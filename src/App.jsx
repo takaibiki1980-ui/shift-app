@@ -1117,7 +1117,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   const APPS = [
     {
       id:"usb", icon:"🔌", label:"USBメモリに保存",
-      sub:"CSVファイルをUSBドライブに保存して利用", color:"#fbbf24", border:"#78350f", bg:"#1c0a00",
+      sub:"CSVファイルをUSBドライブに保存して利用", color:"#fde68a", border:"#d97706", bg:"#292600",
       formats:[{id:"csv",label:"CSV (.csv)",ext:"csv",type:"text/csv;charset=utf-8"}]
     },
     {
