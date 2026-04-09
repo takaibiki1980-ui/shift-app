@@ -573,6 +573,41 @@ function triggerDownload(content, filename, type) {
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
+// File System Access API を使ってOS標準の「名前を付けて保存」ダイアログを開く
+// USB・任意フォルダへの直接保存が可能（Chrome/Edge対応、非対応ブラウザはフォールバック）
+async function saveToFileSystem(content, suggestedName, type, ext) {
+  // File System Access API が使えるか確認（Chrome/Edge対応）
+  if (typeof window.showSaveFilePicker === "function") {
+    const MIME_TO_ACCEPT = {
+      "text/csv;charset=utf-8": { "text/csv": [".csv"] },
+      "application/json":       { "application/json": [".json"] },
+      "text/html;charset=utf-8": { "text/html": [".html"] },
+    };
+    const EXT_LABEL = { csv: "CSV ファイル", json: "JSON ファイル", html: "HTML ファイル" };
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [{
+          description: EXT_LABEL[ext] || "ファイル",
+          accept: MIME_TO_ACCEPT[type] || { "text/plain": [`.${ext}`] },
+        }],
+      });
+      const blob = new Blob([content], { type });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
+    } catch (e) {
+      // キャンセル時はエラー無視
+      if (e.name === "AbortError") return false;
+      throw e;
+    }
+  }
+  // フォールバック：通常ダウンロード
+  triggerDownload(content, suggestedName, type);
+  return true;
+}
+
 
 // ─────────────────────────────────────────────
 //  EXCEL SHIFT TREND IMPORT
@@ -1116,6 +1151,15 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   // アプリ定義
   const APPS = [
     {
+      id:"usb", icon:"💾", label:"USB・ファイルに保存",
+      sub:"USBや任意フォルダに直接保存（名前を付けて保存）", color:"#fbbf24", border:"#78350f", bg:"#1c1008",
+      formats:[
+        {id:"csv", label:"CSV (.csv) ― Excelで開ける",  ext:"csv",  type:"text/csv;charset=utf-8"},
+        {id:"json",label:"JSON (.json) ― バックアップ用", ext:"json", type:"application/json"},
+        {id:"html",label:"印刷用HTML (.html)",           ext:"html", type:"text/html;charset=utf-8"},
+      ]
+    },
+    {
       id:"excel", icon:"📗", label:"Excel",
       sub:"Windowsのエクセルで開く", color:"#34d399", border:"#064e3b", bg:"#022c22",
       formats:[{id:"csv",label:"CSV (.csv)",ext:"csv",type:"text/csv;charset=utf-8"}]
@@ -1157,7 +1201,12 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
     if (fmt.ext==="csv")  content = buildCSV(depts, staffList, allShifts, year, month, selectedDepts);
     if (fmt.ext==="json") content = buildJSON(depts, staffList, allShifts, year, month, selectedDepts);
     if (fmt.ext==="html") content = buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts);
-    triggerDownload(content, `${fname}.${fmt.ext}`, fmt.type);
+    const filename = `${fname}.${fmt.ext}`;
+    if (selectedApp === "usb") {
+      saveToFileSystem(content, filename, fmt.type, fmt.ext);
+    } else {
+      triggerDownload(content, filename, fmt.type);
+    }
   };
 
   const app = APPS.find(a=>a.id===selectedApp);
