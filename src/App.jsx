@@ -1294,6 +1294,71 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
 // ─────────────────────────────────────────────
 //  GENERATE WARNING MODAL
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+//  CLEAR MODAL（シフトクリア確認）
+// ─────────────────────────────────────────────
+function ClearModal({ deptLabel, onClearDept, onClearAll, onClose }) {
+  return (
+    <div style={{
+      position:"fixed",inset:0,background:"#000000cc",zIndex:200,
+      display:"flex",alignItems:"center",justifyContent:"center",padding:16
+    }} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{
+        background:"#091525",border:"1px solid #450a0a",borderRadius:14,
+        padding:24,width:"100%",maxWidth:360,
+        boxShadow:"0 30px 80px #000"
+      }}>
+        <div style={{fontSize:15,fontWeight:900,color:"#f87171",marginBottom:6}}>
+          🗑 シフトのクリア
+        </div>
+        <div style={{fontSize:12,color:"#64748b",marginBottom:20}}>
+          クリアする範囲を選んでください。この操作は元に戻せません。
+        </div>
+
+        {/* このフロアのみ */}
+        <button onClick={onClearDept} style={{
+          width:"100%",background:"#1a0a0a",border:"1px solid #7f1d1d",
+          borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:10,
+          display:"flex",alignItems:"center",gap:12,textAlign:"left"
+        }}>
+          <span style={{fontSize:22}}>🏠</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:800,color:"#fca5a5"}}>
+              {deptLabel} のみクリア
+            </div>
+            <div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>
+              現在表示中のフロアのシフトだけ削除
+            </div>
+          </div>
+        </button>
+
+        {/* 全部署 */}
+        <button onClick={onClearAll} style={{
+          width:"100%",background:"#1a0808",border:"1px solid #991b1b",
+          borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:18,
+          display:"flex",alignItems:"center",gap:12,textAlign:"left"
+        }}>
+          <span style={{fontSize:22}}>🏢</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:800,color:"#ef4444"}}>
+              全部署をクリア
+            </div>
+            <div style={{fontSize:11,color:"#991b1b",marginTop:2}}>
+              すべてのフロアのシフトを削除
+            </div>
+          </div>
+        </button>
+
+        <button onClick={onClose} style={{
+          width:"100%",background:"#0d1a2e",color:"#475569",
+          border:"1px solid #1e3a5f",borderRadius:8,padding:"10px 0",
+          cursor:"pointer",fontSize:13
+        }}>キャンセル</button>
+      </div>
+    </div>
+  );
+}
+
 function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
   const entries = Object.entries(warnings);
   const days = new Date(year, month + 1, 0).getDate();
@@ -1795,6 +1860,86 @@ function StaffModal({ data, deptId, year, month, onSave, onClose }) {
 // ─────────────────────────────────────────────
 //  SHIFT TABLE
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+//  ZOOM WRAPPER（自動フィット・ピンチ・±ボタン対応）
+// ─────────────────────────────────────────────
+function ZoomWrapper({ zoom, onZoomChange, children }) {
+  const innerRef = useRef(null);
+  const outerRef = useRef(null);
+  const scale = zoom / 100;
+
+  // 外側コンテナの高さをscale後のサイズに合わせる（余白除去）
+  useEffect(() => {
+    if (!innerRef.current || !outerRef.current) return;
+    const inner = innerRef.current;
+    const outer = outerRef.current;
+    const updateHeight = () => {
+      outer.style.height = `${Math.round(inner.offsetHeight * scale)}px`;
+    };
+    updateHeight();
+    const ro = new ResizeObserver(updateHeight);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [zoom]);
+
+  // ピンチ操作（タッチイベント）
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el) return;
+    let startDist = null;
+    let startZoom = zoom;
+
+    const onTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        startDist = Math.hypot(dx, dy);
+        startZoom = zoom;
+        e.preventDefault();
+      }
+    };
+    const onTouchMove = (e) => {
+      if (e.touches.length === 2 && startDist !== null) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy);
+        const ratio = dist / startDist;
+        // 5%刻みにスナップ
+        const raw = Math.round(startZoom * ratio / 5) * 5;
+        const clamped = Math.min(100, Math.max(40, raw));
+        if (clamped !== zoom) onZoomChange(clamped);
+        e.preventDefault();
+      }
+    };
+    const onTouchEnd = () => { startDist = null; };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove",  onTouchMove,  { passive: false });
+    el.addEventListener("touchend",   onTouchEnd);
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove",  onTouchMove);
+      el.removeEventListener("touchend",   onTouchEnd);
+    };
+  }, [zoom, onZoomChange]);
+
+  return (
+    <div ref={outerRef} style={{overflowX:"auto", overflowY:"visible", position:"relative"}}>
+      <div
+        ref={innerRef}
+        style={{
+          transformOrigin:"top left",
+          transform:`scale(${scale})`,
+          width: scale < 1 ? `${Math.round(100 / scale)}%` : "100%",
+          display:"inline-block", minWidth:"max-content",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
@@ -2093,12 +2238,84 @@ export default function App() {
     document.head.appendChild(script);
   }, []);
 
-  const [allShifts, setAllShifts] = useState({});
+  // シフトデータをlocalStorageから復元
+  const [allShifts, setAllShifts] = useState(() => {
+    try {
+      const saved = localStorage.getItem("shiftNavi_allShifts");
+      if (!saved) return {};
+      const parsed = JSON.parse(saved);
+      // キーをint変換（JSON化でstring化されたdayキーを戻す）
+      const restored = {};
+      for (const [deptId, deptShifts] of Object.entries(parsed)) {
+        restored[deptId] = {};
+        for (const [staffId, dayMap] of Object.entries(deptShifts)) {
+          restored[deptId][staffId] = {};
+          for (const [d, v] of Object.entries(dayMap)) {
+            restored[deptId][staffId][+d] = v;
+          }
+        }
+      }
+      return restored;
+    } catch { return {}; }
+  });
+  const [saveStatus, setSaveStatus] = useState("saved"); // "saved" | "saving" | "unsaved"
+  const saveTimer = useRef(null);
+
+  // allShifts変更時に自動保存（1秒デバウンス）
+  useEffect(() => {
+    setSaveStatus("unsaved");
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      try {
+        localStorage.setItem("shiftNavi_allShifts", JSON.stringify(allShifts));
+        setSaveStatus("saved");
+      } catch {
+        setSaveStatus("unsaved");
+      }
+    }, 1000);
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+  }, [allShifts]);
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
+  const [tableZoom, setTableZoom] = useState(() => {
+    try { return Number(localStorage.getItem("shiftTableZoom")) || 100; } catch { return 100; }
+  });
+
+  // ズーム変更（stateとlocalStorage両方更新）
+  const handleZoomChange = useCallback((v) => {
+    const clamped = Math.min(100, Math.max(40, Math.round(v / 5) * 5));
+    setTableZoom(clamped);
+    try { localStorage.setItem("shiftTableZoom", clamped); } catch {}
+  }, []);
+
+  // 自動フィット：画面幅に合わせてズームを自動計算
+  // スタッフ列148px + 日付列30px×days + 集計列116px 程度
+  const autoFitZoom = useCallback((staffCount, days) => {
+    const vw = window.innerWidth - 24; // 左右padding分引く
+    const tableEstWidth = 148 + 30 * days + 116;
+    const fit = Math.floor((vw / tableEstWidth) * 100);
+    return Math.min(100, Math.max(40, Math.round(fit / 5) * 5));
+  }, []);
+
+  // 初回マウント時 & 部署切替時に自動フィットを適用
+  // ただしユーザーが手動でズームを変えた場合は上書きしない
+  const autoFitApplied = useRef(false);
+  useEffect(() => {
+    if (autoFitApplied.current) return; // 手動変更後はスキップ
+    // localStorageに保存済みの値があればそちらを優先
+    try {
+      const saved = localStorage.getItem("shiftTableZoom");
+      if (saved) return; // 保存済みあり → 自動フィット不要
+    } catch {}
+    const days = getDays(year, month);
+    const ds = staffList.filter(s => s.dept === activeDeptId).length;
+    const fit = autoFitZoom(ds, days);
+    setTableZoom(fit);
+  }, []); // 初回のみ
   const [excelImportModal, setExcelImportModal] = useState(false);
+  const [clearModal, setClearModal] = useState(false);
   const [shiftTrend, setShiftTrend] = useState({}); // 過去シフト傾向データ
   const [ctxMenu, setCtxMenu] = useState(null);
   const [staffModal, setStaffModal] = useState(null);
@@ -2191,7 +2408,12 @@ export default function App() {
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
 
   return (
-    <div style={{minHeight:"100vh",background:"#060c18",fontFamily:"'Noto Sans JP',sans-serif",color:"#f1f5f9"}}>
+    <div style={{
+      width:"100%", minHeight:"100vh", boxSizing:"border-box",
+      background:"#060c18", fontFamily:"'Noto Sans JP',sans-serif", color:"#f1f5f9",
+      // Viteデフォルトの#root max-width/paddingを打ち消す
+      maxWidth:"none", margin:0, padding:0, textAlign:"left",
+    }}>
       {/* TOPBAR */}
       <div style={{
         background:"#06101f",borderBottom:"1px solid #1e3a5f",
@@ -2225,7 +2447,17 @@ export default function App() {
         </div>
 
         {/* Actions */}
-        <div style={{display:"flex",gap:7}}>
+        <div style={{display:"flex",gap:7,alignItems:"center"}}>
+          {/* 保存インジケーター */}
+          <div style={{
+            fontSize:10,fontWeight:700,
+            color: saveStatus==="saved" ? "#4ade80" : saveStatus==="saving" ? "#fbbf24" : "#94a3b8",
+            display:"flex",alignItems:"center",gap:3,minWidth:60,
+          }}>
+            {saveStatus==="saved"  && <><span>💾</span><span>保存済</span></>}
+            {saveStatus==="unsaved"&& <><span>⏳</span><span>未保存</span></>}
+          </div>
+
           <button onClick={handleGenerate} disabled={generating} style={{
             background:generating?"#0d1a2e":"linear-gradient(135deg,#1e40af,#6d28d9)",
             color:generating?"#334155":"#fff",border:"none",borderRadius:8,
@@ -2251,10 +2483,12 @@ export default function App() {
           }}>
             {Object.keys(shiftTrend).filter(k=>k!=='_months').length > 0 ? `📊 傾向ON(${Object.keys(shiftTrend).filter(k=>k!=='_months').length}名)` : "📊 傾向学習"}
           </button>
-          <button onClick={()=>{if(confirm("このフロアのシフトをクリアしますか？"))setDeptShifts({})}} style={{
-            background:"#0a1830",color:"#475569",border:"1px solid #1e293b",
-            borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12
-          }}>🗑</button>
+          <button onClick={()=>setClearModal(true)}
+          style={{
+            background:"#0a1830",color:"#ef4444",border:"1px solid #450a0a",
+            borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700,
+            display:"flex",alignItems:"center",gap:4,
+          }}>🗑 クリア</button>
         </div>
       </div>
 
@@ -2294,8 +2528,67 @@ export default function App() {
             cursor:"pointer",fontSize:12,fontWeight:innerTab===k?700:400,
           }}>{l}</button>
         ))}
-        <div style={{marginLeft:"auto",fontSize:10,color:"#1e3a5f",padding:"0 8px"}}>
-          最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}
+        <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+          {/* ズームコントロール（シフト表タブのみ表示） */}
+          {innerTab==="shift" && (
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              {/* − ボタン */}
+              <button
+                onClick={() => handleZoomChange(tableZoom - 5)}
+                disabled={tableZoom <= 40}
+                style={{
+                  width:22,height:22,borderRadius:4,border:"1px solid #1e3a5f",
+                  background:"#0a1830",color:tableZoom<=40?"#1e3a5f":"#60a5fa",
+                  cursor:tableZoom<=40?"not-allowed":"pointer",
+                  fontSize:14,fontWeight:900,lineHeight:1,padding:0,
+                  display:"flex",alignItems:"center",justifyContent:"center"
+                }}>−</button>
+
+              {/* スライダー */}
+              <input
+                type="range" min={40} max={100} step={5}
+                value={tableZoom}
+                onChange={e => handleZoomChange(Number(e.target.value))}
+                style={{width:72,accentColor:"#3b82f6",cursor:"pointer"}}
+              />
+
+              {/* + ボタン */}
+              <button
+                onClick={() => handleZoomChange(tableZoom + 5)}
+                disabled={tableZoom >= 100}
+                style={{
+                  width:22,height:22,borderRadius:4,border:"1px solid #1e3a5f",
+                  background:"#0a1830",color:tableZoom>=100?"#1e3a5f":"#60a5fa",
+                  cursor:tableZoom>=100?"not-allowed":"pointer",
+                  fontSize:14,fontWeight:900,lineHeight:1,padding:0,
+                  display:"flex",alignItems:"center",justifyContent:"center"
+                }}>＋</button>
+
+              {/* ズーム率表示 */}
+              <span style={{fontSize:11,fontWeight:700,color:"#60a5fa",minWidth:34,textAlign:"right"}}>
+                {tableZoom}%
+              </span>
+
+              {/* 自動フィット／100%リセットボタン */}
+              <button
+                onClick={() => {
+                  const days = getDays(year, month);
+                  const ds = staffList.filter(s => s.dept === activeDeptId).length;
+                  const fit = autoFitZoom(ds, days);
+                  handleZoomChange(fit);
+                }}
+                title="画面幅に自動フィット"
+                style={{
+                  background:"#0a1830",border:"1px solid #1e3a5f",borderRadius:4,
+                  color:"#60a5fa",fontSize:10,padding:"2px 6px",cursor:"pointer",
+                  whiteSpace:"nowrap"
+                }}
+              >⊞ フィット</button>
+            </div>
+          )}
+          <div style={{fontSize:10,color:"#1e3a5f",padding:"0 4px"}}>
+            最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}
+          </div>
         </div>
       </div>
 
@@ -2304,12 +2597,17 @@ export default function App() {
         {innerTab==="shift" && (
           <>
             <Legend/>
-            <ShiftTable
-              staffList={staffList} shifts={deptShifts}
-              dept={dept} year={year} month={month}
-              onLeftClick={handleLeftClick}
-              onRightClick={handleRightClick}
-            />
+            {/* ズームラッパー
+                transform:scaleはビジュアルのみ縮小し、DOMスペースは元サイズのまま残る。
+                外側divのheightをscale後の値に合わせて余白を除去する。 */}
+            <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}>
+              <ShiftTable
+                staffList={staffList} shifts={deptShifts}
+                dept={dept} year={year} month={month}
+                onLeftClick={handleLeftClick}
+                onRightClick={handleRightClick}
+              />
+            </ZoomWrapper>
           </>
         )}
         {innerTab==="summary" && (
@@ -2341,6 +2639,22 @@ export default function App() {
           year={year} month={month}
           onSave={saveStaff}
           onClose={()=>setStaffModal(null)}
+        />
+      )}
+
+      {/* Clear Modal */}
+      {clearModal && (
+        <ClearModal
+          deptLabel={dept.label}
+          onClearDept={() => {
+            setDeptShifts({});
+            setClearModal(false);
+          }}
+          onClearAll={() => {
+            setAllShifts({});
+            setClearModal(false);
+          }}
+          onClose={() => setClearModal(false)}
         />
       )}
 
