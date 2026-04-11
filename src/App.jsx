@@ -4,19 +4,27 @@ import { useState, useCallback, useRef, useEffect } from "react";
 //  SHIFT DEFINITIONS
 // ─────────────────────────────────────────────
 const SHIFTS = {
-  早番: { short:"早", color:"#fbbf24", bg:"#451a03", border:"#d97706", time:"7:00〜16:00" },
-  日勤: { short:"日", color:"#60a5fa", bg:"#0c2340", border:"#2563eb", time:"9:00〜18:00" },
-  遅番: { short:"遅", color:"#c084fc", bg:"#1e0a40", border:"#7c3aed", time:"11:30〜20:30" },
-  夜勤: { short:"夜", color:"#7dd3fc", bg:"#071528", border:"#1d4ed8", time:"16:30〜翌9:30" },
-  明け: { short:"明", color:"#94a3b8", bg:"#131e2e", border:"#334155", time:"夜勤明け" },
-  休み: { short:"休", color:"#4ade80", bg:"#022c22", border:"#16a34a", time:"－" },
-  希望休: { short:"希", color:"#f87171", bg:"#3b0a0a", border:"#dc2626", time:"希望休" },
-  有休: { short:"有", color:"#e879f9", bg:"#2e0a40", border:"#a21caf", time:"有給" },
-  "": { short:"－", color:"#1e3a5f", bg:"transparent", border:"transparent", time:"" },
+  早番:  { short:"早", color:"#c45c35", bg:"#fff0e8", border:"#e07b54", time:"7:00〜16:00" },
+  日勤:  { short:"日", color:"#3b6eea", bg:"#eef3ff", border:"#6b96f5", time:"9:00〜18:00" },
+  遅番:  { short:"遅", color:"#8b5cc4", bg:"#f5eeff", border:"#b07fd4", time:"11:30〜20:30" },
+  夜勤:  { short:"夜", color:"#2a7a9a", bg:"#e8f6fb", border:"#4ba8c8", time:"16:30〜翌9:30" },
+  明け:  { short:"明", color:"#9e8d80", bg:"#f5f0eb", border:"#c8b8a8", time:"夜勤明け" },
+  休み:  { short:"休", color:"#3a9659", bg:"#edf7f0", border:"#5cb87a", time:"－" },
+  希望休: { short:"希", color:"#c44b4b", bg:"#fff0f0", border:"#e07070", time:"希望休" },
+  有休:  { short:"有", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"有給" },
+  // 半休（手動入力専用・自動生成対象外）
+  "日/休": { short:"日休", color:"#3b6eea", bg:"#f0f5ff", border:"#93b4f5", time:"午前日勤／午後休" },
+  "休/日": { short:"休日", color:"#3a9659", bg:"#f0faf4", border:"#8fcfa8", time:"午前休／午後日勤" },
+  "早/休": { short:"早休", color:"#c45c35", bg:"#fff5ee", border:"#f0a882", time:"早番半日／午後休" },
+  "休/遅": { short:"休遅", color:"#8b5cc4", bg:"#faf5ff", border:"#c4a0e0", time:"午前休／遅番半日" },
+  "": { short:"－", color:"#c8b8a8", bg:"transparent", border:"transparent", time:"" },
 };
+// 左クリックで循環するキー（半休は含めない）
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
-const REST_TYPES = new Set(["休み","希望休","有休","明け"]);
-const WORK_TYPES = new Set(["早番","日勤","遅番","夜勤"]);
+// 右クリックメニューに表示するキー（半休を追加）
+const SHIFT_KEYS_MANUAL = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅",""];
+const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
+const WORK_TYPES  = new Set(["早番","日勤","遅番","夜勤"]);
 
 // ─────────────────────────────────────────────
 //  DEPARTMENTS
@@ -25,31 +33,34 @@ const DEFAULT_DEPTS = [
   { id:"kaigo1", label:"介護部 1階", icon:"🏠",
     shiftTypes:["早番","日勤","遅番","夜勤"],
     minStaff:{ 早番:1, 日勤:1, 遅番:1, 夜勤:1 },
-    defaultKyukoDays:8, maxConsecutive:5 },
+    defaultKyukoDays:8, maxConsecutive:5,
+    roles:["介護福祉士","介護職員","介護補助","介護助手","特定技能"] },
   { id:"kaigo2", label:"介護部 2階", icon:"🏢",
     shiftTypes:["早番","日勤","遅番","夜勤"],
     minStaff:{ 早番:1, 日勤:1, 遅番:1, 夜勤:1 },
-    defaultKyukoDays:8, maxConsecutive:5 },
+    defaultKyukoDays:8, maxConsecutive:5,
+    roles:["介護福祉士","介護職員","介護補助","介護助手","特定技能"] },
   { id:"jimu",   label:"事務所",     icon:"📋",
     shiftTypes:["日勤"],
     minStaff:{ 日勤:1 },
-    defaultKyukoDays:8, maxConsecutive:5 },
+    defaultKyukoDays:8, maxConsecutive:5,
+    roles:["事務員","主任"] },
   { id:"kango",  label:"看護部",     icon:"💉",
     shiftTypes:["日勤"],
     minStaff:{ 日勤:1 },
-    defaultKyukoDays:8, maxConsecutive:5 },
+    defaultKyukoDays:8, maxConsecutive:5,
+    roles:["看護師","准看護師"] },
   { id:"eiyo",   label:"栄養科",     icon:"🍱",
     shiftTypes:["早番","日勤"],
     minStaff:{ 早番:1, 日勤:1 },
-    defaultKyukoDays:8, maxConsecutive:5 },
+    defaultKyukoDays:8, maxConsecutive:5,
+    roles:["管理栄養士","栄養士","調理師"] },
 ];
 
-const ROLES_BY_DEPT = {
-  kaigo1:["介護福祉士","介護職員","介護補助","介護助手","特定技能"],
-  kaigo2:["介護福祉士","介護職員","介護補助","介護助手","特定技能"],
-  jimu:  ["事務員","主任"],
-  kango: ["看護師","准看護師"],
-  eiyo:  ["管理栄養士","栄養士","調理師"],
+// 部署のrolesを取得するヘルパー（depts stateから動的に引く）
+const getDeptRoles = (depts, deptId) => {
+  const d = depts.find(x => x.id === deptId);
+  return d?.roles || ["職員"];
 };
 
 // ─────────────────────────────────────────────
@@ -518,59 +529,73 @@ function buildJSON(depts, staffList, allShifts, year, month, selectedDepts) {
 function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts) {
   const days = getDays(year, month);
   const WD = ["日","月","火","水","木","金","土"];
-  let html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
-<title>シフト表 ${year}年${month+1}月</title>
-<style>
-body{font-family:'Noto Sans JP',sans-serif;font-size:10px;margin:16px;color:#111;}
-h2{font-size:13px;margin:14px 0 5px;}
-table{border-collapse:collapse;width:100%;margin-bottom:20px;}
-th,td{border:1px solid #ccc;padding:2px 3px;text-align:center;font-size:9px;white-space:nowrap;}
-th{background:#e8f0fe;font-weight:bold;} .name{text-align:left;min-width:70px;}
-.we{background:#fff0f6;} .早番{background:#fef3c7;color:#92400e;} .日勤{background:#dbeafe;color:#1e40af;}
-.遅番{background:#ede9fe;color:#5b21b6;} .夜勤{background:#1e3a8a;color:#93c5fd;}
-.明け{background:#f1f5f9;color:#64748b;} .休み{background:#dcfce7;color:#166534;}
-.希望休{background:#fee2e2;color:#991b1b;} .有休{background:#fae8ff;color:#86198f;}
-@media print{body{margin:4px;}h2{font-size:10px;}th,td{font-size:8px;padding:1px 2px;}}
-</style></head><body>`;
+  // アーティファクト環境でのHTMLタグ誤認を防ぐため文字列連結で組み立て
+  const TAG = (t) => '<' + t + '>';  // タグを動的生成
+  const CTAG = (t) => '</' + t + '>'; // 閉じタグを動的生成
+  let html = TAG('!DOCTYPE html')
+    + TAG('html lang="ja"')
+    + TAG('head')
+    + TAG('meta charset="UTF-8"')
+    + TAG(`title`) + `シフト表 ${year}年${month+1}月` + CTAG('title')
+    + TAG('style')
+    + `body{font-family:'Noto Sans JP',sans-serif;font-size:10px;margin:16px;color:#111;}`
+    + `h2{font-size:13px;margin:14px 0 5px;}`
+    + `table{border-collapse:collapse;width:100%;margin-bottom:20px;}`
+    + `th,td{border:1px solid #ccc;padding:2px 3px;text-align:center;font-size:9px;white-space:nowrap;}`
+    + `th{background:#e8f0fe;font-weight:bold;} .name{text-align:left;min-width:70px;}`
+    + `.we{background:#fff0f6;} .早番{background:#fef3c7;color:#92400e;} .日勤{background:#dbeafe;color:#1e40af;}`
+    + `.遅番{background:#ede9fe;color:#5b21b6;} .夜勤{background:#1e3a8a;color:#93c5fd;}`
+    + `.明け{background:#f1f5f9;color:#64748b;} .休み{background:#dcfce7;color:#166534;}`
+    + `.希望休{background:#fee2e2;color:#991b1b;} .有休{background:#fae8ff;color:#86198f;}`
+    + `@media print{body{margin:4px;}h2{font-size:10px;}th,td{font-size:8px;padding:1px 2px;}}`
+    + CTAG('style') + CTAG('head') + TAG('body');
   depts.filter(d=>selectedDepts.includes(d.id)).forEach(dept => {
     const shifts = allShifts[dept.id] || {};
-    html += `<h2>${dept.icon} ${dept.label}　${year}年${month+1}月</h2><table><thead><tr><th class="name">氏名</th>`;
+    html += TAG(`h2`) + `${dept.icon} ${dept.label}　${year}年${month+1}月` + CTAG('h2');
+    html += TAG('table') + TAG('thead') + TAG('tr') + TAG('th class="name"') + '氏名' + CTAG('th');
     for(let d=1;d<=days;d++){
       const wd=WD[new Date(year,month,d).getDay()];
-      html += `<th class="${(wd==="日"||wd==="土")?"we":""}">${d}<br>${wd}</th>`;
+      html += TAG(`th class="${(wd==="日"||wd==="土")?"we":""}"`)+`${d}<br>${wd}`+CTAG('th');
     }
-    html += `<th>勤務</th><th>夜勤</th><th>休</th></tr></thead><tbody>`;
+    html += TAG('th')+'勤務'+CTAG('th')+TAG('th')+'夜勤'+CTAG('th')+TAG('th')+'休'+CTAG('th');
+    html += CTAG('tr')+CTAG('thead')+TAG('tbody');
     staffList.filter(s=>s.dept===dept.id).forEach(s => {
       let w=0,n=0,r=0;
-      html += `<tr><td class="name">${s.name}</td>`;
+      html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
       for(let d=1;d<=days;d++){
         const v=shifts[s.id]?.[d]||"";
         if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v) && v !== "明け") r++;
-        html += `<td class="${v||""}">${SHIFTS[v]?.short||"－"}</td>`;
+        html += TAG(`td class="${v||""}"`)+(SHIFTS[v]?.short||"－")+CTAG('td');
       }
-      html += `<td>${w}</td><td>${n||"－"}</td><td>${r}</td></tr>`;
+      html += TAG('td')+w+CTAG('td')+TAG('td')+(n||"－")+CTAG('td')+TAG('td')+r+CTAG('td');
+      html += CTAG('tr');
     });
-    html += `</tbody></table>`;
+    html += CTAG('tbody') + CTAG('table');
   });
-  return html + `</body></html>`;
+  return html + CTAG('body') + CTAG('html');
 }
 
 function triggerDownload(content, filename, type) {
-  // Artifact環境ではBlob URLダウンロードがブロックされるため
-  // 新タブで開いて手動保存できるようにする
-  const blob = new Blob([content], {type});
-  const url = URL.createObjectURL(blob);
-  const w = window.open(url, "_blank");
-  if (!w) {
-    // ポップアップブロック時はdata URIで試みる
+  try {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  } catch (e) {
+    // フォールバック：data URI
+    const encoded = encodeURIComponent(content);
+    const a = document.createElement("a");
+    a.href = `data:${type},${encoded}`;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
-  setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
 
@@ -786,7 +811,7 @@ function parseShiftExcel(workbook) {
 
 
 
-function ExcelImportModal({ onImport, onClose, currentTrend }) {
+function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm }) {
   const [status, setStatus] = useState("idle"); // idle | parsing | done | error
   const [preview, setPreview] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -795,6 +820,12 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // SheetJSが未ロードの場合のガード
+    if (!window.XLSX) {
+      setErrorMsg("ライブラリの読み込みが完了していません。少し待ってから再度お試しください。");
+      setStatus("error");
+      return;
+    }
     setStatus("parsing");
     setErrorMsg("");
     try {
@@ -818,40 +849,60 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,
       display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#091525",border:"1px solid #1e3a5f",borderRadius:14,
+      <div style={{background:"#fdfaf7",border:"1px solid #d4b8a0",borderRadius:14,
         padding:24,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",
         boxShadow:"0 30px 80px #000"}}>
 
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:"#e2e8f0",fontFamily:"'Noto Sans JP',sans-serif"}}>
+            <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",fontFamily:"'Noto Sans JP',sans-serif"}}>
               📊 過去シフトから傾向を学習
             </div>
-            <div style={{fontSize:11,color:"#475569",marginTop:3}}>
+            <div style={{fontSize:11,color:"#8c7b6e",marginTop:3}}>
               過去のExcelシフト表を読み込んで自動生成に反映
             </div>
           </div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#475569",cursor:"pointer",fontSize:20}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#8c7b6e",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
 
         {/* 説明 */}
-        <div style={{background:"#0d1a2e",borderRadius:8,padding:"10px 14px",
-          border:"1px solid #1e293b",marginBottom:16,fontSize:11,color:"#64748b",lineHeight:1.7}}>
-          <div style={{color:"#60a5fa",fontWeight:700,marginBottom:4}}>📋 対応Excelフォーマット</div>
-          <div>• <b style={{color:"#94a3b8"}}>1列目</b>：スタッフ氏名</div>
-          <div>• <b style={{color:"#94a3b8"}}>2列目以降</b>：シフト値（早番・日勤・遅番・夜勤・休み）</div>
+        <div style={{background:"#f0e8de",borderRadius:8,padding:"10px 14px",
+          border:"1px solid #1e293b",marginBottom:16,fontSize:11,color:"#9e8d80",lineHeight:1.7}}>
+          <div style={{color:"#e07b54",fontWeight:700,marginBottom:4}}>📋 対応Excelフォーマット</div>
+          <div>• <b style={{color:"#b5a99e"}}>1列目</b>：スタッフ氏名</div>
+          <div>• <b style={{color:"#b5a99e"}}>2列目以降</b>：シフト値（早番・日勤・遅番・夜勤・休み）</div>
           <div>• 複数シート・複数月のデータも一括読み込み可能</div>
-          <div style={{marginTop:6,color:"#334155"}}>学習した傾向は「そのスタッフが多く入っていたシフト」を優先配置するヒントとして使用します。</div>
+          <div style={{marginTop:6,color:"#6b5a4e"}}>学習した傾向は「そのスタッフが多く入っていたシフト」を優先配置するヒントとして使用します。</div>
         </div>
 
         {/* 現在の傾向データ */}
         {currentTrend && Object.keys(currentTrend).length > 0 && (
-          <div style={{background:"#0a2010",border:"1px solid #14532d",borderRadius:8,
+          <div style={{background:"#e8f5ee",border:"1px solid #14532d",borderRadius:8,
             padding:"8px 12px",marginBottom:14,fontSize:11}}>
-            <div style={{color:"#4ade80",fontWeight:700,marginBottom:4}}>
-              ✅ 現在 {Object.keys(currentTrend).length} 名分の傾向データを保持中
+            <div style={{color:"#5cb87a",fontWeight:700,marginBottom:4}}>
+              ✅ 現在 {Object.keys(currentTrend).filter(k=>k!=='_months').length} 名分の傾向データを保持中
             </div>
-            <div style={{color:"#166534",fontSize:10}}>新しいファイルを読み込むと上書きされます</div>
+            {currentTrend._months?.length > 0 && (
+              <div style={{color:"#3a8a55",fontSize:10,marginBottom:4}}>
+                学習済み月：{currentTrend._months.map(ym=>{const[y,m]=ym.split('-');return `${y}年${m}月`;}).join('・')}
+              </div>
+            )}
+            <div style={{color:"#3a8a55",fontSize:10,marginBottom:6}}>
+              新しいファイルを読み込むと<b>データが追加（マージ）</b>されます
+            </div>
+            <button onClick={()=>{
+              onConfirm(
+                '傾向データをリセットします。よろしいですか？',
+                () => {
+                  try { localStorage.removeItem('shiftNavi_shiftTrend'); } catch {}
+                  onReset();
+                },
+                'リセット'
+              );
+            }} style={{
+              background:'#fff0f0',border:'1px solid #e07070',borderRadius:5,
+              color:'#c44b4b',fontSize:10,padding:'2px 8px',cursor:'pointer'
+            }}>🗑 傾向データをリセット</button>
           </div>
         )}
 
@@ -859,7 +910,7 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
         <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv"
           onChange={handleFile} style={{display:"none"}}/>
         <button onClick={()=>fileRef.current?.click()} style={{
-          width:"100%",background:"linear-gradient(135deg,#1e40af,#6d28d9)",
+          width:"100%",background:"linear-gradient(135deg,#e07b54,#c45c8a)",
           color:"#fff",border:"none",borderRadius:9,padding:"13px 0",
           cursor:"pointer",fontSize:14,fontWeight:800,
           fontFamily:"'Noto Sans JP',sans-serif",marginBottom:14,
@@ -870,34 +921,34 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
 
         {/* ステータス */}
         {status === "parsing" && (
-          <div style={{textAlign:"center",color:"#60a5fa",padding:"16px 0",fontSize:13}}>
+          <div style={{textAlign:"center",color:"#e07b54",padding:"16px 0",fontSize:13}}>
             ⏳ 解析中...
           </div>
         )}
         {status === "error" && (
-          <div style={{background:"#3b0a0a",border:"1px solid #dc2626",borderRadius:8,
+          <div style={{background:"#fff0f0",border:"1px solid #dc2626",borderRadius:8,
             padding:"10px 14px",color:"#f87171",fontSize:12,marginBottom:14,whiteSpace:"pre-wrap"}}>
             ❌ {errorMsg}
           </div>
         )}
         {status === "done" && preview && (
           <div>
-            <div style={{color:"#4ade80",fontSize:13,fontWeight:700,marginBottom:6}}>
+            <div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>
               ✅ {Object.keys(preview).filter(k=>k!=='_months').length} 名分のデータを読み込みました
             </div>
             {/* 読み込んだ月一覧 */}
             {preview._months && preview._months.length > 0 && (
               <div style={{
-                background:"#0a2010",border:"1px solid #14532d",borderRadius:7,
+                background:"#e8f5ee",border:"1px solid #14532d",borderRadius:7,
                 padding:"6px 12px",marginBottom:10,
                 display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"
               }}>
-                <span style={{fontSize:11,color:"#4ade80",fontWeight:700}}>📅 対象月:</span>
+                <span style={{fontSize:11,color:"#5cb87a",fontWeight:700}}>📅 対象月:</span>
                 {preview._months.map(ym => {
                   const [y, m] = ym.split("-");
                   return (
                     <span key={ym} style={{
-                      background:"#14532d",borderRadius:5,padding:"2px 8px",
+                      background:"#c8e8d4",borderRadius:5,padding:"2px 8px",
                       fontSize:11,color:"#86efac",fontWeight:700
                     }}>{y}年{m}月</span>
                   );
@@ -907,7 +958,7 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
             <div style={{maxHeight:240,overflowY:"auto",marginBottom:14}}>
               {Object.entries(preview).filter(([k]) => k !== '_months').map(([name, scores]) => {
                 const WEEK = ["月","火","水","木","金","土","日"];
-                const WEEK_COLOR = ["#94a3b8","#94a3b8","#94a3b8","#94a3b8","#94a3b8","#60a5fa","#f87171"];
+                const WEEK_COLOR = ["#b5a99e","#b5a99e","#b5a99e","#b5a99e","#b5a99e","#e07b54","#f87171"];
                 // 休み率が高い曜日トップ3を抽出
                 const topRestDays = (scores.dowRestRate || [])
                   .map((rate, i) => ({ dow: i, rate: rate ?? 0, label: WEEK[i] }))
@@ -916,10 +967,10 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
                   .slice(0, 3);
                 return (
                   <div key={name} style={{
-                    background:"#0d1a2e",borderRadius:7,padding:"8px 12px",
+                    background:"#f0e8de",borderRadius:7,padding:"8px 12px",
                     marginBottom:6,border:"1px solid #1e293b"
                   }}>
-                    <div style={{color:"#e2e8f0",fontSize:12,fontWeight:700,marginBottom:5}}>
+                    <div style={{color:"#3d2e24",fontSize:12,fontWeight:700,marginBottom:5}}>
                       {name}
                     </div>
                     {/* シフト傾向 */}
@@ -927,7 +978,7 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
                       {["早番","日勤","遅番","夜勤"].map(k => {
                         const pct = Math.round((scores[k]||0)*100);
                         if (pct === 0) return null;
-                        const col = SHIFTS[k]?.color || "#94a3b8";
+                        const col = SHIFTS[k]?.color || "#b5a99e";
                         return (
                           <div key={k} style={{
                             background:`${col}18`,border:`1px solid ${col}40`,
@@ -940,7 +991,7 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
                     {/* 曜日別休み傾向 */}
                     {topRestDays.length > 0 && (
                       <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
-                        <span style={{fontSize:10,color:"#334155"}}>休み多い曜日:</span>
+                        <span style={{fontSize:10,color:"#6b5a4e"}}>休み多い曜日:</span>
                         {topRestDays.map(d => (
                           <div key={d.dow} style={{
                             background:`${WEEK_COLOR[d.dow]}20`,
@@ -957,14 +1008,14 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
             </div>
             <div style={{display:"flex",gap:10}}>
               <button onClick={()=>onImport(preview)} style={{
-                flex:1,background:"linear-gradient(135deg,#065f46,#0f766e)",
+                flex:1,background:"linear-gradient(135deg,#2d8a52,#2a7a6e)",
                 color:"#fff",border:"none",borderRadius:8,padding:"11px 0",
                 cursor:"pointer",fontSize:14,fontWeight:800,
                 fontFamily:"'Noto Sans JP',sans-serif"
               }}>✅ この傾向データを適用する</button>
               <button onClick={onClose} style={{
-                flex:1,background:"#0d1a2e",color:"#475569",
-                border:"1px solid #1e3a5f",borderRadius:8,padding:"11px 0",
+                flex:1,background:"#f0e8de",color:"#8c7b6e",
+                border:"1px solid #d4b8a0",borderRadius:8,padding:"11px 0",
                 cursor:"pointer",fontSize:14
               }}>キャンセル</button>
             </div>
@@ -972,8 +1023,8 @@ function ExcelImportModal({ onImport, onClose, currentTrend }) {
         )}
         {status === "idle" && (
           <button onClick={onClose} style={{
-            width:"100%",background:"#0d1a2e",color:"#475569",
-            border:"1px solid #1e3a5f",borderRadius:8,padding:"11px 0",
+            width:"100%",background:"#f0e8de",color:"#8c7b6e",
+            border:"1px solid #d4b8a0",borderRadius:8,padding:"11px 0",
             cursor:"pointer",fontSize:14
           }}>閉じる</button>
         )}
@@ -1011,25 +1062,25 @@ function BulkKyukoModal({ depts, staffList, year, month, onApply, onClose }) {
       display:"flex", alignItems:"center", justifyContent:"center", padding:16
     }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{
-        background:"#091525", border:"1px solid #1e3a5f", borderRadius:14,
+        background:"#fdfaf7", border:"1px solid #d4b8a0", borderRadius:14,
         padding:24, width:"100%", maxWidth:400,
         boxShadow:"0 30px 80px #000"
       }}>
         {/* ヘッダー */}
         <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6}}>
           <div>
-            <div style={{fontSize:15, fontWeight:900, color:"#e2e8f0",
+            <div style={{fontSize:15, fontWeight:900, color:"#3d2e24",
               fontFamily:"'Noto Sans JP',sans-serif"}}>📅 休み日数 一括設定</div>
-            <div style={{fontSize:11, color:"#475569", marginTop:2}}>
+            <div style={{fontSize:11, color:"#8c7b6e", marginTop:2}}>
               {year}年{month+1}月　※夜勤明け翌日の休みを含むカウント
             </div>
           </div>
           <button onClick={onClose} style={{background:"none", border:"none",
-            color:"#475569", cursor:"pointer", fontSize:20}}>✕</button>
+            color:"#8c7b6e", cursor:"pointer", fontSize:20}}>✕</button>
         </div>
 
-        <div style={{fontSize:11, color:"#334155", marginBottom:16, marginTop:8,
-          background:"#0d1a2e", borderRadius:7, padding:"8px 12px",
+        <div style={{fontSize:11, color:"#6b5a4e", marginBottom:16, marginTop:8,
+          background:"#f0e8de", borderRadius:7, padding:"8px 12px",
           border:"1px solid #1e293b"}}>
           💡 部署ごとに設定した日数を、その部署の全スタッフに一括適用します。
           個人設定は上書きされますが、後からスタッフ個別に変更可能です。
@@ -1043,39 +1094,39 @@ function BulkKyukoModal({ depts, staffList, year, month, onApply, onClose }) {
             return (
               <div key={d.id} style={{
                 display:"flex", alignItems:"center", gap:12,
-                background:"#0d1a2e", borderRadius:9, padding:"10px 14px",
-                border:"1px solid #1e3a5f"
+                background:"#f0e8de", borderRadius:9, padding:"10px 14px",
+                border:"1px solid #d4b8a0"
               }}>
                 <span style={{fontSize:20}}>{d.icon}</span>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:13, fontWeight:800, color:"#e2e8f0",
+                  <div style={{fontSize:13, fontWeight:800, color:"#3d2e24",
                     fontFamily:"'Noto Sans JP',sans-serif"}}>{d.label}</div>
-                  <div style={{fontSize:10, color:"#334155"}}>{cnt}名</div>
+                  <div style={{fontSize:10, color:"#6b5a4e"}}>{cnt}名</div>
                 </div>
                 <div style={{display:"flex", alignItems:"center", gap:6}}>
                   <button onClick={() => setVal(d.id, (values[d.id] || 8) - 1)}
                     style={{
-                      background:"#1e293b", border:"1px solid #334155", borderRadius:6,
-                      color:"#94a3b8", cursor:"pointer", width:28, height:28,
+                      background:"#e0d4c8", border:"1px solid #334155", borderRadius:6,
+                      color:"#b5a99e", cursor:"pointer", width:28, height:28,
                       fontSize:16, fontWeight:800, lineHeight:1
                     }}>−</button>
                   <input
                     type="number" value={values[d.id] ?? 8} min={0} max={20}
                     onChange={e => setVal(d.id, e.target.value)}
                     style={{
-                      width:48, background:"#060d18", border:"1px solid #1e3a5f",
-                      borderRadius:6, color:"#60a5fa", fontSize:16, fontWeight:800,
+                      width:48, background:"#fff8f4", border:"1px solid #d4b8a0",
+                      borderRadius:6, color:"#e07b54", fontSize:16, fontWeight:800,
                       textAlign:"center", padding:"4px 0",
                       fontFamily:"'Noto Sans JP',sans-serif", outline:"none"
                     }}
                   />
                   <button onClick={() => setVal(d.id, (values[d.id] || 8) + 1)}
                     style={{
-                      background:"#1e293b", border:"1px solid #334155", borderRadius:6,
-                      color:"#94a3b8", cursor:"pointer", width:28, height:28,
+                      background:"#e0d4c8", border:"1px solid #334155", borderRadius:6,
+                      color:"#b5a99e", cursor:"pointer", width:28, height:28,
                       fontSize:16, fontWeight:800, lineHeight:1
                     }}>＋</button>
-                  <span style={{fontSize:11, color:"#334155", minWidth:14}}>日</span>
+                  <span style={{fontSize:11, color:"#6b5a4e", minWidth:14}}>日</span>
                 </div>
               </div>
             );
@@ -1084,14 +1135,14 @@ function BulkKyukoModal({ depts, staffList, year, month, onApply, onClose }) {
 
         <div style={{display:"flex", gap:10}}>
           <button onClick={() => onApply(values, mk)} style={{
-            flex:1, background:"linear-gradient(135deg,#1e40af,#6d28d9)",
+            flex:1, background:"linear-gradient(135deg,#e07b54,#c45c8a)",
             color:"#fff", border:"none", borderRadius:8, padding:"11px 0",
             cursor:"pointer", fontSize:14, fontWeight:800,
             fontFamily:"'Noto Sans JP',sans-serif"
           }}>✅ 適用する</button>
           <button onClick={onClose} style={{
-            flex:1, background:"#0d1a2e", color:"#475569",
-            border:"1px solid #1e3a5f", borderRadius:8, padding:"11px 0",
+            flex:1, background:"#f0e8de", color:"#8c7b6e",
+            border:"1px solid #d4b8a0", borderRadius:8, padding:"11px 0",
             cursor:"pointer", fontSize:14
           }}>キャンセル</button>
         </div>
@@ -1102,115 +1153,74 @@ function BulkKyukoModal({ depts, staffList, year, month, onApply, onClose }) {
 
 
 // ─────────────────────────────────────────────
+//  DOWNLOAD MODAL（シンプル版）
+// ─────────────────────────────────────────────
 function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, onClose }) {
   const [selectedDepts, setSelectedDepts] = useState([activeDeptId]);
-  const [step, setStep] = useState("app"); // "app" | "format"
-  const [selectedApp, setSelectedApp] = useState(null);
+  const noSelection = selectedDepts.length === 0;
+  const fname = `シフト表_${year}年${month+1}月`;
 
   const toggleDept = (id) => setSelectedDepts(prev =>
     prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]
   );
-  const noSelection = selectedDepts.length === 0;
-  const fname = `シフト表_${year}年${month+1}月`;
 
-  // アプリ定義
-  const APPS = [
-    {
-      id:"excel", icon:"📗", label:"Excel",
-      sub:"Windowsのエクセルで開く", color:"#34d399", border:"#064e3b", bg:"#022c22",
-      formats:[{id:"csv",label:"CSV (.csv)",ext:"csv",type:"text/csv;charset=utf-8"}]
-    },
-    {
-      id:"gsheet", icon:"📊", label:"Googleスプレッドシート",
-      sub:"ブラウザのスプレッドシートで開く", color:"#4ade80", border:"#14532d", bg:"#052e16",
-      formats:[{id:"csv",label:"CSV (.csv)",ext:"csv",type:"text/csv;charset=utf-8"}]
-    },
-    {
-      id:"print", icon:"🖨️", label:"印刷（紙のシフト表）",
-      sub:"ブラウザで開いてそのまま印刷", color:"#60a5fa", border:"#1e3a5f", bg:"#0c2340",
-      formats:[{id:"html",label:"HTML (.html)",ext:"html",type:"text/html;charset=utf-8"}]
-    },
-    {
-      id:"kintone", icon:"🔵", label:"kintone / 勤怠システム",
-      sub:"CSV取り込みに対応したシステム向け", color:"#38bdf8", border:"#0c4a6e", bg:"#082f49",
-      formats:[{id:"csv",label:"CSV (.csv)",ext:"csv",type:"text/csv;charset=utf-8"}]
-    },
-    {
-      id:"backup", icon:"💾", label:"バックアップ／他アプリ連携",
-      sub:"JSONデータとして保存・Phase 3連携用", color:"#a78bfa", border:"#2e1065", bg:"#1e0a40",
-      formats:[{id:"json",label:"JSON (.json)",ext:"json",type:"application/json"}]
-    },
-    {
-      id:"custom", icon:"⚙️", label:"その他（形式を選ぶ）",
-      sub:"CSV・HTML・JSONから選択", color:"#94a3b8", border:"#334155", bg:"#0f172a",
-      formats:[
-        {id:"csv",label:"CSV (.csv)",ext:"csv",type:"text/csv;charset=utf-8"},
-        {id:"html",label:"印刷用HTML (.html)",ext:"html",type:"text/html;charset=utf-8"},
-        {id:"json",label:"JSON (.json)",ext:"json",type:"application/json"},
-      ]
-    },
-  ];
-
-  const handleDownload = (fmt) => {
+  const doDownload = (ext) => {
     if (noSelection) return;
-    let content = "";
-    if (fmt.ext==="csv")  content = buildCSV(depts, staffList, allShifts, year, month, selectedDepts);
-    if (fmt.ext==="json") content = buildJSON(depts, staffList, allShifts, year, month, selectedDepts);
-    if (fmt.ext==="html") content = buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts);
-    triggerDownload(content, `${fname}.${fmt.ext}`, fmt.type);
+    let content = "", type = "";
+    if (ext === "csv")  { content = buildCSV(depts, staffList, allShifts, year, month, selectedDepts);  type = "text/csv;charset=utf-8"; }
+    if (ext === "html") { content = buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts); type = "text/html;charset=utf-8"; }
+    triggerDownload(content, `${fname}.${ext}`, type);
   };
 
-  const app = APPS.find(a=>a.id===selectedApp);
+  const BTN = (onClick, icon, label, sub, col, bg, border) => (
+    <button onClick={onClick} disabled={noSelection} style={{
+      width:"100%", background:noSelection?"#ede5db":bg,
+      border:`1px solid ${noSelection?"#e0d4c8":border}`,
+      borderRadius:10, padding:"13px 16px", cursor:noSelection?"not-allowed":"pointer",
+      display:"flex", alignItems:"center", gap:12, textAlign:"left",
+      opacity:noSelection?0.4:1, marginBottom:8,
+    }}>
+      <span style={{fontSize:24}}>{icon}</span>
+      <div style={{flex:1}}>
+        <div style={{fontSize:13,fontWeight:800,color:noSelection?"#6b5a4e":col,
+          fontFamily:"'Noto Sans JP',sans-serif"}}>{label}</div>
+        <div style={{fontSize:11,color:"#8c7b6e",marginTop:2}}>{sub}</div>
+      </div>
+      <span style={{color:noSelection?"#d4c5b5":col,fontSize:16}}>↓</span>
+    </button>
+  );
 
   return (
-    <div style={{
-      position:"fixed",inset:0,background:"#000000cc",zIndex:200,
-      display:"flex",alignItems:"center",justifyContent:"center",padding:16
-    }} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{
-        background:"#0a1525",border:"1px solid #1e3a5f",borderRadius:14,
-        padding:24,width:"100%",maxWidth:440,
-        boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"
-      }}>
-        {/* ヘッダー */}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            {step==="format" && (
-              <button onClick={()=>setStep("app")} style={{
-                background:"#0d1a2e",border:"1px solid #1e3a5f",borderRadius:6,
-                color:"#64748b",cursor:"pointer",fontSize:13,padding:"3px 8px"
-              }}>◀</button>
-            )}
-            <div>
-              <div style={{fontSize:15,fontWeight:900,color:"#e2e8f0",
-                fontFamily:"'Noto Sans JP',sans-serif"}}>
-                {step==="app" ? "📤 シフトを使う" : `📤 ${app?.label}`}
-              </div>
-              <div style={{fontSize:11,color:"#475569",marginTop:2}}>{year}年{month+1}月</div>
-            </div>
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,
+      display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#fdfaf7",border:"1px solid #d4b8a0",borderRadius:14,
+        padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",
+        maxHeight:"90vh",overflowY:"auto"}}>
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",
+              fontFamily:"'Noto Sans JP',sans-serif"}}>📤 書き出し</div>
+            <div style={{fontSize:11,color:"#8c7b6e",marginTop:2}}>{year}年{month+1}月</div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",
-            color:"#475569",cursor:"pointer",fontSize:20}}>✕</button>
+            color:"#8c7b6e",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
 
-        {/* 部署選択（常時表示） */}
-        <div style={{fontSize:11,color:"#1e3a5f",fontWeight:700,marginBottom:8,letterSpacing:"0.08em"}}>
-          ▍ 対象部署
-        </div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:18}}>
+        {/* 部署選択 */}
+        <div style={{fontSize:11,color:"#8c7b6e",fontWeight:700,marginBottom:7}}>対象部署</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:16}}>
           {depts.map(d => {
             const sel = selectedDepts.includes(d.id);
             return (
               <button key={d.id} onClick={()=>toggleDept(d.id)} style={{
-                background:sel?"#1e3a5f":"transparent",
-                color:sel?"#60a5fa":"#334155",
-                border:`1px solid ${sel?"#3b82f6":"#1e293b"}`,
+                background:sel?"#d4c5b5":"transparent",
+                color:sel?"#e07b54":"#6b5a4e",
+                border:`1px solid ${sel?"#d4693f":"#e0d4c8"}`,
                 borderRadius:7,padding:"4px 10px",cursor:"pointer",
                 fontSize:11,fontWeight:sel?700:400,
-                display:"flex",alignItems:"center",gap:4,
-              }}>
-                <span>{d.icon}</span><span>{d.label}</span>
-              </button>
+              }}>{d.icon} {d.label}</button>
             );
           })}
         </div>
@@ -1218,73 +1228,19 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
           <div style={{fontSize:11,color:"#ef4444",marginBottom:10}}>⚠ 部署を1つ以上選択してください</div>
         )}
 
-        {/* STEP 1: アプリ選択 */}
-        {step==="app" && (
-          <>
-            <div style={{fontSize:11,color:"#1e3a5f",fontWeight:700,marginBottom:10,letterSpacing:"0.08em"}}>
-              ▍ どのアプリで使いますか？
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:7}}>
-              {APPS.map(a => (
-                <button key={a.id} onClick={()=>{
-                  if(noSelection) return;
-                  setSelectedApp(a.id);
-                  // 形式が1つしかない場合はそのままダウンロード
-                  if(a.formats.length===1){ handleDownload(a.formats[0]); }
-                  else setStep("format");
-                }} style={{
-                  background:a.bg, border:`1px solid ${a.border}`,
-                  borderRadius:10, padding:"11px 14px", cursor:noSelection?"not-allowed":"pointer",
-                  display:"flex",alignItems:"center",gap:12,textAlign:"left",
-                  opacity:noSelection?0.4:1, transition:"opacity 0.15s",
-                }}
-                  onMouseEnter={e=>{ if(!noSelection) e.currentTarget.style.opacity="0.75"; }}
-                  onMouseLeave={e=>{ e.currentTarget.style.opacity=noSelection?"0.4":"1"; }}
-                >
-                  <span style={{fontSize:22,lineHeight:1}}>{a.icon}</span>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:800,color:a.color,
-                      fontFamily:"'Noto Sans JP',sans-serif"}}>{a.label}</div>
-                    <div style={{fontSize:11,color:"#475569",marginTop:1}}>{a.sub}</div>
-                  </div>
-                  <span style={{color:a.color,fontSize:14}}>
-                    {a.formats.length===1?"↓":"▶"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </>
+        {/* ダウンロードボタン */}
+        <div style={{fontSize:11,color:"#8c7b6e",fontWeight:700,marginBottom:10}}>保存形式を選択</div>
+        {BTN(
+          ()=>doDownload("csv"),
+          "📊","CSV（Excel・スプレッドシート）",
+          "Excel・Googleスプレッドシートで開けます",
+          "#34d399","#e8f5ee","#2d8a52"
         )}
-
-        {/* STEP 2: 形式選択（custom or 複数形式のアプリのみ） */}
-        {step==="format" && app && (
-          <>
-            <div style={{fontSize:11,color:"#1e3a5f",fontWeight:700,marginBottom:10,letterSpacing:"0.08em"}}>
-              ▍ ファイル形式を選択
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:7}}>
-              {app.formats.map(fmt => (
-                <button key={fmt.id} onClick={()=>handleDownload(fmt)} style={{
-                  background:"#0d1a2e", border:`1px solid ${app.border}`,
-                  borderRadius:10, padding:"12px 16px", cursor:"pointer",
-                  display:"flex",alignItems:"center",gap:12,textAlign:"left",
-                  transition:"opacity 0.15s",
-                }}
-                  onMouseEnter={e=>e.currentTarget.style.opacity="0.75"}
-                  onMouseLeave={e=>e.currentTarget.style.opacity="1"}
-                >
-                  <span style={{fontSize:20}}>
-                    {fmt.ext==="csv"?"📊":fmt.ext==="html"?"🖨️":"💾"}
-                  </span>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:13,fontWeight:800,color:app.color,
-                      fontFamily:"'Noto Sans JP',sans-serif"}}>{fmt.label}</div>
-                  </div>
-                  <span style={{color:app.color,fontSize:14}}>↓</span>
-                </button>
-              ))}
-            </div>
-          </>
+        {BTN(
+          ()=>doDownload("html"),
+          "🖨️","印刷用HTML",
+          "ブラウザで開いてそのまま印刷できます",
+          "#e07b54","#e8f0ff","#d4c5b5"
         )}
       </div>
     </div>
@@ -1297,6 +1253,223 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
 // ─────────────────────────────────────────────
 //  CLEAR MODAL（シフトクリア確認）
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+//  DEPT SETTING MODAL（部署の追加・編集）
+// ─────────────────────────────────────────────
+const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
+const DEPT_ICONS = ["🏠","🏢","🏥","💉","📋","🍱","🌸","⭐","🔵","🟢","🟡","🟠","🔴","💜"];
+
+function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
+  const [label,     setLabel]     = useState(dept?.label     || "");
+  const [icon,      setIcon]      = useState(dept?.icon      || "🏠");
+  const [shiftTypes,setShiftTypes]= useState(dept?.shiftTypes|| ["日勤"]);
+  const [minStaff,  setMinStaff]  = useState(dept?.minStaff  || { 日勤:1 });
+  const [maxConsec, setMaxConsec] = useState(dept?.maxConsecutive || 5);
+  const [defKyuko,  setDefKyuko]  = useState(dept?.defaultKyukoDays || 8);
+  const [rolesText, setRolesText] = useState((dept?.roles || ["職員"]).join("\n"));
+
+  const toggleShiftType = (k) => {
+    setShiftTypes(prev => {
+      const next = prev.includes(k) ? prev.filter(x=>x!==k) : [...prev, k];
+      // minStaffもシフト種別に合わせて更新
+      setMinStaff(prevMin => {
+        const newMin = {};
+        next.forEach(s => { newMin[s] = prevMin[s] || 1; });
+        return newMin;
+      });
+      return next;
+    });
+  };
+
+  const handleSave = () => {
+    if (!label.trim()) { alert("部署名を入力してください"); return; }
+    if (shiftTypes.length === 0) { alert("シフト種別を1つ以上選択してください"); return; }
+    const roles = rolesText.split("\n").map(r=>r.trim()).filter(Boolean);
+    onSave({
+      id: dept?.id || `dept_${Date.now()}`,
+      label: label.trim(),
+      icon,
+      shiftTypes,
+      minStaff,
+      maxConsecutive: maxConsec,
+      defaultKyukoDays: defKyuko,
+      roles: roles.length > 0 ? roles : ["職員"],
+    });
+  };
+
+  const INPUT = { width:"100%", background:"#f0e8de", border:"1px solid #d4b8a0",
+    borderRadius:7, color:"#3d2e24", padding:"9px 12px", fontSize:13,
+    fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
+  const LABEL_STYLE = { fontSize:11, color:"#8c7b6e", fontWeight:700, marginBottom:5, display:"block" };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,
+      display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#fdfaf7",border:"1px solid #d4b8a0",borderRadius:14,
+        padding:24,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",
+        boxShadow:"0 30px 80px #000"}}>
+
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+          <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",fontFamily:"'Noto Sans JP',sans-serif"}}>
+            {isNew ? "➕ 部署を追加" : "✏️ 部署を編集"}
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#8c7b6e",cursor:"pointer",fontSize:20}}>✕</button>
+        </div>
+
+        {/* アイコン選択 */}
+        <label style={LABEL_STYLE}>アイコン</label>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
+          {DEPT_ICONS.map(ic=>(
+            <button key={ic} onClick={()=>setIcon(ic)} style={{
+              width:36,height:36,borderRadius:8,fontSize:20,border:"none",cursor:"pointer",
+              background:icon===ic?"#d4c5b5":"#f0e8de",
+              outline:icon===ic?"2px solid #3b82f6":"none"
+            }}>{ic}</button>
+          ))}
+        </div>
+
+        {/* 部署名 */}
+        <label style={LABEL_STYLE}>部署名</label>
+        <input style={{...INPUT,marginBottom:14}} value={label}
+          onChange={e=>setLabel(e.target.value)} placeholder="例：介護部 3階" />
+
+        {/* シフト種別 */}
+        <label style={LABEL_STYLE}>シフト種別（使用するシフトにチェック）</label>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+          {SHIFT_TYPE_OPTIONS.map(k=>{
+            const s = SHIFTS[k];
+            const checked = shiftTypes.includes(k);
+            return (
+              <button key={k} onClick={()=>toggleShiftType(k)} style={{
+                background:checked?s.bg:"#f0e8de",
+                border:`1px solid ${checked?s.border:"#e0d4c8"}`,
+                borderRadius:8,padding:"7px 14px",cursor:"pointer",
+                color:checked?s.color:"#6b5a4e",fontSize:13,fontWeight:checked?700:400,
+                display:"flex",alignItems:"center",gap:6,
+              }}>
+                <span style={{fontSize:16}}>{checked?"✅":"○"}</span>{k}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* シフト種別ごとの最低人数 */}
+        {shiftTypes.length > 0 && (
+          <div style={{background:"#f0e8de",border:"1px solid #1e293b",borderRadius:8,
+            padding:"10px 12px",marginBottom:14}}>
+            <div style={{fontSize:11,color:"#8c7b6e",marginBottom:8}}>最低配置人数</div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+              {shiftTypes.map(k=>(
+                <div key={k} style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700}}>{k}</span>
+                  <input type="number" min={0} max={10} value={minStaff[k]||0}
+                    onChange={e=>setMinStaff(prev=>({...prev,[k]:+e.target.value}))}
+                    style={{...INPUT,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0}}/>
+                  <span style={{fontSize:11,color:"#6b5a4e"}}>名</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 最大連続勤務日数・公休日数 */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+          <div>
+            <label style={LABEL_STYLE}>最大連続勤務日数</label>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" min={3} max={7} value={maxConsec}
+                onChange={e=>setMaxConsec(+e.target.value)}
+                style={{...INPUT,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/>
+              <span style={{fontSize:12,color:"#6b5a4e"}}>日</span>
+            </div>
+          </div>
+          <div>
+            <label style={LABEL_STYLE}>デフォルト公休日数</label>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" min={4} max={15} value={defKyuko}
+                onChange={e=>setDefKyuko(+e.target.value)}
+                style={{...INPUT,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/>
+              <span style={{fontSize:12,color:"#6b5a4e"}}>日</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 役職一覧 */}
+        <label style={LABEL_STYLE}>役職一覧（1行に1つ）</label>
+        <textarea
+          value={rolesText} onChange={e=>setRolesText(e.target.value)}
+          rows={4} placeholder={"介護福祉士\n介護職員\n介護補助"}
+          style={{...INPUT,resize:"vertical",lineHeight:1.7,marginBottom:18}}
+        />
+
+        {/* ボタン */}
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={handleSave} style={{
+            flex:1,background:"linear-gradient(135deg,#e07b54,#c45c8a)",
+            color:"#fff",border:"none",borderRadius:9,padding:"12px 0",
+            cursor:"pointer",fontSize:14,fontWeight:800,
+            fontFamily:"'Noto Sans JP',sans-serif"
+          }}>{isNew?"➕ 追加する":"💾 保存する"}</button>
+          {!isNew && onDelete && (
+            <button onClick={()=>{
+              onConfirm(
+                `「${label}」を削除します。\n\nこの部署のスタッフとシフトデータも\nすべて削除されます。`,
+                () => onDelete(dept.id),
+                "削除する"
+              );
+            }} style={{
+              background:"#fff0f0",border:"1px solid #e07070",borderRadius:9,
+              padding:"12px 14px",cursor:"pointer",color:"#c44b4b",fontSize:12,
+              fontWeight:700,display:"flex",alignItems:"center",gap:4,
+            }}>🗑 削除</button>
+          )}
+          <button onClick={onClose} style={{
+            background:"#f0e8de",color:"#8c7b6e",border:"1px solid #d4b8a0",
+            borderRadius:9,padding:"12px 16px",cursor:"pointer",fontSize:13
+          }}>キャンセル</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+//  CONFIRM DIALOG（confirm()の代替・スマホ対応）
+// ─────────────────────────────────────────────
+function ConfirmDialog({ message, onOk, onCancel, okLabel="削除", okColor="#c44b4b", okBg="#fff0f0", okBorder="#e07070" }) {
+  return (
+    <div style={{
+      position:"fixed",inset:0,background:"#00000099",zIndex:300,
+      display:"flex",alignItems:"center",justifyContent:"center",padding:24,
+    }} onClick={e=>e.target===e.currentTarget&&onCancel()}>
+      <div style={{
+        background:"#fffaf7",border:"1px solid #e8d8cc",borderRadius:14,
+        padding:24,width:"100%",maxWidth:340,
+        boxShadow:"0 20px 60px #0003",
+      }}>
+        <div style={{
+          fontSize:14,color:"#3d2e24",lineHeight:1.7,marginBottom:20,
+          fontFamily:"'Noto Sans JP',sans-serif",whiteSpace:"pre-wrap",
+        }}>{message}</div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onOk} style={{
+            flex:1,background:okBg,border:`1px solid ${okBorder}`,
+            borderRadius:9,padding:"12px 0",cursor:"pointer",
+            color:okColor,fontSize:14,fontWeight:800,
+            fontFamily:"'Noto Sans JP',sans-serif",
+          }}>{okLabel}</button>
+          <button onClick={onCancel} style={{
+            flex:1,background:"#f5ece2",border:"1px solid #d4b8a0",
+            borderRadius:9,padding:"12px 0",cursor:"pointer",
+            color:"#8c7b6e",fontSize:14,
+          }}>キャンセル</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ClearModal({ deptLabel, onClearDept, onClearAll, onClose }) {
   return (
     <div style={{
@@ -1304,20 +1477,20 @@ function ClearModal({ deptLabel, onClearDept, onClearAll, onClose }) {
       display:"flex",alignItems:"center",justifyContent:"center",padding:16
     }} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{
-        background:"#091525",border:"1px solid #450a0a",borderRadius:14,
+        background:"#fdfaf7",border:"1px solid #450a0a",borderRadius:14,
         padding:24,width:"100%",maxWidth:360,
         boxShadow:"0 30px 80px #000"
       }}>
         <div style={{fontSize:15,fontWeight:900,color:"#f87171",marginBottom:6}}>
           🗑 シフトのクリア
         </div>
-        <div style={{fontSize:12,color:"#64748b",marginBottom:20}}>
+        <div style={{fontSize:12,color:"#9e8d80",marginBottom:20}}>
           クリアする範囲を選んでください。この操作は元に戻せません。
         </div>
 
         {/* このフロアのみ */}
         <button onClick={onClearDept} style={{
-          width:"100%",background:"#1a0a0a",border:"1px solid #7f1d1d",
+          width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",
           borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:10,
           display:"flex",alignItems:"center",gap:12,textAlign:"left"
         }}>
@@ -1334,7 +1507,7 @@ function ClearModal({ deptLabel, onClearDept, onClearAll, onClose }) {
 
         {/* 全部署 */}
         <button onClick={onClearAll} style={{
-          width:"100%",background:"#1a0808",border:"1px solid #991b1b",
+          width:"100%",background:"#fff0f0",border:"1px solid #991b1b",
           borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:18,
           display:"flex",alignItems:"center",gap:12,textAlign:"left"
         }}>
@@ -1350,8 +1523,8 @@ function ClearModal({ deptLabel, onClearDept, onClearAll, onClose }) {
         </button>
 
         <button onClick={onClose} style={{
-          width:"100%",background:"#0d1a2e",color:"#475569",
-          border:"1px solid #1e3a5f",borderRadius:8,padding:"10px 0",
+          width:"100%",background:"#f0e8de",color:"#8c7b6e",
+          border:"1px solid #d4b8a0",borderRadius:8,padding:"10px 0",
           cursor:"pointer",fontSize:13
         }}>キャンセル</button>
       </div>
@@ -1369,7 +1542,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
       display:"flex", alignItems:"center", justifyContent:"center", padding:16,
     }}>
       <div style={{
-        background:"#0d1525", border:"1px solid #7f1d1d",
+        background:"#f0e8de", border:"1px solid #7f1d1d",
         borderRadius:14, padding:28, width:"100%", maxWidth:440,
         boxShadow:"0 30px 80px #000, 0 0 0 1px #ef444420",
       }}>
@@ -1377,7 +1550,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
         <div style={{display:"flex", alignItems:"flex-start", gap:14, marginBottom:22}}>
           <div style={{
             width:44, height:44, borderRadius:10, flexShrink:0,
-            background:"#3b0a0a", border:"1px solid #ef4444",
+            background:"#fff0f0", border:"1px solid #ef4444",
             display:"flex", alignItems:"center", justifyContent:"center", fontSize:22,
           }}>⚠️</div>
           <div>
@@ -1385,7 +1558,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
               fontFamily:"'Noto Sans JP',sans-serif", marginBottom:4}}>
               人員不足の警告
             </div>
-            <div style={{fontSize:12, color:"#64748b", fontFamily:"'Noto Sans JP',sans-serif"}}>
+            <div style={{fontSize:12, color:"#9e8d80", fontFamily:"'Noto Sans JP',sans-serif"}}>
               {deptLabel} ／ {year}年{month+1}月
             </div>
           </div>
@@ -1393,7 +1566,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
 
         {/* 説明 */}
         <div style={{
-          background:"#1a0808", border:"1px solid #7f1d1d", borderRadius:8,
+          background:"#fff0f0", border:"1px solid #7f1d1d", borderRadius:8,
           padding:"10px 14px", marginBottom:18, fontSize:12,
           color:"#fca5a5", fontFamily:"'Noto Sans JP',sans-serif", lineHeight:1.7,
         }}>
@@ -1408,19 +1581,19 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
             const pct = Math.round(info.days / days * 100);
             return (
               <div key={shiftKey} style={{
-                background:"#0a1525", border:`1px solid ${s.border||"#334155"}`,
+                background:"#fdfaf7", border:`1px solid ${s.border||"#6b5a4e"}`,
                 borderRadius:9, padding:"10px 14px",
                 display:"flex", alignItems:"center", gap:12,
               }}>
                 <ShiftBadge type={shiftKey} />
                 <div style={{flex:1}}>
                   <div style={{
-                    fontSize:13, fontWeight:800, color:s.color||"#94a3b8",
+                    fontSize:13, fontWeight:800, color:s.color||"#b5a99e",
                     fontFamily:"'Noto Sans JP',sans-serif",
                   }}>
                     {shiftKey}
                   </div>
-                  <div style={{fontSize:11, color:"#475569", marginTop:2}}>
+                  <div style={{fontSize:11, color:"#8c7b6e", marginTop:2}}>
                     不足日数：<span style={{color:"#f87171", fontWeight:700}}>{info.days}日</span>
                     　最大 <span style={{color:"#f87171", fontWeight:700}}>−{info.maxShort}名</span> 不足
                   </div>
@@ -1428,7 +1601,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
                 {/* 棒グラフ */}
                 <div style={{width:80}}>
                   <div style={{
-                    height:6, background:"#1e293b", borderRadius:3, overflow:"hidden",
+                    height:6, background:"#e0d4c8", borderRadius:3, overflow:"hidden",
                   }}>
                     <div style={{
                       height:"100%", borderRadius:3,
@@ -1437,7 +1610,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
                       transition:"width 0.4s",
                     }}/>
                   </div>
-                  <div style={{fontSize:10, color:"#475569", marginTop:3, textAlign:"right"}}>
+                  <div style={{fontSize:10, color:"#8c7b6e", marginTop:3, textAlign:"right"}}>
                     {pct}%の日で不足
                   </div>
                 </div>
@@ -1448,7 +1621,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
 
         {/* 対策メモ */}
         <div style={{
-          fontSize:11, color:"#334155", fontFamily:"'Noto Sans JP',sans-serif",
+          fontSize:11, color:"#6b5a4e", fontFamily:"'Noto Sans JP',sans-serif",
           lineHeight:1.8, marginBottom:20,
         }}>
           💡 対策：① スタッフを追加する　② 部署設定の最低人数を下げる<br/>
@@ -1456,7 +1629,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
         </div>
 
         <button onClick={onClose} style={{
-          width:"100%", background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",
+          width:"100%", background:"linear-gradient(135deg,#e07b54,#b07fd4)",
           color:"#fff", border:"none", borderRadius:8, padding:"11px 0",
           cursor:"pointer", fontSize:14, fontWeight:800,
           fontFamily:"'Noto Sans JP',sans-serif",
@@ -1489,15 +1662,15 @@ function ContextMenu({ x, y, onSelect, onClose }) {
   return (
     <div ref={ref} style={{
       position:"fixed", left:pos.x, top:pos.y, zIndex:999,
-      background:"#0d1e35", border:"1px solid #1e3a5f", borderRadius:10,
+      background:"#f0f4ff", border:"1px solid #d4b8a0", borderRadius:10,
       padding:6, boxShadow:"0 12px 40px #000a",
       display:"grid", gridTemplateColumns:"1fr 1fr", gap:3, minWidth:170,
     }}>
-      {SHIFT_KEYS.map(k => {
+      {SHIFT_KEYS_MANUAL.map(k => {
         const s = SHIFTS[k];
         return (
           <button key={k||"empty"} onClick={()=>onSelect(k)} style={{
-            background:s.bg||"#0d1e35", color:s.color, border:`1px solid ${s.border}`,
+            background:s.bg||"#f0f4ff", color:s.color, border:`1px solid ${s.border}`,
             borderRadius:6, padding:"5px 8px", cursor:"pointer",
             fontSize:12, fontWeight:700, fontFamily:"'Noto Sans JP',sans-serif",
             display:"flex", alignItems:"center", gap:5, whiteSpace:"nowrap",
@@ -1507,7 +1680,7 @@ function ContextMenu({ x, y, onSelect, onClose }) {
               borderRadius:3, display:"flex", alignItems:"center", justifyContent:"center",
               fontSize:11, fontWeight:800
             }}>{s.short}</span>
-            <span style={{fontSize:11, color:"#94a3b8"}}>{k||"クリア"}</span>
+            <span style={{fontSize:11, color:"#b5a99e"}}>{k||"クリア"}</span>
           </button>
         );
       })}
@@ -1520,7 +1693,7 @@ function ContextMenu({ x, y, onSelect, onClose }) {
 // ─────────────────────────────────────────────
 function ShiftBadge({ type }) {
   const s = SHIFTS[type]||SHIFTS[""];
-  if (!type) return <span style={{color:"#1e3a5f",fontSize:10}}>－</span>;
+  if (!type) return <span style={{color:"#d4c5b5",fontSize:10}}>－</span>;
   return (
     <span style={{
       background:s.bg, color:s.color, border:`1px solid ${s.border}`,
@@ -1586,7 +1759,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}}>
         {["日","月","火","水","木","金","土"].map((w,i)=>(
           <div key={w} style={{textAlign:"center",fontSize:10,
-            color:i===0?"#f87171":i===6?"#60a5fa":"#475569",padding:"2px 0"}}>{w}</div>
+            color:i===0?"#f87171":i===6?"#e07b54":"#8c7b6e",padding:"2px 0"}}>{w}</div>
         ))}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:10}}>
@@ -1599,10 +1772,10 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
           const s = reqShift ? SHIFTS[reqShift] : null;
           return (
             <button key={d} onClick={()=>toggleKibo(d)} style={{
-              background: isKibo?"#3b0a0a": reqShift ? s.bg : "transparent",
+              background: isKibo?"#fff0f0": reqShift ? s.bg : "transparent",
               border: isKibo?"1px solid #dc2626": reqShift ? `1px solid ${s.border}` : "1px solid #1e3a5f",
               borderRadius:5, padding:"3px 1px", cursor:"pointer",
-              color: isKibo?"#f87171": reqShift ? s.color : we?"#60a5fa":"#64748b",
+              color: isKibo?"#f87171": reqShift ? s.color : we?"#e07b54":"#9e8d80",
               fontSize:10, fontWeight:(isKibo||reqShift)?800:400,
               fontFamily:"'Noto Sans JP',sans-serif",
               display:"flex",flexDirection:"column",alignItems:"center",gap:1,
@@ -1619,7 +1792,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
       {/* シフト希望セクション */}
       {availableReqTypes.length > 0 && (
         <div style={{borderTop:"1px solid #1e3a5f",paddingTop:10,marginTop:2}}>
-          <div style={{fontSize:11,color:"#475569",marginBottom:8,fontFamily:"'Noto Sans JP',sans-serif"}}>
+          <div style={{fontSize:11,color:"#8c7b6e",marginBottom:8,fontFamily:"'Noto Sans JP',sans-serif"}}>
             シフト希望：日付をタップ→シフトを選択
           </div>
 
@@ -1636,10 +1809,10 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
                       background:s.bg, border:`1px solid ${s.border}`,
                       borderRadius:6, padding:"3px 8px",
                     }}>
-                      <span style={{fontSize:11,color:"#94a3b8"}}>{day}日</span>
+                      <span style={{fontSize:11,color:"#b5a99e"}}>{day}日</span>
                       <ShiftBadge type={shiftKey}/>
                       <button onClick={()=>setShiftReq(+day, shiftKey)} style={{
-                        background:"none",border:"none",color:"#475569",
+                        background:"none",border:"none",color:"#8c7b6e",
                         cursor:"pointer",fontSize:12,lineHeight:1,padding:0
                       }}>✕</button>
                     </div>
@@ -1650,10 +1823,10 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
 
           {/* 日付ごとにシフト選択ボタン */}
           <div style={{
-            background:"#080f1c",borderRadius:8,padding:10,
+            background:"#ede5db",borderRadius:8,padding:10,
             border:"1px solid #1e293b",
           }}>
-            <div style={{fontSize:10,color:"#334155",marginBottom:8}}>
+            <div style={{fontSize:10,color:"#6b5a4e",marginBottom:8}}>
               希望シフトを追加：日付を選んでシフト種別をタップ
             </div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:8}}>
@@ -1666,7 +1839,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
                   }}>{k}</span>
                 );
               })}
-              <span style={{fontSize:10,color:"#334155"}}>← 下のボタンで追加</span>
+              <span style={{fontSize:10,color:"#6b5a4e"}}>← 下のボタンで追加</span>
             </div>
             {/* 日付ごとのシフト選択行 */}
             <div style={{maxHeight:160,overflowY:"auto"}}>
@@ -1680,7 +1853,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
                     padding:"3px 0",borderBottom:"1px solid #0d1525"
                   }}>
                     <span style={{
-                      fontSize:11,color:"#475569",minWidth:32,
+                      fontSize:11,color:"#8c7b6e",minWidth:32,
                       fontFamily:"'Noto Sans JP',sans-serif"
                     }}>{d}日</span>
                     <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
@@ -1690,8 +1863,8 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
                         return (
                           <button key={k} onClick={()=>setShiftReq(d,k)} style={{
                             background:active?s.bg:"transparent",
-                            color:active?s.color:"#334155",
-                            border:`1px solid ${active?s.border:"#1e293b"}`,
+                            color:active?s.color:"#6b5a4e",
+                            border:`1px solid ${active?s.border:"#e0d4c8"}`,
                             borderRadius:4,padding:"2px 7px",cursor:"pointer",
                             fontSize:10,fontWeight:active?800:400,
                             fontFamily:"'Noto Sans JP',sans-serif",
@@ -1708,9 +1881,9 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
       )}
 
       {/* 集計 */}
-      <div style={{marginTop:10,fontSize:11,color:"#475569",display:"flex",gap:12,alignItems:"center"}}>
+      <div style={{marginTop:10,fontSize:11,color:"#8c7b6e",display:"flex",gap:12,alignItems:"center"}}>
         <span>希望休：<span style={{color:"#f87171",fontWeight:700}}>{kiboCount}日</span></span>
-        <span>シフト希望：<span style={{color:"#60a5fa",fontWeight:700}}>{reqCount}件</span></span>
+        <span>シフト希望：<span style={{color:"#e07b54",fontWeight:700}}>{reqCount}件</span></span>
         {(kiboCount>0||reqCount>0) && (
           <button onClick={clearAll} style={{
             background:"none",border:"none",color:"#ef4444",
@@ -1725,13 +1898,14 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
 // ─────────────────────────────────────────────
 //  STAFF MODAL
 // ─────────────────────────────────────────────
-function StaffModal({ data, deptId, year, month, onSave, onClose }) {
+function StaffModal({ data, deptId, depts, year, month, onSave, onClose }) {
   const isNew = !data;
   const mk = monthKey(year, month);
+  const deptRoles = getDeptRoles(depts, deptId);
   const [form, setForm] = useState(() => {
     const base = data ? { ...data } : {
-      name:"", role:(ROLES_BY_DEPT[deptId]||["職員"])[0],
-      nightOk:["kaigo1","kaigo2"].includes(deptId),
+      name:"", role: deptRoles[0] || "職員",
+      nightOk:false,
       nightMax:5, targetWork:20, kyukoDays:8,
       kiboByMonth:{}, shiftRequestsByMonth:{},
     };
@@ -1755,29 +1929,29 @@ function StaffModal({ data, deptId, year, month, onSave, onClose }) {
       display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{
-        background:"#091525",border:"1px solid #1e3a5f",borderRadius:14,
+        background:"#fdfaf7",border:"1px solid #d4b8a0",borderRadius:14,
         padding:24,width:"100%",maxWidth:460,
         boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"
       }}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <h3 style={{color:"#e2e8f0",fontSize:15,fontWeight:900,
+          <h3 style={{color:"#3d2e24",fontSize:15,fontWeight:900,
             fontFamily:"'Noto Sans JP',sans-serif"}}>
             {isNew?"スタッフ追加":"スタッフ編集"}
           </h3>
           <button onClick={onClose} style={{background:"none",border:"none",
-            color:"#475569",cursor:"pointer",fontSize:20,lineHeight:1}}>✕</button>
+            color:"#8c7b6e",cursor:"pointer",fontSize:20,lineHeight:1}}>✕</button>
         </div>
 
         {/* 基本情報 */}
-        <div style={{fontSize:11,color:"#1e3a5f",fontWeight:700,marginBottom:10,letterSpacing:"0.1em"}}>
+        <div style={{fontSize:11,color:"#d4c5b5",fontWeight:700,marginBottom:10,letterSpacing:"0.1em"}}>
           ▍ 基本情報
         </div>
         {[["氏名","name","text"],["役職","role","select"]].map(([label,key,type])=>(
           <div key={key} style={{marginBottom:12}}>
-            <div style={{color:"#475569",fontSize:11,marginBottom:4}}>{label}</div>
+            <div style={{color:"#8c7b6e",fontSize:11,marginBottom:4}}>{label}</div>
             {type==="select"
               ? <select value={form[key]} onChange={e=>set(key,e.target.value)} style={INPUT_STYLE}>
-                  {(ROLES_BY_DEPT[deptId]||["職員"]).map(r=><option key={r}>{r}</option>)}
+                  {deptRoles.map(r=><option key={r}>{r}</option>)}
                 </select>
               : <input type="text" value={form[key]} onChange={e=>set(key,e.target.value)}
                   style={INPUT_STYLE} placeholder={`例：田中 花子`}/>
@@ -1786,22 +1960,22 @@ function StaffModal({ data, deptId, year, month, onSave, onClose }) {
         ))}
 
         {/* 勤務設定 */}
-        <div style={{fontSize:11,color:"#1e3a5f",fontWeight:700,marginBottom:10,
+        <div style={{fontSize:11,color:"#d4c5b5",fontWeight:700,marginBottom:10,
           marginTop:16,letterSpacing:"0.1em"}}>▍ 勤務設定</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div>
-            <div style={{color:"#475569",fontSize:11,marginBottom:4}}>目標勤務日数</div>
+            <div style={{color:"#8c7b6e",fontSize:11,marginBottom:4}}>目標勤務日数</div>
             <input type="number" value={form.targetWork} min={1} max={31}
               onChange={e=>set("targetWork",+e.target.value)} style={INPUT_STYLE}/>
           </div>
           <div>
-            <div style={{color:"#60a5fa",fontSize:11,marginBottom:4,fontWeight:700}}>
+            <div style={{color:"#e07b54",fontSize:11,marginBottom:4,fontWeight:700}}>
               {year}年{month+1}月の休み日数
             </div>
             <input type="number" value={kyukoThisMonth} min={0} max={20}
               onChange={e=>setKyukoThisMonth(e.target.value)}
-              style={{...INPUT_STYLE, color:"#60a5fa", fontWeight:800}}/>
-            <div style={{fontSize:10,color:"#334155",marginTop:3}}>
+              style={{...INPUT_STYLE, color:"#e07b54", fontWeight:800}}/>
+            <div style={{fontSize:10,color:"#6b5a4e",marginTop:3}}>
               夜勤明け翌日の休みも含むカウント
             </div>
           </div>
@@ -1813,14 +1987,14 @@ function StaffModal({ data, deptId, year, month, onSave, onClose }) {
             <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:10}}>
               <input type="checkbox" checked={!!form.nightOk}
                 onChange={e=>set("nightOk",e.target.checked)}
-                style={{width:15,height:15,accentColor:"#3b82f6"}}/>
-              <span style={{color:"#94a3b8",fontSize:13,fontFamily:"'Noto Sans JP',sans-serif"}}>
+                style={{width:15,height:15,accentColor:"#d4693f"}}/>
+              <span style={{color:"#b5a99e",fontSize:13,fontFamily:"'Noto Sans JP',sans-serif"}}>
                 夜勤対応可
               </span>
             </label>
             {form.nightOk && (
               <div>
-                <div style={{color:"#475569",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div>
+                <div style={{color:"#8c7b6e",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div>
                 <input type="number" value={form.nightMax} min={0} max={15}
                   onChange={e=>set("nightMax",+e.target.value)} style={{...INPUT_STYLE,width:80}}/>
               </div>
@@ -1829,9 +2003,9 @@ function StaffModal({ data, deptId, year, month, onSave, onClose }) {
         )}
 
         {/* 希望休 ＆ シフト希望カレンダー */}
-        <div style={{fontSize:11,color:"#1e3a5f",fontWeight:700,marginBottom:10,
+        <div style={{fontSize:11,color:"#d4c5b5",fontWeight:700,marginBottom:10,
           marginTop:4,letterSpacing:"0.1em"}}>▍ {year}年{month+1}月 希望休 ／ シフト希望</div>
-        <div style={{background:"#0d1a2e",borderRadius:8,padding:12,border:"1px solid #1e3a5f"}}>
+        <div style={{background:"#f0e8de",borderRadius:8,padding:12,border:"1px solid #d4b8a0"}}>
           <KiboCalendar
             year={year} month={month}
             selected={kiboSelected} onChange={setKibo}
@@ -1842,13 +2016,13 @@ function StaffModal({ data, deptId, year, month, onSave, onClose }) {
 
         <div style={{display:"flex",gap:10,marginTop:20}}>
           <button onClick={()=>form.name&&onSave(form)} style={{
-            flex:1,background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",
+            flex:1,background:"linear-gradient(135deg,#e07b54,#b07fd4)",
             color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",
             fontSize:14,fontWeight:800,fontFamily:"'Noto Sans JP',sans-serif"
           }}>保存</button>
           <button onClick={onClose} style={{
-            flex:1,background:"#0d1a2e",color:"#475569",
-            border:"1px solid #1e3a5f",borderRadius:8,padding:"11px 0",
+            flex:1,background:"#f0e8de",color:"#8c7b6e",
+            border:"1px solid #d4b8a0",borderRadius:8,padding:"11px 0",
             cursor:"pointer",fontSize:14,fontFamily:"'Noto Sans JP',sans-serif"
           }}>キャンセル</button>
         </div>
@@ -1966,23 +2140,23 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
         <thead>
           <tr>
             <th style={TH({sticky:true,w:148})}>
-              <span style={{color:"#334155",fontSize:10}}>氏名</span>
+              <span style={{color:"#6b5a4e",fontSize:10}}>氏名</span>
             </th>
             {Array.from({length:days},(_,i)=>i+1).map(d=>{
               const wd=getWD(year,month,d), we=isWE(year,month,d), alert=isAlert(d);
               return (
-                <th key={d} style={{...TH({}),background:we?"#0e1830":"#080f1c",minWidth:30,width:30,padding:"3px 1px"}}>
+                <th key={d} style={{...TH({}),background:we?"#edf2ff":"#ede5db",minWidth:30,width:30,padding:"3px 1px"}}>
                   <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
-                    <span style={{fontSize:10,fontWeight:700,color:we?"#f472b6":"#64748b"}}>{d}</span>
-                    <span style={{fontSize:9,color:we?"#f472b6":"#334155"}}>{wd}</span>
+                    <span style={{fontSize:10,fontWeight:700,color:we?"#f472b6":"#9e8d80"}}>{d}</span>
+                    <span style={{fontSize:9,color:we?"#f472b6":"#6b5a4e"}}>{wd}</span>
                     <span style={{fontSize:8}}>{alert?"⚠️":"　"}</span>
                   </div>
                 </th>
               );
             })}
-            <th style={TH({w:44})}><span style={{fontSize:10,color:"#334155"}}>勤務</span></th>
-            <th style={TH({w:36})}><span style={{fontSize:10,color:"#334155"}}>夜勤</span></th>
-            <th style={TH({w:36})}><span style={{fontSize:10,color:"#334155"}}>休日</span></th>
+            <th style={TH({w:44})}><span style={{fontSize:10,color:"#6b5a4e"}}>勤務</span></th>
+            <th style={TH({w:36})}><span style={{fontSize:10,color:"#6b5a4e"}}>夜勤</span></th>
+            <th style={TH({w:36})}><span style={{fontSize:10,color:"#6b5a4e"}}>休日</span></th>
           </tr>
         </thead>
         <tbody>
@@ -1994,17 +2168,17 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             const restCnt  = Object.values(sShifts).filter(v=>REST_TYPES.has(v) && v !== "明け").length;
             const nightOver = s.nightOk && nightCnt > (s.nightMax||5);
             return (
-              <tr key={s.id} style={{background:si%2===0?"#060d1a":"#080e20"}}>
+              <tr key={s.id} style={{background:si%2===0?"#f9f3ed":"#f4ede5"}}>
                 <td style={{
                   position:"sticky",left:0,zIndex:2,
-                  background:si%2===0?"#060d1a":"#080e20",
-                  padding:"4px 10px",borderRight:"1px solid #1e3a5f",
-                  borderBottom:"1px solid #0f172a",minWidth:148,
+                  background:si%2===0?"#f9f3ed":"#f4ede5",
+                  padding:"4px 10px",borderRight:"1px solid #d4b8a0",
+                  borderBottom:"1px solid #e0d4c8",minWidth:148,
                 }}>
-                  <div style={{fontWeight:700,fontSize:12,color:"#e2e8f0",whiteSpace:"nowrap"}}>{s.name}</div>
-                  <div style={{fontSize:10,color:"#334155",display:"flex",gap:6,alignItems:"center"}}>
+                  <div style={{fontWeight:700,fontSize:12,color:"#3d2e24",whiteSpace:"nowrap"}}>{s.name}</div>
+                  <div style={{fontSize:10,color:"#6b5a4e",display:"flex",gap:6,alignItems:"center"}}>
                     <span>{s.role}</span>
-                    {s.nightOk&&<span style={{color:nightOver?"#ef4444":"#2563eb",fontSize:9}}>
+                    {s.nightOk&&<span style={{color:nightOver?"#ef4444":"#c45c35",fontSize:9}}>
                       🌙{nightCnt}/{s.nightMax}
                     </span>}
                   </div>
@@ -2016,33 +2190,33 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   return (
                     <td key={d} style={{
                       padding:"2px 1px",textAlign:"center",
-                      borderRight:"1px solid #080f1c",borderBottom:"1px solid #0f172a",
-                      background:consecViol?"#2d0808":isKibo?"#1a0505":undefined,
+                      borderRight:"1px solid #e0d4c8",borderBottom:"1px solid #e0d4c8",
+                      background:consecViol?"#ffe8e8":isKibo?"#fff5f5":undefined,
                       cursor:"pointer",
-                      outline:consecViol?"1px solid #ef444460":undefined,
+                      outline:consecViol?"1px solid #e0707060":undefined,
                     }}
                       onClick={(e)=>onLeftClick(s.id,d,e)}
                       onContextMenu={(e)=>{e.preventDefault();onRightClick(s.id,d,e);}}>
                       {isKibo
-                        ? <span style={{fontSize:9,color:"#4b1010"}}>希</span>
+                        ? <span style={{fontSize:9,color:"#c44b4b"}}>希</span>
                         : <ShiftBadge type={type}/>
                       }
-                      {consecViol && <span style={{fontSize:7,color:"#ef4444",display:"block",lineHeight:1}}>連超</span>}
+                      {consecViol && <span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}
                     </td>
                   );
                 })}
-                <td style={TD}><span style={{color:workCnt<(s.targetWork-2)?"#f59e0b":workCnt>(s.targetWork+2)?"#ef4444":"#60a5fa",fontWeight:800,fontSize:12}}>{workCnt}</span></td>
-                <td style={TD}><span style={{color:nightOver?"#ef4444":"#7dd3fc",fontWeight:700,fontSize:12}}>{nightCnt||"－"}</span></td>
-                <td style={TD}><span style={{color:"#4ade80",fontWeight:700,fontSize:12}}>{restCnt}</span></td>
+                <td style={TD}><span style={{color:workCnt<(s.targetWork-2)?"#f59e0b":workCnt>(s.targetWork+2)?"#ef4444":"#e07b54",fontWeight:800,fontSize:12}}>{workCnt}</span></td>
+                <td style={TD}><span style={{color:nightOver?"#ef4444":"#7ecec4",fontWeight:700,fontSize:12}}>{nightCnt||"－"}</span></td>
+                <td style={TD}><span style={{color:"#5cb87a",fontWeight:700,fontSize:12}}>{restCnt}</span></td>
               </tr>
             );
           })}
           {/* count rows */}
           {dept.shiftTypes.map(shKey=>(
-            <tr key={shKey} style={{background:"#050a14"}}>
+            <tr key={shKey} style={{background:"#e8dfd4"}}>
               <td style={{
-                position:"sticky",left:0,zIndex:2,background:"#050a14",
-                padding:"3px 10px",borderRight:"1px solid #1e3a5f",borderBottom:"1px solid #0f172a"
+                position:"sticky",left:0,zIndex:2,background:"#e8dfd4",
+                padding:"3px 10px",borderRight:"1px solid #d4b8a0",borderBottom:"1px solid #e0d4c8"
               }}>
                 <ShiftBadge type={shKey}/>
               </td>
@@ -2052,8 +2226,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                 return (
                   <td key={d} style={{
                     textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",
-                    color:cnt===0?"#ef4444":cnt>=min?"#4ade80":"#f59e0b",
-                    borderRight:"1px solid #080f1c",borderBottom:"1px solid #0f172a",
+                    color:cnt===0?"#ef4444":cnt>=min?"#5cb87a":"#f59e0b",
+                    borderRight:"1px solid #e0d4c8",borderBottom:"1px solid #e0d4c8",
                   }}>{cnt||"0"}</td>
                 );
               })}
@@ -2068,16 +2242,16 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
 
 const TH = ({sticky,w}={}) => ({
   position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1,
-  background:"#080f1c", padding:"5px 3px",
-  borderBottom:"2px solid #1e3a5f", borderRight:"1px solid #0f172a",
-  fontSize:11, fontWeight:700, color:"#334155", textAlign:"center", whiteSpace:"nowrap",
+  background:"#f5ece2", padding:"5px 3px",
+  borderBottom:"2px solid #d4b8a0", borderRight:"1px solid #e8d8cc",
+  fontSize:11, fontWeight:700, color:"#7a5c48", textAlign:"center", whiteSpace:"nowrap",
   width:w||"auto", minWidth:w||"auto",
 });
 const TD = { textAlign:"center", padding:"4px 2px",
-  borderBottom:"1px solid #0f172a", borderRight:"1px solid #0f172a" };
+  borderBottom:"1px solid #edddd0", borderRight:"1px solid #edddd0" };
 const INPUT_STYLE = {
-  width:"100%", background:"#0d1a2e", border:"1px solid #1e3a5f",
-  borderRadius:7, color:"#e2e8f0", padding:"8px 10px", fontSize:13,
+  width:"100%", background:"#fff8f4", border:"1px solid #d4b8a0",
+  borderRadius:7, color:"#3d2e24", padding:"8px 10px", fontSize:13,
   fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none",
 };
 
@@ -2092,11 +2266,11 @@ function SummaryView({ staffList, shifts, dept, year, month }) {
     <div style={{overflowX:"auto"}}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
         <thead>
-          <tr style={{background:"#080f1c"}}>
-            <th style={TH({sticky:true,w:148})}><span style={{color:"#334155",fontSize:10}}>スタッフ</span></th>
+          <tr style={{background:"#ede5db"}}>
+            <th style={TH({sticky:true,w:148})}><span style={{color:"#6b5a4e",fontSize:10}}>スタッフ</span></th>
             {shownKeys.map(k=><th key={k} style={TH({})}><ShiftBadge type={k}/></th>)}
-            <th style={TH({w:50})}><span style={{fontSize:10,color:"#334155"}}>勤務計</span></th>
-            <th style={TH({w:50})}><span style={{fontSize:10,color:"#334155"}}>希望休</span></th>
+            <th style={TH({w:50})}><span style={{fontSize:10,color:"#6b5a4e"}}>勤務計</span></th>
+            <th style={TH({w:50})}><span style={{fontSize:10,color:"#6b5a4e"}}>希望休</span></th>
           </tr>
         </thead>
         <tbody>
@@ -2107,21 +2281,21 @@ function SummaryView({ staffList, shifts, dept, year, month }) {
             const work = ["早番","日勤","遅番","夜勤"].reduce((a,k)=>a+(cnt[k]||0),0);
             const kiboSel = (s.kiboByMonth?.[mk]||[]).length;
             return (
-              <tr key={s.id} style={{background:i%2===0?"#060d1a":"#080e20"}}>
+              <tr key={s.id} style={{background:i%2===0?"#f9f3ed":"#f4ede5"}}>
                 <td style={{...TD,position:"sticky",left:0,zIndex:1,
-                  background:i%2===0?"#060d1a":"#080e20",
-                  padding:"5px 10px",borderRight:"1px solid #1e3a5f"}}>
-                  <div style={{fontWeight:700,fontSize:12,color:"#e2e8f0"}}>{s.name}</div>
-                  <div style={{fontSize:10,color:"#334155"}}>{s.role}</div>
+                  background:i%2===0?"#f9f3ed":"#f4ede5",
+                  padding:"5px 10px",borderRight:"1px solid #d4b8a0"}}>
+                  <div style={{fontWeight:700,fontSize:12,color:"#3d2e24"}}>{s.name}</div>
+                  <div style={{fontSize:10,color:"#6b5a4e"}}>{s.role}</div>
                 </td>
                 {shownKeys.map(k=>(
                   <td key={k} style={{...TD,
-                    color:cnt[k]>0?SHIFTS[k].color:"#1e3a5f",
+                    color:cnt[k]>0?SHIFTS[k].color:"#d4c5b5",
                     fontWeight:800,fontSize:13}}>
                     {cnt[k]||"－"}
                   </td>
                 ))}
-                <td style={{...TD,color:"#60a5fa",fontWeight:800,fontSize:14}}>{work}</td>
+                <td style={{...TD,color:"#e07b54",fontWeight:800,fontSize:14}}>{work}</td>
                 <td style={{...TD,color:"#f87171",fontWeight:700,fontSize:13}}>{kiboSel||"－"}</td>
               </tr>
             );
@@ -2140,11 +2314,11 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
   return (
     <div style={{maxWidth:680}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div style={{fontSize:13,color:"#60a5fa",fontWeight:800}}>
+        <div style={{fontSize:13,color:"#e07b54",fontWeight:800}}>
           {dept.icon} {dept.label} — {ds.length}名
         </div>
         <button onClick={onAdd} style={{
-          background:"linear-gradient(135deg,#1d4ed8,#7c3aed)",color:"#fff",
+          background:"linear-gradient(135deg,#e07b54,#b07fd4)",color:"#fff",
           border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",
           fontSize:13,fontWeight:800,fontFamily:"'Noto Sans JP',sans-serif"
         }}>＋ 追加</button>
@@ -2155,7 +2329,7 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
           const kibo = (s.kiboByMonth?.[mk]||[]).length;
           return (
             <div key={s.id} style={{
-              background:"#0a1525",border:"1px solid #1e3a5f",borderRadius:10,
+              background:"#fdfaf7",border:"1px solid #d4b8a0",borderRadius:10,
               padding:"10px 14px",display:"flex",alignItems:"center",
               justifyContent:"space-between",gap:10
             }}>
@@ -2167,18 +2341,18 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
                   fontSize:14,color:"#fff",fontWeight:800
                 }}>{s.name.charAt(0)}</div>
                 <div>
-                  <div style={{fontWeight:800,fontSize:13,color:"#e2e8f0"}}>{s.name}</div>
-                  <div style={{fontSize:10,color:"#334155",display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <div style={{fontWeight:800,fontSize:13,color:"#3d2e24"}}>{s.name}</div>
+                  <div style={{fontSize:10,color:"#6b5a4e",display:"flex",gap:8,flexWrap:"wrap"}}>
                     <span>{s.role}</span>
                     <span>目標{s.targetWork}日</span>
                     <span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)] ?? s.kyukoDays ?? 8}日</span>
-                    {s.nightOk&&<span style={{color:"#2563eb"}}>🌙夜勤×{s.nightMax}回</span>}
+                    {s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}
                     {kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日選択済</span>}
                   </div>
                 </div>
               </div>
               <div style={{display:"flex",gap:6}}>
-                <button onClick={()=>onEdit(s)} style={ICON_BTN("#3b82f6")}>✏️</button>
+                <button onClick={()=>onEdit(s)} style={ICON_BTN("#d4693f")}>✏️</button>
                 <button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button>
               </div>
             </div>
@@ -2186,8 +2360,8 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
         })}
         {ds.length===0&&(
           <div style={{
-            background:"#0a1525",border:"1px dashed #1e3a5f",borderRadius:10,
-            padding:32,textAlign:"center",color:"#1e3a5f",fontSize:13
+            background:"#fdfaf7",border:"1px dashed #1e3a5f",borderRadius:10,
+            padding:32,textAlign:"center",color:"#d4c5b5",fontSize:13
           }}>スタッフが登録されていません</div>
         )}
       </div>
@@ -2203,18 +2377,32 @@ const ICON_BTN = (color) => ({
 //  LEGEND
 // ─────────────────────────────────────────────
 function Legend() {
+  const normalShifts = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休"];
+  const halfShifts   = ["日/休","休/日","早/休","休/遅"];
   return (
-    <div style={{display:"flex",flexWrap:"wrap",gap:6,padding:"8px 0 6px",
-      borderBottom:"1px solid #0f172a",marginBottom:10}}>
-      {Object.entries(SHIFTS).filter(([k])=>k).map(([key,def])=>(
-        <div key={key} style={{display:"flex",alignItems:"center",gap:3}}>
-          <ShiftBadge type={key}/>
-          <span style={{fontSize:9,color:"#334155"}}>{def.time||key}</span>
-        </div>
-      ))}
-      <span style={{fontSize:9,color:"#1e3a5f",marginLeft:4}}>
-        左クリック：順番切替 ／ 右クリック：メニュー選択
-      </span>
+    <div style={{padding:"6px 0 6px",borderBottom:"1px solid #e0d4c8",marginBottom:10}}>
+      {/* 通常シフト */}
+      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:4}}>
+        {normalShifts.map(key=>(
+          <div key={key} style={{display:"flex",alignItems:"center",gap:3}}>
+            <ShiftBadge type={key}/>
+            <span style={{fontSize:9,color:"#6b5a4e"}}>{SHIFTS[key].time||key}</span>
+          </div>
+        ))}
+      </div>
+      {/* 半休シフト */}
+      <div style={{display:"flex",flexWrap:"wrap",gap:5,alignItems:"center"}}>
+        <span style={{fontSize:9,color:"#d4c5b5",fontWeight:700}}>半休:</span>
+        {halfShifts.map(key=>(
+          <div key={key} style={{display:"flex",alignItems:"center",gap:3}}>
+            <ShiftBadge type={key}/>
+            <span style={{fontSize:9,color:"#6b5a4e"}}>{SHIFTS[key].time}</span>
+          </div>
+        ))}
+        <span style={{fontSize:9,color:"#d4c5b5",marginLeft:4}}>
+          左クリック：順番切替 ／ 右クリック：メニュー選択
+        </span>
+      </div>
     </div>
   );
 }
@@ -2226,10 +2414,32 @@ export default function App() {
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
-  const [depts] = useState(DEFAULT_DEPTS);
+  // 部署設定（localStorageに保存）
+  const [depts, setDepts] = useState(() => {
+    try {
+      const saved = localStorage.getItem("shiftNavi_depts");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_DEPTS;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("shiftNavi_depts", JSON.stringify(depts)); } catch {}
+  }, [depts]);
+  const [deptSettingModal, setDeptSettingModal] = useState(null); // null | {dept, isNew}
   const [activeDeptId, setActiveDeptId] = useState("kaigo1");
   const [innerTab, setInnerTab] = useState("shift");
-  const [staffList, setStaffList] = useState(buildStaff());
+  const [staffList, setStaffList] = useState(() => {
+    try {
+      const saved = localStorage.getItem("shiftNavi_staffList");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return buildStaff();
+  });
+
+  // staffList変更時にlocalStorageへ保存
+  useEffect(() => {
+    try { localStorage.setItem("shiftNavi_staffList", JSON.stringify(staffList)); } catch {}
+  }, [staffList]);
   // SheetJS（XLSX）を動的ロード
   useEffect(() => {
     if (window.XLSX) return;
@@ -2238,13 +2448,14 @@ export default function App() {
     document.head.appendChild(script);
   }, []);
 
-  // シフトデータをlocalStorageから復元
+  // シフトデータをlocalStorageから復元（月別スロット対応）
+  const SAVE_KEY = (y, m) => `shiftNavi_shifts_${y}_${m+1}`;
   const [allShifts, setAllShifts] = useState(() => {
     try {
-      const saved = localStorage.getItem("shiftNavi_allShifts");
+      const key = `shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`;
+      const saved = localStorage.getItem(key);
       if (!saved) return {};
       const parsed = JSON.parse(saved);
-      // キーをint変換（JSON化でstring化されたdayキーを戻す）
       const restored = {};
       for (const [deptId, deptShifts] of Object.entries(parsed)) {
         restored[deptId] = {};
@@ -2258,23 +2469,52 @@ export default function App() {
       return restored;
     } catch { return {}; }
   });
-  const [saveStatus, setSaveStatus] = useState("saved"); // "saved" | "saving" | "unsaved"
+  const [saveStatus, setSaveStatus] = useState("saved");
   const saveTimer = useRef(null);
 
-  // allShifts変更時に自動保存（1秒デバウンス）
+  const isLoadingMonth = useRef(false); // 月切替中フラグ（空保存防止）
+
+  // 月が変わったらその月の保存データを読み込む
   useEffect(() => {
+    isLoadingMonth.current = true; // 読み込み中は保存しない
+    try {
+      const saved = localStorage.getItem(SAVE_KEY(year, month));
+      if (!saved) {
+        setAllShifts({});
+      } else {
+        const parsed = JSON.parse(saved);
+        const restored = {};
+        for (const [deptId, deptShifts] of Object.entries(parsed)) {
+          restored[deptId] = {};
+          for (const [staffId, dayMap] of Object.entries(deptShifts)) {
+            restored[deptId][staffId] = {};
+            for (const [d, v] of Object.entries(dayMap)) {
+              restored[deptId][staffId][+d] = v;
+            }
+          }
+        }
+        setAllShifts(restored);
+      }
+    } catch { setAllShifts({}); }
+    // 次のレンダリング後にフラグを解除
+    setTimeout(() => { isLoadingMonth.current = false; }, 100);
+  }, [year, month]);
+
+  // allShifts変更時に月別スロットへ自動保存（1秒デバウンス）
+  // 月切替直後の読み込み中は保存しない（空データ上書き防止）
+  useEffect(() => {
+    if (isLoadingMonth.current) return; // 月切替の読み込み中はスキップ
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      if (isLoadingMonth.current) return; // 念のため再チェック
       try {
-        localStorage.setItem("shiftNavi_allShifts", JSON.stringify(allShifts));
+        localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShifts));
         setSaveStatus("saved");
-      } catch {
-        setSaveStatus("unsaved");
-      }
+      } catch { setSaveStatus("unsaved"); }
     }, 1000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [allShifts]);
+  }, [allShifts, year, month]);
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
   const [downloadModal, setDownloadModal] = useState(false);
@@ -2303,20 +2543,35 @@ export default function App() {
   // ただしユーザーが手動でズームを変えた場合は上書きしない
   const autoFitApplied = useRef(false);
   useEffect(() => {
-    if (autoFitApplied.current) return; // 手動変更後はスキップ
-    // localStorageに保存済みの値があればそちらを優先
+    if (autoFitApplied.current) return;
     try {
       const saved = localStorage.getItem("shiftTableZoom");
-      if (saved) return; // 保存済みあり → 自動フィット不要
+      if (saved) { autoFitApplied.current = true; return; }
     } catch {}
     const days = getDays(year, month);
     const ds = staffList.filter(s => s.dept === activeDeptId).length;
     const fit = autoFitZoom(ds, days);
     setTableZoom(fit);
-  }, []); // 初回のみ
+    autoFitApplied.current = true; // 自動フィット済みフラグをセット
+  }, []);
   const [excelImportModal, setExcelImportModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
-  const [shiftTrend, setShiftTrend] = useState({}); // 過去シフト傾向データ
+  const [confirmDialog, setConfirmDialog] = useState(null); // {message, onOk, okLabel?, okColor?}
+  // 過去シフト傾向データ（localStorageに永続保存）
+  const [shiftTrend, setShiftTrend] = useState(() => {
+    try {
+      const saved = localStorage.getItem("shiftNavi_shiftTrend");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {};
+  });
+
+  // shiftTrend変更時にlocalStorageへ保存
+  useEffect(() => {
+    try {
+      localStorage.setItem("shiftNavi_shiftTrend", JSON.stringify(shiftTrend));
+    } catch {}
+  }, [shiftTrend]);
   const [ctxMenu, setCtxMenu] = useState(null);
   const [staffModal, setStaffModal] = useState(null);
 
@@ -2332,38 +2587,43 @@ export default function App() {
 
   // 自動生成
   const handleGenerate = useCallback(() => {
-    // 最新のstaffList・dept・deptShiftsをクロージャではなく直接参照するため
-    // setAllShifts/setStaffListの最新値を使う
     setGenerating(true);
-    // staffListとdeptの最新値を明示的にキャプチャ
     const currentStaff = staffList;
-    const currentDept = dept;
+    const currentDept  = dept;
     const currentTrend = shiftTrend;
     setTimeout(() => {
-      setAllShifts(prevAll => {
-        const currentShifts = prevAll[currentDept.id] || {};
-        const { shifts: result, warnings } = autoGenerate(
-          currentStaff, currentDept, year, month, currentShifts, currentTrend
-        );
-        // warningsは非同期で設定
-        if (Object.keys(warnings).length > 0) {
-          setTimeout(() => setGenerateWarnings({ warnings, deptLabel: currentDept.label }), 0);
-        }
-        return { ...prevAll, [currentDept.id]: result };
-      });
-      setGenerating(false);
+      try {
+        setAllShifts(prevAll => {
+          const currentShifts = prevAll[currentDept.id] || {};
+          const { shifts: result, warnings } = autoGenerate(
+            currentStaff, currentDept, year, month, currentShifts, currentTrend
+          );
+          if (Object.keys(warnings).length > 0) {
+            setTimeout(() => setGenerateWarnings({ warnings, deptLabel: currentDept.label }), 0);
+          }
+          return { ...prevAll, [currentDept.id]: result };
+        });
+      } catch (e) {
+        console.error("自動生成エラー:", e);
+        alert("自動生成でエラーが発生しました: " + e.message);
+      } finally {
+        setGenerating(false);
+      }
     }, 700);
   }, [staffList, dept, year, month, shiftTrend]);
 
-  // 左クリック：順番切替
+  // 左クリック：順番切替（半休は左クリック対象外）
   const handleLeftClick = useCallback((staffId, day) => {
-    setDeptShifts(prev=>{
-      const cur = prev[staffId]?.[day]||"";
+    setDeptShifts(prev => {
+      const cur = prev[staffId]?.[day] || "";
+      // 半休セルは左クリックで変更しない（右クリックメニューで変更）
+      const HALF_SHIFTS = new Set(["日/休","休/日","早/休","休/遅"]);
+      if (HALF_SHIFTS.has(cur)) return prev;
       const idx = SHIFT_KEYS.indexOf(cur);
-      const next = SHIFT_KEYS[(idx+1)%SHIFT_KEYS.length];
-      return {...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};
+      const next = SHIFT_KEYS[(idx + 1) % SHIFT_KEYS.length];
+      return { ...prev, [staffId]: { ...(prev[staffId]||{}), [day]: next } };
     });
-  },[setDeptShifts]);
+  }, [setDeptShifts]);
 
   // 右クリック：コンテキストメニュー
   const handleRightClick = useCallback((staffId, day, e) => {
@@ -2389,7 +2649,12 @@ export default function App() {
     setStaffModal(null);
   };
   const deleteStaff = (id) => {
-    if (confirm("このスタッフを削除しますか？")) setStaffList(s=>s.filter(x=>x.id!==id));
+    const s = staffList.find(x=>x.id===id);
+    setConfirmDialog({
+      message: `「${s?.name || 'このスタッフ'}」を削除します。\nよろしいですか？`,
+      onOk: () => setStaffList(prev=>prev.filter(x=>x.id!==id)),
+      okLabel: "削除する",
+    });
   };
 
   // 一括休み日数適用
@@ -2407,30 +2672,71 @@ export default function App() {
   const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
 
+  // 部署の保存（追加 or 編集）
+  const handleSaveDept = (deptData) => {
+    let isNew = false;
+    setDepts(prev => {
+      const idx = prev.findIndex(d => d.id === deptData.id);
+      if (idx >= 0) return prev.map((d,i) => i===idx ? deptData : d);
+      isNew = true;
+      return [...prev, deptData];
+    });
+    // setDepts は非同期だが isNew フラグは同期で確定する
+    // setTimeout でレンダリング後にアクティブ切り替え
+    if (!depts.find(d => d.id === deptData.id)) {
+      setTimeout(() => setActiveDeptId(deptData.id), 0);
+    }
+    setDeptSettingModal(null);
+  };
+
+  // 部署の削除
+  const handleDeleteDept = (deptId) => {
+    // 最後の1部署は削除不可
+    if (depts.length <= 1) {
+      alert("部署は最低1つ必要です。削除できません。");
+      return;
+    }
+    setDepts(prev => prev.filter(d => d.id !== deptId));
+    setStaffList(prev => prev.filter(s => s.dept !== deptId));
+    setAllShifts(prev => { const n={...prev}; delete n[deptId]; return n; });
+    // 削除した部署の月別シフトをlocalStorageからも削除
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith(`shiftNavi_shifts_`) && false) {} // 月別キーはdept混在なので保持
+      });
+    } catch {}
+    // 削除部署がアクティブなら別の部署に切り替え
+    if (activeDeptId === deptId) {
+      const next = depts.find(d => d.id !== deptId);
+      if (next) setTimeout(() => setActiveDeptId(next.id), 0);
+    }
+    setDeptSettingModal(null);
+  };
+
   return (
     <div style={{
       width:"100%", minHeight:"100vh", boxSizing:"border-box",
-      background:"#060c18", fontFamily:"'Noto Sans JP',sans-serif", color:"#f1f5f9",
+      background:"#fdf8f4", fontFamily:"'Noto Sans JP',sans-serif", color:"#3d2e24",
       // Viteデフォルトの#root max-width/paddingを打ち消す
       maxWidth:"none", margin:0, padding:0, textAlign:"left",
     }}>
       {/* TOPBAR */}
       <div style={{
-        background:"#06101f",borderBottom:"1px solid #1e3a5f",
+        background:"#fff8f2",borderBottom:"1px solid #d4b8a0",
         padding:"10px 14px",position:"sticky",top:0,zIndex:50,
         display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,
       }}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{
             width:36,height:36,borderRadius:9,
-            background:"linear-gradient(135deg,#1e40af,#6d28d9)",
+            background:"linear-gradient(135deg,#e07b54,#c45c8a)",
             display:"flex",alignItems:"center",justifyContent:"center",fontSize:18
           }}>🏥</div>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:"#e2e8f0",letterSpacing:"0.05em"}}>
+            <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",letterSpacing:"0.05em"}}>
               SHIFT NAVI
             </div>
-            <div style={{fontSize:9,color:"#1e3a5f",letterSpacing:"0.08em"}}>
+            <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>
               介護施設シフト管理 — Phase 1
             </div>
           </div>
@@ -2440,8 +2746,8 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:6}}>
           <button onClick={prevMonth} style={MNAV}>◀</button>
           <div style={{
-            fontSize:14,fontWeight:800,color:"#60a5fa",minWidth:104,textAlign:"center",
-            background:"#0a1830",border:"1px solid #1e3a5f",borderRadius:8,padding:"5px 10px"
+            fontSize:14,fontWeight:800,color:"#e07b54",minWidth:104,textAlign:"center",
+            background:"#f5ece2",border:"1px solid #d4b8a0",borderRadius:8,padding:"5px 10px"
           }}>{year}年 {month+1}月</div>
           <button onClick={nextMonth} style={MNAV}>▶</button>
         </div>
@@ -2451,7 +2757,7 @@ export default function App() {
           {/* 保存インジケーター */}
           <div style={{
             fontSize:10,fontWeight:700,
-            color: saveStatus==="saved" ? "#4ade80" : saveStatus==="saving" ? "#fbbf24" : "#94a3b8",
+            color: saveStatus==="saved" ? "#5cb87a" : saveStatus==="saving" ? "#fbbf24" : "#b5a99e",
             display:"flex",alignItems:"center",gap:3,minWidth:60,
           }}>
             {saveStatus==="saved"  && <><span>💾</span><span>保存済</span></>}
@@ -2459,25 +2765,25 @@ export default function App() {
           </div>
 
           <button onClick={handleGenerate} disabled={generating} style={{
-            background:generating?"#0d1a2e":"linear-gradient(135deg,#1e40af,#6d28d9)",
-            color:generating?"#334155":"#fff",border:"none",borderRadius:8,
+            background:generating?"#f0e8de":"linear-gradient(135deg,#e07b54,#c45c8a)",
+            color:generating?"#6b5a4e":"#fff",border:"none",borderRadius:8,
             padding:"7px 14px",cursor:generating?"not-allowed":"pointer",
             fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,
           }}>
             {generating?"⏳ 生成中...":"⚡ 自動生成"}
           </button>
           <button onClick={()=>setDownloadModal(true)} style={{
-            background:"#0a1830",color:"#34d399",border:"1px solid #064e3b",
+            background:"#f5ece2",color:"#34d399",border:"1px solid #064e3b",
             borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700,
             position:"relative",zIndex:60,
           }}>📤 書き出し</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{
-            background:"#0a1830",color:"#60a5fa",border:"1px solid #1e3a5f",
+            background:"#f5ece2",color:"#e07b54",border:"1px solid #d4b8a0",
             borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700,
           }}>📅 休み設定</button>
           <button onClick={()=>setExcelImportModal(true)} style={{
-            background: Object.keys(shiftTrend).filter(k=>k!=='_months').length > 0 ? "#0a2010" : "#0a1830",
-            color: Object.keys(shiftTrend).filter(k=>k!=='_months').length > 0 ? "#4ade80" : "#94a3b8",
+            background: Object.keys(shiftTrend).filter(k=>k!=='_months').length > 0 ? "#e8f5ee" : "#f5ece2",
+            color: Object.keys(shiftTrend).filter(k=>k!=='_months').length > 0 ? "#5cb87a" : "#b5a99e",
             border: Object.keys(shiftTrend).filter(k=>k!=='_months').length > 0 ? "1px solid #16a34a" : "1px solid #1e3a5f",
             borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700,
           }}>
@@ -2485,7 +2791,7 @@ export default function App() {
           </button>
           <button onClick={()=>setClearModal(true)}
           style={{
-            background:"#0a1830",color:"#ef4444",border:"1px solid #450a0a",
+            background:"#f5ece2",color:"#ef4444",border:"1px solid #450a0a",
             borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700,
             display:"flex",alignItems:"center",gap:4,
           }}>🗑 クリア</button>
@@ -2493,37 +2799,52 @@ export default function App() {
       </div>
 
       {/* DEPT TABS */}
-      <div style={{background:"#040a14",borderBottom:"1px solid #1e3a5f",
-        display:"flex",overflowX:"auto",padding:"0 6px"}}>
+      <div style={{background:"#ece3d8",borderBottom:"1px solid #d4b8a0",
+        display:"flex",overflowX:"auto",padding:"0 6px",alignItems:"center"}}>
         {depts.map(d=>{
           const cnt = staffList.filter(s=>s.dept===d.id).length;
           const act = d.id===activeDeptId;
           return (
-            <button key={d.id} onClick={()=>setActiveDeptId(d.id)} style={{
-              padding:"9px 14px",background:"transparent",border:"none",
-              color:act?"#60a5fa":"#334155",
-              borderBottom:act?"2px solid #3b82f6":"2px solid transparent",
-              cursor:"pointer",fontSize:12,fontWeight:act?800:400,
-              whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,
-            }}>
-              <span>{d.icon}</span>
-              <span>{d.label}</span>
-              <span style={{
-                background:act?"#1e3a5f":"#0d1525",color:act?"#60a5fa":"#334155",
-                borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700
-              }}>{cnt}</span>
-            </button>
+            <div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}>
+              <button onClick={()=>setActiveDeptId(d.id)} style={{
+                padding:"9px 10px",background:"transparent",border:"none",
+                color:act?"#e07b54":"#6b5a4e",
+                borderBottom:act?"2px solid #3b82f6":"2px solid transparent",
+                cursor:"pointer",fontSize:12,fontWeight:act?800:400,
+                whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,
+              }}>
+                <span>{d.icon}</span>
+                <span>{d.label}</span>
+                <span style={{
+                  background:act?"#d4c5b5":"#f0e8de",color:act?"#e07b54":"#6b5a4e",
+                  borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700
+                }}>{cnt}</span>
+              </button>
+              {/* 部署編集ボタン（アクティブ時のみ表示） */}
+              {act && (
+                <button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{
+                  background:"none",border:"none",color:"#d4c5b5",cursor:"pointer",
+                  fontSize:13,padding:"0 4px",lineHeight:1,
+                }} title="部署を編集">✏️</button>
+              )}
+            </div>
           );
         })}
+        {/* 部署追加ボタン */}
+        <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{
+          background:"none",border:"1px dashed #1e3a5f",borderRadius:7,
+          color:"#6b5a4e",cursor:"pointer",fontSize:11,padding:"5px 10px",
+          marginLeft:6,whiteSpace:"nowrap",flexShrink:0,
+        }}>＋ 部署追加</button>
       </div>
 
       {/* INNER TABS */}
-      <div style={{background:"#04090f",borderBottom:"1px solid #1e293b",
+      <div style={{background:"#f0e8de",borderBottom:"1px solid #1e293b",
         display:"flex",padding:"0 12px",gap:2,alignItems:"center"}}>
         {[["shift","📅 シフト表"],["summary","📊 集計"],["staff","👥 スタッフ"]].map(([k,l])=>(
           <button key={k} onClick={()=>setInnerTab(k)} style={{
             padding:"7px 13px",background:"transparent",border:"none",
-            color:innerTab===k?"#93c5fd":"#1e3a5f",
+            color:innerTab===k?"#f5b8a0":"#d4c5b5",
             borderBottom:innerTab===k?"2px solid #3b82f6":"2px solid transparent",
             cursor:"pointer",fontSize:12,fontWeight:innerTab===k?700:400,
           }}>{l}</button>
@@ -2537,8 +2858,8 @@ export default function App() {
                 onClick={() => handleZoomChange(tableZoom - 5)}
                 disabled={tableZoom <= 40}
                 style={{
-                  width:22,height:22,borderRadius:4,border:"1px solid #1e3a5f",
-                  background:"#0a1830",color:tableZoom<=40?"#1e3a5f":"#60a5fa",
+                  width:22,height:22,borderRadius:4,border:"1px solid #d4b8a0",
+                  background:"#f5ece2",color:tableZoom<=40?"#d4c5b5":"#e07b54",
                   cursor:tableZoom<=40?"not-allowed":"pointer",
                   fontSize:14,fontWeight:900,lineHeight:1,padding:0,
                   display:"flex",alignItems:"center",justifyContent:"center"
@@ -2549,7 +2870,7 @@ export default function App() {
                 type="range" min={40} max={100} step={5}
                 value={tableZoom}
                 onChange={e => handleZoomChange(Number(e.target.value))}
-                style={{width:72,accentColor:"#3b82f6",cursor:"pointer"}}
+                style={{width:72,accentColor:"#d4693f",cursor:"pointer"}}
               />
 
               {/* + ボタン */}
@@ -2557,15 +2878,15 @@ export default function App() {
                 onClick={() => handleZoomChange(tableZoom + 5)}
                 disabled={tableZoom >= 100}
                 style={{
-                  width:22,height:22,borderRadius:4,border:"1px solid #1e3a5f",
-                  background:"#0a1830",color:tableZoom>=100?"#1e3a5f":"#60a5fa",
+                  width:22,height:22,borderRadius:4,border:"1px solid #d4b8a0",
+                  background:"#f5ece2",color:tableZoom>=100?"#d4c5b5":"#e07b54",
                   cursor:tableZoom>=100?"not-allowed":"pointer",
                   fontSize:14,fontWeight:900,lineHeight:1,padding:0,
                   display:"flex",alignItems:"center",justifyContent:"center"
                 }}>＋</button>
 
               {/* ズーム率表示 */}
-              <span style={{fontSize:11,fontWeight:700,color:"#60a5fa",minWidth:34,textAlign:"right"}}>
+              <span style={{fontSize:11,fontWeight:700,color:"#e07b54",minWidth:34,textAlign:"right"}}>
                 {tableZoom}%
               </span>
 
@@ -2579,14 +2900,14 @@ export default function App() {
                 }}
                 title="画面幅に自動フィット"
                 style={{
-                  background:"#0a1830",border:"1px solid #1e3a5f",borderRadius:4,
-                  color:"#60a5fa",fontSize:10,padding:"2px 6px",cursor:"pointer",
+                  background:"#f5ece2",border:"1px solid #d4b8a0",borderRadius:4,
+                  color:"#e07b54",fontSize:10,padding:"2px 6px",cursor:"pointer",
                   whiteSpace:"nowrap"
                 }}
               >⊞ フィット</button>
             </div>
           )}
-          <div style={{fontSize:10,color:"#1e3a5f",padding:"0 4px"}}>
+          <div style={{fontSize:10,color:"#d4c5b5",padding:"0 4px"}}>
             最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}
           </div>
         </div>
@@ -2636,9 +2957,24 @@ export default function App() {
         <StaffModal
           data={staffModal.data}
           deptId={activeDeptId}
+          depts={depts}
           year={year} month={month}
           onSave={saveStaff}
           onClose={()=>setStaffModal(null)}
+        />
+      )}
+
+      {/* Dept Setting Modal */}
+      {deptSettingModal && (
+        <DeptSettingModal
+          dept={deptSettingModal.dept}
+          isNew={deptSettingModal.isNew}
+          onSave={handleSaveDept}
+          onDelete={handleDeleteDept}
+          onConfirm={(message, onOk, okLabel) =>
+            setConfirmDialog({ message, onOk, okLabel })
+          }
+          onClose={()=>setDeptSettingModal(null)}
         />
       )}
 
@@ -2662,7 +2998,23 @@ export default function App() {
       {excelImportModal && (
         <ExcelImportModal
           currentTrend={shiftTrend}
-          onImport={(trend) => { setShiftTrend(trend); setExcelImportModal(false); }}
+          onImport={(newTrend) => {
+            setShiftTrend(prev => {
+              const prevMonths = prev._months || [];
+              const newMonths  = newTrend._months || [];
+              const merged = { ...prev, ...newTrend };
+              merged._months = [...new Set([...prevMonths, ...newMonths])].sort();
+              return merged;
+            });
+            setExcelImportModal(false);
+          }}
+          onReset={() => {
+            setShiftTrend({});
+            setExcelImportModal(false);
+          }}
+          onConfirm={(message, onOk, okLabel) =>
+            setConfirmDialog({ message, onOk, okLabel })
+          }
           onClose={() => setExcelImportModal(false)}
         />
       )}
@@ -2699,19 +3051,32 @@ export default function App() {
       {/* Phase badge */}
       <div style={{
         position:"fixed",bottom:12,right:12,
-        background:"#04090f",border:"1px solid #1e3a5f",borderRadius:16,
-        padding:"5px 12px",fontSize:10,color:"#1e3a5f",
+        background:"#f0e8de",border:"1px solid #d4b8a0",borderRadius:16,
+        padding:"5px 12px",fontSize:10,color:"#d4c5b5",
         display:"flex",gap:6,alignItems:"center"
       }}>
-        <span style={{color:"#3b82f6",fontWeight:700}}>Phase 1</span>
+        <span style={{color:"#d4693f",fontWeight:700}}>Phase 1</span>
         <span>手動編集 ＋ ルールベース自動生成</span>
       </div>
+
+      {/* Confirm Dialog（confirm()の代替・スマホ対応） */}
+      {confirmDialog && (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          okLabel={confirmDialog.okLabel || "削除する"}
+          onOk={() => {
+            confirmDialog.onOk();
+            setConfirmDialog(null);
+          }}
+          onCancel={() => setConfirmDialog(null)}
+        />
+      )}
     </div>
   );
 }
 
 const MNAV = {
-  background:"#0a1830",color:"#475569",border:"1px solid #1e3a5f",
+  background:"#f5ece2",color:"#8c7b6e",border:"1px solid #d4b8a0",
   borderRadius:6,width:28,height:28,cursor:"pointer",fontSize:11,
   display:"flex",alignItems:"center",justifyContent:"center"
 };
