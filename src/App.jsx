@@ -13,7 +13,7 @@ const supabase = createClient(
 //  LOGIN PAGE
 // ─────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [mode, setMode]       = useState("login"); // "login" | "signup"
+  const [mode, setMode]       = useState("login");
   const [email, setEmail]     = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -55,7 +55,6 @@ function LoginPage({ onLogin }) {
         padding:36, width:"100%", maxWidth:400,
         boxShadow:"0 20px 60px rgba(0,0,0,0.12)",
       }}>
-        {/* ロゴ */}
         <div style={{textAlign:"center", marginBottom:28}}>
           <div style={{
             width:56, height:56, borderRadius:14,
@@ -63,15 +62,10 @@ function LoginPage({ onLogin }) {
             display:"flex", alignItems:"center", justifyContent:"center",
             fontSize:26, margin:"0 auto 12px",
           }}>🏥</div>
-          <div style={{fontSize:20, fontWeight:900, color:"#3d2e24", letterSpacing:"0.05em"}}>
-            SHIFT NAVI
-          </div>
-          <div style={{fontSize:11, color:"#b5a99e", marginTop:4}}>
-            介護施設シフト管理システム
-          </div>
+          <div style={{fontSize:20, fontWeight:900, color:"#3d2e24", letterSpacing:"0.05em"}}>SHIFT NAVI</div>
+          <div style={{fontSize:11, color:"#b5a99e", marginTop:4}}>介護施設シフト管理システム</div>
         </div>
 
-        {/* タブ */}
         <div style={{display:"flex", background:"#f0e8de", borderRadius:10, padding:3, marginBottom:22}}>
           {[["login","ログイン"],["signup","新規登録"]].map(([k,l])=>(
             <button key={k} onClick={()=>{setMode(k);setError("");setMsg("");}} style={{
@@ -86,7 +80,6 @@ function LoginPage({ onLogin }) {
           ))}
         </div>
 
-        {/* フォーム */}
         <div style={{marginBottom:14}}>
           <div style={{fontSize:11, color:"#8c7b6e", marginBottom:5}}>メールアドレス</div>
           <input
@@ -237,10 +230,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   const res = {};
   const ds = staffList.filter(s => s.dept === dept.id);
-  ds.forEach(s => {
-    res[s.id] = {};
-    Object.entries(prevShifts[s.id] || {}).forEach(([d, v]) => { if (v === "希望休" || v === "有休") res[s.id][+d] = v; });
-  });
+  ds.forEach(s => { res[s.id] = {}; });
 
   const consecWork = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (WORK_TYPES.has(res[id][i])) c++; else break; } return c; };
   const consecRest = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (REST_TYPES.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
@@ -250,11 +240,27 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     return (consecRest(id, d - 1) + 1 + consecRestFwd(id, d)) <= 2;
   };
 
+  // ★ステップ1: 希望休・希望勤務を最初にセット（最優先・絶対変更しない）
   ds.forEach(s => {
-    (s.kiboByMonth?.[mk] || []).forEach(d => { if (d >= 1 && d <= days && res[s.id][d - 1] !== "夜勤") res[s.id][d] = "希望休"; });
-    Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([day, shiftKey]) => { const d = +day; if (d >= 1 && d <= days && !res[s.id][d] && res[s.id][d - 1] !== "夜勤") res[s.id][d] = shiftKey; });
+    // prevShiftsから希望休・有休を引き継ぎ
+    Object.entries(prevShifts[s.id] || {}).forEach(([d, v]) => {
+      if (v === "希望休" || v === "有休") res[s.id][Number(d)] = v;
+    });
+    // kiboByMonthの希望休
+    (s.kiboByMonth?.[mk] || []).forEach(d => {
+      res[s.id][Number(d)] = "希望休";
+    });
+    // shiftRequestsByMonthの希望勤務（早番・日勤・遅番・夜勤指定）
+    Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([day, shiftKey]) => {
+      res[s.id][Number(day)] = shiftKey;
+    });
   });
 
+  // 希望休・希望勤務が入っている日をロック（夜勤配置で絶対に上書きしない）
+  const lockedDays = {};
+  ds.forEach(s => { lockedDays[s.id] = new Set(Object.keys(res[s.id]).map(Number)); });
+
+  // ★ステップ2: 夜勤配置（ロック済みの日・翌日がロックの人は候補から除外）
   if (dept.shiftTypes.includes("夜勤")) {
     const nightPool = ds.filter(s => s.nightOk);
     const autoMax = Math.ceil(days / Math.max(nightPool.length, 1));
@@ -262,20 +268,25 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       const already = ds.filter(s => res[s.id][d] === "夜勤").length;
       let need = (dept.minStaff["夜勤"] || 0) - already;
       if (need <= 0) continue;
-      let cands = nightPool.filter(s => {
-        if (res[s.id][d] && res[s.id][d] !== "休み") return false;
+      const canNight = (s) => {
+        if (lockedDays[s.id].has(d)) return false; // その日がロック済み
         if (["夜勤","明け"].includes(res[s.id][d - 1])) return false;
+        if (d + 1 <= days && lockedDays[s.id].has(d + 1)) return false; // 翌日がロック済み（明けを入れられない）
+        return true;
+      };
+      let cands = nightPool.filter(s => {
+        if (!canNight(s)) return false;
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         return usedNight < Math.max(s.nightMax || 5, autoMax);
       }).sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
       if (cands.length === 0) {
-        cands = nightPool.filter(s => { if (res[s.id][d] && res[s.id][d] !== "休み") return false; if (["夜勤","明け"].includes(res[s.id][d - 1])) return false; return true; })
+        cands = nightPool.filter(s => canNight(s))
           .sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
       }
       for (const s of cands) {
         if (need <= 0) break;
         res[s.id][d] = "夜勤";
-        if (d + 1 <= days && !res[s.id][d + 1]) res[s.id][d + 1] = "明け";
+        if (d + 1 <= days) res[s.id][d + 1] = "明け";
         if (d + 2 <= days && !res[s.id][d + 2]) res[s.id][d + 2] = "休み";
         need--;
       }
@@ -513,7 +524,7 @@ function parseShiftExcel(workbook) {
       if (/^[\d\s★\-＝=①②③◎●▲]/.test(nameCell)) return;
       if (["職員","名前","氏名","スタッフ","役職","担当"].includes(nameCell)) return;
       if (!isNaN(Number(nameCell))) return;
-      if (/^\d{1,2}[\/月日]/.test(nameCell)) return;
+      if (/^\d{1,2}[/月日]/.test(nameCell)) return;
       const counts = { 早番:0, 日勤:0, 遅番:0, 夜勤:0 };
       const dowRest = [0,0,0,0,0,0,0], dowTotal = [0,0,0,0,0,0,0];
       let total = 0;
@@ -540,8 +551,6 @@ function parseShiftExcel(workbook) {
   result._months = Array.from(processedYearMonths).sort();
   return result;
 }
-
-// ─── 以下、モーダル・UIコンポーネント（元コードと同じ） ───
 
 function ShiftBadge({ type }) {
   const s = SHIFTS[type]||SHIFTS[""];
@@ -570,26 +579,61 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
   for (let d=1; d<=days; d++) cells.push(d);
   const dept = DEFAULT_DEPTS.find(d=>d.id===deptId);
   const availableReqTypes = SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||dept?.shiftTypes.includes(k));
-  const toggleKibo = (d) => { if (!d) return; const isKibo=selected.includes(d); const next=isKibo?selected.filter(x=>x!==d):[...selected,d]; if (!isKibo) { const nr={...shiftRequests}; delete nr[d]; onShiftRequests(nr); } onChange(next); };
-  const setShiftReq = (d, shiftKey) => { const nk=selected.filter(x=>x!==d); if(nk.length!==selected.length) onChange(nk); const nr={...shiftRequests}; if(nr[d]===shiftKey) delete nr[d]; else nr[d]=shiftKey; onShiftRequests(nr); };
-  const clearAll = () => { onChange([]); onShiftRequests({}); };
+  const [selectedDay, setSelectedDay] = useState(null);
+
+  const toggleKibo = (d) => {
+    if (!d) return;
+    if (shiftRequests[d]) return; // シフト希望が入っている日は希望休トグル不可
+    const isKibo = selected.includes(d);
+    const next = isKibo ? selected.filter(x=>x!==d) : [...selected,d];
+    onChange(next);
+  };
+  const setShiftReq = (d, shiftKey) => {
+    // 希望休から外す
+    onChange(selected.filter(x=>x!==d));
+    const nr = {...shiftRequests};
+    if (nr[d] === shiftKey) delete nr[d];
+    else nr[d] = shiftKey;
+    onShiftRequests(nr);
+    setSelectedDay(null);
+  };
+  const clearDay = (d) => {
+    onChange(selected.filter(x=>x!==d));
+    const nr = {...shiftRequests}; delete nr[d]; onShiftRequests(nr);
+    setSelectedDay(null);
+  };
+  const clearAll = () => { onChange([]); onShiftRequests({}); setSelectedDay(null); };
+
   return (
     <div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}}>
         {["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10,color:i===0?"#f87171":i===6?"#e07b54":"#8c7b6e",padding:"2px 0"}}>{w}</div>)}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:10}}>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6}}>
         {cells.map((d,i) => {
           if (!d) return <div key={i}/>;
           const isKibo=selected.includes(d), reqShift=shiftRequests[d], dow=(firstDow+d-1)%7, we=dow===0||dow===6, s=reqShift?SHIFTS[reqShift]:null;
-          return <button key={d} onClick={()=>toggleKibo(d)} style={{background:isKibo?"#fff0f0":reqShift?s.bg:"transparent",border:isKibo?"1px solid #dc2626":reqShift?`1px solid ${s.border}`:"1px solid #1e3a5f",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isKibo?"#f87171":reqShift?s.color:we?"#e07b54":"#9e8d80",fontSize:10,fontWeight:(isKibo||reqShift)?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32}}><span>{d}</span>{isKibo&&<span style={{fontSize:8,lineHeight:1}}>希休</span>}{reqShift&&<span style={{fontSize:8,lineHeight:1}}>{SHIFTS[reqShift].short}</span>}</button>;
+          const isSelected = selectedDay===d;
+          return <button key={d} onClick={()=>{ if(reqShift){setSelectedDay(isSelected?null:d);}else if(isKibo){toggleKibo(d);}else{setSelectedDay(isSelected?null:d);} }} style={{background:isSelected?"#ffe0b2":isKibo?"#fff0f0":reqShift?s.bg:"transparent",border:isSelected?"2px solid #e07b54":isKibo?"1px solid #dc2626":reqShift?`1px solid ${s.border}`:"1px solid #1e3a5f",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isKibo?"#f87171":reqShift?s.color:we?"#e07b54":"#9e8d80",fontSize:10,fontWeight:(isKibo||reqShift||isSelected)?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32}}><span>{d}</span>{isKibo&&<span style={{fontSize:8,lineHeight:1}}>希休</span>}{reqShift&&<span style={{fontSize:8,lineHeight:1}}>{SHIFTS[reqShift].short}</span>}{!isKibo&&!reqShift&&isSelected&&<span style={{fontSize:7,lineHeight:1}}>選択</span>}</button>;
         })}
       </div>
-      <div style={{marginTop:10,fontSize:11,color:"#8c7b6e",display:"flex",gap:12,alignItems:"center"}}>
+      {/* 選択中の日のシフト指定UI */}
+      {selectedDay&&(
+        <div style={{background:"#f5ece2",border:"1px solid #d4b8a0",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
+          <div style={{fontSize:11,color:"#8c7b6e",marginBottom:6,fontWeight:700}}>{selectedDay}日の設定</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
+            <button onClick={()=>{ onChange(selected.includes(selectedDay)?selected:[...selected,selectedDay]); const nr={...shiftRequests};delete nr[selectedDay];onShiftRequests(nr);setSelectedDay(null); }} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#c44b4b"}}>希 希望休</button>
+            {availableReqTypes.filter(k=>k!=="休み").map(k=>{const s=SHIFTS[k];return<button key={k} onClick={()=>setShiftReq(selectedDay,k)} style={{background:shiftRequests[selectedDay]===k?"#d4c5b5":s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:s.color}}>{s.short} {k}</button>;})}
+            {(selected.includes(selectedDay)||shiftRequests[selectedDay])&&<button onClick={()=>clearDay(selectedDay)} style={{background:"#f0e8de",border:"1px solid #d4b8a0",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,color:"#8c7b6e"}}>クリア</button>}
+          </div>
+        </div>
+      )}
+      <div style={{marginTop:4,fontSize:11,color:"#8c7b6e",display:"flex",gap:12,alignItems:"center"}}>
         <span>希望休：<span style={{color:"#f87171",fontWeight:700}}>{selected.length}日</span></span>
         <span>シフト希望：<span style={{color:"#e07b54",fontWeight:700}}>{Object.keys(shiftRequests).length}件</span></span>
         {(selected.length>0||Object.keys(shiftRequests).length>0)&&<button onClick={clearAll} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11,marginLeft:"auto"}}>全クリア</button>}
       </div>
+      <div style={{fontSize:10,color:"#b5a99e",marginTop:4}}>※ 日付タップ→種別を選択。希望休・シフト希望は自動生成で最優先されます。</div>
     </div>
   );
 }
@@ -788,16 +832,28 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
   );
 }
 
+// ─────────────────────────────────────────────
+//  ★ ZoomWrapper（空白バグ修正済み）
+// ─────────────────────────────────────────────
 function ZoomWrapper({ zoom, onZoomChange, children }) {
   const innerRef = useRef(null), outerRef = useRef(null);
   const scale = zoom / 100;
+
+  // ★ 修正箇所: setTimeout二段階追加で初回描画後に高さを再計算
   useEffect(() => {
     if (!innerRef.current || !outerRef.current) return;
     const inner = innerRef.current, outer = outerRef.current;
-    const updateHeight = () => { outer.style.height = `${Math.round(inner.offsetHeight * scale)}px`; };
+    const updateHeight = () => {
+      outer.style.height = `${Math.round(inner.offsetHeight * scale)}px`;
+    };
     updateHeight();
-    const ro = new ResizeObserver(updateHeight); ro.observe(inner); return () => ro.disconnect();
+    const t1 = setTimeout(updateHeight, 100);
+    const t2 = setTimeout(updateHeight, 500);
+    const ro = new ResizeObserver(updateHeight);
+    ro.observe(inner);
+    return () => { ro.disconnect(); clearTimeout(t1); clearTimeout(t2); };
   }, [zoom]);
+
   useEffect(() => {
     const el = outerRef.current; if (!el) return;
     let startDist = null, startZoom = zoom;
@@ -807,6 +863,7 @@ function ZoomWrapper({ zoom, onZoomChange, children }) {
     el.addEventListener("touchstart",onTouchStart,{passive:false}); el.addEventListener("touchmove",onTouchMove,{passive:false}); el.addEventListener("touchend",onTouchEnd);
     return () => { el.removeEventListener("touchstart",onTouchStart); el.removeEventListener("touchmove",onTouchMove); el.removeEventListener("touchend",onTouchEnd); };
   }, [zoom, onZoomChange]);
+
   return (
     <div ref={outerRef} style={{overflowX:"auto",overflowY:"visible",position:"relative"}}>
       <div ref={innerRef} style={{transformOrigin:"top left",transform:`scale(${scale})`,width:scale<1?`${Math.round(100/scale)}%`:"100%",display:"inline-block",minWidth:"max-content"}}>{children}</div>
@@ -897,7 +954,7 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#e07b54,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#fdfaf7",border:"1px solid #d4b8a0",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},55%,30%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#3d2e24"}}>{s.name}</div><div style={{fontSize:10,color:"#6b5a4e",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日選択済</span>}</div></div></div><div style={{display:"flex",gap:6}}><button onClick={()=>onEdit(s)} style={ICON_BTN("#d4693f")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);}) }
+        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#fdfaf7",border:"1px solid #d4b8a0",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},55%,30%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#3d2e24"}}>{s.name}</div><div style={{fontSize:10,color:"#6b5a4e",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日選択済</span>}</div></div></div><div style={{display:"flex",gap:6}}><button onClick={()=>onEdit(s)} style={ICON_BTN("#d4693f")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
         {ds.length===0&&<div style={{background:"#fdfaf7",border:"1px dashed #1e3a5f",borderRadius:10,padding:32,textAlign:"center",color:"#d4c5b5",fontSize:13}}>スタッフが登録されていません</div>}
       </div>
     </div>
@@ -923,7 +980,6 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Supabaseセッション監視
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -935,11 +991,8 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
+  const handleLogout = async () => { await supabase.auth.signOut(); };
 
-  // ローディング中
   if (authLoading) {
     return (
       <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fdf8f4,#f5e8dc)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}>
@@ -951,17 +1004,13 @@ export default function App() {
     );
   }
 
-  // 未ログイン → ログイン画面
-  if (!session) {
-    return <LoginPage onLogin={() => {}} />;
-  }
+  if (!session) { return <LoginPage onLogin={() => {}} />; }
 
-  // ログイン済み → メインアプリ
   return <MainApp session={session} onLogout={handleLogout} />;
 }
 
 // ─────────────────────────────────────────────
-//  MAIN APP（ログイン済み後の本体）
+//  MAIN APP
 // ─────────────────────────────────────────────
 function MainApp({ session, onLogout }) {
   const now = new Date();
@@ -1087,7 +1136,6 @@ function MainApp({ session, onLogout }) {
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#f5ece2",color:"#e07b54",border:"1px solid #d4b8a0",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📅 休み設定</button>
           <button onClick={()=>setExcelImportModal(true)} style={{background:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#e8f5ee":"#f5ece2",color:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#5cb87a":"#b5a99e",border:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"1px solid #16a34a":"1px solid #1e3a5f",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?`📊 傾向ON`:"📊 傾向学習"}</button>
           <button onClick={()=>setClearModal(true)} style={{background:"#f5ece2",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 クリア</button>
-          {/* ログアウトボタン */}
           <button onClick={onLogout} style={{background:"#f5ece2",color:"#8c7b6e",border:"1px solid #d4b8a0",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
             <span>👤</span>
             <span style={{fontSize:9,color:"#b5a99e",maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.user.email}</span>
