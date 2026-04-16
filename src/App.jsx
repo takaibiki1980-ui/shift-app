@@ -1021,13 +1021,12 @@ function MainApp({ session, onLogout }) {
   const [month, setMonth] = useState(now.getMonth());
 
   const isInitializing = useRef(true);
-  const isReloading = useRef(false); // reloadFromRemote 中は true（書き戻しループ防止）
   const [dbLoading, setDbLoading] = useState(true);
 
   const [depts, setDepts] = useState(() => { try { const s=localStorage.getItem("shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_depts",JSON.stringify(depts)); } catch {}
-    if (!isInitializing.current && !isReloading.current) {
+    if (!isInitializing.current) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
     }
   }, [depts]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1039,7 +1038,7 @@ function MainApp({ session, onLogout }) {
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
-    if (!isInitializing.current && !isReloading.current) {
+    if (!isInitializing.current) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1086,11 +1085,7 @@ function MainApp({ session, onLogout }) {
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
         }
       } catch(e) { console.error('Supabase初期ロードエラー:', e); }
-      finally {
-        setDbLoading(false);
-        // React effects が走り終わってから false にする（書き戻しループ防止）
-        setTimeout(() => { isInitializing.current = false; }, 500);
-      }
+      finally { isInitializing.current = false; setDbLoading(false); }
     };
     loadAll();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1101,8 +1096,7 @@ function MainApp({ session, onLogout }) {
 
     const reloadFromRemote = async () => {
       if (saveStatusRef.current === 'unsaved') return; // 未保存の変更があれば上書きしない
-      if (isReloading.current) return; // 二重実行防止
-      isReloading.current = true; // 受信データが再保存されるのを防ぐ（isInitializing は触らない）
+      isInitializing.current = true; // 受信データが再保存されるのを防ぐ
       try {
         const { data, error } = await supabase
           .from('shift_data')
@@ -1120,7 +1114,7 @@ function MainApp({ session, onLogout }) {
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
         }
       } catch(e) { console.warn('リモート同期エラー:', e); }
-      finally { setTimeout(() => { isReloading.current = false; }, 200); }
+      finally { setTimeout(() => { isInitializing.current = false; }, 0); }
     };
 
     // スマホでアプリを切り替えて戻ったとき同期
@@ -1135,13 +1129,9 @@ function MainApp({ session, onLogout }) {
       )
       .subscribe();
 
-    // Realtime が届かない場合のフォールバック（30秒ポーリング）
-    const pollInterval = setInterval(() => { if (!document.hidden) reloadFromRemote(); }, 30000);
-
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
       supabase.removeChannel(channel);
-      clearInterval(pollInterval);
     };
   }, [dbLoading, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
