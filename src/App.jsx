@@ -1018,47 +1018,106 @@ function MainApp({ session, onLogout }) {
   const [year,  setYear]  = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
 
+  const isInitializing = useRef(true);
+  const [dbLoading, setDbLoading] = useState(true);
+
   const [depts, setDepts] = useState(() => { try { const s=localStorage.getItem("shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
-  useEffect(() => { try { localStorage.setItem("shiftNavi_depts",JSON.stringify(depts)); } catch {} }, [depts]);
+  useEffect(() => {
+    try { localStorage.setItem("shiftNavi_depts",JSON.stringify(depts)); } catch {}
+    if (!isInitializing.current) {
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
+    }
+  }, [depts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [deptSettingModal, setDeptSettingModal] = useState(null);
   const [activeDeptId, setActiveDeptId] = useState("kaigo1");
   const [innerTab, setInnerTab] = useState("shift");
 
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
-  useEffect(() => { try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {} }, [staffList]);
+  useEffect(() => {
+    try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
+    if (!isInitializing.current) {
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
+    }
+  }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if(window.XLSX)return; const script=document.createElement("script"); script.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; document.head.appendChild(script); }, []);
 
   const SAVE_KEY = (y, m) => `shiftNavi_shifts_${y}_${m+1}`;
+  const restoreShifts = (parsed) => { const r={}; for(const [dId,ds] of Object.entries(parsed||{})){r[dId]={};for(const [sId,dm] of Object.entries(ds)){r[dId][sId]={};for(const [d,v] of Object.entries(dm))r[dId][sId][+d]=v;}} return r; };
   const [allShifts, setAllShifts] = useState(() => {
-    try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; const parsed=JSON.parse(saved); const restored={}; for(const [deptId,deptShifts] of Object.entries(parsed)){restored[deptId]={};for(const [staffId,dayMap] of Object.entries(deptShifts)){restored[deptId][staffId]={};for(const [d,v] of Object.entries(dayMap))restored[deptId][staffId][+d]=v;}} return restored; } catch { return {}; }
+    try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
   });
 
   const [saveStatus, setSaveStatus] = useState("saved");
   const saveTimer = useRef(null);
   const isLoadingMonth = useRef(false);
 
+  // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
-    isLoadingMonth.current = true;
-    try {
-      const saved = localStorage.getItem(SAVE_KEY(year, month));
-      if (!saved) { setAllShifts({}); }
-      else { const parsed=JSON.parse(saved); const restored={}; for(const [deptId,deptShifts] of Object.entries(parsed)){restored[deptId]={};for(const [staffId,dayMap] of Object.entries(deptShifts)){restored[deptId][staffId]={};for(const [d,v] of Object.entries(dayMap))restored[deptId][staffId][+d]=v;}} setAllShifts(restored); }
-    } catch { setAllShifts({}); }
-    setTimeout(() => { isLoadingMonth.current = false; }, 100);
-  }, [year, month]);
+    const loadAll = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('shift_data')
+          .select('data_key,data_value')
+          .eq('user_id', session.user.id);
+        if (error) throw error;
+        const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
+        if (byKey['depts'])      setDepts(byKey['depts']);
+        if (byKey['staffList'])  setStaffList(byKey['staffList']);
+        if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+        const shiftKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
+        if (byKey[shiftKey]) {
+          isLoadingMonth.current = true;
+          setAllShifts(restoreShifts(byKey[shiftKey]));
+          setTimeout(() => { isLoadingMonth.current = false; }, 100);
+        }
+      } catch(e) { console.error('Supabase初期ロードエラー:', e); }
+      finally { isInitializing.current = false; setDbLoading(false); }
+    };
+    loadAll();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── 月切替: Supabase から当月シフトをロード ──
   useEffect(() => {
-    if (isLoadingMonth.current) return;
+    if (isInitializing.current) return;
+    isLoadingMonth.current = true;
+    const key = `shifts_${year}_${month+1}`;
+    supabase.from('shift_data').select('data_value')
+      .eq('user_id', session.user.id).eq('data_key', key).maybeSingle()
+      .then(({ data, error }) => {
+        if (!error && data?.data_value) {
+          setAllShifts(restoreShifts(data.data_value));
+        } else {
+          try { const saved=localStorage.getItem(SAVE_KEY(year,month)); setAllShifts(saved ? restoreShifts(JSON.parse(saved)) : {}); } catch { setAllShifts({}); }
+        }
+        setTimeout(() => { isLoadingMonth.current = false; }, 100);
+      });
+  }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── シフト変更: Supabase へ自動保存（1秒デバウンス）──
+  useEffect(() => {
+    if (isLoadingMonth.current || isInitializing.current) return;
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
+    saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
-      try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); setSaveStatus("saved"); } catch { setSaveStatus("unsaved"); }
+      const key = `shifts_${year}_${month+1}`;
+      try {
+        const { error } = await supabase.from('shift_data').upsert(
+          { user_id:session.user.id, data_key:key, data_value:allShifts, updated_at:new Date().toISOString() },
+          { onConflict:'user_id,data_key' }
+        );
+        if (error) throw error;
+        try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
+        setSaveStatus("saved");
+      } catch {
+        try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
+        setSaveStatus("unsaved");
+      }
     }, 1000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [allShifts, year, month]);
+  }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
@@ -1074,7 +1133,12 @@ function MainApp({ session, onLogout }) {
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
-  useEffect(() => { try{localStorage.setItem("shiftNavi_shiftTrend",JSON.stringify(shiftTrend));}catch{} }, [shiftTrend]);
+  useEffect(() => {
+    try { localStorage.setItem("shiftNavi_shiftTrend",JSON.stringify(shiftTrend)); } catch {}
+    if (!isInitializing.current) {
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
+    }
+  }, [shiftTrend]); // eslint-disable-line react-hooks/exhaustive-deps
   const [ctxMenu, setCtxMenu] = useState(null);
   const [staffModal, setStaffModal] = useState(null);
 
@@ -1109,6 +1173,7 @@ function MainApp({ session, onLogout }) {
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
   const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
+  if (dbLoading) return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fdf8f4,#f5e8dc)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:48,height:48,borderRadius:12,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px"}}>🏥</div><div style={{color:"#b5a99e",fontSize:13}}>データを同期中…</div></div></div>;
   if (!dept) return <div style={{minHeight:"100vh",background:"#fdf8f4",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#c8b8a8",fontSize:14}}>読み込み中…</div></div>;
 
   return (
