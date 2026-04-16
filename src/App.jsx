@@ -1072,12 +1072,12 @@ function MainApp({ session, onLogout }) {
         if (byKey['depts']) {
           setDepts(byKey['depts']);
         } else {
-          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).catch(()=>{});
+          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
         }
         if (byKey['staffList']) {
           setStaffList(byKey['staffList']);
         } else {
-          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).catch(()=>{});
+          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
         }
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         const shiftKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
