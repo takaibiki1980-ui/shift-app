@@ -1085,7 +1085,11 @@ function MainApp({ session, onLogout }) {
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
         }
       } catch(e) { console.error('Supabase初期ロードエラー:', e); }
-      finally { isInitializing.current = false; setDbLoading(false); }
+      finally {
+        setDbLoading(false);
+        // effects より先に false にすると書き戻しループが発生するため遅延する
+        setTimeout(() => { isInitializing.current = false; }, 300);
+      }
     };
     loadAll();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1114,7 +1118,7 @@ function MainApp({ session, onLogout }) {
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
         }
       } catch(e) { console.warn('リモート同期エラー:', e); }
-      finally { setTimeout(() => { isInitializing.current = false; }, 0); }
+      finally { setTimeout(() => { isInitializing.current = false; }, 300); }
     };
 
     // スマホでアプリを切り替えて戻ったとき同期
