@@ -1027,7 +1027,8 @@ function MainApp({ session, onLogout }) {
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_depts",JSON.stringify(depts)); } catch {}
     if (!isInitializing.current) {
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+        .then(({ error }) => { if (error) console.error('[sync] depts upsert失敗:', error); else console.log('[sync] depts 保存OK'); });
     }
   }, [depts]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1039,7 +1040,8 @@ function MainApp({ session, onLogout }) {
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
     if (!isInitializing.current) {
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+        .then(({ error }) => { if (error) console.error('[sync] staffList upsert失敗:', error); else console.log('[sync] staffList 保存OK'); });
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
