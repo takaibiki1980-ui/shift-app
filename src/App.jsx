@@ -1050,6 +1050,8 @@ function MainApp({ session, onLogout }) {
   });
 
   const [saveStatus, setSaveStatus] = useState("saved");
+  const saveStatusRef = useRef("saved");
+  useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
   const saveTimer = useRef(null);
   const isLoadingMonth = useRef(false);
 
@@ -1077,6 +1079,51 @@ function MainApp({ session, onLogout }) {
     };
     loadAll();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── リアルタイム同期: 他デバイスの変更を即座に反映 ──
+  useEffect(() => {
+    if (dbLoading) return;
+
+    const reloadFromRemote = async () => {
+      if (saveStatusRef.current === 'unsaved') return; // 未保存の変更があれば上書きしない
+      isInitializing.current = true; // 受信データが再保存されるのを防ぐ
+      try {
+        const { data, error } = await supabase
+          .from('shift_data')
+          .select('data_key,data_value')
+          .eq('user_id', session.user.id);
+        if (error) throw error;
+        const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
+        if (byKey['depts'])      setDepts(byKey['depts']);
+        if (byKey['staffList'])  setStaffList(byKey['staffList']);
+        if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+        const shiftKey = `shifts_${year}_${month+1}`;
+        if (byKey[shiftKey]) {
+          isLoadingMonth.current = true;
+          setAllShifts(restoreShifts(byKey[shiftKey]));
+          setTimeout(() => { isLoadingMonth.current = false; }, 100);
+        }
+      } catch(e) { console.warn('リモート同期エラー:', e); }
+      finally { setTimeout(() => { isInitializing.current = false; }, 0); }
+    };
+
+    // スマホでアプリを切り替えて戻ったとき同期
+    const onVisibility = () => { if (!document.hidden) reloadFromRemote(); };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    // Supabase Realtime: 他デバイスが保存した瞬間に同期
+    const channel = supabase.channel(`shift-sync-${session.user.id}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'shift_data', filter: `user_id=eq.${session.user.id}` },
+        () => reloadFromRemote()
+      )
+      .subscribe();
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      supabase.removeChannel(channel);
+    };
+  }, [dbLoading, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 月切替: Supabase から当月シフトをロード ──
   useEffect(() => {
