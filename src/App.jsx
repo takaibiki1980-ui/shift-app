@@ -271,7 +271,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       const canNight = (s) => {
         if (lockedDays[s.id].has(d)) return false; // その日がロック済み
         if (["夜勤","明け"].includes(res[s.id][d - 1])) return false;
-        if (d + 1 <= days && lockedDays[s.id].has(d + 1)) return false; // 翌日がロック済み（明けを入れられない）
+        if (d + 1 <= days && lockedDays[s.id].has(d + 1) && res[s.id][d+1] !== "明け") return false; // 翌日がロック済み（明けを入れられない）
         return true;
       };
       let cands = nightPool.filter(s => {
@@ -346,6 +346,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       dayTypes.forEach(k => { cnts[k] = ds.filter(s => res[s.id][d] === k).length; });
       const freeStaff = ds.filter(s => !res[s.id][d]).sort((a, b) => consecWork(a.id, d - 1) - consecWork(b.id, d - 1));
       for (const s of freeStaff) {
+        if (res[s.id][d-1] === "夜勤") { res[s.id][d] = "明け"; continue; }
         if ((consecWork(s.id, d - 1) + 1) > maxConsec) { res[s.id][d] = "休み"; continue; }
         let available = dayTypes.filter(k => cnts[k] < (maxStaff[k] ?? 99));
         if (s.role === "介護補助" || s.role === "介護助手") available = available.filter(k => k === "日勤");
@@ -366,6 +367,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         for (const d of restDays) {
           if (excess <= 0) break;
           if (res[s.id][d - 1] === "明け") continue;
+          if (res[s.id][d - 1] === "夜勤") continue;
           const actualBefore = consecWork(s.id, d - 1);
           let actualAfter = 0;
           for (let i = d + 1; i <= days; i++) { if (WORK_TYPES.has(res[s.id][i])) actualAfter++; else break; }
@@ -570,7 +572,7 @@ function ContextMenu({ x, y, onSelect, onClose }) {
   );
 }
 
-const SHIFT_REQ_TYPES = ["早番","日勤","遅番","夜勤","休み","有休"];
+const SHIFT_REQ_TYPES = ["早番","日勤","遅番","夜勤","明け","休み","有休"];
 function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftRequests, deptId }) {
   const days = getDays(year, month);
   const firstDow = new Date(year, month, 1).getDay();
@@ -578,7 +580,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
   for (let i=0; i<firstDow; i++) cells.push(null);
   for (let d=1; d<=days; d++) cells.push(d);
   const dept = DEFAULT_DEPTS.find(d=>d.id===deptId);
-  const availableReqTypes = SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||dept?.shiftTypes.includes(k));
+  const availableReqTypes = SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||k==="明け"||dept?.shiftTypes.includes(k));
   const [selectedDay, setSelectedDay] = useState(null);
 
   const toggleKibo = (d) => {
@@ -1065,8 +1067,16 @@ function MainApp({ session, onLogout }) {
           .eq('user_id', session.user.id);
         if (error) throw error;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
-        if (byKey['depts'])      setDepts(byKey['depts']);
-        if (byKey['staffList'])  setStaffList(byKey['staffList']);
+        if (byKey['depts']) {
+          setDepts(byKey['depts']);
+        } else {
+          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).catch(()=>{});
+        }
+        if (byKey['staffList']) {
+          setStaffList(byKey['staffList']);
+        } else {
+          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).catch(()=>{});
+        }
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         const shiftKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
         if (byKey[shiftKey]) {
@@ -1231,7 +1241,7 @@ function MainApp({ session, onLogout }) {
           <div style={{width:36,height:36,borderRadius:9,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🏥</div>
           <div>
             <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",letterSpacing:"0.05em"}}>SHIFT NAVI</div>
-            <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>介護施設シフト管理 — Phase 1</div>
+            <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>介護施設シフト管理 — Phase 2</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -1295,7 +1305,7 @@ function MainApp({ session, onLogout }) {
       {bulkKyukoModal&&<BulkKyukoModal depts={depts} staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} onClose={()=>setGenerateWarnings(null)}/>}
-      <div style={{position:"fixed",bottom:12,right:12,background:"#f0e8de",border:"1px solid #d4b8a0",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#d4c5b5",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#d4693f",fontWeight:700}}>Phase 1</span><span>手動編集 ＋ ルールベース自動生成</span></div>
+      <div style={{position:"fixed",bottom:12,right:12,background:"#f0e8de",border:"1px solid #d4b8a0",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#d4c5b5",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#d4693f",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
     </div>
   );
