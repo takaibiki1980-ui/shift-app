@@ -1220,6 +1220,9 @@ function MainApp({ session, onLogout }) {
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
+  const [aiMode, setAiMode] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_shiftTrend",JSON.stringify(shiftTrend)); } catch {}
     if (!isInitializing.current) {
@@ -1288,6 +1291,7 @@ function MainApp({ session, onLogout }) {
           <button onClick={()=>setDownloadModal(true)} style={{background:"#f5ece2",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📤 書き出し</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#f5ece2",color:"#e07b54",border:"1px solid #d4b8a0",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📅 休み設定</button>
           <button onClick={()=>setExcelImportModal(true)} style={{background:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#e8f5ee":"#f5ece2",color:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#5cb87a":"#b5a99e",border:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"1px solid #16a34a":"1px solid #1e3a5f",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?`📊 傾向ON`:"📊 傾向学習"}</button>
+          <button onClick={()=>setAiMode(v=>!v)} style={{background:aiMode?"#ede9fe":"#f5ece2",color:aiMode?"#7c3aed":"#b5a99e",border:aiMode?"1px solid #7c3aed":"1px solid #d4b8a0",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
           <button onClick={()=>setClearModal(true)} style={{background:"#f5ece2",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 クリア</button>
           <button onClick={onLogout} style={{background:"#f5ece2",color:"#8c7b6e",border:"1px solid #d4b8a0",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
             <span>👤</span>
@@ -1296,6 +1300,31 @@ function MainApp({ session, onLogout }) {
           </button>
         </div>
       </div>
+
+      {/* AI PANEL */}
+      {aiMode&&(
+        <div style={{background:"#f3f0ff",borderBottom:"1px solid #c4b5fd",padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#7c3aed",display:"flex",alignItems:"center",gap:6}}>
+            <span>🤖 AI調整モード</span>
+            <span style={{fontSize:10,fontWeight:400,color:"#a78bfa"}}>自動生成後のシフトを指示で調整できます</span>
+          </div>
+          <textarea
+            value={aiInstruction}
+            onChange={e=>setAiInstruction(e.target.value)}
+            placeholder={"例）田中さんと山田さんは夜勤を一緒にしないで\n例）鈴木さんは水曜を早番にしてほしい\n例）夜勤が連続している人を確認して調整して"}
+            style={{width:"100%",minHeight:72,borderRadius:8,border:"1px solid #c4b5fd",padding:"8px 10px",fontSize:12,color:"#4c1d95",background:"#faf5ff",resize:"vertical",boxSizing:"border-box",outline:"none",fontFamily:"inherit"}}
+          />
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <button
+              disabled={!aiInstruction.trim()||aiLoading}
+              style={{background:(!aiInstruction.trim()||aiLoading)?"#e9d5ff":"linear-gradient(135deg,#7c3aed,#a855f7)",color:(!aiInstruction.trim()||aiLoading)?"#a78bfa":"#fff",border:"none",borderRadius:8,padding:"7px 16px",cursor:(!aiInstruction.trim()||aiLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:800}}
+            >
+              {aiLoading?"⏳ 調整中…":"✨ AIに調整を依頼"}
+            </button>
+            <span style={{fontSize:10,color:"#a78bfa"}}>※ 現在準備中（Step 2で接続予定）</span>
+          </div>
+        </div>
+      )}
 
       {/* DEPT TABS */}
       <div style={{background:"#ece3d8",borderBottom:"1px solid #d4b8a0",display:"flex",overflowX:"auto",padding:"0 6px",alignItems:"center"}}>
