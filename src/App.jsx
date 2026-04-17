@@ -411,7 +411,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         let shortage = target - currentRest;
         if (shortage > 0) {
           const workDays = Object.entries(res[s.id]).filter(([, v]) => WORK_TYPES.has(v)).map(([d]) => +d)
-            .filter(d => res[s.id][d - 1] !== "明け" && canRest(s.id, d))
+            .filter(d => res[s.id][d - 1] !== "明け" && res[s.id][d + 1] !== "明け" && canRest(s.id, d))
             .sort((a, b) => consecWork(s.id, b - 1) - consecWork(s.id, a - 1));
           for (const d of workDays) { if (shortage <= 0) break; if (!canRest(s.id, d)) continue; res[s.id][d] = "休み"; shortage--; }
         }
@@ -419,6 +419,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       for (let d = 1; d <= days; d++) {
         if (res[s.id][d] !== "休み") continue;
         if (res[s.id][d - 1] === "明け") continue;
+        if (res[s.id][d + 1] === "明け") continue;
         if (consecRest(s.id, d) <= 2) continue;
         if ((consecWork(s.id, d - 1) + 1) > maxConsec) continue;
         const fixCnts = {};
