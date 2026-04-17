@@ -1236,6 +1236,34 @@ function MainApp({ session, onLogout }) {
   const deptShifts = allShifts[activeDeptId]||{};
   const setDeptShifts = useCallback(updater => { setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater})); }, [activeDeptId]);
 
+  const handleAiAdjust = useCallback(async () => {
+    if (!aiInstruction.trim()) return;
+    setAiLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ai-shift-adjust", {
+        body: { shifts: deptShifts, staffList, dept, instruction: aiInstruction, year, month: month + 1 },
+      });
+      if (error) throw new Error(error.message);
+      if (data.error) throw new Error(data.error);
+      if (data.changes && data.changes.length > 0) {
+        setDeptShifts(prev => {
+          const next = { ...prev };
+          for (const c of data.changes) {
+            next[c.staffId] = { ...(next[c.staffId] || {}), [c.day]: c.shift };
+          }
+          return next;
+        });
+        alert(`✨ AI調整完了\n\n${data.explanation}\n\n変更: ${data.changes.length}件`);
+      } else {
+        alert(`✨ AIからの回答\n\n${data.explanation}`);
+      }
+    } catch (e) {
+      alert("AI調整エラー: " + e.message);
+    } finally {
+      setAiLoading(false);
+    }
+  }, [aiInstruction, deptShifts, staffList, dept, year, month, setDeptShifts]);
+
   const handleGenerate = useCallback(() => {
     setGenerating(true);
     const cs=staffList, cd=dept, ct=shiftTrend;
@@ -1316,12 +1344,13 @@ function MainApp({ session, onLogout }) {
           />
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <button
+              onClick={handleAiAdjust}
               disabled={!aiInstruction.trim()||aiLoading}
               style={{background:(!aiInstruction.trim()||aiLoading)?"#e9d5ff":"linear-gradient(135deg,#7c3aed,#a855f7)",color:(!aiInstruction.trim()||aiLoading)?"#a78bfa":"#fff",border:"none",borderRadius:8,padding:"7px 16px",cursor:(!aiInstruction.trim()||aiLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:800}}
             >
               {aiLoading?"⏳ 調整中…":"✨ AIに調整を依頼"}
             </button>
-            <span style={{fontSize:10,color:"#a78bfa"}}>※ 現在準備中（Step 2で接続予定）</span>
+            <span style={{fontSize:10,color:"#a78bfa"}}>※ Supabase Edge Function デプロイ後に有効</span>
           </div>
         </div>
       )}

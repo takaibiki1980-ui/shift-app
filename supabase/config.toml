@@ -1,0 +1,6 @@
+[project]
+# Supabase プロジェクトIDをここに設定 (supabase link 後に自動更新)
+# project_id = "your-project-id"
+
+[functions.ai-shift-adjust]
+verify_jwt = true
