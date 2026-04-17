@@ -260,6 +260,27 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const lockedDays = {};
   ds.forEach(s => { lockedDays[s.id] = new Set(Object.keys(res[s.id]).map(Number)); });
 
+  // 勤務指定の夜勤・明けに連鎖して翌日を自動セット
+  ds.forEach(s => {
+    for (let d = 1; d <= days; d++) {
+      if (res[s.id][d] === "夜勤") {
+        if (d + 1 <= days && !lockedDays[s.id].has(d + 1)) {
+          res[s.id][d + 1] = "明け";
+          lockedDays[s.id].add(d + 1);
+        }
+        if (d + 2 <= days && !lockedDays[s.id].has(d + 2)) {
+          res[s.id][d + 2] = "休み";
+          lockedDays[s.id].add(d + 2);
+        }
+      } else if (res[s.id][d] === "明け") {
+        if (d + 1 <= days && !lockedDays[s.id].has(d + 1)) {
+          res[s.id][d + 1] = "休み";
+          lockedDays[s.id].add(d + 1);
+        }
+      }
+    }
+  });
+
   // ★ステップ2: 夜勤配置（ロック済みの日・翌日がロックの人は候補から除外）
   if (dept.shiftTypes.includes("夜勤")) {
     const nightPool = ds.filter(s => s.nightOk);
