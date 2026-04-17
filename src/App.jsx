@@ -387,6 +387,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         let excess = restDays.length - target;
         for (const d of restDays) {
           if (excess <= 0) break;
+          if (lockedDays[s.id].has(d)) continue;
           if (res[s.id][d - 1] === "明け") continue;
           if (res[s.id][d - 1] === "夜勤") continue;
           const actualBefore = consecWork(s.id, d - 1);
@@ -418,6 +419,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
       for (let d = 1; d <= days; d++) {
         if (res[s.id][d] !== "休み") continue;
+        if (lockedDays[s.id].has(d)) continue;
         if (res[s.id][d - 1] === "明け") continue;
         if (res[s.id][d + 1] === "明け") continue;
         if (consecRest(s.id, d) <= 2) continue;
@@ -647,7 +649,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
           <div style={{fontSize:11,color:"#8c7b6e",marginBottom:6,fontWeight:700}}>{selectedDay}日の設定</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
             <button onClick={()=>{ onChange(selected.includes(selectedDay)?selected:[...selected,selectedDay]); const nr={...shiftRequests};delete nr[selectedDay];onShiftRequests(nr);setSelectedDay(null); }} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#c44b4b"}}>希 希望休</button>
-            {availableReqTypes.filter(k=>k!=="休み").map(k=>{const s=SHIFTS[k];return<button key={k} onClick={()=>setShiftReq(selectedDay,k)} style={{background:shiftRequests[selectedDay]===k?"#d4c5b5":s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:s.color}}>{s.short} {k}</button>;})}
+            {availableReqTypes.map(k=>{const s=SHIFTS[k];return<button key={k} onClick={()=>setShiftReq(selectedDay,k)} style={{background:shiftRequests[selectedDay]===k?"#d4c5b5":s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:s.color}}>{s.short} {k}</button>;})}
             {(selected.includes(selectedDay)||shiftRequests[selectedDay])&&<button onClick={()=>clearDay(selectedDay)} style={{background:"#f0e8de",border:"1px solid #d4b8a0",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,color:"#8c7b6e"}}>クリア</button>}
           </div>
         </div>
