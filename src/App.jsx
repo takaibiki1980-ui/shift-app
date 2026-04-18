@@ -1240,17 +1240,11 @@ function MainApp({ session, onLogout }) {
     if (!aiInstruction.trim()) return;
     setAiLoading(true);
     try {
-      const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-shift-adjust`;
+      const fnUrl = "/api/ai-shift-adjust";
       console.log("[AI] 呼び出しURL:", fnUrl);
-      const { data: { session: s } } = await supabase.auth.getSession();
-      const token = s?.access_token ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
       const res = await fetch(fnUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ shifts: deptShifts, staffList, dept, instruction: aiInstruction, year, month: month + 1 }),
       });
       console.log("[AI] レスポンスステータス:", res.status);
