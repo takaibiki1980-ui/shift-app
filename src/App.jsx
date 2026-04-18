@@ -1240,13 +1240,25 @@ function MainApp({ session, onLogout }) {
     if (!aiInstruction.trim()) return;
     setAiLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("ai-shift-adjust", {
-        body: { shifts: deptShifts, staffList, dept, instruction: aiInstruction, year, month: month + 1 },
+      const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-shift-adjust`;
+      console.log("[AI] 呼び出しURL:", fnUrl);
+      const { data: { session: s } } = await supabase.auth.getSession();
+      const token = s?.access_token ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
+      const res = await fetch(fnUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "apikey": import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ shifts: deptShifts, staffList, dept, instruction: aiInstruction, year, month: month + 1 }),
       });
-      if (error) {
-        console.error("[AI] invoke error:", error);
-        throw new Error(`Edge Function エラー: ${error.message} (${JSON.stringify(error)})`);
+      console.log("[AI] レスポンスステータス:", res.status);
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errText}`);
       }
+      const data = await res.json();
       if (data?.error) throw new Error(data.error);
       if (data.changes && data.changes.length > 0) {
         setDeptShifts(prev => {
