@@ -1350,7 +1350,7 @@ function MainApp({ session, onLogout }) {
             >
               {aiLoading?"⏳ 調整中…":"✨ AIに調整を依頼"}
             </button>
-            <span style={{fontSize:10,color:"#a78bfa"}}>※ Supabase Edge Function デプロイ後に有効</span>
+            <span style={{fontSize:10,color:"#a78bfa"}}>※ 自動生成後に使うと精度UP</span>
           </div>
         </div>
       )}
