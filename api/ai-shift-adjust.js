@@ -26,12 +26,14 @@ export default async function handler(req, res) {
       "明け": "明", "休み": "休", "希望休": "希", "有休": "有",
     };
 
-    let shiftTable = "";
+    const headerDays = Array.from({ length: days }, (_, i) => String(i + 1).padStart(2, "0")).join("|");
+    let shiftTable = "日付: " + headerDays + "\n";
     for (const s of staffInDept) {
       const row = Array.from({ length: days }, (_, i) => {
         const v = ((shifts || {})[s.id] || {})[i + 1] || "－";
-        return SHIFT_SHORT[v] || v;
-      }).join("");
+        const short = SHIFT_SHORT[v] || v;
+        return short.padStart(2, " ");
+      }).join("|");
       shiftTable += s.name + "(" + s.role + ")[ID:" + s.id + "]: " + row + "\n";
     }
 
@@ -45,7 +47,8 @@ export default async function handler(req, res) {
       "- 「夜勤明け削除」「夜勤セット削除」と指示されたら、該当の夜勤・明け・休み3日分すべてを休みに変更\n" +
       "- 変更は指示に関係するスタッフのみ\n" +
       "- 利用可能なシフト種別: " + (dept.shiftTypes || []).join("、") + "、明け、休み\n\n" +
-      "シフト表の読み方: 早=早番 日=日勤 遅=遅番 夜=夜勤 明=明け 休=休み 希=希望休 有=有休 －=未設定\n\n" +
+      "シフト表の読み方: 早=早番 日=日勤 遅=遅番 夜=夜勤 明=明け 休=休み 希=希望休 有=有休 －=未設定\n" +
+      "シフト表は「日付: 01|02|03|...」の行で日付番号を示し、各スタッフ行の同じ位置がその日のシフト。日付番号を絶対に間違えないこと。\n\n" +
       "必ずJSON形式のみで返答（前後に説明文不要）:\n" +
       '{"changes":[{"staffId":"スタッフID","day":日付番号,"shift":"シフト種別"}],"explanation":"変更内容の説明"}\n' +
       '変更不要なら: {"changes":[],"explanation":"変更不要です"}';
