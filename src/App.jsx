@@ -1243,8 +1243,11 @@ function MainApp({ session, onLogout }) {
       const { data, error } = await supabase.functions.invoke("ai-shift-adjust", {
         body: { shifts: deptShifts, staffList, dept, instruction: aiInstruction, year, month: month + 1 },
       });
-      if (error) throw new Error(error.message);
-      if (data.error) throw new Error(data.error);
+      if (error) {
+        console.error("[AI] invoke error:", error);
+        throw new Error(`Edge Function エラー: ${error.message} (${JSON.stringify(error)})`);
+      }
+      if (data?.error) throw new Error(data.error);
       if (data.changes && data.changes.length > 0) {
         setDeptShifts(prev => {
           const next = { ...prev };

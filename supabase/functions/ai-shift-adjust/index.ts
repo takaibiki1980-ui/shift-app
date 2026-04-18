@@ -13,7 +13,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
-    const { shifts, staffList, dept, instruction, year, month } = await req.json();
+    // req.json() が失敗するケースに備えてテキストで受け取ってからパース
+    const rawText = await req.text();
+    if (!rawText) throw new Error("リクエストボディが空です");
+    const { shifts, staffList, dept, instruction, year, month } = JSON.parse(rawText);
 
     const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
     if (!apiKey) throw new Error("ANTHROPIC_API_KEY が設定されていません");
