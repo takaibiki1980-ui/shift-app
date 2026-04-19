@@ -1,6 +1,59 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
+const LOGO_CHARS = [
+  { char: "し", color: "#F4847E" },
+  { char: "ふ", color: "#7BC8C0" },
+  { char: "ぽ", color: "#F5C355" },
+  { char: "ん", color: "#A48FD0" },
+];
+const LOGO_STYLE = {
+  fontFamily: "'M PLUS Rounded 1c', sans-serif",
+  fontWeight: 900,
+  textShadow: "-2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff, 2px 2px 0 #fff, 0 2px 0 #fff, 2px 0 0 #fff, 0 -2px 0 #fff, -2px 0 0 #fff",
+  letterSpacing: "0.05em",
+  lineHeight: 1,
+};
+function ShifuponLogo({ size = 22 }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
+      <span style={{ fontSize: size * 0.6, marginBottom: size * 0.3 }}>✦</span>
+      {LOGO_CHARS.map(({ char, color }) => (
+        <span key={char} style={{ ...LOGO_STYLE, fontSize: size, color }}>{char}</span>
+      ))}
+      <span style={{ fontSize: size * 0.5, marginBottom: -size * 0.1, color: "#F4A7B9" }}>✦</span>
+    </span>
+  );
+}
+
+function ShifuponIcon({ size = 48, radius = 12 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="ig" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#F9D4C8"/>
+          <stop offset="50%" stopColor="#C9EAE7"/>
+          <stop offset="100%" stopColor="#D4C5F0"/>
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx={radius} fill="url(#ig)"/>
+      <rect x="10" y="13" width="28" height="22" rx="4" fill="white" fillOpacity="0.85"/>
+      <rect x="10" y="13" width="28" height="7" rx="4" fill="#F4847E" fillOpacity="0.9"/>
+      <rect x="10" y="17" width="28" height="3" fill="#F4847E" fillOpacity="0.9"/>
+      <line x1="19" y1="20" x2="19" y2="35" stroke="#e0d4c8" strokeWidth="1"/>
+      <line x1="28" y1="20" x2="28" y2="35" stroke="#e0d4c8" strokeWidth="1"/>
+      <line x1="10" y1="26" x2="38" y2="26" stroke="#e0d4c8" strokeWidth="1"/>
+      <line x1="10" y1="31" x2="38" y2="31" stroke="#e0d4c8" strokeWidth="1"/>
+      <rect x="11" y="21" width="7" height="4" rx="1" fill="#F4847E" fillOpacity="0.7"/>
+      <rect x="20" y="21" width="7" height="4" rx="1" fill="#7BC8C0" fillOpacity="0.7"/>
+      <rect x="29" y="21" width="8" height="4" rx="1" fill="#F5C355" fillOpacity="0.7"/>
+      <rect x="11" y="27" width="7" height="3" rx="1" fill="#A48FD0" fillOpacity="0.7"/>
+      <rect x="20" y="27" width="7" height="3" rx="1" fill="#F4847E" fillOpacity="0.7"/>
+      <rect x="29" y="27" width="8" height="3" rx="1" fill="#7BC8C0" fillOpacity="0.7"/>
+    </svg>
+  );
+}
+
 // ─────────────────────────────────────────────
 //  SUPABASE
 // ─────────────────────────────────────────────
@@ -56,14 +109,9 @@ function LoginPage({ onLogin }) {
         boxShadow:"0 20px 60px rgba(0,0,0,0.12)",
       }}>
         <div style={{textAlign:"center", marginBottom:28}}>
-          <div style={{
-            width:56, height:56, borderRadius:14,
-            background:"linear-gradient(135deg,#e07b54,#c45c8a)",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            fontSize:26, margin:"0 auto 12px",
-          }}>🏥</div>
-          <div style={{fontSize:20, fontWeight:900, color:"#3d2e24", letterSpacing:"0.05em"}}>SHIFT NAVI</div>
-          <div style={{fontSize:11, color:"#b5a99e", marginTop:4}}>介護施設シフト管理システム</div>
+          <div style={{margin:"0 auto 12px", width:56, height:56}}><ShifuponIcon size={56} radius={14}/></div>
+          <ShifuponLogo size={28} />
+          <div style={{fontSize:11, color:"#b5a99e", marginTop:6}}>介護施設シフト管理システム</div>
         </div>
 
         <div style={{display:"flex", background:"#f0e8de", borderRadius:10, padding:3, marginBottom:22}}>
@@ -1000,7 +1048,7 @@ export default function App() {
     return (
       <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fdf8f4,#f5e8dc)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}>
         <div style={{textAlign:"center"}}>
-          <div style={{width:48,height:48,borderRadius:12,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px"}}>🏥</div>
+          <div style={{margin:"0 auto 12px"}}><ShifuponIcon size={48} radius={12}/></div>
           <div style={{color:"#b5a99e",fontSize:13}}>読み込み中…</div>
         </div>
       </div>
@@ -1230,7 +1278,7 @@ function MainApp({ session, onLogout }) {
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
   const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
-  if (dbLoading) return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fdf8f4,#f5e8dc)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:48,height:48,borderRadius:12,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px"}}>🏥</div><div style={{color:"#b5a99e",fontSize:13}}>データを同期中…</div></div></div>;
+  if (dbLoading) return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fdf8f4,#f5e8dc)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{textAlign:"center"}}><div style={{margin:"0 auto 12px"}}><ShifuponIcon size={48} radius={12}/></div><div style={{color:"#b5a99e",fontSize:13}}>データを同期中…</div></div></div>;
   if (!dept) return <div style={{minHeight:"100vh",background:"#fdf8f4",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#c8b8a8",fontSize:14}}>読み込み中…</div></div>;
 
   return (
@@ -1238,10 +1286,10 @@ function MainApp({ session, onLogout }) {
       {/* TOPBAR */}
       <div style={{background:"#fff8f2",borderBottom:"1px solid #d4b8a0",padding:"10px 14px",position:"sticky",top:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:36,height:36,borderRadius:9,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🏥</div>
+          <ShifuponIcon size={36} radius={9}/>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",letterSpacing:"0.05em"}}>SHIFT NAVI</div>
-            <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>介護施設シフト管理 — Phase 2</div>
+            <ShifuponLogo size={18}/>
+            <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>介護施設シフト管理</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
