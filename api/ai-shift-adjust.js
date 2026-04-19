@@ -49,9 +49,12 @@ export default async function handler(req, res) {
       "- 利用可能なシフト種別: " + (dept.shiftTypes || []).join("、") + "、明け、休み\n\n" +
       "シフト表の読み方: 早=早番 日=日勤 遅=遅番 夜=夜勤 明=明け 休=休み 希=希望休 有=有休 －=未設定\n" +
       "シフト表は「日付: 01|02|03|...」の行で日付番号を示し、各スタッフ行の同じ位置がその日のシフト。日付番号を絶対に間違えないこと。\n\n" +
+      "【ペア固定ルール抽出】指示が複数スタッフの相関（例：「Aが夜勤の日はBを早番」「Aが夜勤の翌日はBを休み」）を含む場合、rules配列に構造化して出力：\n" +
+      '  {"type":"pair","triggerStaffId":"A_ID","triggerShift":"夜勤","targetStaffId":"B_ID","targetShift":"早番","offset":0}\n' +
+      "  offset: 0=同日, 1=翌日, -1=前日。該当しない指示なら rules は空配列[]。\n\n" +
       "必ずJSON形式のみで返答（前後に説明文不要）:\n" +
-      '{"changes":[{"staffId":"スタッフID","day":日付番号,"shift":"シフト種別"}],"explanation":"変更内容の説明"}\n' +
-      '変更不要なら: {"changes":[],"explanation":"変更不要です"}';
+      '{"changes":[{"staffId":"スタッフID","day":日付番号,"shift":"シフト種別"}],"rules":[],"explanation":"変更内容の説明"}\n' +
+      '変更不要なら: {"changes":[],"rules":[],"explanation":"変更不要です"}';
 
     const userPrompt =
       "【" + year + "年" + month + "月 シフト表 / " + dept.label + "】\n" +
@@ -66,7 +69,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
+        max_tokens: 2048,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       }),
@@ -138,6 +141,39 @@ function validateAndRepair(aiResult, originalShifts, staffInDept, days) {
   const repairs = [];
   const repairNotes = [];
 
+  const rawRules = Array.isArray(aiResult.rules) ? aiResult.rules : [];
+  const staffIdSet = new Set(staffInDept.map((s) => s.id));
+  const pairRules = rawRules
+    .filter((r) => r && r.type === "pair" && staffIdSet.has(r.triggerStaffId) && staffIdSet.has(r.targetStaffId))
+    .map((r) => ({
+      triggerStaffId: r.triggerStaffId,
+      triggerShift: normalize(r.triggerShift),
+      targetStaffId: r.targetStaffId,
+      targetShift: normalize(r.targetShift),
+      offset: Number.isFinite(r.offset) ? r.offset : 0,
+    }));
+
+  for (const rule of pairRules) {
+    const trigRow = simulated[rule.triggerStaffId] || {};
+    const tgtRow = simulated[rule.targetStaffId] || {};
+    affectedStaffIds.add(rule.targetStaffId);
+    if (!simulated[rule.targetStaffId]) simulated[rule.targetStaffId] = tgtRow;
+
+    for (let d = 1; d <= days; d++) {
+      if (trigRow[d] !== rule.triggerShift) continue;
+      const td = d + rule.offset;
+      if (td < 1 || td > days) continue;
+      const current = tgtRow[td];
+      if (current === rule.targetShift) continue;
+      if (PROTECTED.has(current)) continue;
+      if (current === "夜勤" || current === "明け") continue;
+
+      tgtRow[td] = rule.targetShift;
+      repairs.push({ staffId: rule.targetStaffId, day: td, shift: rule.targetShift });
+      repairNotes.push(td + "日の" + shortName(staffInDept, rule.targetStaffId) + "を" + rule.targetShift + "に補完（ペア固定）");
+    }
+  }
+
   for (const staffId of affectedStaffIds) {
     const row = simulated[staffId] || {};
 
@@ -184,4 +220,9 @@ function validateAndRepair(aiResult, originalShifts, staffInDept, days) {
   }
 
   return { changes: mergedChanges, explanation };
+}
+
+function shortName(staffInDept, id) {
+  const s = staffInDept.find((x) => x.id === id);
+  return s ? s.name : id;
 }
