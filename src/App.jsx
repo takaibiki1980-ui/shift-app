@@ -27,29 +27,52 @@ function ShifuponLogo({ size = 22 }) {
 }
 
 function ShifuponIcon({ size = 48, radius = 12 }) {
+  const rx = Math.round((radius / size) * 100);
   return (
-    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="ig" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse">
+        <radialGradient id="sp-body" cx="38%" cy="30%" r="65%">
+          <stop offset="0%" stopColor="#ffffff"/>
+          <stop offset="60%" stopColor="#f8f4f0"/>
+          <stop offset="100%" stopColor="#ede5db"/>
+        </radialGradient>
+        <linearGradient id="sp-bg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#F9D4C8"/>
           <stop offset="50%" stopColor="#C9EAE7"/>
           <stop offset="100%" stopColor="#D4C5F0"/>
         </linearGradient>
       </defs>
-      <rect width="48" height="48" rx={radius} fill="url(#ig)"/>
-      <rect x="10" y="13" width="28" height="22" rx="4" fill="white" fillOpacity="0.85"/>
-      <rect x="10" y="13" width="28" height="7" rx="4" fill="#F4847E" fillOpacity="0.9"/>
-      <rect x="10" y="17" width="28" height="3" fill="#F4847E" fillOpacity="0.9"/>
-      <line x1="19" y1="20" x2="19" y2="35" stroke="#e0d4c8" strokeWidth="1"/>
-      <line x1="28" y1="20" x2="28" y2="35" stroke="#e0d4c8" strokeWidth="1"/>
-      <line x1="10" y1="26" x2="38" y2="26" stroke="#e0d4c8" strokeWidth="1"/>
-      <line x1="10" y1="31" x2="38" y2="31" stroke="#e0d4c8" strokeWidth="1"/>
-      <rect x="11" y="21" width="7" height="4" rx="1" fill="#F4847E" fillOpacity="0.7"/>
-      <rect x="20" y="21" width="7" height="4" rx="1" fill="#7BC8C0" fillOpacity="0.7"/>
-      <rect x="29" y="21" width="8" height="4" rx="1" fill="#F5C355" fillOpacity="0.7"/>
-      <rect x="11" y="27" width="7" height="3" rx="1" fill="#A48FD0" fillOpacity="0.7"/>
-      <rect x="20" y="27" width="7" height="3" rx="1" fill="#F4847E" fillOpacity="0.7"/>
-      <rect x="29" y="27" width="8" height="3" rx="1" fill="#7BC8C0" fillOpacity="0.7"/>
+      {/* 背景 */}
+      <rect width="100" height="100" rx={rx} fill="url(#sp-bg)"/>
+      {/* 左腕（体の後ろ） */}
+      <ellipse cx="20" cy="64" rx="11" ry="15" fill="url(#sp-body)" transform="rotate(-22 20 64)"/>
+      {/* 右腕（体の後ろ） */}
+      <ellipse cx="80" cy="64" rx="11" ry="15" fill="url(#sp-body)" transform="rotate(22 80 64)"/>
+      {/* 胴体 */}
+      <ellipse cx="50" cy="50" rx="30" ry="33" fill="url(#sp-body)"/>
+      {/* 左足 */}
+      <ellipse cx="38" cy="83" rx="12" ry="8" fill="url(#sp-body)"/>
+      {/* 右足 */}
+      <ellipse cx="62" cy="83" rx="12" ry="8" fill="url(#sp-body)"/>
+      {/* ほっぺ */}
+      <ellipse cx="33" cy="55" rx="8" ry="5.5" fill="#F4A0A0" fillOpacity="0.38"/>
+      <ellipse cx="67" cy="55" rx="8" ry="5.5" fill="#F4A0A0" fillOpacity="0.38"/>
+      {/* 目 */}
+      <circle cx="41" cy="44" r="3.8" fill="#1a1a1a"/>
+      <circle cx="59" cy="44" r="3.8" fill="#1a1a1a"/>
+      {/* 口 */}
+      <path d="M 43 54 Q 50 62 57 54" stroke="#1a1a1a" strokeWidth="2.2" fill="none" strokeLinecap="round"/>
+      {/* カレンダー */}
+      <rect x="35" y="60" width="30" height="23" rx="3.5" fill="white" fillOpacity="0.92" stroke="#ddd4cc" strokeWidth="0.8"/>
+      <rect x="35" y="60" width="30" height="5.5" rx="3.5" fill="#ede5da" fillOpacity="0.9"/>
+      <rect x="35" y="64" width="30" height="1.5" fill="#ede5da" fillOpacity="0.9"/>
+      {/* グリッド線 */}
+      <line x1="45" y1="65.5" x2="45" y2="83" stroke="#ddd4cc" strokeWidth="0.7"/>
+      <line x1="55" y1="65.5" x2="55" y2="83" stroke="#ddd4cc" strokeWidth="0.7"/>
+      <line x1="35" y1="71" x2="65" y2="71" stroke="#ddd4cc" strokeWidth="0.7"/>
+      <line x1="35" y1="77" x2="65" y2="77" stroke="#ddd4cc" strokeWidth="0.7"/>
+      {/* チェックマーク */}
+      <path d="M 48 69.5 L 51.5 73.5 L 59 66" stroke="#7BC8C0" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   );
 }
