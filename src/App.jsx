@@ -1450,7 +1450,7 @@ function MainApp({ session, onLogout }) {
 
       {/* INNER TABS */}
       <div style={{background:"#eaf8f6",borderBottom:"2px solid #2BBFBA",display:"flex",padding:"0 12px",gap:2,alignItems:"center"}}>
-        {[["shift","📅 シフト表"],["summary","📊 集計"],["staff","👥 スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#2BBFBA":"#8ecece",borderBottom:innerTab===k?"2px solid #3b82f6":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab===k?700:400}}>{l}</button>)}
+        {[["shift","📅 シフト表"],["summary","📊 集計"],["staff","👥 スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab===k?800:600}}>{l}</button>)}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
           {innerTab==="shift"&&(
             <div style={{display:"flex",alignItems:"center",gap:4}}>
