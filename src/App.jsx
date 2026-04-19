@@ -26,6 +26,45 @@ function ShifuponLogo({ size = 22 }) {
   );
 }
 
+function ShifuponIcon({ size = 48, radius = 12 }) {
+  const rx = Math.round((radius / size) * 100);
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="sp-body" cx="38%" cy="30%" r="65%">
+          <stop offset="0%" stopColor="#ffffff"/>
+          <stop offset="60%" stopColor="#f8f4f0"/>
+          <stop offset="100%" stopColor="#ede5db"/>
+        </radialGradient>
+        <linearGradient id="sp-bg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#F9D4C8"/>
+          <stop offset="50%" stopColor="#C9EAE7"/>
+          <stop offset="100%" stopColor="#D4C5F0"/>
+        </linearGradient>
+      </defs>
+      <rect width="100" height="100" rx={rx} fill="url(#sp-bg)"/>
+      <ellipse cx="20" cy="64" rx="11" ry="15" fill="url(#sp-body)" transform="rotate(-22 20 64)"/>
+      <ellipse cx="80" cy="64" rx="11" ry="15" fill="url(#sp-body)" transform="rotate(22 80 64)"/>
+      <ellipse cx="50" cy="50" rx="30" ry="33" fill="url(#sp-body)"/>
+      <ellipse cx="38" cy="83" rx="12" ry="8" fill="url(#sp-body)"/>
+      <ellipse cx="62" cy="83" rx="12" ry="8" fill="url(#sp-body)"/>
+      <ellipse cx="33" cy="55" rx="8" ry="5.5" fill="#F4A0A0" fillOpacity="0.38"/>
+      <ellipse cx="67" cy="55" rx="8" ry="5.5" fill="#F4A0A0" fillOpacity="0.38"/>
+      <circle cx="41" cy="44" r="3.8" fill="#1a1a1a"/>
+      <circle cx="59" cy="44" r="3.8" fill="#1a1a1a"/>
+      <path d="M 43 54 Q 50 62 57 54" stroke="#1a1a1a" strokeWidth="2.2" fill="none" strokeLinecap="round"/>
+      <rect x="35" y="60" width="30" height="23" rx="3.5" fill="white" fillOpacity="0.92" stroke="#ddd4cc" strokeWidth="0.8"/>
+      <rect x="35" y="60" width="30" height="5.5" rx="3.5" fill="#ede5da" fillOpacity="0.9"/>
+      <rect x="35" y="64" width="30" height="1.5" fill="#ede5da" fillOpacity="0.9"/>
+      <line x1="45" y1="65.5" x2="45" y2="83" stroke="#ddd4cc" strokeWidth="0.7"/>
+      <line x1="55" y1="65.5" x2="55" y2="83" stroke="#ddd4cc" strokeWidth="0.7"/>
+      <line x1="35" y1="71" x2="65" y2="71" stroke="#ddd4cc" strokeWidth="0.7"/>
+      <line x1="35" y1="77" x2="65" y2="77" stroke="#ddd4cc" strokeWidth="0.7"/>
+      <path d="M 48 69.5 L 51.5 73.5 L 59 66" stroke="#7BC8C0" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
+
 // ─────────────────────────────────────────────
 //  SUPABASE
 // ─────────────────────────────────────────────
@@ -81,12 +120,7 @@ function LoginPage({ onLogin }) {
         boxShadow:"0 20px 60px rgba(0,0,0,0.12)",
       }}>
         <div style={{textAlign:"center", marginBottom:28}}>
-          <div style={{
-            width:56, height:56, borderRadius:14,
-            background:"linear-gradient(135deg,#e07b54,#c45c8a)",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            fontSize:26, margin:"0 auto 12px",
-          }}>🏥</div>
+          <div style={{margin:"0 auto 12px", width:56, height:56}}><ShifuponIcon size={56} radius={14}/></div>
           <ShifuponLogo size={28} />
           <div style={{fontSize:11, color:"#b5a99e", marginTop:6}}>介護施設シフト管理システム</div>
         </div>
@@ -1049,7 +1083,7 @@ export default function App() {
     return (
       <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fdf8f4,#f5e8dc)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}>
         <div style={{textAlign:"center"}}>
-          <div style={{width:48,height:48,borderRadius:12,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px"}}>🏥</div>
+          <div style={{margin:"0 auto 12px"}}><ShifuponIcon size={48} radius={12}/></div>
           <div style={{color:"#b5a99e",fontSize:13}}>読み込み中…</div>
         </div>
       </div>
@@ -1344,7 +1378,7 @@ function MainApp({ session, onLogout }) {
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
   const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
-  if (dbLoading) return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fdf8f4,#f5e8dc)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{textAlign:"center"}}><div style={{width:48,height:48,borderRadius:12,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,margin:"0 auto 12px"}}>🏥</div><div style={{color:"#b5a99e",fontSize:13}}>データを同期中…</div></div></div>;
+  if (dbLoading) return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fdf8f4,#f5e8dc)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{textAlign:"center"}}><div style={{margin:"0 auto 12px"}}><ShifuponIcon size={48} radius={12}/></div><div style={{color:"#b5a99e",fontSize:13}}>データを同期中…</div></div></div>;
   if (!dept) return <div style={{minHeight:"100vh",background:"#fdf8f4",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#c8b8a8",fontSize:14}}>読み込み中…</div></div>;
 
   return (
@@ -1352,10 +1386,10 @@ function MainApp({ session, onLogout }) {
       {/* TOPBAR */}
       <div style={{background:"#fff8f2",borderBottom:"1px solid #d4b8a0",padding:"10px 14px",position:"sticky",top:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:36,height:36,borderRadius:9,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🏥</div>
+          <ShifuponIcon size={36} radius={9}/>
           <div>
-            <ShifuponLogo size={18} />
-            <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>介護施設シフト管理 — Phase 2</div>
+            <ShifuponLogo size={18}/>
+            <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>介護施設シフト管理</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
