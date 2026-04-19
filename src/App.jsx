@@ -1,6 +1,32 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
+const LOGO_CHARS = [
+  { char: "し", color: "#F4847E" },
+  { char: "ふ", color: "#7BC8C0" },
+  { char: "ぽ", color: "#F5C355" },
+  { char: "ん", color: "#A48FD0" },
+];
+const LOGO_STYLE = {
+  fontFamily: "'M PLUS Rounded 1c', sans-serif",
+  fontWeight: 900,
+  WebkitTextStroke: "3px #fff",
+  textShadow: "0 2px 8px rgba(0,0,0,0.10)",
+  letterSpacing: "0.05em",
+  lineHeight: 1,
+};
+function ShifuponLogo({ size = 22 }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
+      <span style={{ fontSize: size * 0.6, marginBottom: size * 0.3 }}>✦</span>
+      {LOGO_CHARS.map(({ char, color }) => (
+        <span key={char} style={{ ...LOGO_STYLE, fontSize: size, color }}>{char}</span>
+      ))}
+      <span style={{ fontSize: size * 0.5, marginBottom: -size * 0.1, color: "#F4A7B9" }}>✦</span>
+    </span>
+  );
+}
+
 // ─────────────────────────────────────────────
 //  SUPABASE
 // ─────────────────────────────────────────────
@@ -62,8 +88,8 @@ function LoginPage({ onLogin }) {
             display:"flex", alignItems:"center", justifyContent:"center",
             fontSize:26, margin:"0 auto 12px",
           }}>🏥</div>
-          <div style={{fontSize:20, fontWeight:900, color:"#3d2e24", letterSpacing:"0.05em"}}>しふぽん</div>
-          <div style={{fontSize:11, color:"#b5a99e", marginTop:4}}>介護施設シフト管理システム</div>
+          <ShifuponLogo size={28} />
+          <div style={{fontSize:11, color:"#b5a99e", marginTop:6}}>介護施設シフト管理システム</div>
         </div>
 
         <div style={{display:"flex", background:"#f0e8de", borderRadius:10, padding:3, marginBottom:22}}>
@@ -1329,7 +1355,7 @@ function MainApp({ session, onLogout }) {
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:36,height:36,borderRadius:9,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🏥</div>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",letterSpacing:"0.05em"}}>しふぽん</div>
+            <ShifuponLogo size={18} />
             <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>介護施設シフト管理 — Phase 2</div>
           </div>
         </div>
