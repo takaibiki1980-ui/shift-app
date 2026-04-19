@@ -94,14 +94,14 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "AI応答のJSONパース失敗: " + e.message, raw: match[0] });
     }
 
-    const validated = validateAndRepair(parsed, shifts, staffInDept, days);
+    const validated = validateAndRepair(parsed, shifts, staffInDept, days, dept);
     return res.status(200).json(validated);
   } catch (err) {
     return res.status(500).json({ error: err.message || "不明なエラー" });
   }
 }
 
-function validateAndRepair(aiResult, originalShifts, staffInDept, days) {
+function validateAndRepair(aiResult, originalShifts, staffInDept, days, dept) {
   const SHIFT_NORMALIZE = {
     "早": "早番", "早番": "早番",
     "日": "日勤", "日勤": "日勤",
@@ -219,7 +219,32 @@ function validateAndRepair(aiResult, originalShifts, staffInDept, days) {
     explanation += "\n【自動補完】" + repairNotes.join("、");
   }
 
-  return { changes: mergedChanges, explanation };
+  const minStaff = (dept && dept.minStaff) ? dept.minStaff : {};
+  const staffingWarnings = [];
+  if (Object.keys(minStaff).length > 0) {
+    for (let d = 1; d <= days; d++) {
+      for (const [shiftType, minCount] of Object.entries(minStaff)) {
+        if (!minCount) continue;
+        const actual = staffInDept.filter((s) => {
+          const merged = mergedMap.get(s.id + ":" + d);
+          const shift = merged ? merged.shift : ((originalShifts || {})[s.id] || {})[d] || "";
+          return shift === shiftType;
+        }).length;
+        if (actual < minCount) {
+          staffingWarnings.push(d + "日 " + shiftType + "：" + actual + "名（最低" + minCount + "名）");
+        }
+      }
+    }
+  }
+
+  if (staffingWarnings.length > 0) {
+    explanation += "\n【配置不足警告】" + staffingWarnings.slice(0, 10).join("、");
+    if (staffingWarnings.length > 10) {
+      explanation += "…他" + (staffingWarnings.length - 10) + "件";
+    }
+  }
+
+  return { changes: mergedChanges, explanation, staffingWarnings };
 }
 
 function shortName(staffInDept, id) {
