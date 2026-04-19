@@ -84,12 +84,82 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "AIの応答からJSONを抽出できませんでした", raw: text });
     }
 
+    let parsed;
     try {
-      return res.status(200).json(JSON.parse(match[0]));
+      parsed = JSON.parse(match[0]);
     } catch (e) {
       return res.status(500).json({ error: "AI応答のJSONパース失敗: " + e.message, raw: match[0] });
     }
+
+    const validated = validateAndRepair(parsed, shifts, staffInDept, days);
+    return res.status(200).json(validated);
   } catch (err) {
     return res.status(500).json({ error: err.message || "不明なエラー" });
   }
+}
+
+function validateAndRepair(aiResult, originalShifts, staffInDept, days) {
+  const aiChanges = Array.isArray(aiResult.changes) ? aiResult.changes : [];
+  const affectedStaffIds = new Set(aiChanges.map((c) => c.staffId));
+
+  const simulated = {};
+  for (const s of staffInDept) {
+    simulated[s.id] = { ...((originalShifts || {})[s.id] || {}) };
+  }
+  for (const c of aiChanges) {
+    if (!c || !c.staffId || !c.day) continue;
+    if (!simulated[c.staffId]) simulated[c.staffId] = {};
+    simulated[c.staffId][c.day] = c.shift || "";
+  }
+
+  const PROTECTED = new Set(["希望休", "有休"]);
+  const repairs = [];
+  const repairNotes = [];
+
+  for (const staffId of affectedStaffIds) {
+    const row = simulated[staffId] || {};
+
+    for (let d = 1; d <= days; d++) {
+      const cur = row[d];
+      const next = row[d + 1];
+      const prev = row[d - 1];
+
+      if (cur === "夜勤" && d < days && next !== "明け" && !PROTECTED.has(next)) {
+        row[d + 1] = "明け";
+        repairs.push({ staffId, day: d + 1, shift: "明け" });
+        repairNotes.push(d + 1 + "日を明けに自動補完（夜勤の翌日）");
+      }
+
+      if (cur === "明け" && prev !== "夜勤") {
+        if (!PROTECTED.has(cur)) {
+          row[d] = "休み";
+          repairs.push({ staffId, day: d, shift: "休み" });
+          repairNotes.push(d + "日の孤立した明けを休みに修正");
+        }
+      }
+
+      if (cur === "明け" && d < days && next !== "休み" && !PROTECTED.has(next)) {
+        row[d + 1] = "休み";
+        repairs.push({ staffId, day: d + 1, shift: "休み" });
+        repairNotes.push(d + 1 + "日を休みに自動補完（明けの翌日）");
+      }
+    }
+  }
+
+  const mergedMap = new Map();
+  for (const c of aiChanges) {
+    if (!c || !c.staffId || !c.day) continue;
+    mergedMap.set(c.staffId + ":" + c.day, c);
+  }
+  for (const r of repairs) {
+    mergedMap.set(r.staffId + ":" + r.day, r);
+  }
+  const mergedChanges = Array.from(mergedMap.values());
+
+  let explanation = aiResult.explanation || "";
+  if (repairNotes.length > 0) {
+    explanation += "\n【自動補完】" + repairNotes.join("、");
+  }
+
+  return { changes: mergedChanges, explanation };
 }
