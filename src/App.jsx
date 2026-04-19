@@ -62,7 +62,7 @@ function LoginPage({ onLogin }) {
             display:"flex", alignItems:"center", justifyContent:"center",
             fontSize:26, margin:"0 auto 12px",
           }}>🏥</div>
-          <div style={{fontSize:20, fontWeight:900, color:"#3d2e24", letterSpacing:"0.05em"}}>SHIFT NAVI</div>
+          <div style={{fontSize:20, fontWeight:900, color:"#3d2e24", letterSpacing:"0.05em"}}>しふぽん</div>
           <div style={{fontSize:11, color:"#b5a99e", marginTop:4}}>介護施設シフト管理システム</div>
         </div>
 
@@ -1329,7 +1329,7 @@ function MainApp({ session, onLogout }) {
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{width:36,height:36,borderRadius:9,background:"linear-gradient(135deg,#e07b54,#c45c8a)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🏥</div>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",letterSpacing:"0.05em"}}>SHIFT NAVI</div>
+            <div style={{fontSize:15,fontWeight:900,color:"#3d2e24",letterSpacing:"0.05em"}}>しふぽん</div>
             <div style={{fontSize:9,color:"#d4c5b5",letterSpacing:"0.08em"}}>介護施設シフト管理 — Phase 2</div>
           </div>
         </div>
