@@ -10,8 +10,7 @@ const LOGO_CHARS = [
 const LOGO_STYLE = {
   fontFamily: "'M PLUS Rounded 1c', sans-serif",
   fontWeight: 900,
-  WebkitTextStroke: "3px #fff",
-  textShadow: "0 2px 8px rgba(0,0,0,0.10)",
+  textShadow: "-2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff, 2px 2px 0 #fff, 0 2px 0 #fff, 2px 0 0 #fff, 0 -2px 0 #fff, -2px 0 0 #fff",
   letterSpacing: "0.05em",
   lineHeight: 1,
 };
