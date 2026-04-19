@@ -99,7 +99,30 @@ export default async function handler(req, res) {
 }
 
 function validateAndRepair(aiResult, originalShifts, staffInDept, days) {
-  const aiChanges = Array.isArray(aiResult.changes) ? aiResult.changes : [];
+  const SHIFT_NORMALIZE = {
+    "早": "早番", "早番": "早番",
+    "日": "日勤", "日勤": "日勤",
+    "遅": "遅番", "遅番": "遅番",
+    "夜": "夜勤", "夜勤": "夜勤",
+    "明": "明け", "明け": "明け",
+    "休": "休み", "休み": "休み", "公": "休み", "公休": "休み",
+    "希": "希望休", "希望休": "希望休",
+    "有": "有休", "有休": "有休", "有給": "有休",
+  };
+  const VALID_SHIFTS = new Set(Object.values(SHIFT_NORMALIZE));
+  const normalize = (v) => {
+    if (v === null || v === undefined || v === "") return "";
+    const s = String(v).trim();
+    if (SHIFT_NORMALIZE[s]) return SHIFT_NORMALIZE[s];
+    if (VALID_SHIFTS.has(s)) return s;
+    return s;
+  };
+
+  const rawChanges = Array.isArray(aiResult.changes) ? aiResult.changes : [];
+  const aiChanges = rawChanges
+    .filter((c) => c && c.staffId && c.day)
+    .map((c) => ({ staffId: c.staffId, day: c.day, shift: normalize(c.shift) }));
+
   const affectedStaffIds = new Set(aiChanges.map((c) => c.staffId));
 
   const simulated = {};
@@ -107,7 +130,6 @@ function validateAndRepair(aiResult, originalShifts, staffInDept, days) {
     simulated[s.id] = { ...((originalShifts || {})[s.id] || {}) };
   }
   for (const c of aiChanges) {
-    if (!c || !c.staffId || !c.day) continue;
     if (!simulated[c.staffId]) simulated[c.staffId] = {};
     simulated[c.staffId][c.day] = c.shift || "";
   }
