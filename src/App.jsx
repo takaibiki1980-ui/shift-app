@@ -204,7 +204,7 @@ const SHIFTS = {
   日勤:  { short:"日", color:"#3b6eea", bg:"#eef3ff", border:"#6b96f5", time:"9:00〜18:00" },
   遅番:  { short:"遅", color:"#8b5cc4", bg:"#f5eeff", border:"#b07fd4", time:"11:30〜20:30" },
   夜勤:  { short:"夜", color:"#2a7a9a", bg:"#e8f6fb", border:"#4ba8c8", time:"16:30〜翌9:30" },
-  明け:  { short:"明", color:"#5a9e9b", bg:"#f5f0eb", border:"#c8b8a8", time:"夜勤明け" },
+  明け:  { short:"明", color:"#9e8d80", bg:"#f5f0eb", border:"#c8b8a8", time:"夜勤明け" },
   休み:  { short:"休", color:"#3a9659", bg:"#edf7f0", border:"#5cb87a", time:"－" },
   希望休: { short:"希", color:"#c44b4b", bg:"#fff0f0", border:"#e07070", time:"希望休" },
   有休:  { short:"有", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"有給" },
@@ -704,7 +704,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
       </div>
       {/* 選択中の日のシフト指定UI */}
       {selectedDay&&(
-        <div style={{background:"#dff5f3",border:"1px solid #90cbc8",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
+        <div style={{background:"#ffffff",border:"1px solid #90cbc8",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
           <div style={{fontSize:11,color:"#3a8a87",marginBottom:6,fontWeight:700}}>{selectedDay}日の設定</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
             <button onClick={()=>{ onChange(selected.includes(selectedDay)?selected:[...selected,selectedDay]); const nr={...shiftRequests};delete nr[selectedDay];onShiftRequests(nr);setSelectedDay(null); }} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#c44b4b"}}>希 希望休</button>
@@ -816,7 +816,7 @@ function ConfirmDialog({ message, onOk, onCancel, okLabel="削除" }) {
         <div style={{fontSize:14,color:"#1a3635",lineHeight:1.7,marginBottom:20,whiteSpace:"pre-wrap"}}>{message}</div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={onOk} style={{flex:1,background:"#fff0f0",border:"1px solid #e07070",borderRadius:9,padding:"12px 0",cursor:"pointer",color:"#c44b4b",fontSize:14,fontWeight:800}}>{okLabel}</button>
-          <button onClick={onCancel} style={{flex:1,background:"#dff5f3",border:"1px solid #90cbc8",borderRadius:9,padding:"12px 0",cursor:"pointer",color:"#3a8a87",fontSize:14}}>キャンセル</button>
+          <button onClick={onCancel} style={{flex:1,background:"#ffffff",border:"1px solid #90cbc8",borderRadius:9,padding:"12px 0",cursor:"pointer",color:"#3a8a87",fontSize:14}}>キャンセル</button>
         </div>
       </div>
     </div>
@@ -957,7 +957,7 @@ function ZoomWrapper({ zoom, onZoomChange, children }) {
   );
 }
 
-const TH = ({sticky,w}={}) => ({ position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1, background:"#dff5f3", padding:"5px 3px", borderBottom:"2px solid #90cbc8", borderRight:"1px solid #b0e0de", fontSize:11, fontWeight:700, color:"#2a7a77", textAlign:"center", whiteSpace:"nowrap", width:w||"auto", minWidth:w||"auto" });
+const TH = ({sticky,w}={}) => ({ position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1, background:"#ffffff", padding:"5px 3px", borderBottom:"2px solid #90cbc8", borderRight:"1px solid #b0e0de", fontSize:11, fontWeight:700, color:"#2a7a77", textAlign:"center", whiteSpace:"nowrap", width:w||"auto", minWidth:w||"auto" });
 const TD = { textAlign:"center", padding:"4px 2px", borderBottom:"1px solid #c8ecea", borderRight:"1px solid #c8ecea" };
 
 function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick }) {
@@ -973,7 +973,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
         <thead>
           <tr>
             <th style={TH({sticky:true,w:148})}><span style={{color:"#2a5a57",fontSize:10}}>氏名</span></th>
-            {Array.from({length:days},(_,i)=>i+1).map(d=>{const wd=getWD(year,month,d),we=isWE(year,month,d),alert=isAlert(d);return(<th key={d} style={{...TH({}),background:we?"#d5f1ef":"#d5edec",minWidth:30,width:30,padding:"3px 1px"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}><span style={{fontSize:10,fontWeight:700,color:we?"#f472b6":"#5a9e9b"}}>{d}</span><span style={{fontSize:9,color:we?"#f472b6":"#2a5a57"}}>{wd}</span><span style={{fontSize:8}}>{alert?"⚠️":"　"}</span></div></th>);})}
+            {Array.from({length:days},(_,i)=>i+1).map(d=>{const wd=getWD(year,month,d),we=isWE(year,month,d),alert=isAlert(d);return(<th key={d} style={{...TH({}),background:we?"#edf8f7":"#f8fffe",minWidth:30,width:30,padding:"3px 1px"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}><span style={{fontSize:10,fontWeight:700,color:we?"#f472b6":"#5a9e9b"}}>{d}</span><span style={{fontSize:9,color:we?"#f472b6":"#2a5a57"}}>{wd}</span><span style={{fontSize:8}}>{alert?"⚠️":"　"}</span></div></th>);})}
             <th style={TH({w:44})}><span style={{fontSize:10,color:"#2a5a57"}}>勤務</span></th>
             <th style={TH({w:36})}><span style={{fontSize:10,color:"#2a5a57"}}>夜勤</span></th>
             <th style={TH({w:36})}><span style={{fontSize:10,color:"#2a5a57"}}>休日</span></th>
@@ -987,8 +987,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             const restCnt=Object.values(sShifts).filter(v=>REST_TYPES.has(v)&&v!=="明け").length;
             const nightOver=s.nightOk&&nightCnt>(s.nightMax||5);
             return (
-              <tr key={s.id} style={{background:si%2===0?"#e8f8f7":"#e2f5f3"}}>
-                <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#e8f8f7":"#e2f5f3",padding:"4px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda",minWidth:148}}>
+              <tr key={s.id} style={{background:si%2===0?"#ffffff":"#fafeff"}}>
+                <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#ffffff":"#fafeff",padding:"4px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda",minWidth:148}}>
                   <div style={{fontWeight:700,fontSize:12,color:"#1a3635",whiteSpace:"nowrap"}}>{s.name}</div>
                   <div style={{fontSize:10,color:"#2a5a57",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#c45c35",fontSize:9}}>🌙{nightCnt}/{s.nightMax}</span>}</div>
                 </td>
@@ -1003,8 +1003,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             );
           })}
           {dept.shiftTypes.map(shKey=>(
-            <tr key={shKey} style={{background:"#e8dfd4"}}>
-              <td style={{position:"sticky",left:0,zIndex:2,background:"#e8dfd4",padding:"3px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda"}}><ShiftBadge type={shKey}/></td>
+            <tr key={shKey} style={{background:"#f0fffe"}}>
+              <td style={{position:"sticky",left:0,zIndex:2,background:"#f0fffe",padding:"3px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda"}}><ShiftBadge type={shKey}/></td>
               {Array.from({length:days},(_,i)=>i+1).map(d=>{const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length,min=dept.minStaff?.[shKey]||0;return<td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:cnt===0?"#ef4444":cnt>=min?"#5cb87a":"#f59e0b",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda"}}>{cnt||"0"}</td>;})}
               <td colSpan={3}/>
             </tr>
@@ -1023,7 +1023,7 @@ function SummaryView({ staffList, shifts, dept, year, month }) {
     <div style={{overflowX:"auto"}}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
         <thead><tr style={{background:"#d5edec"}}><th style={TH({sticky:true,w:148})}><span style={{color:"#2a5a57",fontSize:10}}>スタッフ</span></th>{shownKeys.map(k=><th key={k} style={TH({})}><ShiftBadge type={k}/></th>)}<th style={TH({w:50})}><span style={{fontSize:10,color:"#2a5a57"}}>勤務計</span></th><th style={TH({w:50})}><span style={{fontSize:10,color:"#2a5a57"}}>希望休</span></th></tr></thead>
-        <tbody>{ds.map((s,i)=>{const sv=shifts[s.id]||{},cnt={};shownKeys.forEach(k=>{cnt[k]=Object.values(sv).filter(v=>v===k).length;});const work=["早番","日勤","遅番","夜勤"].reduce((a,k)=>a+(cnt[k]||0),0),kiboSel=(s.kiboByMonth?.[mk]||[]).length;return(<tr key={s.id} style={{background:i%2===0?"#e8f8f7":"#e2f5f3"}}><td style={{...TD,position:"sticky",left:0,zIndex:1,background:i%2===0?"#e8f8f7":"#e2f5f3",padding:"5px 10px",borderRight:"1px solid #90cbc8"}}><div style={{fontWeight:700,fontSize:12,color:"#1a3635"}}>{s.name}</div><div style={{fontSize:10,color:"#2a5a57"}}>{s.role}</div></td>{shownKeys.map(k=><td key={k} style={{...TD,color:cnt[k]>0?SHIFTS[k].color:"#8ecece",fontWeight:800,fontSize:13}}>{cnt[k]||"－"}</td>)}<td style={{...TD,color:"#2BBFBA",fontWeight:800,fontSize:14}}>{work}</td><td style={{...TD,color:"#f87171",fontWeight:700,fontSize:13}}>{kiboSel||"－"}</td></tr>);})}</tbody>
+        <tbody>{ds.map((s,i)=>{const sv=shifts[s.id]||{},cnt={};shownKeys.forEach(k=>{cnt[k]=Object.values(sv).filter(v=>v===k).length;});const work=["早番","日勤","遅番","夜勤"].reduce((a,k)=>a+(cnt[k]||0),0),kiboSel=(s.kiboByMonth?.[mk]||[]).length;return(<tr key={s.id} style={{background:i%2===0?"#ffffff":"#fafeff"}}><td style={{...TD,position:"sticky",left:0,zIndex:1,background:i%2===0?"#ffffff":"#fafeff",padding:"5px 10px",borderRight:"1px solid #90cbc8"}}><div style={{fontWeight:700,fontSize:12,color:"#1a3635"}}>{s.name}</div><div style={{fontSize:10,color:"#2a5a57"}}>{s.role}</div></td>{shownKeys.map(k=><td key={k} style={{...TD,color:cnt[k]>0?SHIFTS[k].color:"#8ecece",fontWeight:800,fontSize:13}}>{cnt[k]||"－"}</td>)}<td style={{...TD,color:"#2BBFBA",fontWeight:800,fontSize:14}}>{work}</td><td style={{...TD,color:"#f87171",fontWeight:700,fontSize:13}}>{kiboSel||"－"}</td></tr>);})}</tbody>
       </table>
     </div>
   );
@@ -1057,7 +1057,7 @@ function Legend() {
   );
 }
 
-const MNAV = { background:"#dff5f3", color:"#3a8a87", border:"1px solid #90cbc8", borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:11, display:"flex", alignItems:"center", justifyContent:"center" };
+const MNAV = { background:"#ffffff", color:"#3a8a87", border:"1px solid #90cbc8", borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:11, display:"flex", alignItems:"center", justifyContent:"center" };
 
 // ─────────────────────────────────────────────
 //  APP（メイン）
@@ -1394,7 +1394,7 @@ function MainApp({ session, onLogout }) {
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
           <button onClick={prevMonth} style={MNAV}>◀</button>
-          <div style={{fontSize:14,fontWeight:800,color:"#2BBFBA",minWidth:104,textAlign:"center",background:"#dff5f3",border:"1px solid #90cbc8",borderRadius:8,padding:"5px 10px"}}>{year}年 {month+1}月</div>
+          <div style={{fontSize:14,fontWeight:800,color:"#2BBFBA",minWidth:104,textAlign:"center",background:"#ffffff",border:"1px solid #90cbc8",borderRadius:8,padding:"5px 10px"}}>{year}年 {month+1}月</div>
           <button onClick={nextMonth} style={MNAV}>▶</button>
         </div>
         <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
@@ -1403,12 +1403,12 @@ function MainApp({ session, onLogout }) {
             {saveStatus==="unsaved"&&<><span>⏳</span><span>未保存</span></>}
           </div>
           <button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳ 生成中…":"⚡ 自動生成"}</button>
-          <button onClick={()=>setDownloadModal(true)} style={{background:"#dff5f3",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📤 書き出し</button>
-          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#dff5f3",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📅 休み設定</button>
+          <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📤 書き出し</button>
+          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📅 休み設定</button>
           <button onClick={()=>setExcelImportModal(true)} style={{background:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#e8f5ee":"#dff5f3",color:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#5cb87a":"#6ab5b2",border:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"1px solid #16a34a":"1px solid #0e3a38",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?`📊 傾向ON`:"📊 傾向学習"}</button>
           <button onClick={()=>setAiMode(v=>!v)} style={{background:aiMode?"#ede9fe":"#dff5f3",color:aiMode?"#7c3aed":"#6ab5b2",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
-          <button onClick={()=>setClearModal(true)} style={{background:"#dff5f3",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 クリア</button>
-          <button onClick={onLogout} style={{background:"#dff5f3",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
+          <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 クリア</button>
+          <button onClick={onLogout} style={{background:"#ffffff",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
             <span>👤</span>
             <span style={{fontSize:9,color:"#6ab5b2",maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.user?.email}</span>
             <span>ログアウト</span>
@@ -1443,22 +1443,22 @@ function MainApp({ session, onLogout }) {
       )}
 
       {/* DEPT TABS */}
-      <div style={{background:"#cce9e7",borderBottom:"1px solid #90cbc8",display:"flex",overflowX:"auto",padding:"0 6px",alignItems:"center"}}>
+      <div style={{background:"#e0f4f2",borderBottom:"1px solid #90cbc8",display:"flex",overflowX:"auto",padding:"0 6px",alignItems:"center"}}>
         {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"9px 10px",background:"transparent",border:"none",color:act?"#2BBFBA":"#2a5a57",borderBottom:act?"2px solid #3b82f6":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?800:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><span>{d.icon}</span><span>{d.label}</span><span style={{background:act?"#8ecece":"#d5edeb",color:act?"#2BBFBA":"#2a5a57",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"none",border:"none",color:"#8ecece",cursor:"pointer",fontSize:13,padding:"0 4px"}}>✏️</button>}</div>);})}
         <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #0e3a38",borderRadius:7,color:"#2a5a57",cursor:"pointer",fontSize:11,padding:"5px 10px",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>＋ 部署追加</button>
       </div>
 
       {/* INNER TABS */}
-      <div style={{background:"#d5edeb",borderBottom:"1px solid #0e3a38",display:"flex",padding:"0 12px",gap:2,alignItems:"center"}}>
-        {[["shift","📅 シフト表"],["summary","📊 集計"],["staff","👥 スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#f5b8a0":"#8ecece",borderBottom:innerTab===k?"2px solid #3b82f6":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab===k?700:400}}>{l}</button>)}
+      <div style={{background:"#eaf8f6",borderBottom:"2px solid #2BBFBA",display:"flex",padding:"0 12px",gap:2,alignItems:"center"}}>
+        {[["shift","📅 シフト表"],["summary","📊 集計"],["staff","👥 スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#2BBFBA":"#8ecece",borderBottom:innerTab===k?"2px solid #3b82f6":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab===k?700:400}}>{l}</button>)}
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
           {innerTab==="shift"&&(
             <div style={{display:"flex",alignItems:"center",gap:4}}>
-              <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=40} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#dff5f3",color:tableZoom<=40?"#8ecece":"#2BBFBA",cursor:tableZoom<=40?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+              <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=40} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#ffffff",color:tableZoom<=40?"#8ecece":"#2BBFBA",cursor:tableZoom<=40?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
               <input type="range" min={40} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{width:72,accentColor:"#2BBFBA",cursor:"pointer"}}/>
-              <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#dff5f3",color:tableZoom>=100?"#8ecece":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
+              <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#ffffff",color:tableZoom>=100?"#8ecece":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
               <span style={{fontSize:11,fontWeight:700,color:"#2BBFBA",minWidth:34,textAlign:"right"}}>{tableZoom}%</span>
-              <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#dff5f3",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
+              <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#ffffff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
             </div>
           )}
           <div style={{fontSize:10,color:"#8ecece",padding:"0 4px"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>
