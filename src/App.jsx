@@ -649,8 +649,8 @@ function ContextMenu({ x, y, onSelect, onClose }) {
   const [pos, setPos] = useState({x,y});
   useEffect(() => { setPos({ x: Math.min(x, window.innerWidth-200), y: Math.min(y, window.innerHeight-320) }); }, [x,y]);
   return (
-    <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#f0f4ff",border:"1px solid #90cbc8",borderRadius:10,padding:6,boxShadow:"0 12px 40px #000a",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170}}>
-      {SHIFT_KEYS_MANUAL.map(k => { const s=SHIFTS[k]; return <button key={k||"empty"} onClick={()=>onSelect(k)} style={{background:s.bg||"#f0f4ff",color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:k?s.bg:"transparent",borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#6ab5b2"}}>{k||"クリア"}</span></button>; })}
+    <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#ffffff",border:"1px solid #90cbc8",borderRadius:10,padding:6,boxShadow:"0 12px 40px #000a",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170}}>
+      {SHIFT_KEYS_MANUAL.map(k => { const s=SHIFTS[k]; return <button key={k||"empty"} onClick={()=>onSelect(k)} style={{background:s.bg||"#ffffff",color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:k?s.bg:"transparent",borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#6ab5b2"}}>{k||"クリア"}</span></button>; })}
     </div>
   );
 }
@@ -787,7 +787,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>{isNew?"➕ 部署を追加":"✏️ 部署を編集"}</div><button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button></div>
         <label style={LS}>アイコン</label>
-        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{DEPT_ICONS.map(ic=><button key={ic} onClick={()=>setIcon(ic)} style={{width:36,height:36,borderRadius:8,fontSize:20,border:"none",cursor:"pointer",background:icon===ic?"#8ecece":"#d5edeb",outline:icon===ic?"2px solid #3b82f6":"none"}}>{ic}</button>)}</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{DEPT_ICONS.map(ic=><button key={ic} onClick={()=>setIcon(ic)} style={{width:36,height:36,borderRadius:8,fontSize:20,border:"none",cursor:"pointer",background:icon===ic?"#8ecece":"#d5edeb",outline:icon===ic?"2px solid #2BBFBA":"none"}}>{ic}</button>)}</div>
         <label style={LS}>部署名</label>
         <input style={{...INPUT_STYLE,marginBottom:14}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="例：介護部 3階"/>
         <label style={LS}>シフト種別</label>
@@ -897,7 +897,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:16}}>{depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#8ecece":"transparent",color:sel?"#2BBFBA":"#2a5a57",border:`1px solid ${sel?"#2BBFBA":"#b8deda"}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:sel?700:400}}>{d.icon} {d.label}</button>;})}</div>
         {noSelection&&<div style={{fontSize:11,color:"#ef4444",marginBottom:10}}>⚠ 部署を1つ以上選択してください</div>}
         <button onClick={()=>doDownload("csv")} disabled={noSelection} style={{width:"100%",background:noSelection?"#d5edec":"#e8f5ee",border:"1px solid #2d8a52",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>📊</span><div><div style={{fontSize:13,fontWeight:800,color:"#34d399"}}>CSV（Excel・スプレッドシート）</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>Excel・Googleスプレッドシートで開けます</div></div></button>
-        <button onClick={()=>doDownload("html")} disabled={noSelection} style={{width:"100%",background:noSelection?"#d5edec":"#e8f0ff",border:"1px solid #8ecece",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1}}><span style={{fontSize:24}}>🖨️</span><div><div style={{fontSize:13,fontWeight:800,color:"#2BBFBA"}}>印刷用HTML</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>ブラウザで開いてそのまま印刷できます</div></div></button>
+        <button onClick={()=>doDownload("html")} disabled={noSelection} style={{width:"100%",background:noSelection?"#d5edec":"#e8f8f7",border:"1px solid #8ecece",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1}}><span style={{fontSize:24}}>🖨️</span><div><div style={{fontSize:13,fontWeight:800,color:"#2BBFBA"}}>印刷用HTML</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>ブラウザで開いてそのまま印刷できます</div></div></button>
       </div>
     </div>
   );
@@ -908,7 +908,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
   const days = new Date(year, month + 1, 0).getDate();
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#d5edeb",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,boxShadow:"0 30px 80px #000"}}>
+      <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:22}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>人員不足の警告</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
         <div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:18,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:22}}>{entries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#f3fffe",border:`1px solid ${s.border||"#2a5a57"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#6ab5b2"}}>{shiftKey}</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#b8deda",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#3a8a87",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div>
@@ -997,7 +997,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:consecViol?"#ffe8e8":isKibo?"#fff5f5":undefined,cursor:"pointer",outline:consecViol?"1px solid #e0707060":undefined}} onClick={(e)=>onLeftClick(s.id,d,e)} onContextMenu={(e)=>{e.preventDefault();onRightClick(s.id,d,e);}}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:<ShiftBadge type={type}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 <td style={TD}><span style={{color:workCnt<(s.targetWork-2)?"#f59e0b":workCnt>(s.targetWork+2)?"#ef4444":"#2BBFBA",fontWeight:800,fontSize:12}}>{workCnt}</span></td>
-                <td style={TD}><span style={{color:nightOver?"#ef4444":"#7ecec4",fontWeight:700,fontSize:12}}>{nightCnt||"－"}</span></td>
+                <td style={TD}><span style={{color:nightOver?"#ef4444":"#1a9e9a",fontWeight:700,fontSize:12}}>{nightCnt||"－"}</span></td>
                 <td style={TD}><span style={{color:"#5cb87a",fontWeight:700,fontSize:12}}>{restCnt}</span></td>
               </tr>
             );
@@ -1057,7 +1057,7 @@ function Legend() {
   );
 }
 
-const MNAV = { background:"#ffffff", color:"#3a8a87", border:"1px solid #90cbc8", borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:11, display:"flex", alignItems:"center", justifyContent:"center" };
+const MNAV = { background:"#ffffff", color:"#2BBFBA", border:"1px solid #90cbc8", borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:11, display:"flex", alignItems:"center", justifyContent:"center" };
 
 // ─────────────────────────────────────────────
 //  APP（メイン）
@@ -1444,7 +1444,7 @@ function MainApp({ session, onLogout }) {
 
       {/* DEPT TABS */}
       <div style={{background:"#e0f4f2",borderBottom:"1px solid #90cbc8",display:"flex",overflowX:"auto",padding:"0 6px",alignItems:"center"}}>
-        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"9px 10px",background:"transparent",border:"none",color:act?"#2BBFBA":"#2a5a57",borderBottom:act?"2px solid #3b82f6":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?800:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><span>{d.icon}</span><span>{d.label}</span><span style={{background:act?"#8ecece":"#d5edeb",color:act?"#2BBFBA":"#2a5a57",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"none",border:"none",color:"#8ecece",cursor:"pointer",fontSize:13,padding:"0 4px"}}>✏️</button>}</div>);})}
+        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"9px 10px",background:"transparent",border:"none",color:act?"#2BBFBA":"#2a5a57",borderBottom:act?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?800:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><span>{d.icon}</span><span>{d.label}</span><span style={{background:act?"#8ecece":"#d5edeb",color:act?"#2BBFBA":"#2a5a57",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"none",border:"none",color:"#8ecece",cursor:"pointer",fontSize:13,padding:"0 4px"}}>✏️</button>}</div>);})}
         <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #0e3a38",borderRadius:7,color:"#2a5a57",cursor:"pointer",fontSize:11,padding:"5px 10px",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>＋ 部署追加</button>
       </div>
 
