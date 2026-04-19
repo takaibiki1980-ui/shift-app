@@ -1,4 +1,7 @@
 export default async function handler(req, res) {
+  const reqId = Math.random().toString(36).slice(2, 8);
+  const log = (type, data) => console.log(JSON.stringify({ ts: new Date().toISOString(), reqId, type, ...data }));
+
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -13,10 +16,24 @@ export default async function handler(req, res) {
   try {
     const { shifts, staffList, dept, instruction, year, month } = req.body;
 
+    // ── 入力バリデーション ──
+    const missing = [];
+    if (!instruction || !instruction.trim()) missing.push("instruction");
+    if (!dept || !dept.id) missing.push("dept");
+    if (!year || !month) missing.push("year/month");
+    if (!Array.isArray(staffList)) missing.push("staffList(配列でない)");
+    if (missing.length > 0) {
+      log("error", { stage: "validation", missing });
+      return res.status(400).json({ error: "必須パラメータ不足: " + missing.join(", ") });
+    }
+
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
+      log("error", { stage: "env", message: "ANTHROPIC_API_KEY未設定" });
       return res.status(500).json({ error: "ANTHROPIC_API_KEY が設定されていません" });
     }
+
+    log("start", { dept: dept.id, year, month, staffCount: staffList.length, instructionLen: instruction.length });
 
     const days = new Date(year, month, 0).getDate();
     const staffInDept = (staffList || []).filter((s) => s.dept === dept.id);
@@ -77,13 +94,17 @@ export default async function handler(req, res) {
 
     if (!apiRes.ok) {
       const errText = await apiRes.text();
+      log("error", { stage: "anthropic_api", status: apiRes.status, body: errText.slice(0, 200) });
       return res.status(500).json({ error: "Anthropic API " + apiRes.status + ": " + errText });
     }
 
     const aiData = await apiRes.json();
     const text = (aiData.content && aiData.content[0] && aiData.content[0].text) || "";
+    log("ai_response", { length: text.length, inputTokens: aiData.usage?.input_tokens, outputTokens: aiData.usage?.output_tokens });
+
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) {
+      log("error", { stage: "json_extract", raw: text.slice(0, 200) });
       return res.status(500).json({ error: "AIの応答からJSONを抽出できませんでした", raw: text });
     }
 
@@ -91,12 +112,21 @@ export default async function handler(req, res) {
     try {
       parsed = JSON.parse(match[0]);
     } catch (e) {
+      log("error", { stage: "json_parse", message: e.message, raw: match[0].slice(0, 200) });
       return res.status(500).json({ error: "AI応答のJSONパース失敗: " + e.message, raw: match[0] });
     }
 
     const validated = validateAndRepair(parsed, shifts, staffInDept, days, dept);
+    log("success", {
+      aiChanges: parsed.changes?.length ?? 0,
+      totalChanges: validated.changes.length,
+      repairs: validated.changes.length - (parsed.changes?.length ?? 0),
+      rulesDetected: parsed.rules?.length ?? 0,
+      staffingWarnings: validated.staffingWarnings?.length ?? 0,
+    });
     return res.status(200).json(validated);
   } catch (err) {
+    log("error", { stage: "handler", message: err.message });
     return res.status(500).json({ error: err.message || "不明なエラー" });
   }
 }

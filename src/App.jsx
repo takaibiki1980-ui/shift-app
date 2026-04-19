@@ -1183,6 +1183,7 @@ function MainApp({ session, onLogout }) {
   }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── シフト変更: Supabase へ自動保存（1秒デバウンス）──
+  const saveFailCountRef = useRef(0);
   useEffect(() => {
     if (isLoadingMonth.current || isInitializing.current) return;
     setSaveStatus("unsaved");
@@ -1195,12 +1196,30 @@ function MainApp({ session, onLogout }) {
           { user_id:session.user.id, data_key:key, data_value:allShifts, updated_at:new Date().toISOString() },
           { onConflict:'user_id,data_key' }
         );
-        if (error) throw error;
+        if (error) {
+          // 認証エラー検知
+          if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("token")) {
+            console.error("[save] 認証トークン切れ:", error.message);
+            alert("セッションが切れました。再ログインしてください。");
+            await supabase.auth.signOut();
+            return;
+          }
+          throw error;
+        }
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
+        saveFailCountRef.current = 0;
         setSaveStatus("saved");
-      } catch {
+        console.log("[save] Supabase保存OK:", key);
+      } catch(e) {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
+        saveFailCountRef.current += 1;
+        console.error("[save] Supabase保存失敗(" + saveFailCountRef.current + "回目):", e?.message || e);
         setSaveStatus("unsaved");
+        // 3回連続失敗でユーザーに通知
+        if (saveFailCountRef.current >= 3) {
+          alert("クラウド保存が" + saveFailCountRef.current + "回失敗しています。\nネット接続を確認してください。\n（ローカルには保存済み）");
+          saveFailCountRef.current = 0;
+        }
       }
     }, 1000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
