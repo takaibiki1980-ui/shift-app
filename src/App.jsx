@@ -1252,13 +1252,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
 
   const handlePrint = () => {
     const html = buildYoteiHTML(dept,staffList,shifts,year,month,yoteiDeptData,floorSettings);
-    // 子ウィンドウ自身が印刷ダイアログを開く（親のイベントループをブロックしない）
-    const htmlWithPrint = html.replace('</body>', '<script>window.onload=function(){setTimeout(function(){window.print();},300);}<\/script></body>');
-    const blob = new Blob([htmlWithPrint], {type:'text/html;charset=utf-8'});
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, '_blank');
-    if(!w){alert("ポップアップをブロックしています。許可してから再試行してください。");URL.revokeObjectURL(url);return;}
-    setTimeout(()=>URL.revokeObjectURL(url), 120000);
+    triggerDownload(html, `予定表_${dept.label}_${year}年${month+1}月.html`, 'text/html;charset=utf-8');
   };
 
   const handleAutoAssign = () => {
@@ -1283,7 +1277,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
         {floorSettings.floors.map((f,i)=><span key={i} style={{background:"#d5edeb",borderRadius:6,padding:"3px 9px",fontSize:11,color:"#1a3635",fontWeight:700}}>{f.name}</span>)}
         <button onClick={()=>setSettingsOpen(true)} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚙️ 設定</button>
         <button onClick={handleAutoAssign} style={{background:"linear-gradient(135deg,#f5b942,#e07b30)",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚡ 自動配置</button>
-        <button onClick={handlePrint} style={{marginLeft:"auto",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🖨️ 印刷プレビュー</button>
+        <button onClick={handlePrint} style={{marginLeft:"auto",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>📥 ダウンロード</button>
       </div>
       {/* 月カレンダー */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:7}}>
