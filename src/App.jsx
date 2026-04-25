@@ -1062,8 +1062,8 @@ const MNAV = { background:"#ffffff", color:"#2BBFBA", border:"1px solid #90cbc8"
 // ─────────────────────────────────────────────
 //  YOTEI (職員予定表)
 // ─────────────────────────────────────────────
-const YOTEI_SHIFT_ORDER = ["明け","早番","日勤","遅番","夜勤"];
-const YOTEI_SHIFT_COLORS = { 明け:"#9e8d80", 早番:"#c45c35", 日勤:"#3b6eea", 遅番:"#8b5cc4", 夜勤:"#2a7a9a" };
+const YOTEI_SHIFT_ORDER = ["明け","早番","日勤","遅番","夜勤","日/休","休/日","早/休","休/遅"];
+const YOTEI_SHIFT_COLORS = { 明け:"#9e8d80", 早番:"#c45c35", 日勤:"#3b6eea", 遅番:"#8b5cc4", 夜勤:"#2a7a9a", "日/休":"#3b6eea", "休/日":"#3a9659", "早/休":"#c45c35", "休/遅":"#8b5cc4" };
 
 function buildYoteiHTML(dept, staffList, shifts, year, month, yoteiDeptData, floorSettings) {
   const days = getDays(year, month);
