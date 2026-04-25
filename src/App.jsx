@@ -1302,15 +1302,15 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
                 const sh=SHIFTS[st];
                 return(
                   <div key={st} style={{display:"flex",alignItems:"flex-start",gap:3,marginBottom:2}}>
-                    <span style={{fontSize:9,fontWeight:800,color:sh.color,minWidth:20,textAlign:"center",background:sh.bg,borderRadius:2,flexShrink:0,lineHeight:"16px",padding:"0 2px"}}>{sh.short}</span>
-                    <div style={{fontSize:9,color:"#2a5a57",lineHeight:1.5,display:"flex",flexWrap:"wrap",gap:"2px 4px"}}>
-                      {group.map(s=>{const a=assign[s.id],short=s.name.replace(/\s/g,"").slice(-2);return<span key={s.id}>{short}{a&&<span style={{color:"#1a9e9a",fontWeight:700}}>({a.slice(0,3)})</span>}</span>;})}
+                    <span style={{fontSize:10,fontWeight:800,color:sh.color,minWidth:22,textAlign:"center",background:sh.bg,borderRadius:2,flexShrink:0,lineHeight:"18px",padding:"0 2px"}}>{sh.short}</span>
+                    <div style={{fontSize:11,color:"#2a5a57",lineHeight:1.6,display:"flex",flexWrap:"wrap",gap:"2px 4px"}}>
+                      {group.map(s=>{const a=assign[s.id],nm=s.name.replace(/\s/g,"");return<span key={s.id}>{nm}{a&&<span style={{color:"#1a9e9a",fontWeight:700}}>({a.slice(0,4)})</span>}</span>;})}
                     </div>
                   </div>
                 );
               })}
-              {workCount===0&&<div style={{fontSize:9,color:"#b8deda",textAlign:"center",paddingTop:4}}>勤務なし</div>}
-              {memo&&<div style={{fontSize:8,color:"#92400e",background:"#fffbea",borderRadius:3,padding:"2px 4px",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{memo.slice(0,18)}{memo.length>18?"…":""}</div>}
+              {workCount===0&&<div style={{fontSize:10,color:"#b8deda",textAlign:"center",paddingTop:4}}>勤務なし</div>}
+              {memo&&<div style={{fontSize:10,color:"#92400e",background:"#fffbea",borderRadius:3,padding:"2px 4px",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{memo.slice(0,20)}{memo.length>20?"…":""}</div>}
             </div>
           );
         })}
