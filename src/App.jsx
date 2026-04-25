@@ -1111,27 +1111,42 @@ function autoAssignDay(d, dept, staffList, shifts, rules, floorSettings) {
 
 function FloorSettingsModal({ floorSettings, onSave, onClose }) {
   const [floors, setFloors] = useState(() => floorSettings.floors.map(f=>f.name));
+  const [duties, setDuties] = useState(() => (floorSettings.duties||[{name:"入浴"},{name:"フリー"}]).map(d=>d.name));
   const [rules, setRules] = useState(() => {
     const existing = floorSettings.rules || [];
     return YOTEI_SHIFT_ORDER.map(st => ({ shiftType:st, assignment:(existing.find(x=>x.shiftType===st)?.assignment)||"" }));
   });
   const updateFloor = (i, v) => setFloors(p=>{const n=[...p];n[i]=v;return n;});
   const deleteFloor = (i) => setFloors(p=>p.filter((_,j)=>j!==i));
+  const updateDuty = (i, v) => setDuties(p=>{const n=[...p];n[i]=v;return n;});
+  const deleteDuty = (i) => setDuties(p=>p.filter((_,j)=>j!==i));
   const setRule = (st, v) => setRules(p=>p.map(r=>r.shiftType===st?{...r,assignment:v}:r));
   const validFloors = floors.filter(n=>n.trim());
+  const validDuties = duties.filter(n=>n.trim());
   const assignOptions = [
     {value:"", label:"なし（未設定）"},
     {value:"auto", label:"⚡ 自動分配（フロアを均等割り）"},
     ...validFloors.map(n=>({value:n, label:`🏠 ${n}（固定）`})),
-    {value:"入浴", label:"🛁 入浴（固定）"},
-    {value:"フリー", label:"🔄 フリー（固定）"},
+    ...validDuties.map(n=>({value:n, label:`🎯 ${n}（固定）`})),
   ];
   const handleSave = () => {
     if(validFloors.length===0){alert("フロア名を1つ以上設定してください");return;}
-    onSave({floors:validFloors.map(n=>({name:n})), rules});
+    onSave({floors:validFloors.map(n=>({name:n})), duties:validDuties.map(n=>({name:n})), rules});
     onClose();
   };
   const LS = {fontSize:11,color:"#3a8a87",fontWeight:700,marginBottom:6,display:"block"};
+  const EditList = ({items, onUpdate, onDelete, onAdd, addLabel, placeholder}) => (
+    <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
+      {items.map((name,i)=>(
+        <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}>
+          <input value={name} onChange={e=>onUpdate(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={placeholder(i)}/>
+          <button onClick={()=>onDelete(i)} disabled={items.length<=1}
+            style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,color:"#c44b4b",cursor:items.length<=1?"not-allowed":"pointer",padding:"5px 9px",fontSize:13,opacity:items.length<=1?0.4:1}}>✕</button>
+        </div>
+      ))}
+      <button onClick={onAdd} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800}}>{addLabel}</button>
+    </div>
+  );
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
@@ -1140,16 +1155,10 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
         <label style={LS}>🏠 フロア名</label>
-        <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
-          {floors.map((name,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}>
-              <input value={name} onChange={e=>updateFloor(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`フロア${i+1}`}/>
-              <button onClick={()=>deleteFloor(i)} disabled={floors.length<=1}
-                style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,color:"#c44b4b",cursor:floors.length<=1?"not-allowed":"pointer",padding:"5px 9px",fontSize:13,opacity:floors.length<=1?0.4:1}}>✕</button>
-            </div>
-          ))}
-          <button onClick={()=>setFloors(p=>[...p,""])} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800}}>＋ フロアを追加</button>
-        </div>
+        <EditList items={floors} onUpdate={updateFloor} onDelete={deleteFloor} onAdd={()=>setFloors(p=>[...p,""])} addLabel="＋ フロアを追加" placeholder={i=>`フロア${i+1}`}/>
+        <label style={LS}>🎯 役割・業務</label>
+        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:8}}>入浴・フリーなどの業務担当。フロアとは別に自由に追加できます。</div>
+        <EditList items={duties} onUpdate={updateDuty} onDelete={deleteDuty} onAdd={()=>setDuties(p=>[...p,""])} addLabel="＋ 役割を追加" placeholder={i=>`役割${i+1}`}/>
         <label style={LS}>⚡ 自動配置ルール</label>
         <div style={{fontSize:10,color:"#6ab5b2",marginBottom:10}}>「自動配置」ボタンで全日程に一括適用されるルールです。「自動分配」はフロアを均等に振り分けます。</div>
         <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:20}}>
@@ -1179,7 +1188,7 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
   const wd = getWD(year, month, day);
   const ds = staffList.filter(s => s.dept === dept.id);
   const workingGroups = YOTEI_SHIFT_ORDER.map(st=>({ st, staff:ds.filter(s=>(shifts[s.id]?.[day]||"")===st) })).filter(g=>g.staff.length>0);
-  const floorOptions = ["", ...floorSettings.floors.map(f=>f.name), "入浴", "フリー"];
+  const floorOptions = ["", ...floorSettings.floors.map(f=>f.name), ...(floorSettings.duties||[]).map(d=>d.name)];
   const [local, setLocal] = useState(() => ({...assignments}));
   const [memo, setMemo] = useState(() => assignments["_memo"]||"");
   const set = (staffId, val) => setLocal(prev=>({...prev, [staffId]:val}));
@@ -1564,7 +1573,7 @@ function MainApp({ session, onLogout }) {
   const [ctxMenu, setCtxMenu] = useState(null);
   const [staffModal, setStaffModal] = useState(null);
 
-  const [floorSettings, setFloorSettings] = useState(() => { try{const s=localStorage.getItem("shiftNavi_floorSettings");if(s)return JSON.parse(s);}catch{} return {floors:[{name:"りんどう"},{name:"ぼたん"}]}; });
+  const [floorSettings, setFloorSettings] = useState(() => { try{const s=localStorage.getItem("shiftNavi_floorSettings");if(s){const p=JSON.parse(s);if(!p.duties)p.duties=[{name:"入浴"},{name:"フリー"}];return p;}}catch{} return {floors:[{name:"りんどう"},{name:"ぼたん"}],duties:[{name:"入浴"},{name:"フリー"}]}; });
   useEffect(() => {
     try{localStorage.setItem("shiftNavi_floorSettings",JSON.stringify(floorSettings));}catch{}
     if(!isInitializing.current){supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'floorSettings',data_value:floorSettings,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});}
