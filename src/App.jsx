@@ -80,12 +80,14 @@ function LoginPage({ onLogin }) {
   const [mode, setMode]       = useState("login");
   const [email, setEmail]     = useState("");
   const [password, setPassword] = useState("");
+  const [facilityName, setFacilityName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
   const [msg, setMsg]         = useState("");
 
   const handleSubmit = async () => {
     if (!email || !password) { setError("メールアドレスとパスワードを入力してください"); return; }
+    if (mode === "signup" && !facilityName.trim()) { setError("施設名を入力してください"); return; }
     setLoading(true); setError(""); setMsg("");
     try {
       if (mode === "login") {
@@ -93,7 +95,7 @@ function LoginPage({ onLogin }) {
         if (error) throw error;
         onLogin();
       } else {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { error } = await supabase.auth.signUp({ email, password, options: { data: { facility_name: facilityName.trim() } } });
         if (error) throw error;
         setMsg("確認メールを送信しました。メールのリンクをクリックしてアカウントを有効化してください。");
       }
@@ -139,6 +141,18 @@ function LoginPage({ onLogin }) {
           ))}
         </div>
 
+        {mode==="signup"&&(
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11, color:"#3a8a87", marginBottom:5}}>施設名 <span style={{color:"#ef4444"}}>*</span></div>
+            <input
+              type="text" value={facilityName}
+              onChange={e=>setFacilityName(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="〇〇介護施設"
+              style={{width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:8, color:"#1a3635", padding:"10px 12px", fontSize:13, boxSizing:"border-box", outline:"none"}}
+            />
+          </div>
+        )}
         <div style={{marginBottom:14}}>
           <div style={{fontSize:11, color:"#3a8a87", marginBottom:5}}>メールアドレス</div>
           <input
@@ -1330,17 +1344,25 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
 export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [profile, setProfile] = useState(null);
+
+  const fetchProfile = async (sess) => {
+    if (!sess) { setProfile(null); return; }
+    const { data } = await supabase.from('profiles').select('*').eq('id', sess.user.id).maybeSingle();
+    setProfile(data || { facility_name: sess.user.email, plan: 'free', is_admin: false });
+  };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setAuthLoading(false);
+      fetchProfile(session).finally(() => setAuthLoading(false));
     }).catch(() => setAuthLoading(false));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      fetchProfile(session);
     });
     return () => subscription.unsubscribe();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLogout = async () => { await supabase.auth.signOut(); };
 
@@ -1357,13 +1379,70 @@ export default function App() {
 
   if (!session) { return <LoginPage onLogin={() => {}} />; }
 
-  return <MainApp session={session} onLogout={handleLogout} />;
+  return <MainApp session={session} profile={profile} onLogout={handleLogout} onProfileUpdate={setProfile} />;
+}
+
+// ─────────────────────────────────────────────
+//  PLAN CONSTANTS
+// ─────────────────────────────────────────────
+const PLAN_LABELS = { free:"無料プラン", standard:"スタンダード", full:"フルプラン" };
+const PLAN_COLORS = { free:"#6b7280", standard:"#2BBFBA", full:"#f59e0b" };
+
+// ─────────────────────────────────────────────
+//  ADMIN PANEL
+// ─────────────────────────────────────────────
+function AdminPanel({ onClose }) {
+  const [facilities, setFacilities] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.from('profiles').select('*').order('created_at', { ascending: false })
+      .then(({ data }) => { setFacilities(data || []); setLoading(false); });
+  }, []);
+
+  const changePlan = async (id, plan) => {
+    await supabase.from('profiles').update({ plan, updated_at: new Date().toISOString() }).eq('id', id);
+    setFacilities(prev => prev.map(f => f.id === id ? { ...f, plan } : f));
+  };
+
+  const plans = ['free', 'standard', 'full'];
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#f5fffe",border:"1px solid #90cbc8",borderRadius:16,padding:24,width:"100%",maxWidth:680,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:16,fontWeight:900,color:"#1a3635"}}>🏢 施設管理（管理者）</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:22}}>✕</button>
+        </div>
+        {loading ? <div style={{textAlign:"center",color:"#6ab5b2",padding:40}}>読み込み中…</div> : (
+          <>
+            <div style={{fontSize:11,color:"#6ab5b2",marginBottom:12}}>登録施設数：{facilities.length}件</div>
+            {facilities.map(f => (
+              <div key={f.id} style={{background:"#f0fffe",border:"1px solid #b8deda",borderRadius:10,padding:"12px 16px",marginBottom:8,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                <div style={{flex:1,minWidth:160}}>
+                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635"}}>{f.facility_name||"（施設名未設定）"}</div>
+                  <div style={{fontSize:10,color:"#6ab5b2",marginTop:2}}>{f.created_at?.slice(0,10)} 登録</div>
+                </div>
+                <span style={{fontSize:11,fontWeight:700,color:PLAN_COLORS[f.plan]||"#6b7280",background:"#fff",border:`1px solid ${PLAN_COLORS[f.plan]||"#d1d5db"}`,borderRadius:12,padding:"2px 10px"}}>{PLAN_LABELS[f.plan]||f.plan}</span>
+                <div style={{display:"flex",gap:4}}>
+                  {plans.map(p=>(
+                    <button key={p} onClick={()=>changePlan(f.id,p)} style={{background:f.plan===p?PLAN_COLORS[p]:"#fff",color:f.plan===p?"#fff":PLAN_COLORS[p],border:`1px solid ${PLAN_COLORS[p]}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:700}}>
+                      {PLAN_LABELS[p]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────
 //  MAIN APP
 // ─────────────────────────────────────────────
-function MainApp({ session, onLogout }) {
+function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -1569,6 +1648,7 @@ function MainApp({ session, onLogout }) {
   const [excelImportModal, setExcelImportModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
+  const [adminModal, setAdminModal] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
   const [aiMode, setAiMode] = useState(false);
   const [aiInstruction, setAiInstruction] = useState("");
@@ -1704,13 +1784,16 @@ function MainApp({ session, onLogout }) {
           <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📤 書き出し</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📅 休み設定</button>
           <button onClick={()=>setExcelImportModal(true)} style={{background:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#e8f5ee":"#ffffff",color:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#5cb87a":"#2a6a67",border:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?`📊 傾向ON`:"📊 傾向学習"}</button>
-          <button onClick={()=>setAiMode(v=>!v)} style={{background:aiMode?"#ede9fe":"#ffffff",color:aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
+          {profile?.plan==='full'
+            ? <button onClick={()=>setAiMode(v=>!v)} style={{background:aiMode?"#ede9fe":"#ffffff",color:aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
+            : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
+          }
           <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 クリア</button>
-          <button onClick={onLogout} style={{background:"#ffffff",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
-            <span>👤</span>
-            <span style={{fontSize:9,color:"#6ab5b2",maxWidth:80,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{session.user?.email}</span>
-            <span>ログアウト</span>
-          </button>
+          {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🏢 管理</button>}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
+            <span style={{fontSize:10,fontWeight:800,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
+            <span style={{fontSize:10,color:"#3a8a87",fontWeight:700}}>👤 ログアウト</span>
+          </div>
         </div>
       </div>
 
@@ -1748,7 +1831,11 @@ function MainApp({ session, onLogout }) {
 
       {/* INNER TABS */}
       <div style={{background:"#eaf8f6",borderBottom:"2px solid #2BBFBA",display:"flex",padding:"0 12px",gap:2,alignItems:"center"}}>
-        {[["shift","📅 シフト表"],["summary","📊 集計"],["staff","👥 スタッフ"],["yotei","📋 予定表"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab===k?800:600}}>{l}</button>)}
+        {[["shift","📅 シフト表"],["summary","📊 集計"],["staff","👥 スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab===k?800:600}}>{l}</button>)}
+        {profile?.plan==='free'
+          ? <button onClick={()=>alert("📋 予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"7px 13px",background:"transparent",border:"none",color:"#9ca3af",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:600}}>🔒 予定表</button>
+          : <button onClick={()=>setInnerTab("yotei")} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab==="yotei"?"#1a9e9a":"#2a6a67",borderBottom:innerTab==="yotei"?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab==="yotei"?800:600}}>📋 予定表</button>
+        }
         <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
           {innerTab==="shift"&&(
             <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -1781,6 +1868,7 @@ function MainApp({ session, onLogout }) {
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#8ecece",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#2BBFBA",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
+      {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
     </div>
   );
 }
