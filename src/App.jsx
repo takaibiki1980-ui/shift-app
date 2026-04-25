@@ -1079,13 +1079,100 @@ function buildYoteiHTML(dept, staffList, shifts, year, month, yoteiDeptData, flo
   const dayCards = Array.from({length:days},(_,i)=>i+1).map(d => {
     const date=new Date(year,month,d), wd=WD_NAMES[date.getDay()], isWE=date.getDay()===0||date.getDay()===6;
     const groups=getDayGroups(d);
+    const memo=(yoteiDeptData||{})[String(d)]?.["_memo"]||"";
     const hBg=isWE?'#ffe0e6':'#e0f4f2', hColor=isWE?'#c0392b':'#1a3635';
     let ri=0, rows='';
     groups.forEach(g=>{g.staff.forEach((s,si)=>{const bg=ri++%2===0?'#ffffff':'#f5fffe';rows+=`<tr style="background:${bg};"><td style="color:${g.color};font-weight:bold;font-size:10px;padding:2px 5px;white-space:nowrap;vertical-align:middle;">${si===0?g.st:''}</td><td style="padding:2px 5px;font-size:10px;">${s.name}</td><td style="padding:2px 5px;font-size:10px;color:#1a9e9a;font-weight:bold;">${s.assignment}</td></tr>`;});});
     if(!rows)rows=`<tr><td colspan="3" style="color:#b8deda;text-align:center;padding:6px;font-size:9px;">勤務なし</td></tr>`;
+    if(memo)rows+=`<tr><td colspan="3" style="background:#fffbea;color:#92400e;font-size:9px;padding:3px 5px;border-top:1px dashed #fde68a;">📝 ${memo}</td></tr>`;
     return `<div style="border:1px solid #90cbc8;border-radius:6px;overflow:hidden;break-inside:avoid;"><div style="background:${hBg};color:${hColor};padding:4px 8px;font-weight:bold;font-size:11px;">${month+1}月${d}日（${wd}）</div><table style="width:100%;border-collapse:collapse;">${rows}</table></div>`;
   });
   return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>職員予定表 ${year}年${month+1}月 ${dept.label}</title><style>@media print{@page{size:A4 portrait;margin:10mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Noto Sans JP','ヒラギノ角ゴ ProN',Meiryo,sans-serif;margin:0;padding:10px;}h2{font-size:14px;border-bottom:2px solid #2BBFBA;padding-bottom:6px;margin:0 0 10px;color:#1a3635;}.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}</style></head><body><h2>📋 職員予定表　${year}年${month+1}月　${dept.label}</h2><div class="grid">${dayCards.join('')}</div></body></html>`;
+}
+
+function autoAssignDay(d, dept, staffList, shifts, rules, floorSettings) {
+  const ds = staffList.filter(s => s.dept === dept.id);
+  const assign = {};
+  YOTEI_SHIFT_ORDER.forEach(shiftType => {
+    const rule = (rules||[]).find(r => r.shiftType === shiftType);
+    if (!rule || !rule.assignment) return;
+    const staff = ds.filter(s => (shifts[s.id]?.[d]||"") === shiftType);
+    if (staff.length === 0) return;
+    if (rule.assignment === "auto") {
+      const floors = floorSettings.floors;
+      if (floors.length === 0) return;
+      staff.forEach((s, i) => { assign[s.id] = floors[i % floors.length].name; });
+    } else {
+      staff.forEach(s => { assign[s.id] = rule.assignment; });
+    }
+  });
+  return assign;
+}
+
+function FloorSettingsModal({ floorSettings, onSave, onClose }) {
+  const [floors, setFloors] = useState(() => floorSettings.floors.map(f=>f.name));
+  const [rules, setRules] = useState(() => {
+    const existing = floorSettings.rules || [];
+    return YOTEI_SHIFT_ORDER.map(st => ({ shiftType:st, assignment:(existing.find(x=>x.shiftType===st)?.assignment)||"" }));
+  });
+  const updateFloor = (i, v) => setFloors(p=>{const n=[...p];n[i]=v;return n;});
+  const deleteFloor = (i) => setFloors(p=>p.filter((_,j)=>j!==i));
+  const setRule = (st, v) => setRules(p=>p.map(r=>r.shiftType===st?{...r,assignment:v}:r));
+  const validFloors = floors.filter(n=>n.trim());
+  const assignOptions = [
+    {value:"", label:"なし（未設定）"},
+    {value:"auto", label:"⚡ 自動分配（フロアを均等割り）"},
+    ...validFloors.map(n=>({value:n, label:`🏠 ${n}（固定）`})),
+    {value:"入浴", label:"🛁 入浴（固定）"},
+    {value:"フリー", label:"🔄 フリー（固定）"},
+  ];
+  const handleSave = () => {
+    if(validFloors.length===0){alert("フロア名を1つ以上設定してください");return;}
+    onSave({floors:validFloors.map(n=>({name:n})), rules});
+    onClose();
+  };
+  const LS = {fontSize:11,color:"#3a8a87",fontWeight:700,marginBottom:6,display:"block"};
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>⚙️ 予定表 設定</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
+        </div>
+        <label style={LS}>🏠 フロア名</label>
+        <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
+          {floors.map((name,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}>
+              <input value={name} onChange={e=>updateFloor(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`フロア${i+1}`}/>
+              <button onClick={()=>deleteFloor(i)} disabled={floors.length<=1}
+                style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,color:"#c44b4b",cursor:floors.length<=1?"not-allowed":"pointer",padding:"5px 9px",fontSize:13,opacity:floors.length<=1?0.4:1}}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>setFloors(p=>[...p,""])} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800}}>＋ フロアを追加</button>
+        </div>
+        <label style={LS}>⚡ 自動配置ルール</label>
+        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:10}}>「自動配置」ボタンで全日程に一括適用されるルールです。「自動分配」はフロアを均等に振り分けます。</div>
+        <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:20}}>
+          {rules.map(({shiftType,assignment})=>{
+            const sh=SHIFTS[shiftType];
+            return(
+              <div key={shiftType} style={{display:"flex",alignItems:"center",gap:10,background:"#d5edeb",borderRadius:8,padding:"8px 12px",border:"1px solid #90cbc8"}}>
+                <ShiftBadge type={shiftType}/>
+                <span style={{fontSize:12,fontWeight:700,color:sh.color,minWidth:34}}>{shiftType}</span>
+                <select value={assignment} onChange={e=>setRule(shiftType,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"5px 8px",fontSize:12}}>
+                  {assignOptions.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={handleSave} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
+          <button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments, floorSettings, onSave, onClose }) {
@@ -1094,7 +1181,9 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
   const workingGroups = YOTEI_SHIFT_ORDER.map(st=>({ st, staff:ds.filter(s=>(shifts[s.id]?.[day]||"")===st) })).filter(g=>g.staff.length>0);
   const floorOptions = ["", ...floorSettings.floors.map(f=>f.name), "入浴", "フリー"];
   const [local, setLocal] = useState(() => ({...assignments}));
+  const [memo, setMemo] = useState(() => assignments["_memo"]||"");
   const set = (staffId, val) => setLocal(prev=>({...prev, [staffId]:val}));
+  const handleSave = () => onSave({...local, _memo:memo});
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
@@ -1102,7 +1191,7 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
           <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>{month+1}月{day}日（{wd}）担当配置</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
-        {workingGroups.length===0&&<div style={{color:"#8ecece",fontSize:13,textAlign:"center",padding:32}}>この日の勤務者がいません</div>}
+        {workingGroups.length===0&&<div style={{color:"#8ecece",fontSize:13,textAlign:"center",padding:"16px 0"}}>この日の勤務者がいません</div>}
         {workingGroups.map(({st,staff})=>{
           const sh=SHIFTS[st];
           return(
@@ -1119,8 +1208,14 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
             </div>
           );
         })}
-        <div style={{display:"flex",gap:10,marginTop:20}}>
-          <button onClick={()=>onSave(local)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
+        <div style={{marginTop:14}}>
+          <div style={{fontSize:11,color:"#3a8a87",marginBottom:5,fontWeight:700}}>📝 メモ・追加記入</div>
+          <textarea value={memo} onChange={e=>setMemo(e.target.value)}
+            placeholder="例）午後から外部研修あり、浴室清掃担当あり"
+            style={{...INPUT_STYLE,minHeight:56,resize:"vertical",fontFamily:"inherit"}}/>
+        </div>
+        <div style={{display:"flex",gap:10,marginTop:16}}>
+          <button onClick={handleSave} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
           <button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
         </div>
       </div>
@@ -1128,13 +1223,13 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
   );
 }
 
-function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpdateYotei, floorSettings, onUpdateFloors }) {
+function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpdateYotei, onBatchUpdateYotei, floorSettings, onUpdateFloorSettings }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
   const [editDay, setEditDay] = useState(null);
-  const [editingFloors, setEditingFloors] = useState(false);
-  const [floorDraft, setFloorDraft] = useState(() => floorSettings.floors.map(f=>f.name));
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const getDayAssignments = (d) => (yoteiDeptData||{})[String(d)]||{};
+
   const handlePrint = () => {
     const html = buildYoteiHTML(dept,staffList,shifts,year,month,yoteiDeptData,floorSettings);
     const w = window.open('','_blank');
@@ -1142,36 +1237,47 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
     w.document.write(html); w.document.close();
     setTimeout(()=>w.print(),400);
   };
+
+  const handleAutoAssign = () => {
+    const rules = floorSettings.rules||[];
+    const hasRule = rules.some(r=>r.assignment);
+    if(!hasRule){alert("⚙️ 設定でシフト種別ごとの配置ルールを設定してから実行してください。");return;}
+    if(!window.confirm(`${month+1}月の全日程に自動配置ルールを適用します。\n既存の配置は上書きされます（メモは保持）。\nよろしいですか？`))return;
+    const dayMap = {};
+    for(let d=1;d<=days;d++){
+      const auto = autoAssignDay(d,dept,staffList,shifts,rules,floorSettings);
+      const existing = getDayAssignments(d);
+      dayMap[String(d)] = {...existing, ...auto};
+    }
+    onBatchUpdateYotei(dayMap);
+  };
+
   return (
     <div style={{maxWidth:960}}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:10,padding:"10px 16px",marginBottom:14,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <span style={{fontSize:12,fontWeight:800,color:"#2BBFBA",whiteSpace:"nowrap"}}>🏠 フロア名</span>
-        {editingFloors?(
-          <>
-            {floorDraft.map((name,i)=><input key={i} value={name} onChange={e=>{const n=[...floorDraft];n[i]=e.target.value;setFloorDraft(n);}} style={{...INPUT_STYLE,width:110,marginBottom:0,padding:"5px 8px"}} placeholder={`フロア${i+1}`}/>)}
-            <button onClick={()=>{const n=[...floorDraft];n.push("");setFloorDraft(n);}} style={{background:"#d5edeb",border:"1px solid #0e3a38",borderRadius:6,padding:"5px 9px",cursor:"pointer",fontSize:11,color:"#2a5a57"}}>＋追加</button>
-            <button onClick={()=>{onUpdateFloors(floorDraft.filter(n=>n.trim()));setEditingFloors(false);}} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:800}}>保存</button>
-            <button onClick={()=>setEditingFloors(false)} style={{background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:7,padding:"6px 12px",cursor:"pointer",fontSize:12}}>キャンセル</button>
-          </>
-        ):(
-          <>
-            {floorSettings.floors.map((f,i)=><span key={i} style={{background:"#d5edeb",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#1a3635",fontWeight:700}}>{f.name}</span>)}
-            <button onClick={()=>{setFloorDraft(floorSettings.floors.map(f=>f.name));setEditingFloors(true);}} style={{background:"none",border:"1px solid #90cbc8",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,color:"#2BBFBA"}}>✏️ 編集</button>
-          </>
-        )}
-        <button onClick={handlePrint} style={{marginLeft:"auto",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontSize:12,fontWeight:800,whiteSpace:"nowrap"}}>🖨️ 印刷プレビュー</button>
+      {/* ツールバー */}
+      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,fontWeight:800,color:"#2BBFBA",whiteSpace:"nowrap"}}>🏠 フロア</span>
+        {floorSettings.floors.map((f,i)=><span key={i} style={{background:"#d5edeb",borderRadius:6,padding:"3px 9px",fontSize:11,color:"#1a3635",fontWeight:700}}>{f.name}</span>)}
+        <button onClick={()=>setSettingsOpen(true)} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚙️ 設定</button>
+        <button onClick={handleAutoAssign} style={{background:"linear-gradient(135deg,#f5b942,#e07b30)",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚡ 自動配置</button>
+        <button onClick={handlePrint} style={{marginLeft:"auto",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🖨️ 印刷プレビュー</button>
       </div>
+      {/* 月カレンダー */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:7}}>
         {Array.from({length:days},(_,i)=>i+1).map(d=>{
           const wd=getWD(year,month,d), we=isWE(year,month,d);
           const assign=getDayAssignments(d);
-          const assignedCnt=Object.values(assign).filter(v=>v).length;
+          const assignedCnt=Object.keys(assign).filter(k=>k!=="__memo"&&assign[k]).length;
+          const memo=assign["_memo"]||"";
           const workCount=YOTEI_SHIFT_ORDER.reduce((acc,st)=>acc+ds.filter(s=>(shifts[s.id]?.[d]||"")===st).length,0);
           return(
             <div key={d} onClick={()=>setEditDay(d)} style={{background:"#ffffff",border:`1px solid ${we?"#fca5a5":"#90cbc8"}`,borderRadius:9,padding:"8px 10px",cursor:"pointer",boxShadow:"0 1px 4px #0001"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                 <span style={{fontSize:13,fontWeight:800,color:we?"#e53e3e":"#1a3635"}}>{d}<span style={{fontSize:10,marginLeft:3,fontWeight:400,color:we?"#e53e3e":"#5a9e9b"}}>({wd})</span></span>
-                {assignedCnt>0&&<span style={{fontSize:9,background:"#d5edeb",color:"#2BBFBA",borderRadius:8,padding:"1px 5px",fontWeight:700}}>{assignedCnt}件</span>}
+                <div style={{display:"flex",gap:3,alignItems:"center"}}>
+                  {assignedCnt>0&&<span style={{fontSize:9,background:"#d5edeb",color:"#2BBFBA",borderRadius:8,padding:"1px 5px",fontWeight:700}}>{assignedCnt}</span>}
+                  {memo&&<span style={{fontSize:9}}>📝</span>}
+                </div>
               </div>
               {YOTEI_SHIFT_ORDER.map(st=>{
                 const group=ds.filter(s=>(shifts[s.id]?.[d]||"")===st);
@@ -1187,13 +1293,15 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
                 );
               })}
               {workCount===0&&<div style={{fontSize:9,color:"#b8deda",textAlign:"center",paddingTop:4}}>勤務なし</div>}
+              {memo&&<div style={{fontSize:8,color:"#92400e",background:"#fffbea",borderRadius:3,padding:"2px 4px",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{memo.slice(0,18)}{memo.length>18?"…":""}</div>}
             </div>
           );
         })}
       </div>
       {editDay!==null&&(
-        <DayYoteiModal day={editDay} year={year} month={month} dept={dept} staffList={staffList} shifts={shifts} assignments={getDayAssignments(editDay)} floorSettings={floorSettings} onSave={assignments=>{onUpdateYotei(editDay,assignments);setEditDay(null);}} onClose={()=>setEditDay(null)}/>
+        <DayYoteiModal day={editDay} year={year} month={month} dept={dept} staffList={staffList} shifts={shifts} assignments={getDayAssignments(editDay)} floorSettings={floorSettings} onSave={a=>{onUpdateYotei(editDay,a);setEditDay(null);}} onClose={()=>setEditDay(null)}/>
       )}
+      {settingsOpen&&<FloorSettingsModal floorSettings={floorSettings} onSave={onUpdateFloorSettings} onClose={()=>setSettingsOpen(false)}/>}
     </div>
   );
 }
@@ -1479,8 +1587,11 @@ function MainApp({ session, onLogout }) {
   const handleUpdateYotei = useCallback((day, assignments) => {
     setAllYotei(prev=>({...prev,[activeDeptId]:{...(prev[activeDeptId]||{}),[String(day)]:assignments}}));
   }, [activeDeptId]);
-  const handleUpdateFloors = useCallback((floors) => {
-    setFloorSettings({floors: floors.map(n=>typeof n==="string"?{name:n}:n)});
+  const handleBatchUpdateYotei = useCallback((dayMap) => {
+    setAllYotei(prev=>({...prev,[activeDeptId]:{...(prev[activeDeptId]||{}),...dayMap}}));
+  }, [activeDeptId]);
+  const handleUpdateFloorSettings = useCallback((newSettings) => {
+    setFloorSettings(newSettings);
   }, []);
 
   const handleAiAdjust = useCallback(async () => {
@@ -1639,7 +1750,7 @@ function MainApp({ session, onLogout }) {
         {innerTab==="shift"&&(<><Legend/><ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
-        {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} floorSettings={floorSettings} onUpdateFloors={handleUpdateFloors}/>}
+        {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
       {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)}/>}
