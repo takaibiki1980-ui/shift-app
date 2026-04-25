@@ -1161,7 +1161,7 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           {duties.map((name,i)=>(
             <div key={i} style={rowStyle}>
               <input value={name} onChange={e=>updateDuty(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`役割${i+1}`}/>
-              <button onClick={()=>deleteDuty(i)} disabled={duties.length<=1} style={delBtn(duties.length<=1)}>✕</button>
+              <button onClick={()=>deleteDuty(i)} style={delBtn(false)}>✕</button>
             </div>
           ))}
           <button onClick={()=>setDuties(p=>[...p,""])} style={addBtn}>＋ 役割を追加</button>
@@ -1286,7 +1286,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
         {Array.from({length:days},(_,i)=>i+1).map(d=>{
           const wd=getWD(year,month,d), we=isWE(year,month,d);
           const assign=getDayAssignments(d);
-          const assignedCnt=Object.keys(assign).filter(k=>k!=="__memo"&&assign[k]).length;
+          const assignedCnt=Object.keys(assign).filter(k=>k!=="_memo"&&assign[k]).length;
           const memo=assign["_memo"]||"";
           const workCount=YOTEI_SHIFT_ORDER.reduce((acc,st)=>acc+ds.filter(s=>(shifts[s.id]?.[d]||"")===st).length,0);
           return(
