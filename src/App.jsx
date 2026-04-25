@@ -1248,10 +1248,13 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
 
   const handlePrint = () => {
     const html = buildYoteiHTML(dept,staffList,shifts,year,month,yoteiDeptData,floorSettings);
-    const w = window.open('','_blank');
-    if(!w){alert("ポップアップをブロックしています。許可してから再試行してください。");return;}
-    w.document.write(html); w.document.close();
-    setTimeout(()=>w.print(),400);
+    // 子ウィンドウ自身が印刷ダイアログを開く（親のイベントループをブロックしない）
+    const htmlWithPrint = html.replace('</body>', '<script>window.onload=function(){setTimeout(function(){window.print();},300);}<\/script></body>');
+    const blob = new Blob([htmlWithPrint], {type:'text/html;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    if(!w){alert("ポップアップをブロックしています。許可してから再試行してください。");URL.revokeObjectURL(url);return;}
+    setTimeout(()=>URL.revokeObjectURL(url), 120000);
   };
 
   const handleAutoAssign = () => {
