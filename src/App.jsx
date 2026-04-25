@@ -81,6 +81,9 @@ function LoginPage({ onLogin }) {
   const [email, setEmail]     = useState("");
   const [password, setPassword] = useState("");
   const [facilityName, setFacilityName] = useState("");
+  const [agreed, setAgreed]   = useState(false);
+  const [showTerms, setShowTerms]   = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
   const [msg, setMsg]         = useState("");
@@ -88,6 +91,7 @@ function LoginPage({ onLogin }) {
   const handleSubmit = async () => {
     if (!email || !password) { setError("メールアドレスとパスワードを入力してください"); return; }
     if (mode === "signup" && !facilityName.trim()) { setError("施設名を入力してください"); return; }
+    if (mode === "signup" && !agreed) { setError("利用規約・プライバシーポリシーへの同意が必要です"); return; }
     setLoading(true); setError(""); setMsg("");
     try {
       if (mode === "login") {
@@ -195,6 +199,18 @@ function LoginPage({ onLogin }) {
           }}>✅ {msg}</div>
         )}
 
+        {mode==="signup"&&(
+          <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:16,padding:"10px 12px",background:"#f0fffe",borderRadius:8,border:"1px solid #b8deda"}}>
+            <input type="checkbox" id="agree" checked={agreed} onChange={e=>setAgreed(e.target.checked)} style={{marginTop:2,accentColor:"#2BBFBA",cursor:"pointer",flexShrink:0}}/>
+            <label htmlFor="agree" style={{fontSize:12,color:"#2a5a57",lineHeight:1.6,cursor:"pointer"}}>
+              <button onClick={()=>setShowTerms(true)} style={{background:"none",border:"none",color:"#2BBFBA",cursor:"pointer",fontSize:12,fontWeight:700,padding:0,textDecoration:"underline"}}>利用規約</button>
+              {" および "}
+              <button onClick={()=>setShowPrivacy(true)} style={{background:"none",border:"none",color:"#2BBFBA",cursor:"pointer",fontSize:12,fontWeight:700,padding:0,textDecoration:"underline"}}>プライバシーポリシー</button>
+              {" に同意します"}
+            </label>
+          </div>
+        )}
+
         <button onClick={handleSubmit} disabled={loading} style={{
           width:"100%",
           background:loading?"#b8deda":"linear-gradient(135deg,#2BBFBA,#45B7D1)",
@@ -205,14 +221,99 @@ function LoginPage({ onLogin }) {
         }}>
           {loading ? "⏳ 処理中…" : mode==="login" ? "ログイン" : "アカウントを作成"}
         </button>
+
+        <div style={{textAlign:"center",marginTop:20,display:"flex",justifyContent:"center",gap:16}}>
+          <button onClick={()=>setShowTerms(true)} style={{background:"none",border:"none",color:"#6ab5b2",cursor:"pointer",fontSize:11,textDecoration:"underline"}}>利用規約</button>
+          <button onClick={()=>setShowPrivacy(true)} style={{background:"none",border:"none",color:"#6ab5b2",cursor:"pointer",fontSize:11,textDecoration:"underline"}}>プライバシーポリシー</button>
+        </div>
       </div>
+      {showTerms&&<TermsModal onClose={()=>setShowTerms(false)}/>}
+      {showPrivacy&&<PrivacyModal onClose={()=>setShowPrivacy(false)}/>}
     </div>
   );
 }
 
 // ─────────────────────────────────────────────
-//  SHIFT DEFINITIONS
+//  TERMS & PRIVACY MODALS
 // ─────────────────────────────────────────────
+function LegalModal({ title, onClose, children }) {
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#f5fffe",border:"1px solid #90cbc8",borderRadius:16,padding:24,width:"100%",maxWidth:560,maxHeight:"80vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,position:"sticky",top:0,background:"#f5fffe",paddingBottom:12,borderBottom:"1px solid #d5edeb"}}>
+          <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>{title}</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:22}}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:"#2a5a57",lineHeight:2}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function TermsModal({ onClose }) {
+  return (
+    <LegalModal title="📄 利用規約" onClose={onClose}>
+      <p style={{color:"#6ab5b2",marginBottom:16}}>最終更新日：2026年4月26日</p>
+      <h3 style={{color:"#1a3635",marginBottom:8}}>第1条（サービスの目的）</h3>
+      <p>しふぽん（以下「本サービス」）は、介護施設向けのシフト管理を支援するWebアプリケーションです。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第2条（利用登録）</h3>
+      <p>本サービスの利用にはメールアドレスによるアカウント登録が必要です。登録内容は正確な情報を入力してください。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第3条（プランと料金）</h3>
+      <p>本サービスは無料プラン・スタンダードプラン・フルプランを提供します。有料プランの料金・支払方法については別途ご案内します。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第4条（禁止事項）</h3>
+      <p>以下の行為を禁止します。</p>
+      <ul style={{paddingLeft:20,marginTop:8}}>
+        <li>他のユーザーへの不正アクセス</li>
+        <li>サービスの複製・転売・商業目的での無断利用</li>
+        <li>虚偽の情報による登録</li>
+        <li>法令または公序良俗に反する行為</li>
+      </ul>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第5条（免責事項）</h3>
+      <p>運営者は本サービスの利用によって生じた損害について、運営者の故意または重過失がある場合を除き、責任を負いません。システム障害・データ消失等について最大限の努力をもって対応しますが、完全な保証はしかねます。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第6条（サービスの変更・停止）</h3>
+      <p>運営者は事前の通知をもってサービス内容の変更または停止ができるものとします。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第7条（規約の変更）</h3>
+      <p>本規約は必要に応じて変更されることがあります。変更後も本サービスを継続して利用した場合、変更後の規約に同意したものとみなします。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第8条（準拠法）</h3>
+      <p>本規約は日本法に準拠し、日本国内の裁判所を専属的合意管轄とします。</p>
+    </LegalModal>
+  );
+}
+
+function PrivacyModal({ onClose }) {
+  return (
+    <LegalModal title="🔒 プライバシーポリシー" onClose={onClose}>
+      <p style={{color:"#6ab5b2",marginBottom:16}}>最終更新日：2026年4月26日</p>
+      <h3 style={{color:"#1a3635",marginBottom:8}}>1. 収集する情報</h3>
+      <p>本サービスでは以下の情報を収集します。</p>
+      <ul style={{paddingLeft:20,marginTop:8}}>
+        <li>メールアドレス（アカウント認証のため）</li>
+        <li>施設名（サービス管理のため）</li>
+        <li>シフトデータ・職員情報（サービス提供のため）</li>
+      </ul>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>2. 利用目的</h3>
+      <p>収集した情報は以下の目的のみに利用します。</p>
+      <ul style={{paddingLeft:20,marginTop:8}}>
+        <li>本サービスの提供・運営</li>
+        <li>お問い合わせへの対応</li>
+        <li>サービス改善のための分析</li>
+      </ul>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>3. 第三者への提供</h3>
+      <p>収集した個人情報は、法令に基づく場合を除き、第三者に提供・開示しません。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>4. 安全管理</h3>
+      <p>データはSupabase（米国）のサーバーで安全に管理されています。アクセス制御・暗号化により不正アクセス防止に努めます。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>5. Cookieについて</h3>
+      <p>本サービスはログイン状態の維持のためにローカルストレージを使用します。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>6. 個人情報の削除</h3>
+      <p>アカウントの削除をご希望の場合は、お問い合わせ先までご連絡ください。速やかに対応いたします。</p>
+      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>7. お問い合わせ</h3>
+      <p>個人情報の取り扱いに関するお問い合わせは以下までご連絡ください。</p>
+      <p style={{marginTop:8,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>メール：takaibiki1980@icloud.com</p>
+    </LegalModal>
+  );
+}
+
+
 const SHIFTS = {
   早番:  { short:"早", color:"#c45c35", bg:"#fff0e8", border:"#e0894f", time:"7:00〜16:00" },
   日勤:  { short:"日", color:"#3b6eea", bg:"#eef3ff", border:"#6b96f5", time:"9:00〜18:00" },
