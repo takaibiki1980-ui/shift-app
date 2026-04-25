@@ -217,6 +217,7 @@ const SHIFTS = {
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
 const SHIFT_KEYS_MANUAL = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅",""];
 const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
+const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]);
 const WORK_TYPES  = new Set(["早番","日勤","遅番","夜勤"]);
 
 const DEFAULT_DEPTS = [
@@ -519,7 +520,7 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
       const kibodays = s.kiboByMonth?.[mk] || [];
       const cells = [dept.label, s.name, s.role];
       let workCnt=0, nightCnt=0, restCnt=0;
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const out=v||(kibodays.includes(d)?"希望休":""); cells.push(out); if(WORK_TYPES.has(v)) workCnt++; if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け") restCnt++; }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const out=v||(kibodays.includes(d)?"希望休":""); cells.push(out); if(WORK_TYPES.has(v)) workCnt++; if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け") restCnt+=HALF_REST_TYPES.has(v)?0.5:1; }
       cells.push(workCnt, nightCnt, restCnt);
       rows.push(cells.map(c=>`"${c}"`).join(","));
     });
@@ -545,7 +546,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts)
       let w=0,n=0,r=0;
       const kibodays = s.kiboByMonth?.[mk] || [];
       html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け") r++; html += TAG('td')+(isKibo?'<span style="color:#c44b4b">希</span>':(SHIFTS[v]?.short||"－"))+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け") r+=HALF_REST_TYPES.has(v)?0.5:1; html += TAG('td')+(isKibo?'<span style="color:#c44b4b">希</span>':(SHIFTS[v]?.short||"－"))+CTAG('td'); }
       html += TAG('td')+w+CTAG('td')+TAG('td')+(n||"－")+CTAG('td')+TAG('td')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
@@ -988,7 +989,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             const sShifts=shifts[s.id]||{}, kibodays=s.kiboByMonth?.[mk]||[];
             const workCnt=Object.values(sShifts).filter(v=>WORK_TYPES.has(v)).length;
             const nightCnt=Object.values(sShifts).filter(v=>v==="夜勤").length;
-            const restCnt=Object.values(sShifts).filter(v=>REST_TYPES.has(v)&&v!=="明け").length;
+            const restCnt=Object.values(sShifts).reduce((acc,v)=>REST_TYPES.has(v)&&v!=="明け"?acc+(HALF_REST_TYPES.has(v)?0.5:1):acc,0);
             const nightOver=s.nightOk&&nightCnt>(s.nightMax||5);
             return (
               <tr key={s.id} style={{background:si%2===0?"#ffffff":"#fafeff"}}>
