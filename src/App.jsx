@@ -1135,18 +1135,9 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
     onClose();
   };
   const LS = {fontSize:11,color:"#3a8a87",fontWeight:700,marginBottom:6,display:"block"};
-  const EditList = ({items, onUpdate, onDelete, onAdd, addLabel, placeholder}) => (
-    <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
-      {items.map((name,i)=>(
-        <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:7}}>
-          <input value={name} onChange={e=>onUpdate(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={placeholder(i)}/>
-          <button onClick={()=>onDelete(i)} disabled={items.length<=1}
-            style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,color:"#c44b4b",cursor:items.length<=1?"not-allowed":"pointer",padding:"5px 9px",fontSize:13,opacity:items.length<=1?0.4:1}}>✕</button>
-        </div>
-      ))}
-      <button onClick={onAdd} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800}}>{addLabel}</button>
-    </div>
-  );
+  const rowStyle = {display:"flex",alignItems:"center",gap:6,marginBottom:7};
+  const delBtn = (disabled) => ({background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,color:"#c44b4b",cursor:disabled?"not-allowed":"pointer",padding:"5px 9px",fontSize:13,opacity:disabled?0.4:1});
+  const addBtn = {background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800};
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
@@ -1155,10 +1146,26 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
         <label style={LS}>🏠 フロア名</label>
-        <EditList items={floors} onUpdate={updateFloor} onDelete={deleteFloor} onAdd={()=>setFloors(p=>[...p,""])} addLabel="＋ フロアを追加" placeholder={i=>`フロア${i+1}`}/>
+        <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
+          {floors.map((name,i)=>(
+            <div key={i} style={rowStyle}>
+              <input value={name} onChange={e=>updateFloor(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`フロア${i+1}`}/>
+              <button onClick={()=>deleteFloor(i)} disabled={floors.length<=1} style={delBtn(floors.length<=1)}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>setFloors(p=>[...p,""])} style={addBtn}>＋ フロアを追加</button>
+        </div>
         <label style={LS}>🎯 役割・業務</label>
         <div style={{fontSize:10,color:"#6ab5b2",marginBottom:8}}>入浴・フリーなどの業務担当。フロアとは別に自由に追加できます。</div>
-        <EditList items={duties} onUpdate={updateDuty} onDelete={deleteDuty} onAdd={()=>setDuties(p=>[...p,""])} addLabel="＋ 役割を追加" placeholder={i=>`役割${i+1}`}/>
+        <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
+          {duties.map((name,i)=>(
+            <div key={i} style={rowStyle}>
+              <input value={name} onChange={e=>updateDuty(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`役割${i+1}`}/>
+              <button onClick={()=>deleteDuty(i)} disabled={duties.length<=1} style={delBtn(duties.length<=1)}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>setDuties(p=>[...p,""])} style={addBtn}>＋ 役割を追加</button>
+        </div>
         <label style={LS}>⚡ 自動配置ルール</label>
         <div style={{fontSize:10,color:"#6ab5b2",marginBottom:10}}>「自動配置」ボタンで全日程に一括適用されるルールです。「自動分配」はフロアを均等に振り分けます。</div>
         <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:20}}>
