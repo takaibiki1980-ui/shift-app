@@ -1487,9 +1487,231 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
 }
 
 // ─────────────────────────────────────────────
+//  スタッフポータル
+// ─────────────────────────────────────────────
+function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChange }) {
+  const days = getDays(year, month);
+  const firstDow = new Date(year, month, 1).getDay();
+  const cells = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= days; d++) cells.push(d);
+  const lim = kiboLimit || 3;
+
+  const toggle = (d) => {
+    if (!d) return;
+    const cnt = otherCounts[d] || 0;
+    if (!myDays.includes(d) && cnt >= lim) return;
+    onChange(myDays.includes(d) ? myDays.filter(x => x !== d) : [...myDays, d]);
+  };
+
+  return (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:4}}>
+        {["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:11,color:i===0?"#f87171":i===6?"#2BBFBA":"#3a8a87",padding:"3px 0",fontWeight:700}}>{w}</div>)}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+        {cells.map((d,i)=>{
+          if(!d) return <div key={i}/>;
+          const isMe = myDays.includes(d);
+          const cnt = otherCounts[d] || 0;
+          const over = cnt >= lim;
+          const warn = cnt === lim - 1;
+          const dow = (firstDow+d-1)%7, we = dow===0||dow===6;
+          const blocked = !isMe && over;
+          return (
+            <button key={d} onClick={()=>toggle(d)} disabled={blocked}
+              style={{background:isMe?"#fff0f0":blocked?"#f5f5f5":"transparent",border:isMe?"2px solid #ef4444":blocked?"1px solid #e5e5e5":"1px solid #0e3a38",borderRadius:6,padding:"4px 2px",cursor:blocked?"not-allowed":"pointer",color:isMe?"#ef4444":blocked?"#aaa":we?"#2BBFBA":"#1a3635",fontSize:11,fontWeight:isMe?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:38,position:"relative",opacity:blocked?0.5:1}}>
+              {over&&!isMe&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#ef4444"}}>⚠</span>}
+              {!over&&warn&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#f59e0b"}}>!</span>}
+              <span style={{fontSize:12}}>{d}</span>
+              {isMe&&<span style={{fontSize:8,lineHeight:1,color:"#ef4444"}}>希休</span>}
+              {cnt>0&&<span style={{fontSize:8,lineHeight:1,color:over?"#ef4444":warn?"#f59e0b":"#c44b4b"}}>{cnt}人</span>}
+              {!isMe&&!cnt&&!blocked&&<span style={{fontSize:8,lineHeight:1,color:"#b0d8d5"}}>○</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{marginTop:8,fontSize:11,color:"#3a8a87"}}>
+        <span style={{color:"#ef4444",fontWeight:700}}>■</span> 自分の希望休
+        <span style={{marginLeft:12,color:"#c44b4b"}}>数字</span> = 他のスタッフの人数
+        <span style={{marginLeft:12,color:"#9ca3af"}}>■</span> 上限到達（選択不可）
+      </div>
+    </div>
+  );
+}
+
+function StaffPortal({ adminUserId }) {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth());
+  const [config, setConfig] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const [selDeptId, setSelDeptId] = useState(null);
+  const [selStaffId, setSelStaffId] = useState(null);
+  const [myDays, setMyDays] = useState([]);
+  const [otherCounts, setOtherCounts] = useState({});
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [kiboLoading, setKiboLoading] = useState(false);
+
+  useEffect(() => {
+    supabase.rpc('get_facility_config', { p_user_id: adminUserId })
+      .then(({ data, error }) => {
+        if (error || !data) { setLoadError(true); return; }
+        setConfig(data);
+        if (data.depts?.length > 0) setSelDeptId(data.depts[0].id);
+      });
+  }, [adminUserId]);
+
+  const mk = monthKey(year, month);
+  const selDept = config?.depts?.find(d => d.id === selDeptId);
+  const deptStaff = (config?.staffList || []).filter(s => s.dept === selDeptId);
+  const selStaff = deptStaff.find(s => s.id === selStaffId);
+  const lim = selDept?.kiboLimit || 3;
+
+  useEffect(() => {
+    if (!selStaffId || !selDeptId) return;
+    setKiboLoading(true);
+    setSubmitted(false);
+    supabase.from('staff_kibo').select('*')
+      .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk)
+      .then(({ data }) => {
+        setKiboLoading(false);
+        if (!data) return;
+        const mine = data.find(k => k.staff_id === selStaffId);
+        setMyDays(mine?.days || []);
+        const counts = {};
+        data.filter(k => k.staff_id !== selStaffId).forEach(k => {
+          (k.days||[]).forEach(d => { counts[d] = (counts[d]||0) + 1; });
+        });
+        setOtherCounts(counts);
+      });
+  }, [selStaffId, selDeptId, mk, adminUserId]);
+
+  const handleSubmit = async () => {
+    if (!selStaff || !selDept) return;
+    setSubmitting(true);
+    const { error } = await supabase.from('staff_kibo').upsert({
+      admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
+      month_key: mk, days: myDays, updated_at: new Date().toISOString()
+    }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
+    setSubmitting(false);
+    if (!error) setSubmitted(true);
+    else alert('送信に失敗しました。もう一度お試しください。');
+  };
+
+  const prevMonth = () => { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); setSubmitted(false); };
+  const nextMonth = () => { if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); setSubmitted(false); };
+
+  const BASE = { minHeight:"100vh", background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)", fontFamily:"'Noto Sans JP',sans-serif", padding:16 };
+
+  if (loadError) return (
+    <div style={{...BASE,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center",color:"#ef4444"}}>
+        <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
+        <div style={{fontSize:14,fontWeight:700}}>施設情報を読み込めませんでした</div>
+        <div style={{fontSize:12,color:"#6b7280",marginTop:8}}>URLが正しいか確認してください</div>
+      </div>
+    </div>
+  );
+
+  if (!config) return (
+    <div style={{...BASE,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}>
+        <ShifuponIcon size={48} radius={12}/>
+        <div style={{color:"#6ab5b2",fontSize:13,marginTop:12}}>読み込み中…</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={BASE}>
+      {/* ヘッダー */}
+      <div style={{background:"#fff",borderRadius:14,padding:"12px 16px",marginBottom:16,boxShadow:"0 2px 12px #0e3a3820",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <ShifuponIcon size={36} radius={8}/>
+          <div>
+            <div style={{fontSize:13,fontWeight:900,color:"#1a3635"}}>{config.facility_name || "しふぽん"}</div>
+            <div style={{fontSize:10,color:"#3a8a87"}}>希望休 入力ポータル</div>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>◀</button>
+          <span style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{year}年{month+1}月</span>
+          <button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>▶</button>
+        </div>
+      </div>
+
+      {/* 部署選択 */}
+      <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
+        <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:10}}>▍ 部署を選んでください</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {(config.depts||[]).map(d=>(
+            <button key={d.id} onClick={()=>{setSelDeptId(d.id);setSelStaffId(null);setMyDays([]);setSubmitted(false);}}
+              style={{background:selDeptId===d.id?"linear-gradient(135deg,#2BBFBA,#45B7D1)":"#d5edeb",color:selDeptId===d.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selDeptId===d.id?800:400}}>
+              {d.icon} {d.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* スタッフ選択 */}
+      {selDeptId && (
+        <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:10}}>▍ 自分の名前を選んでください</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {deptStaff.length===0&&<div style={{fontSize:12,color:"#9ca3af"}}>この部署にスタッフがいません</div>}
+            {deptStaff.map(s=>(
+              <button key={s.id} onClick={()=>{setSelStaffId(s.id);setMyDays([]);setSubmitted(false);}}
+                style={{background:selStaffId===s.id?"linear-gradient(135deg,#2BBFBA,#b07fd4)":"#d5edeb",color:selStaffId===s.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selStaffId===s.id?800:400}}>
+                {s.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* カレンダー */}
+      {selStaff && !submitted && (
+        <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:4}}>▍ {selStaff.name}さんの希望休（{year}年{month+1}月）</div>
+          <div style={{fontSize:10,color:"#c44b4b",marginBottom:10}}>※ 同じ日は上限{lim}名まで。上限に達した日は選択できません。</div>
+          {kiboLoading ? (
+            <div style={{textAlign:"center",color:"#6ab5b2",padding:20}}>読み込み中…</div>
+          ) : (
+            <StaffKiboCalendar year={year} month={month} myDays={myDays} otherCounts={otherCounts} kiboLimit={lim} onChange={setMyDays}/>
+          )}
+          <div style={{marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:12,color:"#ef4444",fontWeight:700}}>選択中: {myDays.length}日</span>
+            <button onClick={handleSubmit} disabled={submitting}
+              style={{background:submitting?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:submitting?"#2a5a57":"#fff",border:"none",borderRadius:10,padding:"12px 28px",cursor:submitting?"not-allowed":"pointer",fontSize:14,fontWeight:800}}>
+              {submitting?"送信中…":"✅ 送信する"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 送信完了 */}
+      {submitted && (
+        <div style={{background:"#f0fff4",border:"2px solid #86efac",borderRadius:12,padding:24,textAlign:"center",marginBottom:12}}>
+          <div style={{fontSize:36,marginBottom:8}}>✅</div>
+          <div style={{fontSize:16,fontWeight:900,color:"#16a34a",marginBottom:4}}>送信しました！</div>
+          <div style={{fontSize:12,color:"#3a8a87",marginBottom:16}}>{year}年{month+1}月の希望休（{myDays.sort((a,b)=>a-b).join("日・")}日）を送信しました。</div>
+          <div style={{fontSize:11,color:"#6b7280",marginBottom:16}}>管理者に自動で反映されます。</div>
+          <button onClick={()=>setSubmitted(false)} style={{background:"#d5edeb",color:"#1a3635",border:"none",borderRadius:8,padding:"9px 20px",cursor:"pointer",fontSize:12,fontWeight:700}}>✏️ 修正する</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 //  APP（メイン）
 // ─────────────────────────────────────────────
 export default function App() {
+  const staffUserId = new URLSearchParams(window.location.search).get('staff');
+  if (staffUserId) return <StaffPortal adminUserId={staffUserId} />;
+
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [profile, setProfile] = useState(null);
