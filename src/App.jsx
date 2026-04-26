@@ -1099,6 +1099,166 @@ function ZoomWrapper({ zoom, onZoomChange, children }) {
 const TH = ({sticky,w}={}) => ({ position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1, background:"#ffffff", padding:"5px 3px", borderBottom:"2px solid #90cbc8", borderRight:"1px solid #b0e0de", fontSize:11, fontWeight:700, color:"#2a7a77", textAlign:"center", whiteSpace:"nowrap", width:w||"auto", minWidth:w||"auto" });
 const TD = { textAlign:"center", padding:"4px 2px", borderBottom:"1px solid #c8ecea", borderRight:"1px solid #c8ecea" };
 
+// ─────────────────────────────────────────────
+//  改善提案モジュール
+// ─────────────────────────────────────────────
+const SUGGESTION_PENALTY = { UNDERSTAFF:30, KIBO_VIOLATE:50, NIGHT_OVER:40, CONSEC_OVER:20 };
+
+function scoreShiftState(staffList, shifts, year, month, dept) {
+  const days = getDays(year, month);
+  const mk = monthKey(year, month);
+  const ds = staffList.filter(s => s.dept === dept.id);
+  let total = 0;
+  const issues = [];
+
+  for (let d = 1; d <= days; d++) {
+    (dept.shiftTypes || []).forEach(st => {
+      const actual = ds.filter(s => (shifts[s.id]?.[d]||'') === st).length;
+      const min = dept.minStaff?.[st] || 0;
+      if (actual < min) {
+        const p = (min - actual) * SUGGESTION_PENALTY.UNDERSTAFF;
+        total += p;
+        issues.push({ type:'understaff', day:d, shiftType:st, short:min-actual, penalty:p });
+      }
+    });
+  }
+
+  ds.forEach(s => {
+    (s.kiboByMonth?.[mk] || []).forEach(d => {
+      if (WORK_TYPES.has(shifts[s.id]?.[d] || '')) {
+        total += SUGGESTION_PENALTY.KIBO_VIOLATE;
+        issues.push({ type:'kibo', staff:s, day:d, penalty:SUGGESTION_PENALTY.KIBO_VIOLATE });
+      }
+    });
+  });
+
+  ds.forEach(s => {
+    const nightCnt = Object.values(shifts[s.id]||{}).filter(v=>v==='夜勤').length;
+    const max = s.nightMax || 5;
+    if (s.nightOk && nightCnt > max) {
+      const p = (nightCnt - max) * SUGGESTION_PENALTY.NIGHT_OVER;
+      total += p;
+      issues.push({ type:'night_over', staff:s, count:nightCnt, max, penalty:p });
+    }
+  });
+
+  const maxConsec = dept.maxConsecutive || 5;
+  ds.forEach(s => {
+    let streak = 0;
+    for (let d = 1; d <= days; d++) {
+      if (WORK_TYPES.has(shifts[s.id]?.[d]||'')) { streak++; }
+      else streak = 0;
+      if (streak > maxConsec) {
+        total += SUGGESTION_PENALTY.CONSEC_OVER;
+        issues.push({ type:'consec', staff:s, day:d, penalty:SUGGESTION_PENALTY.CONSEC_OVER });
+      }
+    }
+  });
+
+  return { total, issues };
+}
+
+function cloneShiftsDeep(shifts) {
+  const out = {};
+  Object.keys(shifts).forEach(id => { out[id] = { ...shifts[id] }; });
+  return out;
+}
+
+function generateSuggestions(staffList, shifts, year, month, dept) {
+  const mk = monthKey(year, month);
+  const ds = staffList.filter(s => s.dept === dept.id);
+  const base = scoreShiftState(staffList, shifts, year, month, dept);
+  const candidates = [];
+
+  const tryCandidate = (newShifts, description, type) => {
+    const newScore = scoreShiftState(staffList, newShifts, year, month, dept);
+    const improvement = base.total - newScore.total;
+    if (improvement > 0) candidates.push({ improvement, newShifts, description, type, newScore: newScore.total });
+  };
+
+  base.issues.filter(i => i.type === 'understaff').forEach(({ day, shiftType }) => {
+    ds.forEach(s => {
+      const cur = shifts[s.id]?.[day] || '';
+      if (!cur && !(s.kiboByMonth?.[mk]||[]).includes(day)) {
+        const ns = cloneShiftsDeep(shifts);
+        ns[s.id] = { ...(ns[s.id]||{}), [day]: shiftType };
+        tryCandidate(ns, `${s.name}さんを${day}日（${shiftType}）に追加 → 勤務不足が解消されます`, 'add_staff');
+      }
+    });
+  });
+
+  base.issues.filter(i => i.type === 'night_over').forEach(({ staff }) => {
+    Object.entries(shifts[staff.id]||{}).forEach(([dayStr, v]) => {
+      if (v !== '夜勤') return;
+      const ns = cloneShiftsDeep(shifts);
+      ns[staff.id] = { ...(ns[staff.id]||{}), [Number(dayStr)]: '休み' };
+      tryCandidate(ns, `${staff.name}さんの${dayStr}日の夜勤を休みに変更 → 夜勤超過が解消されます`, 'reduce_night');
+    });
+  });
+
+  base.issues.filter(i => i.type === 'kibo').forEach(({ staff, day }) => {
+    const ns = cloneShiftsDeep(shifts);
+    ns[staff.id] = { ...(ns[staff.id]||{}), [day]: '休み' };
+    tryCandidate(ns, `${staff.name}さんの${day}日を希望休（休み）に変更 → 希望休違反が解消されます`, 'fix_kibo');
+  });
+
+  base.issues.filter(i => i.type === 'consec').forEach(({ staff, day }) => {
+    const ns = cloneShiftsDeep(shifts);
+    ns[staff.id] = { ...(ns[staff.id]||{}), [day]: '休み' };
+    tryCandidate(ns, `${staff.name}さんの${day}日を休みに変更 → 連続勤務違反が解消されます`, 'fix_consec');
+  });
+
+  return candidates.sort((a,b) => b.improvement - a.improvement).slice(0, 5);
+}
+
+function SuggestionPanel({ staffList, shifts, year, month, dept, onApply }) {
+  const [suggestions, setSuggestions] = useState([]);
+  const [baseScore, setBaseScore] = useState(null);
+  const [analyzed, setAnalyzed] = useState(false);
+
+  const analyze = () => {
+    const result = scoreShiftState(staffList, shifts, year, month, dept);
+    setBaseScore(result);
+    setSuggestions(generateSuggestions(staffList, shifts, year, month, dept));
+    setAnalyzed(true);
+  };
+
+  const TYPE_ICON = { add_staff:'➕', reduce_night:'🌙', fix_kibo:'💚', fix_consec:'📅' };
+
+  return (
+    <div style={{background:"#f8fffe",border:"1px solid #90cbc8",borderRadius:12,padding:16,marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+        <span style={{fontSize:13,fontWeight:900,color:"#1a3635"}}>🔍 改善提案</span>
+        <button onClick={analyze} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:800}}>分析する</button>
+        {baseScore!==null&&<span style={{fontSize:11,color:baseScore.total===0?"#16a34a":"#c44b4b",fontWeight:700}}>ペナルティ: {baseScore.total}点{baseScore.total===0?" ✅ 問題なし":""}</span>}
+      </div>
+
+      {analyzed && suggestions.length === 0 && baseScore?.total === 0 && (
+        <div style={{fontSize:12,color:"#16a34a",fontWeight:700}}>✅ 現在のシフトに問題は見つかりませんでした。</div>
+      )}
+      {analyzed && suggestions.length === 0 && baseScore?.total > 0 && (
+        <div style={{fontSize:12,color:"#6b7280"}}>自動改善できる案が見つかりませんでした。手動での調整をお試しください。</div>
+      )}
+
+      {suggestions.map((s, i) => (
+        <div key={i} style={{background:"#f0fff4",border:"1px solid #86efac",borderRadius:9,padding:"10px 14px",marginBottom:8}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+            <div>
+              <span style={{fontSize:11,fontWeight:800,color:"#16a34a"}}>{TYPE_ICON[s.type]||"✅"} 改善案 {i+1}</span>
+              <span style={{fontSize:10,color:"#16a34a",marginLeft:8}}>(-{s.improvement}点改善 → {s.newScore}点)</span>
+              <div style={{fontSize:12,color:"#1a3635",marginTop:4}}>{s.description}</div>
+            </div>
+            <button onClick={()=>onApply(s.newShifts)}
+              style={{flexShrink:0,background:"#16a34a",color:"#fff",border:"none",borderRadius:7,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>
+              適用する
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
@@ -2061,6 +2221,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [adminModal, setAdminModal] = useState(false);
   const [shareModal, setShareModal] = useState(false);
+  const [showSuggestion, setShowSuggestion] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
   const [aiMode, setAiMode] = useState(false);
   const [aiInstruction, setAiInstruction] = useState("");
@@ -2259,6 +2420,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#ffffff",color:tableZoom>=100?"#8ecece":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
               <span style={{fontSize:11,fontWeight:700,color:"#2BBFBA",minWidth:34,textAlign:"right"}}>{tableZoom}%</span>
               <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#ffffff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
+              <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#ffffff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
             </div>
           )}
           <div style={{fontSize:10,color:"#8ecece",padding:"0 4px"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>
@@ -2267,7 +2429,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* CONTENT */}
       <div style={{padding:"10px 8px",minHeight:"calc(100vh - 180px)"}}>
-        {innerTab==="shift"&&(<><Legend/><ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick}/></ZoomWrapper></>)}
+        {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
