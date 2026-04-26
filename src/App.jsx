@@ -1540,13 +1540,13 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
   );
 }
 
-function StaffPortal({ adminUserId }) {
+function StaffPortal({ adminUserId, fixedDeptId }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [config, setConfig] = useState(null);
   const [loadError, setLoadError] = useState(false);
-  const [selDeptId, setSelDeptId] = useState(null);
+  const [selDeptId, setSelDeptId] = useState(fixedDeptId || null);
   const [selStaffId, setSelStaffId] = useState(null);
   const [myDays, setMyDays] = useState([]);
   const [otherCounts, setOtherCounts] = useState({});
@@ -1559,9 +1559,9 @@ function StaffPortal({ adminUserId }) {
       .then(({ data, error }) => {
         if (error || !data) { setLoadError(true); return; }
         setConfig(data);
-        if (data.depts?.length > 0) setSelDeptId(data.depts[0].id);
+        if (!fixedDeptId && data.depts?.length > 0) setSelDeptId(data.depts[0].id);
       });
-  }, [adminUserId]);
+  }, [adminUserId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mk = monthKey(year, month);
   const selDept = config?.depts?.find(d => d.id === selDeptId);
@@ -1642,18 +1642,26 @@ function StaffPortal({ adminUserId }) {
         </div>
       </div>
 
-      {/* 部署選択 */}
-      <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
-        <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:10}}>▍ 部署を選んでください</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {(config.depts||[]).map(d=>(
-            <button key={d.id} onClick={()=>{setSelDeptId(d.id);setSelStaffId(null);setMyDays([]);setSubmitted(false);}}
-              style={{background:selDeptId===d.id?"linear-gradient(135deg,#2BBFBA,#45B7D1)":"#d5edeb",color:selDeptId===d.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selDeptId===d.id?800:400}}>
-              {d.icon} {d.label}
-            </button>
-          ))}
+      {/* 部署選択（fixedDeptIdがない場合のみ表示） */}
+      {!fixedDeptId && (
+        <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:10}}>▍ 部署を選んでください</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {(config.depts||[]).map(d=>(
+              <button key={d.id} onClick={()=>{setSelDeptId(d.id);setSelStaffId(null);setMyDays([]);setSubmitted(false);}}
+                style={{background:selDeptId===d.id?"linear-gradient(135deg,#2BBFBA,#45B7D1)":"#d5edeb",color:selDeptId===d.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selDeptId===d.id?800:400}}>
+                {d.icon} {d.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+      {/* 固定部署の場合は部署名をヘッダーに表示 */}
+      {fixedDeptId && selDept && (
+        <div style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",borderRadius:12,padding:"10px 16px",marginBottom:12,textAlign:"center"}}>
+          <span style={{color:"#fff",fontWeight:900,fontSize:14}}>{selDept.icon} {selDept.label}</span>
+        </div>
+      )}
 
       {/* スタッフ選択 */}
       {selDeptId && (
@@ -1709,8 +1717,10 @@ function StaffPortal({ adminUserId }) {
 //  APP（メイン）
 // ─────────────────────────────────────────────
 export default function App() {
-  const staffUserId = new URLSearchParams(window.location.search).get('staff');
-  if (staffUserId) return <StaffPortal adminUserId={staffUserId} />;
+  const params = new URLSearchParams(window.location.search);
+  const staffUserId = params.get('staff');
+  const staffDeptId = params.get('dept');
+  if (staffUserId) return <StaffPortal adminUserId={staffUserId} fixedDeptId={staffDeptId||undefined} />;
 
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -2050,6 +2060,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [adminModal, setAdminModal] = useState(false);
+  const [shareModal, setShareModal] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
   const [aiMode, setAiMode] = useState(false);
   const [aiInstruction, setAiInstruction] = useState("");
@@ -2192,7 +2203,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
           }
           <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 クリア</button>
-          <button onClick={()=>{ const url=`${window.location.origin}?staff=${session.user.id}`; if(navigator.share){navigator.share({title:'しふぽん 希望休入力',text:'希望休の入力はこちら',url});}else{navigator.clipboard?.writeText(url).catch(()=>{});alert(`スタッフ共有URLをコピーしました！\n\n${url}\n\n※このURLをスタッフに送ってください。`);} }} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔗 共有</button>
+          <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔗 共有</button>
           {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🏢 管理</button>}
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
             <span style={{fontSize:10,fontWeight:800,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
@@ -2273,6 +2284,30 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       <div style={{position:"fixed",bottom:12,right:12,background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#8ecece",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#2BBFBA",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
+      {shareModal&&(
+        <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&setShareModal(false)}>
+          <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>🔗 スタッフ共有URL</div>
+              <button onClick={()=>setShareModal(false)} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
+            </div>
+            <div style={{fontSize:11,color:"#3a8a87",marginBottom:16,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
+            {depts.map(d=>{
+              const url=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
+              const doShare=()=>{ if(navigator.share){navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url});}else{navigator.clipboard?.writeText(url).catch(()=>{});alert(`URLをコピーしました！\n${url}`);}};
+              return(
+                <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:6}}>{d.icon} {d.label}</div>
+                  <div style={{fontSize:10,color:"#6b7280",wordBreak:"break-all",marginBottom:8,background:"#f5f5f5",borderRadius:6,padding:"6px 8px"}}>{url}</div>
+                  <button onClick={doShare} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:12,fontWeight:800,width:"100%"}}>
+                    {navigator.share?"📤 共有する":"📋 URLをコピー"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
