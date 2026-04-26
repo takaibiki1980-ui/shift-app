@@ -1245,28 +1245,21 @@ function autoAssignDay(d, dept, staffList, shifts, rules, floorSettings) {
 }
 
 function FloorSettingsModal({ floorSettings, onSave, onClose }) {
-  const [floors, setFloors] = useState(() => floorSettings.floors.map(f=>f.name));
   const [duties, setDuties] = useState(() => (floorSettings.duties||[{name:"入浴"},{name:"フリー"}]).map(d=>d.name));
   const [rules, setRules] = useState(() => {
     const existing = floorSettings.rules || [];
     return YOTEI_SHIFT_ORDER.map(st => ({ shiftType:st, assignment:(existing.find(x=>x.shiftType===st)?.assignment)||"" }));
   });
-  const updateFloor = (i, v) => setFloors(p=>{const n=[...p];n[i]=v;return n;});
-  const deleteFloor = (i) => setFloors(p=>p.filter((_,j)=>j!==i));
   const updateDuty = (i, v) => setDuties(p=>{const n=[...p];n[i]=v;return n;});
   const deleteDuty = (i) => setDuties(p=>p.filter((_,j)=>j!==i));
   const setRule = (st, v) => setRules(p=>p.map(r=>r.shiftType===st?{...r,assignment:v}:r));
-  const validFloors = floors.filter(n=>n.trim());
   const validDuties = duties.filter(n=>n.trim());
   const assignOptions = [
     {value:"", label:"なし（未設定）"},
-    {value:"auto", label:"⚡ 自動分配（フロアを均等割り）"},
-    ...validFloors.map(n=>({value:n, label:`🏠 ${n}（固定）`})),
     ...validDuties.map(n=>({value:n, label:`🎯 ${n}（固定）`})),
   ];
   const handleSave = () => {
-    if(validFloors.length===0){alert("フロア名を1つ以上設定してください");return;}
-    onSave({floors:validFloors.map(n=>({name:n})), duties:validDuties.map(n=>({name:n})), rules});
+    onSave({floors:[], duties:validDuties.map(n=>({name:n})), rules});
     onClose();
   };
   const LS = {fontSize:11,color:"#3a8a87",fontWeight:700,marginBottom:6,display:"block"};
@@ -1280,18 +1273,8 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>⚙️ 予定表 設定</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
-        <label style={LS}>🏠 フロア名</label>
-        <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
-          {floors.map((name,i)=>(
-            <div key={i} style={rowStyle}>
-              <input value={name} onChange={e=>updateFloor(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`フロア${i+1}`}/>
-              <button onClick={()=>deleteFloor(i)} disabled={floors.length<=1} style={delBtn(floors.length<=1)}>✕</button>
-            </div>
-          ))}
-          <button onClick={()=>setFloors(p=>[...p,""])} style={addBtn}>＋ フロアを追加</button>
-        </div>
         <label style={LS}>🎯 役割・業務</label>
-        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:8}}>入浴・フリーなどの業務担当。フロアとは別に自由に追加できます。</div>
+        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:8}}>入浴・フリーなどの業務担当を自由に追加できます。</div>
         <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
           {duties.map((name,i)=>(
             <div key={i} style={rowStyle}>
@@ -1302,7 +1285,7 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           <button onClick={()=>setDuties(p=>[...p,""])} style={addBtn}>＋ 役割を追加</button>
         </div>
         <label style={LS}>⚡ 自動配置ルール</label>
-        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:10}}>「自動配置」ボタンで全日程に一括適用されるルールです。「自動分配」はフロアを均等に振り分けます。</div>
+        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:10}}>「自動配置」ボタンで全日程に一括適用されるルールです。</div>
         <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:20}}>
           {rules.map(({shiftType,assignment})=>{
             const sh=SHIFTS[shiftType];
@@ -1330,7 +1313,7 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
   const wd = getWD(year, month, day);
   const ds = staffList.filter(s => s.dept === dept.id);
   const workingGroups = YOTEI_SHIFT_ORDER.map(st=>({ st, staff:ds.filter(s=>(shifts[s.id]?.[day]||"")===st) })).filter(g=>g.staff.length>0);
-  const floorOptions = ["", ...floorSettings.floors.map(f=>f.name), ...(floorSettings.duties||[]).map(d=>d.name)];
+  const floorOptions = ["", ...(floorSettings.duties||[]).map(d=>d.name)];
   const [local, setLocal] = useState(() => ({...assignments}));
   const [memo, setMemo] = useState(() => assignments["_memo"]||"");
   const set = (staffId, val) => setLocal(prev=>({...prev, [staffId]:val}));
@@ -1409,7 +1392,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
       {/* ツールバー */}
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontSize:12,fontWeight:800,color:"#2BBFBA",whiteSpace:"nowrap"}}>🏠 フロア</span>
-        {floorSettings.floors.map((f,i)=><span key={i} style={{background:"#d5edeb",borderRadius:6,padding:"3px 9px",fontSize:11,color:"#1a3635",fontWeight:700}}>{f.name}</span>)}
+        {(floorSettings.duties||[]).map((d,i)=><span key={i} style={{background:"#d5edeb",borderRadius:6,padding:"3px 9px",fontSize:11,color:"#1a3635",fontWeight:700}}>{d.name}</span>)}
         <button onClick={()=>setSettingsOpen(true)} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚙️ 設定</button>
         <button onClick={handleAutoAssign} style={{background:"linear-gradient(135deg,#f5b942,#e07b30)",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚡ 自動配置</button>
         <button onClick={handlePrint} style={{marginLeft:"auto",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🖨️ 印刷</button>
@@ -1783,7 +1766,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [ctxMenu, setCtxMenu] = useState(null);
   const [staffModal, setStaffModal] = useState(null);
 
-  const DEFAULT_FLOOR_SETTINGS = {floors:[{name:"りんどう"},{name:"ぼたん"}],duties:[{name:"入浴"},{name:"フリー"}]};
+  const DEFAULT_FLOOR_SETTINGS = {floors:[],duties:[{name:"入浴"},{name:"フリー"}]};
   const [allFloorSettings, setAllFloorSettings] = useState(() => { try{const s=localStorage.getItem("shiftNavi_allFloorSettings");if(s)return JSON.parse(s);}catch{} return {}; });
   const floorSettings = allFloorSettings[activeDeptId] || DEFAULT_FLOOR_SETTINGS;
   useEffect(() => {
