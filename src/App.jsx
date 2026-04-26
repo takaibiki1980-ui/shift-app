@@ -1418,6 +1418,18 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
     onBatchUpdateYotei(dayMap);
   };
 
+  const handleClearAssign = () => {
+    if(!window.confirm(`${month+1}月の全配置をクリアします。\nシフト・メモは保持されます。\nよろしいですか？`))return;
+    const dayMap = {};
+    for(let d=1;d<=days;d++){
+      const existing = getDayAssignments(d);
+      const cleared = {};
+      Object.keys(existing).forEach(k=>{ if(k==="memo") cleared[k]=existing[k]; });
+      dayMap[String(d)] = cleared;
+    }
+    onBatchUpdateYotei(dayMap);
+  };
+
   return (
     <div style={{maxWidth:960}}>
       {/* ツールバー */}
@@ -1426,6 +1438,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
         {(floorSettings.duties||[]).map((d,i)=><span key={i} style={{background:"#d5edeb",borderRadius:6,padding:"3px 9px",fontSize:11,color:"#1a3635",fontWeight:700}}>{d.name}</span>)}
         <button onClick={()=>setSettingsOpen(true)} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚙️ 設定</button>
         <button onClick={handleAutoAssign} style={{background:"linear-gradient(135deg,#f5b942,#e07b30)",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚡ 自動配置</button>
+        <button onClick={handleClearAssign} style={{background:"#fff0f0",color:"#c44b4b",border:"1px solid #e07070",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🗑 配置クリア</button>
         <button onClick={handlePrint} style={{marginLeft:"auto",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🖨️ 印刷</button>
         <button onClick={handleDownloadYotei} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>📥 USB保存</button>
       </div>
