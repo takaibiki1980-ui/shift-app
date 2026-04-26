@@ -1245,26 +1245,32 @@ function autoAssignDay(d, dept, staffList, shifts, rules, floorSettings) {
 }
 
 function FloorSettingsModal({ floorSettings, onSave, onClose }) {
+  const [groups, setGroups] = useState(() => (floorSettings.floors||[]).map(f=>f.name));
   const [duties, setDuties] = useState(() => (floorSettings.duties||[{name:"入浴"},{name:"フリー"}]).map(d=>d.name));
   const [rules, setRules] = useState(() => {
     const existing = floorSettings.rules || [];
     return YOTEI_SHIFT_ORDER.map(st => ({ shiftType:st, assignment:(existing.find(x=>x.shiftType===st)?.assignment)||"" }));
   });
+  const updateGroup = (i, v) => setGroups(p=>{const n=[...p];n[i]=v;return n;});
+  const deleteGroup = (i) => setGroups(p=>p.filter((_,j)=>j!==i));
   const updateDuty = (i, v) => setDuties(p=>{const n=[...p];n[i]=v;return n;});
   const deleteDuty = (i) => setDuties(p=>p.filter((_,j)=>j!==i));
   const setRule = (st, v) => setRules(p=>p.map(r=>r.shiftType===st?{...r,assignment:v}:r));
+  const validGroups = groups.filter(n=>n.trim());
   const validDuties = duties.filter(n=>n.trim());
   const assignOptions = [
     {value:"", label:"なし（未設定）"},
+    ...(validGroups.length>0?[{value:"auto", label:`⚡ 均等分配（${validGroups.join("・")}）`}]:[]),
+    ...validGroups.map(n=>({value:n, label:`📍 ${n}（固定）`})),
     ...validDuties.map(n=>({value:n, label:`🎯 ${n}（固定）`})),
   ];
   const handleSave = () => {
-    onSave({floors:[], duties:validDuties.map(n=>({name:n})), rules});
+    onSave({floors:validGroups.map(n=>({name:n})), duties:validDuties.map(n=>({name:n})), rules});
     onClose();
   };
   const LS = {fontSize:11,color:"#3a8a87",fontWeight:700,marginBottom:6,display:"block"};
   const rowStyle = {display:"flex",alignItems:"center",gap:6,marginBottom:7};
-  const delBtn = (disabled) => ({background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,color:"#c44b4b",cursor:disabled?"not-allowed":"pointer",padding:"5px 9px",fontSize:13,opacity:disabled?0.4:1});
+  const delBtn = () => ({background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,color:"#c44b4b",cursor:"pointer",padding:"5px 9px",fontSize:13});
   const addBtn = {background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800};
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -1273,13 +1279,24 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>⚙️ 予定表 設定</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
+        <label style={LS}>📍 配置グループ（均等分配用）</label>
+        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:8}}>例：1階・2階など。自動配置で均等に振り分けたい場合に設定します。</div>
+        <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
+          {groups.map((name,i)=>(
+            <div key={i} style={rowStyle}>
+              <input value={name} onChange={e=>updateGroup(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`グループ${i+1}（例：1階）`}/>
+              <button onClick={()=>deleteGroup(i)} style={delBtn()}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>setGroups(p=>[...p,""])} style={addBtn}>＋ グループを追加</button>
+        </div>
         <label style={LS}>🎯 役割・業務</label>
         <div style={{fontSize:10,color:"#6ab5b2",marginBottom:8}}>入浴・フリーなどの業務担当を自由に追加できます。</div>
         <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
           {duties.map((name,i)=>(
             <div key={i} style={rowStyle}>
               <input value={name} onChange={e=>updateDuty(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`役割${i+1}`}/>
-              <button onClick={()=>deleteDuty(i)} style={delBtn(false)}>✕</button>
+              <button onClick={()=>deleteDuty(i)} style={delBtn()}>✕</button>
             </div>
           ))}
           <button onClick={()=>setDuties(p=>[...p,""])} style={addBtn}>＋ 役割を追加</button>
