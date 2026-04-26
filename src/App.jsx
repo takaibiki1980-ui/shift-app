@@ -1628,7 +1628,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
         }
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
-        if (byKey['floorSettings']) setFloorSettings(byKey['floorSettings']);
+        if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
         const shiftKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
         if (byKey[shiftKey]) {
           isLoadingMonth.current = true;
@@ -1783,11 +1783,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [ctxMenu, setCtxMenu] = useState(null);
   const [staffModal, setStaffModal] = useState(null);
 
-  const [floorSettings, setFloorSettings] = useState(() => { try{const s=localStorage.getItem("shiftNavi_floorSettings");if(s){const p=JSON.parse(s);if(!p.duties)p.duties=[{name:"入浴"},{name:"フリー"}];return p;}}catch{} return {floors:[{name:"りんどう"},{name:"ぼたん"}],duties:[{name:"入浴"},{name:"フリー"}]}; });
+  const DEFAULT_FLOOR_SETTINGS = {floors:[{name:"りんどう"},{name:"ぼたん"}],duties:[{name:"入浴"},{name:"フリー"}]};
+  const [allFloorSettings, setAllFloorSettings] = useState(() => { try{const s=localStorage.getItem("shiftNavi_allFloorSettings");if(s)return JSON.parse(s);}catch{} return {}; });
+  const floorSettings = allFloorSettings[activeDeptId] || DEFAULT_FLOOR_SETTINGS;
   useEffect(() => {
-    try{localStorage.setItem("shiftNavi_floorSettings",JSON.stringify(floorSettings));}catch{}
-    if(!isInitializing.current){supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'floorSettings',data_value:floorSettings,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});}
-  }, [floorSettings]); // eslint-disable-line react-hooks/exhaustive-deps
+    try{localStorage.setItem("shiftNavi_allFloorSettings",JSON.stringify(allFloorSettings));}catch{}
+    if(!isInitializing.current){supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'allFloorSettings',data_value:allFloorSettings,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});}
+  }, [allFloorSettings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [allYotei, setAllYotei] = useState({});
   const YOTEI_SAVE_KEY = (y, m) => `yotei_${y}_${m+1}`;
@@ -1810,8 +1812,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setAllYotei(prev=>({...prev,[activeDeptId]:{...(prev[activeDeptId]||{}),...dayMap}}));
   }, [activeDeptId]);
   const handleUpdateFloorSettings = useCallback((newSettings) => {
-    setFloorSettings(newSettings);
-  }, []);
+    setAllFloorSettings(prev => ({...prev, [activeDeptId]: newSettings}));
+  }, [activeDeptId]);
 
   const handleAiAdjust = useCallback(async () => {
     if (!aiInstruction.trim()) return;
