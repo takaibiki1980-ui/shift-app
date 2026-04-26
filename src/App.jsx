@@ -789,7 +789,7 @@ function ContextMenu({ x, y, onSelect, onClose }) {
 }
 
 const SHIFT_REQ_TYPES = ["早番","日勤","遅番","夜勤","明け","休み","有休"];
-function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftRequests, deptId }) {
+function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftRequests, deptId, kiboCountByDay, kiboLimit }) {
   const days = getDays(year, month);
   const firstDow = new Date(year, month, 1).getDay();
   const cells = [];
@@ -832,7 +832,10 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
           if (!d) return <div key={i}/>;
           const isKibo=selected.includes(d), reqShift=shiftRequests[d], dow=(firstDow+d-1)%7, we=dow===0||dow===6, s=reqShift?SHIFTS[reqShift]:null;
           const isSelected = selectedDay===d;
-          return <button key={d} onClick={()=>{ if(reqShift){setSelectedDay(isSelected?null:d);}else if(isKibo){toggleKibo(d);}else{setSelectedDay(isSelected?null:d);} }} style={{background:isSelected?"#ffe0b2":isKibo?"#fff0f0":reqShift?s.bg:"transparent",border:isSelected?"2px solid #2BBFBA":isKibo?"1px solid #dc2626":reqShift?`1px solid ${s.border}`:"1px solid #0e3a38",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isKibo?"#f87171":reqShift?s.color:we?"#2BBFBA":"#5a9e9b",fontSize:10,fontWeight:(isKibo||reqShift||isSelected)?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32}}><span>{d}</span>{isKibo&&<span style={{fontSize:8,lineHeight:1}}>希休</span>}{reqShift&&<span style={{fontSize:8,lineHeight:1}}>{SHIFTS[reqShift].short}</span>}{!isKibo&&!reqShift&&isSelected&&<span style={{fontSize:7,lineHeight:1}}>選択</span>}</button>;
+          const othersKibo = kiboCountByDay?.[d] || 0;
+          const limit = kiboLimit || 3;
+          const kiboOver = othersKibo >= limit, kiboWarn = othersKibo === limit - 1;
+          return <button key={d} onClick={()=>{ if(reqShift){setSelectedDay(isSelected?null:d);}else if(isKibo){toggleKibo(d);}else{setSelectedDay(isSelected?null:d);} }} style={{background:isSelected?"#ffe0b2":isKibo?"#fff0f0":reqShift?s.bg:"transparent",border:isSelected?"2px solid #2BBFBA":isKibo?"1px solid #dc2626":reqShift?`1px solid ${s.border}`:"1px solid #0e3a38",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isKibo?"#f87171":reqShift?s.color:we?"#2BBFBA":"#5a9e9b",fontSize:10,fontWeight:(isKibo||reqShift||isSelected)?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32,position:"relative"}}>{kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#ef4444",fontWeight:900,lineHeight:1}}>⚠</span>}{kiboWarn&&!kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#f59e0b",fontWeight:900,lineHeight:1}}>!</span>}<span>{d}</span>{isKibo&&<span style={{fontSize:8,lineHeight:1}}>希休</span>}{reqShift&&<span style={{fontSize:8,lineHeight:1}}>{SHIFTS[reqShift].short}</span>}{!isKibo&&!reqShift&&isSelected&&<span style={{fontSize:7,lineHeight:1}}>選択</span>}{othersKibo>0&&<span style={{fontSize:7,lineHeight:1,color:kiboOver?"#ef4444":kiboWarn?"#f59e0b":"#c44b4b"}}>{othersKibo}人</span>}</button>;
         })}
       </div>
       {/* 選択中の日のシフト指定UI */}
@@ -858,7 +861,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
 
 const INPUT_STYLE = { width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:7, color:"#1a3635", padding:"8px 10px", fontSize:13, fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
 
-function StaffModal({ data, deptId, depts, year, month, onSave, onClose }) {
+function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCountByDay, kiboLimit }) {
   const isNew = !data;
   const mk = monthKey(year, month);
   const deptRoles = getDeptRoles(depts, deptId);
@@ -897,7 +900,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose }) {
         )}
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
-          <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId}/>
+          <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId} kiboCountByDay={kiboCountByDay} kiboLimit={kiboLimit}/>
         </div>
         <div style={{display:"flex",gap:10,marginTop:20}}>
           <button onClick={()=>form.name&&onSave(form)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
@@ -911,9 +914,9 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose }) {
 const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
 const DEPT_ICONS = ["🏠","🏢","🏥","💉","📋","🍱","🌸","⭐","🔵","🟢","🟡","🟠","🔴","💜"];
 function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
-  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n"));
+  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n"));
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,roles:roles.length>0?roles:["職員"]}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"]}); };
   const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -929,6 +932,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={3} max={7} value={maxConsec} onChange={e=>setMaxConsec(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
           <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={4} max={15} value={defKyuko} onChange={e=>setDefKyuko(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
+          <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={1} max={10} value={kiboLimit} onChange={e=>setKiboLimit(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
         </div>
         <label style={LS}>役職一覧（1行に1つ）</label>
         <textarea value={rolesText} onChange={e=>setRolesText(e.target.value)} rows={4} placeholder={"介護福祉士\n介護職員\n介護補助"} style={{...INPUT_STYLE,resize:"vertical",lineHeight:1.7,marginBottom:18}}/>
@@ -1144,6 +1148,16 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
               <td colSpan={3}/>
             </tr>
           ))}
+          <tr style={{background:"#fff5f5"}}>
+            <td style={{position:"sticky",left:0,zIndex:2,background:"#fff5f5",padding:"3px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda",fontSize:10,color:"#c44b4b",fontWeight:700,whiteSpace:"nowrap"}}>希望休</td>
+            {Array.from({length:days},(_,i)=>i+1).map(d=>{
+              const cnt=ds.reduce((acc,s)=>acc+((s.kiboByMonth?.[mk]||[]).includes(d)?1:0),0);
+              const limit=dept.kiboLimit||3;
+              const over=cnt>=limit, warn=cnt===limit-1;
+              return <td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:over?"#ef4444":warn?"#f59e0b":cnt>0?"#c44b4b":"#d5edeb",background:over?"#ffe4e4":warn?"#fffbeb":undefined,borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda"}}>{over?"⚠":cnt>0?cnt:""}</td>;
+            })}
+            <td colSpan={3} style={{borderBottom:"1px solid #b8deda"}}/>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -1982,7 +1996,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       </div>
 
       {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)}/>}
-      {staffModal!==null&&<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)}/>}
+      {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClearAll={()=>{setAllShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend} onImport={(newTrend)=>{setShiftTrend(prev=>{const pm=prev._months||[],nm=newTrend._months||[];const m={...prev,...newTrend};m._months=[...new Set([...pm,...nm])].sort();return m;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend({});setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
