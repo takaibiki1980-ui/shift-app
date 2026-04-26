@@ -1250,7 +1250,7 @@ function autoAssignDay(d, dept, staffList, shifts, rules, floorSettings) {
     if (rule.assignment === "auto") {
       const floors = floorSettings.floors;
       if (floors.length === 0) return;
-      staff.forEach((s, i) => { assign[s.id] = floors[i % floors.length].name; });
+      staff.forEach((s, i) => { assign[s.id] = floors[(i + d - 1) % floors.length].name; });
     } else {
       staff.forEach(s => { assign[s.id] = rule.assignment; });
     }
