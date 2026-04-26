@@ -1330,7 +1330,7 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
   const wd = getWD(year, month, day);
   const ds = staffList.filter(s => s.dept === dept.id);
   const workingGroups = YOTEI_SHIFT_ORDER.map(st=>({ st, staff:ds.filter(s=>(shifts[s.id]?.[day]||"")===st) })).filter(g=>g.staff.length>0);
-  const floorOptions = ["", ...(floorSettings.duties||[]).map(d=>d.name)];
+  const floorOptions = ["", ...(floorSettings.floors||[]).map(f=>f.name), ...(floorSettings.duties||[]).map(d=>d.name)];
   const [local, setLocal] = useState(() => ({...assignments}));
   const [memo, setMemo] = useState(() => assignments["_memo"]||"");
   const set = (staffId, val) => setLocal(prev=>({...prev, [staffId]:val}));
