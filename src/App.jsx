@@ -1842,16 +1842,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // スタッフポータル用: 施設設定をSupabaseに公開保存
+  // スタッフポータル用: 施設設定をSupabaseに公開保存（dbLoading完了後に必ず1回書く）
   useEffect(() => {
-    if (isInitializing.current) return;
+    if (dbLoading) return;
     const cfg = {
       facility_name: profile?.facility_name || '',
       depts: depts.map(d => ({ id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3 })),
       staffList: staffList.map(s => ({ id: s.id, dept: s.dept, name: s.name, role: s.role }))
     };
     supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'facilityConfig', data_value: cfg, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
-  }, [depts, staffList]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [depts, staffList, dbLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if(window.XLSX)return; const script=document.createElement("script"); script.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; document.head.appendChild(script); }, []);
 
@@ -2192,7 +2192,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
           }
           <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 クリア</button>
-          <button onClick={()=>{ const url=`${window.location.origin}?staff=${session.user.id}`; navigator.clipboard?.writeText(url).catch(()=>{}); alert(`スタッフ共有URLをコピーしました！\n\n${url}\n\n※このURLをスタッフに送ってください。`); }} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔗 共有</button>
+          <button onClick={()=>{ const url=`${window.location.origin}?staff=${session.user.id}`; if(navigator.share){navigator.share({title:'しふぽん 希望休入力',text:'希望休の入力はこちら',url});}else{navigator.clipboard?.writeText(url).catch(()=>{});alert(`スタッフ共有URLをコピーしました！\n\n${url}\n\n※このURLをスタッフに送ってください。`);} }} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔗 共有</button>
           {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🏢 管理</button>}
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
             <span style={{fontSize:10,fontWeight:800,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
