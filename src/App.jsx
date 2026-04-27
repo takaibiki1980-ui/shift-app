@@ -2484,14 +2484,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:16,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
             {depts.map(d=>{
               const url=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
-              const doShare=()=>{ if(navigator.share){navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url}).catch(()=>{});}else{navigator.clipboard?.writeText(url).then(()=>alert(`URLをコピーしました！`)).catch(()=>alert(`URLをコピーしてください:\n${url}`));}};
+              const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(url).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${url}`));}else{alert(`URLをコピーしてください:\n${url}`);}};
+              const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
                   <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:6}}>{d.icon} {d.label}</div>
                   <div style={{fontSize:10,color:"#6b7280",wordBreak:"break-all",marginBottom:8,background:"#f5f5f5",borderRadius:6,padding:"6px 8px"}}>{url}</div>
-                  <button onClick={doShare} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:12,fontWeight:800,width:"100%"}}>
-                    {navigator.share?"📤 共有する":"📋 URLをコピー"}
-                  </button>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={doShare} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📤 共有する</button>
+                    <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
+                  </div>
                 </div>
               );
             })}
