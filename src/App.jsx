@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { QRCodeSVG } from "qrcode.react";
 
 const LOGO_CHARS = [
   { char: "し", color: "#F4847E" },
@@ -2523,8 +2524,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:6}}>{d.icon} {d.label}</div>
-                  <div style={{fontSize:10,color:"#6b7280",wordBreak:"break-all",marginBottom:8,background:"#f5f5f5",borderRadius:6,padding:"6px 8px"}}>{url}</div>
+                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:10}}>{d.icon} {d.label}</div>
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:10,padding:8,background:"#f5f5f5",borderRadius:8}}>
+                    <QRCodeSVG value={url} size={180} bgColor="#ffffff" fgColor="#1a3635" level="M" includeMargin={true}/>
+                  </div>
+                  <div style={{fontSize:9,color:"#6b7280",wordBreak:"break-all",marginBottom:8,background:"#f5f5f5",borderRadius:6,padding:"6px 8px"}}>{url}</div>
                   <div style={{display:"flex",gap:8}}>
                     <button onClick={doShare} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📤 共有する</button>
                     <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
