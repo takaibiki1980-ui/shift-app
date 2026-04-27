@@ -1715,22 +1715,28 @@ function StaffPortal({ adminUserId, fixedDeptId }) {
   const [submitting, setSubmitting] = useState(false);
   const [kiboLoading, setKiboLoading] = useState(false);
 
-  const loadConfig = () => {
+  const loadConfig = async () => {
     setLoading(true); setLoadError(false); setConfig(null);
-    // RPC 関数を介さず直接 shift_data を読む（public_read_facilityConfig ポリシーで anon 許可済み）
-    supabase
-      .from('shift_data')
-      .select('data_value')
-      .eq('user_id', adminUserId)
-      .eq('data_key', 'facilityConfig')
-      .maybeSingle()
-      .then(({ data, error }) => {
-        setLoading(false);
-        if (error || !data?.data_value) { setLoadError(true); return; }
+    // 最大4回リトライ（Supabaseコールドスタート・モバイル不安定回線対策）
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
+      const { data, error } = await supabase
+        .from('shift_data')
+        .select('data_value')
+        .eq('user_id', adminUserId)
+        .eq('data_key', 'facilityConfig')
+        .maybeSingle();
+      if (!error && data?.data_value) {
         const cfg = data.data_value;
         setConfig(cfg);
+        setLoading(false);
         if (!fixedDeptId && cfg.depts?.length > 0) setSelDeptId(cfg.depts[0].id);
-      });
+        return;
+      }
+      console.warn('[StaffPortal] loadConfig attempt', attempt + 1, 'failed:', error?.message || 'no data');
+    }
+    setLoading(false);
+    setLoadError(true);
   };
 
   useEffect(() => { loadConfig(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
