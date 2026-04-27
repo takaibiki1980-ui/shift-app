@@ -2464,7 +2464,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:16,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
             {depts.map(d=>{
               const url=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
-              const doShare=()=>{ if(navigator.share){navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url});}else{navigator.clipboard?.writeText(url).catch(()=>{});alert(`URLをコピーしました！\n${url}`);}};
+              const doShare=()=>{ if(navigator.share){navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url}).catch(()=>{});}else{navigator.clipboard?.writeText(url).then(()=>alert(`URLをコピーしました！`)).catch(()=>alert(`URLをコピーしてください:\n${url}`));}};
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
                   <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:6}}>{d.icon} {d.label}</div>
