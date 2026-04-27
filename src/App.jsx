@@ -1717,12 +1717,19 @@ function StaffPortal({ adminUserId, fixedDeptId }) {
 
   const loadConfig = () => {
     setLoading(true); setLoadError(false); setConfig(null);
-    supabase.rpc('get_facility_config', { p_user_id: adminUserId })
+    // RPC 関数を介さず直接 shift_data を読む（public_read_facilityConfig ポリシーで anon 許可済み）
+    supabase
+      .from('shift_data')
+      .select('data_value')
+      .eq('user_id', adminUserId)
+      .eq('data_key', 'facilityConfig')
+      .maybeSingle()
       .then(({ data, error }) => {
         setLoading(false);
-        if (error || !data) { setLoadError(true); return; }
-        setConfig(data);
-        if (!fixedDeptId && data.depts?.length > 0) setSelDeptId(data.depts[0].id);
+        if (error || !data?.data_value) { setLoadError(true); return; }
+        const cfg = data.data_value;
+        setConfig(cfg);
+        if (!fixedDeptId && cfg.depts?.length > 0) setSelDeptId(cfg.depts[0].id);
       });
   };
 
