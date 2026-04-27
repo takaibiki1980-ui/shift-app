@@ -2023,6 +2023,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // スタッフポータル用: 施設設定をSupabaseに公開保存（dbLoading完了後に必ず1回書く）
   useEffect(() => {
     if (dbLoading) return;
+    if (staffList.length === 0) return; // 空データで上書きしない
     const cfg = {
       facility_name: profile?.facility_name || '',
       depts: depts.map(d => ({ id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3 })),
@@ -2174,8 +2175,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // ── シフト変更: Supabase へ自動保存（1秒デバウンス）──
   const saveFailCountRef = useRef(0);
   useEffect(() => {
-    if (isLoadingMonth.current || isInitializing.current) return;
+    if (isLoadingMonth.current) return;
+    // isInitializing中でもunsavedをマーク（Realtimeによる上書きを防ぐ）
     setSaveStatus("unsaved");
+    if (isInitializing.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
