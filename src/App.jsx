@@ -1706,6 +1706,7 @@ function StaffPortal({ adminUserId, fixedDeptId }) {
   const [month, setMonth] = useState(now.getMonth());
   const [config, setConfig] = useState(null);
   const [loadError, setLoadError] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [selDeptId, setSelDeptId] = useState(fixedDeptId || null);
   const [selStaffId, setSelStaffId] = useState(null);
   const [myDays, setMyDays] = useState([]);
@@ -1714,14 +1715,18 @@ function StaffPortal({ adminUserId, fixedDeptId }) {
   const [submitting, setSubmitting] = useState(false);
   const [kiboLoading, setKiboLoading] = useState(false);
 
-  useEffect(() => {
+  const loadConfig = () => {
+    setLoading(true); setLoadError(false); setConfig(null);
     supabase.rpc('get_facility_config', { p_user_id: adminUserId })
       .then(({ data, error }) => {
+        setLoading(false);
         if (error || !data) { setLoadError(true); return; }
         setConfig(data);
         if (!fixedDeptId && data.depts?.length > 0) setSelDeptId(data.depts[0].id);
       });
-  }, [adminUserId]); // eslint-disable-line react-hooks/exhaustive-deps
+  };
+
+  useEffect(() => { loadConfig(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const mk = monthKey(year, month);
   const selDept = config?.depts?.find(d => d.id === selDeptId);
@@ -1765,21 +1770,24 @@ function StaffPortal({ adminUserId, fixedDeptId }) {
 
   const BASE = { minHeight:"100vh", background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)", fontFamily:"'Noto Sans JP',sans-serif", padding:16 };
 
+  if (loading) return (
+    <div style={{...BASE,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}>
+        <ShifuponIcon size={48} radius={12}/>
+        <div style={{color:"#6ab5b2",fontSize:13,marginTop:12}}>読み込み中…</div>
+      </div>
+    </div>
+  );
+
   if (loadError) return (
     <div style={{...BASE,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{textAlign:"center",color:"#ef4444"}}>
         <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
         <div style={{fontSize:14,fontWeight:700}}>施設情報を読み込めませんでした</div>
         <div style={{fontSize:12,color:"#6b7280",marginTop:8}}>URLが正しいか確認してください</div>
-      </div>
-    </div>
-  );
-
-  if (!config) return (
-    <div style={{...BASE,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{textAlign:"center"}}>
-        <ShifuponIcon size={48} radius={12}/>
-        <div style={{color:"#6ab5b2",fontSize:13,marginTop:12}}>読み込み中…</div>
+        <button onClick={loadConfig} style={{marginTop:16,background:"#2BBFBA",color:"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+          🔄 再読込
+        </button>
       </div>
     </div>
   );
@@ -1828,7 +1836,7 @@ function StaffPortal({ adminUserId, fixedDeptId }) {
         <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
           <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:10}}>▍ 自分の名前を選んでください</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {deptStaff.length===0&&<div style={{fontSize:12,color:"#9ca3af"}}>この部署にスタッフがいません</div>}
+            {deptStaff.length===0&&<div style={{fontSize:12,color:"#9ca3af"}}>スタッフが見つかりません。管理者がスタッフを登録後、<button onClick={loadConfig} style={{background:"none",border:"none",color:"#2BBFBA",cursor:"pointer",fontWeight:700,fontSize:12,padding:0,textDecoration:"underline"}}>再読込</button>してください。</div>}
             {deptStaff.map(s=>(
               <button key={s.id} onClick={()=>{setSelStaffId(s.id);setMyDays([]);setSubmitted(false);}}
                 style={{background:selStaffId===s.id?"linear-gradient(135deg,#2BBFBA,#b07fd4)":"#d5edeb",color:selStaffId===s.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selStaffId===s.id?800:400}}>
