@@ -2175,10 +2175,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // ── シフト変更: Supabase へ自動保存（1秒デバウンス）──
   const saveFailCountRef = useRef(0);
   useEffect(() => {
+    // isLoadingMonth中（Supabaseからのロード中）のみスキップ
+    // isInitializingは不要: reloadFromRemoteはisLoadingMonth=trueでsetAllShiftsするため
     if (isLoadingMonth.current) return;
-    // isInitializing中でもunsavedをマーク（Realtimeによる上書きを防ぐ）
     setSaveStatus("unsaved");
-    if (isInitializing.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
