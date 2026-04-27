@@ -2314,9 +2314,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const handleGenerate = useCallback(() => {
     setGenerating(true);
+    isInitializing.current = false; // Realtimeリロード中でも生成を確実に反映させる
     const cs=staffList, cd=dept, ct=shiftTrend;
     setTimeout(() => {
-      try { setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings}=autoGenerate(cs,cd,year,month,cs2,ct);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label}),0);return{...prevAll,[cd.id]:result};}); }
+      try {
+        setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings}=autoGenerate(cs,cd,year,month,cs2,ct);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label}),0);return{...prevAll,[cd.id]:result};});
+        setSaveStatus("unsaved"); // 生成直後にunsavedをセットしてRealtimeによる上書きを防ぐ
+      }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
     },700);
