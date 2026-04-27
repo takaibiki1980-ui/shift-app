@@ -368,6 +368,19 @@ const getWD    = (y,m,d) => ["日","月","火","水","木","金","土"][new Date
 const isWE     = (y,m,d) => { const w=new Date(y,m,d).getDay(); return w===0||w===6; };
 const monthKey = (y,m) => `${y}-${m+1}`;
 
+// UUID ↔ 22文字base64url変換（URLを40%短縮）
+const uuidToShort = (uuid) => {
+  const hex = uuid.replace(/-/g, '');
+  const bytes = [];
+  for (let i = 0; i < 32; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const shortToUuid = (s) => {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const hex = Array.from(bin).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+};
+
 function calcConsecutive(sShifts, d) {
   let cnt = 0;
   for (let i = d; i >= 1; i--) { if (WORK_TYPES.has(sShifts[i])) cnt++; else break; }
@@ -1724,7 +1737,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         const cfg = {
           facility_name: c.fn || '',
           depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3 }],
-          staffList: (c.sl || []).map(s => ({ id: s.id, name: s.name, dept: c.d.id }))
+          staffList: (c.sl || []).map(s => ({ id: s.i ? shortToUuid(s.i) : s.id, name: s.n || s.name, dept: c.d.id }))
         };
         setConfig(cfg);
         setLoading(false);
@@ -2502,7 +2515,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             </div>
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:16,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
             {depts.map(d=>{
-              const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({id:s.id,name:s.name}));
+              const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
               const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               const url=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}&cfg=${cfgB64}`;
