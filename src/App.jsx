@@ -1700,7 +1700,7 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
   );
 }
 
-function StaffPortal({ adminUserId, fixedDeptId }) {
+function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -1716,8 +1716,26 @@ function StaffPortal({ adminUserId, fixedDeptId }) {
   const [kiboLoading, setKiboLoading] = useState(false);
 
   const loadConfig = async () => {
+    // URLにcfgデータが埋め込まれていれば即座に使う（Supabase不要・確実）
+    if (cfgPreload) {
+      try {
+        const json = decodeURIComponent(escape(atob(cfgPreload)));
+        const c = JSON.parse(json);
+        const cfg = {
+          facility_name: c.fn || '',
+          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3 }],
+          staffList: (c.sl || []).map(s => ({ id: s.id, name: s.name, dept: c.d.id }))
+        };
+        setConfig(cfg);
+        setLoading(false);
+        if (!fixedDeptId) setSelDeptId(c.d.id);
+        return;
+      } catch (e) {
+        console.warn('[StaffPortal] cfgPreload decode failed:', e);
+      }
+    }
+    // フォールバック: Supabaseから読む（最大4回リトライ）
     setLoading(true); setLoadError(false); setConfig(null);
-    // 最大4回リトライ（Supabaseコールドスタート・モバイル不安定回線対策）
     for (let attempt = 0; attempt < 4; attempt++) {
       if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
       const { data, error } = await supabase
@@ -1901,7 +1919,8 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const staffUserId = params.get('staff');
   const staffDeptId = params.get('dept');
-  if (staffUserId) return <StaffPortal adminUserId={staffUserId} fixedDeptId={staffDeptId||undefined} />;
+  const staffCfgB64 = params.get('cfg');
+  if (staffUserId) return <StaffPortal adminUserId={staffUserId} fixedDeptId={staffDeptId||undefined} cfgPreload={staffCfgB64} />;
 
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -2483,7 +2502,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             </div>
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:16,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
             {depts.map(d=>{
-              const url=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
+              const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({id:s.id,name:s.name}));
+              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3},sl:deptSl};
+              const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
+              const url=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(url).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${url}`));}else{alert(`URLをコピーしてください:\n${url}`);}};
               const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
               return(
