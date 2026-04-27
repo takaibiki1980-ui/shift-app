@@ -2519,18 +2519,21 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
               const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
-              const url=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}&cfg=${cfgB64}`;
-              const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(url).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${url}`));}else{alert(`URLをコピーしてください:\n${url}`);}};
-              const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
+              const urlShort=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
+              const urlFull=`${urlShort}&cfg=${cfgB64}`;
+              const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlFull).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlFull}`));}else{alert(`URLをコピーしてください:\n${urlFull}`);}};
+              const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url:urlFull});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:10}}>{d.icon} {d.label}</div>
-                  <div style={{display:"flex",justifyContent:"center",marginBottom:10,padding:8,background:"#f5f5f5",borderRadius:8}}>
-                    <QRCodeSVG value={url} size={180} bgColor="#ffffff" fgColor="#1a3635" level="M" includeMargin={true}/>
+                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:6}}>{d.icon} {d.label}</div>
+                  <div style={{textAlign:"center",marginBottom:6}}>
+                    <div style={{fontSize:10,color:"#3a8a87",marginBottom:6,fontWeight:700}}>📷 カメラで読み取り</div>
+                    <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #90cbc8",borderRadius:8}}>
+                      <QRCodeSVG value={urlShort} size={160} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
+                    </div>
                   </div>
-                  <div style={{fontSize:9,color:"#6b7280",wordBreak:"break-all",marginBottom:8,background:"#f5f5f5",borderRadius:6,padding:"6px 8px"}}>{url}</div>
-                  <div style={{display:"flex",gap:8}}>
-                    <button onClick={doShare} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📤 共有する</button>
+                  <div style={{display:"flex",gap:8,marginTop:8}}>
+                    <button onClick={doShare} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📤 LINEで送る</button>
                     <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
                   </div>
                 </div>
