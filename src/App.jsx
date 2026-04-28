@@ -439,6 +439,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     (s.kiboByMonth?.[mk] || []).forEach(d => {
       res[s.id][Number(d)] = "希望休";
     });
+    // yukyuByMonthの有休（希望休より優先度は同等・後勝ち）
+    (s.yukyuByMonth?.[mk] || []).forEach(d => {
+      res[s.id][Number(d)] = "有休";
+    });
     // shiftRequestsByMonthの希望勤務（早番・日勤・遅番・夜勤指定）
     Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([day, shiftKey]) => {
       res[s.id][Number(day)] = shiftKey;
@@ -1363,7 +1367,7 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},55%,30%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#1a3635"}}>{s.name}</div><div style={{fontSize:10,color:"#2a5a57",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日選択済</span>}</div></div></div><div style={{display:"flex",gap:6}}><button onClick={()=>onEdit(s)} style={ICON_BTN("#2BBFBA")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
+        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},55%,30%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#1a3635"}}>{s.name}</div><div style={{fontSize:10,color:"#2a5a57",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}</div></div></div><div style={{display:"flex",gap:6}}><button onClick={()=>onEdit(s)} style={ICON_BTN("#2BBFBA")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
         {ds.length===0&&<div style={{background:"#f3fffe",border:"1px dashed #0e3a38",borderRadius:10,padding:32,textAlign:"center",color:"#8ecece",fontSize:13}}>スタッフが登録されていません</div>}
       </div>
     </div>
@@ -1663,7 +1667,13 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
 // ─────────────────────────────────────────────
 //  スタッフポータル
 // ─────────────────────────────────────────────
-function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChange }) {
+function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChange, type = 'kibo', disabledDays = [] }) {
+  const isYukyu = type === 'yukyu';
+  const activeColor = isYukyu ? '#9b4db5' : '#ef4444';
+  const activeBg = isYukyu ? '#faf0ff' : '#fff0f0';
+  const activeBorder = isYukyu ? '#c07ad5' : '#ef4444';
+  const badgeLabel = isYukyu ? '有休' : '希休';
+
   const days = getDays(year, month);
   const firstDow = new Date(year, month, 1).getDay();
   const cells = [];
@@ -1673,8 +1683,11 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
 
   const toggle = (d) => {
     if (!d) return;
-    const cnt = otherCounts[d] || 0;
-    if (!myDays.includes(d) && cnt >= lim) return;
+    if (disabledDays.includes(d)) return;
+    if (!isYukyu) {
+      const cnt = otherCounts?.[d] || 0;
+      if (!myDays.includes(d) && cnt >= lim) return;
+    }
     onChange(myDays.includes(d) ? myDays.filter(x => x !== d) : [...myDays, d]);
   };
 
@@ -1687,29 +1700,37 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
         {cells.map((d,i)=>{
           if(!d) return <div key={i}/>;
           const isMe = myDays.includes(d);
-          const cnt = otherCounts[d] || 0;
-          const over = cnt >= lim;
-          const warn = cnt === lim - 1;
+          const isDisabled = disabledDays.includes(d) && !isMe;
+          const cnt = (!isYukyu && otherCounts?.[d]) || 0;
+          const over = !isYukyu && cnt >= lim;
+          const warn = !isYukyu && cnt === lim - 1;
           const dow = (firstDow+d-1)%7, we = dow===0||dow===6;
-          const blocked = !isMe && over;
+          const blocked = isDisabled || (!isMe && over);
           return (
             <button key={d} onClick={()=>toggle(d)} disabled={blocked}
-              style={{background:isMe?"#fff0f0":blocked?"#f5f5f5":"transparent",border:isMe?"2px solid #ef4444":blocked?"1px solid #e5e5e5":"1px solid #0e3a38",borderRadius:6,padding:"4px 2px",cursor:blocked?"not-allowed":"pointer",color:isMe?"#ef4444":blocked?"#aaa":we?"#2BBFBA":"#1a3635",fontSize:11,fontWeight:isMe?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:38,position:"relative",opacity:blocked?0.5:1}}>
+              style={{background:isMe?activeBg:blocked?"#f5f5f5":"transparent",border:isMe?`2px solid ${activeBorder}`:blocked?"1px solid #e5e5e5":"1px solid #0e3a38",borderRadius:6,padding:"4px 2px",cursor:blocked?"not-allowed":"pointer",color:isMe?activeColor:blocked?"#aaa":we?"#2BBFBA":"#1a3635",fontSize:11,fontWeight:isMe?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:38,position:"relative",opacity:blocked?0.5:1}}>
               {over&&!isMe&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#ef4444"}}>⚠</span>}
               {!over&&warn&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#f59e0b"}}>!</span>}
               <span style={{fontSize:12}}>{d}</span>
-              {isMe&&<span style={{fontSize:8,lineHeight:1,color:"#ef4444"}}>希休</span>}
-              {cnt>0&&<span style={{fontSize:8,lineHeight:1,color:over?"#ef4444":warn?"#f59e0b":"#c44b4b"}}>{cnt}人</span>}
-              {!isMe&&!cnt&&!blocked&&<span style={{fontSize:8,lineHeight:1,color:"#b0d8d5"}}>○</span>}
+              {isMe&&<span style={{fontSize:8,lineHeight:1,color:activeColor}}>{badgeLabel}</span>}
+              {!isYukyu&&cnt>0&&<span style={{fontSize:8,lineHeight:1,color:over?"#ef4444":warn?"#f59e0b":"#c44b4b"}}>{cnt}人</span>}
+              {!isMe&&!blocked&&(!cnt||isYukyu)&&<span style={{fontSize:8,lineHeight:1,color:"#b0d8d5"}}>○</span>}
             </button>
           );
         })}
       </div>
-      <div style={{marginTop:8,fontSize:11,color:"#3a8a87"}}>
-        <span style={{color:"#ef4444",fontWeight:700}}>■</span> 自分の希望休
-        <span style={{marginLeft:12,color:"#c44b4b"}}>数字</span> = 他のスタッフの人数
-        <span style={{marginLeft:12,color:"#9ca3af"}}>■</span> 上限到達（選択不可）
-      </div>
+      {isYukyu ? (
+        <div style={{marginTop:8,fontSize:11,color:"#3a8a87"}}>
+          <span style={{color:"#9b4db5",fontWeight:700}}>■</span> 自分の有休
+          <span style={{marginLeft:12,color:"#6b7280"}}>※ 人数上限なし・自由に選択可</span>
+        </div>
+      ) : (
+        <div style={{marginTop:8,fontSize:11,color:"#3a8a87"}}>
+          <span style={{color:"#ef4444",fontWeight:700}}>■</span> 自分の希望休
+          <span style={{marginLeft:12,color:"#c44b4b"}}>数字</span> = 他のスタッフの人数
+          <span style={{marginLeft:12,color:"#9ca3af"}}>■</span> 上限到達（選択不可）
+        </div>
+      )}
     </div>
   );
 }
@@ -1724,6 +1745,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   const [selDeptId, setSelDeptId] = useState(fixedDeptId || null);
   const [selStaffId, setSelStaffId] = useState(null);
   const [myDays, setMyDays] = useState([]);
+  const [myYukyuDays, setMyYukyuDays] = useState([]);
   const [otherCounts, setOtherCounts] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -1791,6 +1813,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         if (!data) return;
         const mine = data.find(k => k.staff_id === selStaffId);
         setMyDays(mine?.days || []);
+        setMyYukyuDays(mine?.yukyu_days || []);
         const counts = {};
         data.filter(k => k.staff_id !== selStaffId).forEach(k => {
           (k.days||[]).forEach(d => { counts[d] = (counts[d]||0) + 1; });
@@ -1817,7 +1840,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
     }
     const { error } = await supabase.from('staff_kibo').upsert({
       admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
-      month_key: mk, days: myDays, updated_at: new Date().toISOString()
+      month_key: mk, days: myDays, yukyu_days: myYukyuDays, updated_at: new Date().toISOString()
     }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
     setSubmitting(false); submittingRef.current = false;
     if (!error) setSubmitted(true);
@@ -1859,7 +1882,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           <ShifuponIcon size={36} radius={8}/>
           <div>
             <div style={{fontSize:13,fontWeight:900,color:"#1a3635"}}>{config.facility_name || "しふぽん"}</div>
-            <div style={{fontSize:10,color:"#3a8a87"}}>希望休 入力ポータル</div>
+            <div style={{fontSize:10,color:"#3a8a87"}}>希望休・有休 入力ポータル</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1875,7 +1898,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:10}}>▍ 部署を選んでください</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {(config.depts||[]).map(d=>(
-              <button key={d.id} onClick={()=>{setSelDeptId(d.id);setSelStaffId(null);setMyDays([]);setSubmitted(false);}}
+              <button key={d.id} onClick={()=>{setSelDeptId(d.id);setSelStaffId(null);setMyDays([]);setMyYukyuDays([]);setSubmitted(false);}}
                 style={{background:selDeptId===d.id?"linear-gradient(135deg,#2BBFBA,#45B7D1)":"#d5edeb",color:selDeptId===d.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selDeptId===d.id?800:400}}>
                 {d.icon} {d.label}
               </button>
@@ -1897,7 +1920,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {deptStaff.length===0&&<div style={{fontSize:12,color:"#9ca3af"}}>スタッフが見つかりません。管理者がスタッフを登録後、<button onClick={loadConfig} style={{background:"none",border:"none",color:"#2BBFBA",cursor:"pointer",fontWeight:700,fontSize:12,padding:0,textDecoration:"underline"}}>再読込</button>してください。</div>}
             {deptStaff.map(s=>(
-              <button key={s.id} onClick={()=>{setSelStaffId(s.id);setMyDays([]);setSubmitted(false);}}
+              <button key={s.id} onClick={()=>{setSelStaffId(s.id);setMyDays([]);setMyYukyuDays([]);setSubmitted(false);}}
                 style={{background:selStaffId===s.id?"linear-gradient(135deg,#2BBFBA,#b07fd4)":"#d5edeb",color:selStaffId===s.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selStaffId===s.id?800:400}}>
                 {s.name}
               </button>
@@ -1908,22 +1931,39 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
       {/* カレンダー */}
       {selStaff && !submitted && (
-        <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:4}}>▍ {selStaff.name}さんの希望休（{year}年{month+1}月）</div>
-          <div style={{fontSize:10,color:"#c44b4b",marginBottom:10}}>※ 同じ日は上限{lim}名まで。上限に達した日は選択できません。</div>
-          {kiboLoading ? (
-            <div style={{textAlign:"center",color:"#6ab5b2",padding:20}}>読み込み中…</div>
-          ) : (
-            <StaffKiboCalendar year={year} month={month} myDays={myDays} otherCounts={otherCounts} kiboLimit={lim} onChange={setMyDays}/>
-          )}
-          <div style={{marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontSize:12,color:"#ef4444",fontWeight:700}}>選択中: {myDays.length}日</span>
+        <>
+          {/* 希望休 */}
+          <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:4}}>▍ {selStaff.name}さんの希望休（{year}年{month+1}月）</div>
+            <div style={{fontSize:10,color:"#c44b4b",marginBottom:10}}>※ 同じ日は上限{lim}名まで。上限に達した日は選択できません。</div>
+            {kiboLoading ? (
+              <div style={{textAlign:"center",color:"#6ab5b2",padding:20}}>読み込み中…</div>
+            ) : (
+              <StaffKiboCalendar year={year} month={month} myDays={myDays} otherCounts={otherCounts} kiboLimit={lim} onChange={setMyDays} type="kibo" disabledDays={myYukyuDays}/>
+            )}
+            <div style={{marginTop:10,fontSize:12,color:"#ef4444",fontWeight:700}}>選択中: {myDays.length}日</div>
+          </div>
+
+          {/* 有休 */}
+          <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815",border:"1px solid #e8d5f5"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#9b4db5",marginBottom:4}}>▍ {selStaff.name}さんの有休（{year}年{month+1}月）</div>
+            <div style={{fontSize:10,color:"#9b4db5",marginBottom:10}}>※ 有休取得希望日を選んでください。人数制限はありません。</div>
+            {kiboLoading ? (
+              <div style={{textAlign:"center",color:"#6ab5b2",padding:20}}>読み込み中…</div>
+            ) : (
+              <StaffKiboCalendar year={year} month={month} myDays={myYukyuDays} otherCounts={{}} kiboLimit={99} onChange={setMyYukyuDays} type="yukyu" disabledDays={myDays}/>
+            )}
+            <div style={{marginTop:10,fontSize:12,color:"#9b4db5",fontWeight:700}}>選択中: {myYukyuDays.length}日</div>
+          </div>
+
+          {/* 送信ボタン */}
+          <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
             <button onClick={handleSubmit} disabled={submitting}
               style={{background:submitting?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:submitting?"#2a5a57":"#fff",border:"none",borderRadius:10,padding:"12px 28px",cursor:submitting?"not-allowed":"pointer",fontSize:14,fontWeight:800}}>
               {submitting?"送信中…":"✅ 送信する"}
             </button>
           </div>
-        </div>
+        </>
       )}
 
       {/* 送信完了 */}
@@ -1931,8 +1971,16 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         <div style={{background:"#f0fff4",border:"2px solid #86efac",borderRadius:12,padding:24,textAlign:"center",marginBottom:12}}>
           <div style={{fontSize:36,marginBottom:8}}>✅</div>
           <div style={{fontSize:16,fontWeight:900,color:"#16a34a",marginBottom:4}}>送信しました！</div>
-          <div style={{fontSize:12,color:"#3a8a87",marginBottom:16}}>{year}年{month+1}月の希望休（{myDays.sort((a,b)=>a-b).join("日・")}日）を送信しました。</div>
-          <div style={{fontSize:11,color:"#6b7280",marginBottom:16}}>管理者に自動で反映されます。</div>
+          {myDays.length > 0 && (
+            <div style={{fontSize:12,color:"#c44b4b",marginBottom:4}}>希望休：{myDays.sort((a,b)=>a-b).join("日・")}日</div>
+          )}
+          {myYukyuDays.length > 0 && (
+            <div style={{fontSize:12,color:"#9b4db5",marginBottom:4}}>有休：{myYukyuDays.sort((a,b)=>a-b).join("日・")}日</div>
+          )}
+          {myDays.length === 0 && myYukyuDays.length === 0 && (
+            <div style={{fontSize:12,color:"#3a8a87",marginBottom:4}}>{year}年{month+1}月の申請を送信しました。</div>
+          )}
+          <div style={{fontSize:11,color:"#6b7280",margin:"8px 0 16px"}}>管理者に自動で反映されます。</div>
           <button onClick={()=>setSubmitted(false)} style={{background:"#d5edeb",color:"#1a3635",border:"none",borderRadius:8,padding:"9px 20px",cursor:"pointer",fontSize:12,fontWeight:700}}>✏️ 修正する</button>
         </div>
       )}
@@ -2187,7 +2235,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       setStaffList(prev => prev.map(s => {
         const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
         if (!kibo) return s;
-        return { ...s, kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days } };
+        return {
+          ...s,
+          kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days || [] },
+          yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: kibo.yukyu_days || [] }
+        };
       }));
       setTimeout(() => { isMergingKibo.current = false; }, 200);
     };
