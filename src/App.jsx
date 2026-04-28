@@ -664,7 +664,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts)
   const WD = ["日","月","火","水","木","金","土"];
   const TAG = (t) => '<' + t + '>';
   const CTAG = (t) => '</' + t + '>';
-  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:10px;margin:16px;color:#111;}h2{font-size:13px;margin:14px 0 5px;}table{border-collapse:collapse;width:100%;margin-bottom:20px;}th,td{border:1px solid #ccc;padding:2px 3px;text-align:center;font-size:9px;white-space:nowrap;}th{background:#e8f0fe;font-weight:bold;}.name{text-align:left;min-width:70px;}.we{background:#fff0f6;}@media print{body{margin:4px;}h2{font-size:10px;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
+  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:10px;margin:16px;color:#111;}h2{font-size:13px;margin:14px 0 5px;}table{border-collapse:collapse;width:100%;margin-bottom:20px;}th,td{border:1px solid #ccc;padding:2px 3px;text-align:center;font-size:9px;white-space:nowrap;}th{background:#e8f0fe;font-weight:bold;}.name{text-align:left;min-width:70px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}@media print{body{margin:4px;}h2{font-size:10px;page-break-before:auto;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
   depts.filter(d=>selectedDepts.includes(d.id)).forEach(dept => {
     const shifts = allShifts[dept.id] || {};
     html += TAG('h2')+`${dept.icon} ${dept.label}　${year}年${month+1}月`+CTAG('h2');
@@ -1727,6 +1727,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   const [otherCounts, setOtherCounts] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [kiboLoading, setKiboLoading] = useState(false);
 
   const loadConfig = async () => {
@@ -1800,12 +1801,25 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
   const handleSubmit = async () => {
     if (!selStaff || !selDept) return;
+    if (submittingRef.current) return; // 二重送信防止
+    submittingRef.current = true;
     setSubmitting(true);
+    // 送信直前に最新カウントを確認（同時送信による上限突破を検知）
+    const { data: latest } = await supabase.from('staff_kibo')
+      .select('staff_id,days')
+      .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
+    const overDays = myDays.filter(d =>
+      (latest || []).filter(k => k.staff_id !== selStaffId && (k.days||[]).includes(d)).length >= lim
+    );
+    if (overDays.length > 0) {
+      alert(`${overDays.sort((a,b)=>a-b).join('日・')}日は希望休の上限に達しました。別の日を選んでください。`);
+      setSubmitting(false); submittingRef.current = false; return;
+    }
     const { error } = await supabase.from('staff_kibo').upsert({
       admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
       month_key: mk, days: myDays, updated_at: new Date().toISOString()
     }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
-    setSubmitting(false);
+    setSubmitting(false); submittingRef.current = false;
     if (!error) setSubmitted(true);
     else alert('送信に失敗しました。もう一度お試しください。');
   };
@@ -2042,6 +2056,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [month, setMonth] = useState(now.getMonth());
 
   const isInitializing = useRef(true);
+  const isMergingKibo = useRef(false); // mergeStaffKibo中にstaffListが再保存されるのを防ぐ
   const [dbLoading, setDbLoading] = useState(true);
 
   const [depts, setDepts] = useState(() => { try { const s=localStorage.getItem("shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
@@ -2060,7 +2075,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
-    if (!isInitializing.current) {
+    if (!isInitializing.current && !isMergingKibo.current) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
         .then(({ error }) => { if (error) console.error('[sync] staffList upsert失敗:', error); else console.log('[sync] staffList 保存OK'); });
     }
@@ -2168,11 +2183,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       const mk = monthKey(year, month);
       const { data } = await supabase.from('staff_kibo').select('*').eq('admin_user_id', session.user.id).eq('month_key', mk);
       if (!data || data.length === 0) return;
+      isMergingKibo.current = true; // DB保存をスキップさせる
       setStaffList(prev => prev.map(s => {
         const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
         if (!kibo) return s;
         return { ...s, kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days } };
       }));
+      setTimeout(() => { isMergingKibo.current = false; }, 200);
     };
     mergeStaffKibo();
 
