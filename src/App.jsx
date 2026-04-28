@@ -2284,11 +2284,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [generateWarnings, setGenerateWarnings] = useState(null);
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
+  const isMobile = window.innerWidth < 680;
   const [tableZoom, setTableZoom] = useState(() => { try { return Number(localStorage.getItem("shiftTableZoom")) || 100; } catch { return 100; } });
-  const handleZoomChange = useCallback((v) => { const c=Math.min(100,Math.max(40,Math.round(v/5)*5)); setTableZoom(c); try{localStorage.setItem("shiftTableZoom",c);}catch{} }, []);
-  const autoFitZoom = useCallback((staffCount, days) => { const vw=window.innerWidth-24; const tableEstWidth=148+30*days+116; return Math.min(100,Math.max(40,Math.round(Math.floor(vw/tableEstWidth*100)/5)*5)); }, []);
+  const handleZoomChange = useCallback((v) => { const min=isMobile?30:40; const c=Math.min(100,Math.max(min,Math.round(v/5)*5)); setTableZoom(c); try{localStorage.setItem("shiftTableZoom",c);}catch{} }, [isMobile]);
+  const autoFitZoom = useCallback((staffCount, days) => { const vw=window.innerWidth-(isMobile?8:24); const tableEstWidth=148+30*days+116; const min=isMobile?30:40; return Math.min(100,Math.max(min,Math.round(Math.floor(vw/tableEstWidth*100)/5)*5)); }, [isMobile]);
   const autoFitApplied = useRef(false);
-  useEffect(() => { if(autoFitApplied.current)return; try{const s=localStorage.getItem("shiftTableZoom");if(s){autoFitApplied.current=true;return;}}catch{} setTableZoom(autoFitZoom(staffList.filter(s=>s.dept===activeDeptId).length,getDays(now.getFullYear(),now.getMonth()))); autoFitApplied.current=true; }, []);
+  useEffect(() => { if(autoFitApplied.current)return; try{const s=localStorage.getItem("shiftTableZoom");if(s&&!isMobile){autoFitApplied.current=true;return;}}catch{} setTableZoom(autoFitZoom(staffList.filter(s=>s.dept===activeDeptId).length,getDays(now.getFullYear(),now.getMonth()))); autoFitApplied.current=true; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [excelImportModal, setExcelImportModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
@@ -2428,22 +2429,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <div style={{fontSize:14,fontWeight:800,color:"#2BBFBA",minWidth:104,textAlign:"center",background:"#ffffff",border:"1px solid #90cbc8",borderRadius:8,padding:"5px 10px"}}>{year}年 {month+1}月</div>
           <button onClick={nextMonth} style={MNAV}>▶</button>
         </div>
-        <div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
-          <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:60}}>
-            {saveStatus==="saved"&&<><span>💾</span><span>保存済</span></>}
-            {saveStatus==="unsaved"&&<><span>⏳</span><span>未保存</span></>}
+        <div style={{display:"flex",gap:isMobile?4:7,alignItems:"center",flexWrap:"wrap"}}>
+          <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
+            {saveStatus==="saved"&&<><span>💾</span>{!isMobile&&<span>保存済</span>}</>}
+            {saveStatus==="unsaved"&&<><span>⏳</span>{!isMobile&&<span>未保存</span>}</>}
           </div>
-          <button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳ 生成中…":"⚡ 自動生成"}</button>
-          <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📤 書き出し</button>
-          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>📅 休み設定</button>
-          <button onClick={()=>setExcelImportModal(true)} style={{background:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#e8f5ee":"#ffffff",color:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#5cb87a":"#2a6a67",border:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?`📊 傾向ON`:"📊 傾向学習"}</button>
-          {profile?.plan==='full'
+          <button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 生成中…":" 自動生成")}</button>
+          <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
+          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
+          {!isMobile&&<button onClick={()=>setExcelImportModal(true)} style={{background:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#e8f5ee":"#ffffff",color:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#5cb87a":"#2a6a67",border:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?`📊 傾向ON`:"📊 傾向学習"}</button>}
+          {!isMobile&&(profile?.plan==='full'
             ? <button onClick={()=>setAiMode(v=>!v)} style={{background:aiMode?"#ede9fe":"#ffffff",color:aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
             : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
-          }
-          <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 クリア</button>
-          <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔗 共有</button>
-          {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:12,fontWeight:700}}>🏢 管理</button>}
+          )}
+          <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>
+          <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
+          {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🏢":"🏢 管理"}</button>}
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
             <span style={{fontSize:10,fontWeight:800,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
             <span style={{fontSize:10,color:"#3a8a87",fontWeight:700}}>👤 ログアウト</span>
@@ -2484,8 +2485,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       </div>
 
       {/* INNER TABS */}
-      <div style={{background:"#eaf8f6",borderBottom:"2px solid #2BBFBA",display:"flex",padding:"0 12px",gap:2,alignItems:"center"}}>
-        {[["shift","📅 シフト表"],["summary","📊 集計"],["staff","👥 スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab===k?800:600}}>{l}</button>)}
+      <div style={{background:"#eaf8f6",borderBottom:"2px solid #2BBFBA",display:"flex",padding:"0 6px",gap:2,alignItems:"center",overflowX:"auto"}}>
+        {[["shift",isMobile?"📅 シフト":"📅 シフト表"],["summary",isMobile?"📊 集計":"📊 集計"],["staff",isMobile?"👥 スタッフ":"👥 スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab===k?800:600,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
         {profile?.plan==='free'
           ? <button onClick={()=>alert("📋 予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"7px 13px",background:"transparent",border:"none",color:"#9ca3af",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:600}}>🔒 予定表</button>
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:"7px 13px",background:"transparent",border:"none",color:innerTab==="yotei"?"#1a9e9a":"#2a6a67",borderBottom:innerTab==="yotei"?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:innerTab==="yotei"?800:600}}>📋 予定表</button>
@@ -2501,7 +2502,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#ffffff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
             </div>
           )}
-          <div style={{fontSize:10,color:"#8ecece",padding:"0 4px"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>
+          {!isMobile&&<div style={{fontSize:10,color:"#8ecece",padding:"0 4px",whiteSpace:"nowrap"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>}
         </div>
       </div>
 
