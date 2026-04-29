@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { shifts, staffList, dept, instruction, year, month } = req.body;
+    const { shifts, staffList, dept, instruction, aiRules, year, month } = req.body;
 
     // ── 入力バリデーション ──
     const missing = [];
@@ -54,6 +54,10 @@ export default async function handler(req, res) {
       shiftTable += s.name + "(" + s.role + ")[ID:" + s.id + "]: " + row + "\n";
     }
 
+    const facilityRulesSection = aiRules && aiRules.trim()
+      ? "\n\n【施設固有ルール（必ず遵守すること）】\n" + aiRules.trim().split("\n").filter(Boolean).map(r => "- " + r).join("\n")
+      : "";
+
     const systemPrompt =
       "あなたは介護施設のシフト管理AIです。与えられた月次シフト表を指示に従い、最小限の変更で調整してください。\n\n" +
       "厳守ルール（夜勤セット＝3日連続の不可分ブロック）：\n" +
@@ -63,8 +67,10 @@ export default async function handler(req, res) {
       "- 明けを削除する場合、前日の「夜勤」も必ず同時に削除する\n" +
       "- 「夜勤明け削除」「夜勤セット削除」と指示されたら、該当の夜勤・明け・休み3日分すべてを休みに変更\n" +
       "- 変更は指示に関係するスタッフのみ\n" +
-      "- 利用可能なシフト種別: " + (dept.shiftTypes || []).join("、") + "、明け、休み\n\n" +
+      "- 利用可能なシフト種別: " + (dept.shiftTypes || []).join("、") + "、明け、休み\n" +
+      facilityRulesSection + "\n\n" +
       "シフト表の読み方: 早=早番 日=日勤 遅=遅番 夜=夜勤 明=明け 休=休み 希=希望休 有=有休 －=未設定\n" +
+      "各スタッフ行の形式: 名前(役職)[ID:xxx]\n" +
       "シフト表は「日付: 01|02|03|...」の行で日付番号を示し、各スタッフ行の同じ位置がその日のシフト。日付番号を絶対に間違えないこと。\n\n" +
       "【ペア固定ルール抽出】指示が複数スタッフの相関（例：「Aが夜勤の日はBを早番」「Aが夜勤の翌日はBを休み」）を含む場合、rules配列に構造化して出力：\n" +
       '  {"type":"pair","triggerStaffId":"A_ID","triggerShift":"夜勤","targetStaffId":"B_ID","targetShift":"早番","offset":0}\n' +

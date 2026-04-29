@@ -2143,6 +2143,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'facilityConfig', data_value: cfg, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
   }, [depts, staffList, dbLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (isInitializing.current) return;
+    supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'aiRules', data_value: aiRules, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
+  }, [aiRules]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => { if(window.XLSX)return; const script=document.createElement("script"); script.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; document.head.appendChild(script); }, []);
 
   const SAVE_KEY = (y, m) => `shiftNavi_shifts_${y}_${m+1}`;
@@ -2179,6 +2184,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
+        if (byKey['aiRules']) setAiRules(byKey['aiRules']);
         const shiftKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
         if (byKey[shiftKey]) {
           isLoadingMonth.current = true;
@@ -2355,6 +2361,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [aiMode, setAiMode] = useState(false);
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiRules, setAiRules] = useState("");
+  const [showAiRules, setShowAiRules] = useState(false);
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_shiftTrend",JSON.stringify(shiftTrend)); } catch {}
     if (!isInitializing.current) {
@@ -2405,7 +2413,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       const res = await fetch(fnUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shifts: deptShifts, staffList, dept, instruction: aiInstruction, year, month: month + 1 }),
+        body: JSON.stringify({ shifts: deptShifts, staffList, dept, instruction: aiInstruction, aiRules: aiRules.trim(), year, month: month + 1 }),
       });
       console.log("[AI] レスポンスステータス:", res.status);
       if (!res.ok) {
@@ -2431,7 +2439,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     } finally {
       setAiLoading(false);
     }
-  }, [aiInstruction, deptShifts, staffList, dept, year, month, setDeptShifts]);
+  }, [aiInstruction, aiRules, deptShifts, staffList, dept, year, month, setDeptShifts]);
 
   const handleGenerate = useCallback(() => {
     setGenerating(true);
@@ -2509,10 +2517,51 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* AI PANEL */}
       {aiMode&&(
         <div style={{background:"#f3f0ff",borderBottom:"1px solid #c4b5fd",padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#7c3aed",display:"flex",alignItems:"center",gap:6}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#7c3aed",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
             <span>🤖 AI調整モード</span>
             <span style={{fontSize:10,fontWeight:400,color:"#a78bfa"}}>自動生成後のシフトを指示で調整できます</span>
+            <button onClick={()=>setShowAiRules(v=>!v)} style={{marginLeft:"auto",background:showAiRules?"#ede9fe":"#fff",border:"1px solid #c4b5fd",borderRadius:6,color:"#7c3aed",fontSize:10,padding:"2px 8px",cursor:"pointer",fontWeight:showAiRules?800:400}}>
+              {aiRules.trim()?"⚙️ ルール設定 ✓":"⚙️ ルール設定"}
+            </button>
           </div>
+
+          {/* AIルール設定（折りたたみ） */}
+          {showAiRules&&(
+            <div style={{background:"#ede9fe",borderRadius:10,padding:"10px 12px",border:"1px solid #c4b5fd"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#5b21b6",marginBottom:6}}>施設固有のAIルール（毎回自動で適用されます）</div>
+              <div style={{fontSize:10,color:"#7c3aed",marginBottom:6}}>役職・業務ごとのルールを書いておくと、AI がシフト調整時に自動で従います。</div>
+              {/* プリセットボタン */}
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+                {[
+                  "介護補助は夜勤禁止",
+                  "パート職員は日勤か早番のみ",
+                  "主任は月に夜勤2回まで",
+                  "新人（研修中）は日勤のみ",
+                  "夜勤担当者は最低2名以上",
+                  "同じ役職の職員を夜勤に偏らせない",
+                  "連続夜勤は禁止",
+                  "リーダーが夜勤の日は経験者を早番に"
+                ].map(preset=>(
+                  <button key={preset} onClick={()=>setAiRules(r=>r?r+"\n"+preset:preset)}
+                    style={{background:"#fff",border:"1px solid #c4b5fd",borderRadius:12,padding:"2px 8px",fontSize:10,color:"#6d28d9",cursor:"pointer"}}>
+                    ＋{preset}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={aiRules}
+                onChange={e=>setAiRules(e.target.value)}
+                placeholder={"例）介護補助は夜勤禁止\n例）パート職員は日勤か早番のみ\n例）○○さんは土日優先で休みにする\n例）新しく追加した役職名はここにルールを書いてください"}
+                style={{width:"100%",minHeight:90,borderRadius:8,border:"1px solid #c4b5fd",padding:"8px 10px",fontSize:11,color:"#4c1d95",background:"#faf5ff",resize:"vertical",boxSizing:"border-box",outline:"none",fontFamily:"inherit"}}
+              />
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+                <div style={{fontSize:10,color:"#a78bfa"}}>{aiRules.trim()?`${aiRules.trim().split("\n").filter(Boolean).length}件のルール設定中`:"ルール未設定（任意）"}</div>
+                {aiRules.trim()&&<button onClick={()=>{if(confirm("ルールをクリアしますか？"))setAiRules("");}} style={{background:"none",border:"none",color:"#ef4444",fontSize:10,cursor:"pointer"}}>🗑 クリア</button>}
+              </div>
+            </div>
+          )}
+
+          {/* 今回の指示 */}
           <textarea
             value={aiInstruction}
             onChange={e=>setAiInstruction(e.target.value)}
