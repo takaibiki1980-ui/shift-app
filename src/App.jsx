@@ -2600,6 +2600,35 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <button onClick={()=>setShareModal(false)} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
             </div>
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:16,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
+
+            {/* ── サイト全体QR（新規登録・ログイン用） ── */}
+            <div style={{background:"#fff",border:"2px solid #2BBFBA",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+              <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:4}}>🏠 しふぽん サイトQRコード</div>
+              <div style={{fontSize:10,color:"#3a8a87",marginBottom:10}}>自分のサイトに貼り付けると、スキャンしたらしふぽんのログイン・新規登録画面へ移動します。</div>
+              <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+                  <div style={{padding:8,background:"#fff",border:"2px solid #90cbc8",borderRadius:8,display:"inline-block"}}>
+                    <QRCodeSVG value={window.location.origin} size={160} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
+                  </div>
+                  <div style={{fontSize:9,color:"#6ab5b2",wordBreak:"break-all",textAlign:"center",maxWidth:176}}>{window.location.origin}</div>
+                </div>
+                <div style={{flex:1,minWidth:160}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:8}}>使い方</div>
+                  <div style={{fontSize:11,color:"#3a8a87",lineHeight:1.8}}>
+                    ① このQRコードを<strong>スクリーンショット</strong><br/>
+                    ② 自分のサイトに画像として貼り付け<br/>
+                    ③ 読み取るとしふぽんに到達<br/>
+                    ④ 「ログイン」または「新規登録」が表示されます
+                  </div>
+                  <div style={{marginTop:10,fontSize:10,background:"#fef3c7",border:"1px solid #fbbf24",borderRadius:6,padding:"6px 8px",color:"#92400e"}}>
+                    💡 URLもリンクとして貼れます<br/>
+                    <span style={{wordBreak:"break-all",fontWeight:700}}>{window.location.origin}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{fontSize:11,color:"#3a8a87",marginBottom:10,fontWeight:700}}>▍ 部署別 スタッフ希望休ポータル</div>
             {depts.map(d=>{
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
               const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3},sl:deptSl};
