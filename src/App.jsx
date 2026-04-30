@@ -2166,11 +2166,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'facilityConfig', data_value: cfg, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
   }, [depts, staffList, dbLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (isInitializing.current) return;
-    supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'aiRules', data_value: aiRules, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
-  }, [aiRules]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => { if(window.XLSX)return; const script=document.createElement("script"); script.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; document.head.appendChild(script); }, []);
 
   const SAVE_KEY = (y, m) => `shiftNavi_shifts_${y}_${m+1}`;
@@ -2386,6 +2381,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiRules, setAiRules] = useState("");
   const [showAiRules, setShowAiRules] = useState(false);
+  useEffect(() => {
+    if (isInitializing.current) return;
+    supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'aiRules', data_value: aiRules, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
+  }, [aiRules]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_shiftTrend",JSON.stringify(shiftTrend)); } catch {}
     if (!isInitializing.current) {
