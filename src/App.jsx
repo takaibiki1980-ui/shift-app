@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -1993,6 +1993,29 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 // ─────────────────────────────────────────────
 //  APP（メイン）
 // ─────────────────────────────────────────────
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{minHeight:"100vh",background:"#fff0f0",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"sans-serif",padding:24}}>
+        <div style={{background:"#fff",border:"2px solid #ef4444",borderRadius:12,padding:24,maxWidth:500,width:"100%"}}>
+          <div style={{fontSize:32,marginBottom:8}}>⚠️</div>
+          <div style={{fontSize:16,fontWeight:700,color:"#dc2626",marginBottom:8}}>エラーが発生しました</div>
+          <div style={{fontSize:12,color:"#374151",marginBottom:16}}>以下のエラー内容を開発者にお伝えください：</div>
+          <pre style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:6,padding:12,fontSize:11,color:"#991b1b",overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all"}}>
+            {this.state.error?.message || String(this.state.error)}
+          </pre>
+          <button onClick={()=>window.location.reload()} style={{marginTop:16,background:"#dc2626",color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",cursor:"pointer",fontSize:13,fontWeight:700}}>
+            🔄 ページを再読み込み
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const staffUserId = params.get('staff');
@@ -2037,7 +2060,7 @@ export default function App() {
 
   if (!session) { return <LoginPage onLogin={() => {}} />; }
 
-  return <MainApp session={session} profile={profile} onLogout={handleLogout} onProfileUpdate={setProfile} />;
+  return <ErrorBoundary><MainApp session={session} profile={profile} onLogout={handleLogout} onProfileUpdate={setProfile} /></ErrorBoundary>;
 }
 
 // ─────────────────────────────────────────────
