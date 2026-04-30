@@ -1821,32 +1821,38 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           (k.days||[]).forEach(d => { counts[d] = (counts[d]||0) + 1; });
         });
         setOtherCounts(counts);
-      });
+      })
+      .catch(() => { setKiboLoading(false); });
   }, [selStaffId, selDeptId, mk, adminUserId]);
 
   const handleSubmit = async () => {
     if (!selStaff || !selDept) return;
-    if (submittingRef.current) return; // 二重送信防止
+    if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
-    // 送信直前に最新カウントを確認（同時送信による上限突破を検知）
-    const { data: latest } = await supabase.from('staff_kibo')
-      .select('staff_id,days')
-      .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
-    const overDays = myDays.filter(d =>
-      (latest || []).filter(k => k.staff_id !== selStaffId && (k.days||[]).includes(d)).length >= lim
-    );
-    if (overDays.length > 0) {
-      alert(`${overDays.sort((a,b)=>a-b).join('日・')}日は希望休の上限に達しました。別の日を選んでください。`);
-      setSubmitting(false); submittingRef.current = false; return;
+    try {
+      const { data: latest } = await supabase.from('staff_kibo')
+        .select('staff_id,days')
+        .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
+      const overDays = myDays.filter(d =>
+        (latest || []).filter(k => k.staff_id !== selStaffId && (k.days||[]).includes(d)).length >= lim
+      );
+      if (overDays.length > 0) {
+        alert(`${overDays.sort((a,b)=>a-b).join('日・')}日は希望休の上限に達しました。別の日を選んでください。`);
+        return;
+      }
+      const { error } = await supabase.from('staff_kibo').upsert({
+        admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
+        month_key: mk, days: myDays, yukyu_days: myYukyuDays, updated_at: new Date().toISOString()
+      }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
+      if (!error) setSubmitted(true);
+      else alert('送信に失敗しました。もう一度お試しください。');
+    } catch {
+      alert('送信に失敗しました。ネットワークを確認してください。');
+    } finally {
+      setSubmitting(false);
+      submittingRef.current = false;
     }
-    const { error } = await supabase.from('staff_kibo').upsert({
-      admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
-      month_key: mk, days: myDays, yukyu_days: myYukyuDays, updated_at: new Date().toISOString()
-    }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
-    setSubmitting(false); submittingRef.current = false;
-    if (!error) setSubmitted(true);
-    else alert('送信に失敗しました。もう一度お試しください。');
   };
 
   const prevMonth = () => { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); setSubmitted(false); };
@@ -2381,9 +2387,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiRules, setAiRules] = useState("");
   const [showAiRules, setShowAiRules] = useState(false);
+  const aiRulesTimerRef = useRef(null);
+  const generateTimerRef = useRef(null);
   useEffect(() => {
     if (isInitializing.current) return;
-    supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'aiRules', data_value: aiRules, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
+    if (aiRulesTimerRef.current) clearTimeout(aiRulesTimerRef.current);
+    aiRulesTimerRef.current = setTimeout(() => {
+      supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'aiRules', data_value: aiRules, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {}).catch(() => {});
+    }, 1000);
+    return () => { if (aiRulesTimerRef.current) clearTimeout(aiRulesTimerRef.current); };
   }, [aiRules]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_shiftTrend",JSON.stringify(shiftTrend)); } catch {}
@@ -2428,33 +2440,32 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const handleAiAdjust = useCallback(async () => {
     if (!aiInstruction.trim()) return;
+    if (!dept) { alert("部署が選択されていません。"); return; }
     setAiLoading(true);
     try {
       const fnUrl = "/api/ai-shift-adjust";
-      console.log("[AI] 呼び出しURL:", fnUrl);
       const res = await fetch(fnUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ shifts: deptShifts, staffList, dept, instruction: aiInstruction, aiRules: aiRules.trim(), year, month: month + 1 }),
       });
-      console.log("[AI] レスポンスステータス:", res.status);
       if (!res.ok) {
         const errText = await res.text();
         throw new Error(`HTTP ${res.status}: ${errText}`);
       }
       const data = await res.json();
       if (data?.error) throw new Error(data.error);
-      if (data.changes && data.changes.length > 0) {
+      if (Array.isArray(data.changes) && data.changes.length > 0) {
         setDeptShifts(prev => {
           const next = { ...prev };
           for (const c of data.changes) {
-            next[c.staffId] = { ...(next[c.staffId] || {}), [c.day]: c.shift };
+            if (c?.staffId && c?.day) next[c.staffId] = { ...(next[c.staffId] || {}), [c.day]: c.shift };
           }
           return next;
         });
         alert(`✨ AI調整完了\n\n${data.explanation}\n\n変更: ${data.changes.length}件`);
       } else {
-        alert(`✨ AIからの回答\n\n${data.explanation}`);
+        alert(`✨ AIからの回答\n\n${data.explanation || "変更なし"}`);
       }
     } catch (e) {
       alert("AI調整エラー: " + e.message);
@@ -2464,10 +2475,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [aiInstruction, aiRules, deptShifts, staffList, dept, year, month, setDeptShifts]);
 
   const handleGenerate = useCallback(() => {
+    if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
     isInitializing.current = false; // Realtimeリロード中でも生成を確実に反映させる
     const cs=staffList, cd=dept, ct=shiftTrend;
-    setTimeout(() => {
+    generateTimerRef.current = setTimeout(() => {
       try {
         setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings}=autoGenerate(cs,cd,year,month,cs2,ct);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label}),0);return{...prevAll,[cd.id]:result};});
         setSaveStatus("unsaved"); // 生成直後にunsavedをセットしてRealtimeによる上書きを防ぐ
