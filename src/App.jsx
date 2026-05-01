@@ -2186,6 +2186,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isLoadingMonth = useRef(false);
   const activeDeptIdRef = useRef(activeDeptId);
   useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
+  const userEditSeq = useRef(0); // ユーザー編集のたびにインクリメント（Realtime競合検出用）
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -2244,13 +2245,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (dbLoading) return;
 
     const reloadFromRemote = async () => {
-      isInitializing.current = true; // 受信データが再保存されるのを防ぐ
+      // 編集中（unsaved）はスキップ — saveStatusRefはユーザー操作で即時更新されるため確実
+      if (saveStatusRef.current === 'unsaved') return;
+      // fetch開始時のシーケンス番号を記録（fetch中にユーザーが編集したら検出するため）
+      const seqAtStart = userEditSeq.current;
+      isInitializing.current = true;
       try {
         const { data, error } = await supabase
           .from('shift_data')
           .select('data_key,data_value')
           .eq('user_id', session.user.id);
         if (error) throw error;
+        // fetch中にユーザーが編集していたらシフト更新をキャンセル
+        if (userEditSeq.current !== seqAtStart) return;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts'])      setDepts(byKey['depts']);
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
@@ -2260,23 +2267,23 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
           setAllShifts(prev => {
+            // updater実行時に再チェック（fetch後に編集があればキャンセル）
+            if (userEditSeq.current !== seqAtStart) return prev;
             const result = { ...prev };
             for (const [k, v] of deptShiftEntries) {
-              const deptId = k.slice(shiftPrefix.length);
-              // 編集中の部署は未保存の変更を保護、それ以外は即時反映
-              if (saveStatusRef.current !== 'unsaved' || deptId !== activeDeptId) {
-                result[deptId] = v;
-              }
+              result[k.slice(shiftPrefix.length)] = v;
             }
             return restoreShifts(result);
           });
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
         } else {
-          // 旧フォーマット: 未保存の変更がなければ更新
           const legacyKey = `shifts_${year}_${month+1}`;
-          if (byKey[legacyKey] && saveStatusRef.current !== 'unsaved') {
+          if (byKey[legacyKey]) {
             isLoadingMonth.current = true;
-            setAllShifts(restoreShifts(byKey[legacyKey]));
+            setAllShifts(prev => {
+              if (userEditSeq.current !== seqAtStart) return prev;
+              return restoreShifts(byKey[legacyKey]);
+            });
             setTimeout(() => { isLoadingMonth.current = false; }, 100);
           }
         }
@@ -2471,9 +2478,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const dept = depts.find(d=>d.id===activeDeptId) || depts[0];
   const deptShifts = allShifts[activeDeptId]||{};
   const setDeptShifts = useCallback(updater => {
-    // ユーザー操作（クリア・セル編集・AI調整等）は常にRealtimeより優先する
-    isLoadingMonth.current = false;
-    saveStatusRef.current = "unsaved";
+    // ユーザー操作はRealtimeより常に優先: 編集前にシーケンス番号を上げてRealtimeをキャンセル
+    userEditSeq.current++;
+    saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
     setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater}));
   }, [activeDeptId]);
 
@@ -2530,9 +2537,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     isInitializing.current = false;
     const cs=staffList, cd=dept, ct=shiftTrend;
     generateTimerRef.current = setTimeout(() => {
-      // Realtimeリロード中でも確実に保存・表示できるよう強制リセット
-      isLoadingMonth.current = false;
-      saveStatusRef.current = "unsaved";
+      // 自動生成もユーザー操作: シーケンス番号を上げてRealtimeをキャンセル
+      userEditSeq.current++;
+      saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
       try {
         setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings}=autoGenerate(cs,cd,year,month,cs2,ct);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label}),0);return{...prevAll,[cd.id]:result};});
         setSaveStatus("unsaved");
