@@ -1069,20 +1069,26 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm 
   );
 }
 
-function BulkKyukoModal({ depts, staffList, year, month, onApply, onClose }) {
+function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   const mk = monthKey(year, month);
-  const initValues = () => { const vals={}; depts.forEach(d=>{const ds=staffList.filter(s=>s.dept===d.id);if(ds.length===0)return;const first=ds[0];vals[d.id]=first.kyukoDaysByMonth?.[mk]??first.kyukoDays??8;}); return vals; };
-  const [values, setValues] = useState(initValues);
-  const setVal = (deptId, v) => setValues(prev=>({...prev,[deptId]:Math.max(0,Math.min(20,+v||0))}));
+  const initDays = () => { const first = staffList[0]; return first ? (first.kyukoDaysByMonth?.[mk] ?? first.kyukoDays ?? 8) : 8; };
+  const [days, setDays] = useState(initDays);
+  const setVal = (v) => setDays(Math.max(0, Math.min(20, +v || 0)));
+  const totalStaff = staffList.length;
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000"}}>
+      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>📅 休み日数 一括設定</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button></div>
-        <div style={{fontSize:11,color:"#2a5a57",marginBottom:16,marginTop:8,background:"#d5edeb",borderRadius:7,padding:"8px 12px",border:"1px solid #0e3a38"}}>💡 部署ごとに設定した日数を、その部署の全スタッフに一括適用します。</div>
-        <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
-          {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length;if(cnt===0)return null;return(<div key={d.id} style={{display:"flex",alignItems:"center",gap:12,background:"#d5edeb",borderRadius:9,padding:"10px 14px",border:"1px solid #90cbc8"}}><span style={{fontSize:20}}>{d.icon}</span><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{d.label}</div><div style={{fontSize:10,color:"#2a5a57"}}>{cnt}名</div></div><div style={{display:"flex",alignItems:"center",gap:6}}><button onClick={()=>setVal(d.id,(values[d.id]||8)-1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:6,color:"#6ab5b2",cursor:"pointer",width:28,height:28,fontSize:16,fontWeight:800}}>−</button><input type="number" value={values[d.id]??8} min={0} max={20} onChange={e=>setVal(d.id,e.target.value)} style={{width:48,background:"#f0fffe",border:"1px solid #90cbc8",borderRadius:6,color:"#2BBFBA",fontSize:16,fontWeight:800,textAlign:"center",padding:"4px 0",outline:"none"}}/><button onClick={()=>setVal(d.id,(values[d.id]||8)+1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:6,color:"#6ab5b2",cursor:"pointer",width:28,height:28,fontSize:16,fontWeight:800}}>＋</button><span style={{fontSize:11,color:"#2a5a57"}}>日</span></div></div>);})}
+        <div style={{fontSize:11,color:"#2a5a57",marginBottom:20,marginTop:8,background:"#d5edeb",borderRadius:7,padding:"8px 12px",border:"1px solid #0e3a38"}}>💡 施設全体の休み日数を設定します。全部署・全スタッフ（{totalStaff}名）に一括適用されます。</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:28,background:"#d5edeb",borderRadius:12,padding:"18px 20px",border:"1px solid #90cbc8"}}>
+          <button onClick={()=>setVal(days-1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+          <div style={{textAlign:"center"}}>
+            <input type="number" value={days} min={0} max={20} onChange={e=>setVal(e.target.value)} style={{width:72,background:"#f0fffe",border:"2px solid #2BBFBA",borderRadius:8,color:"#2BBFBA",fontSize:28,fontWeight:900,textAlign:"center",padding:"6px 0",outline:"none"}}/>
+            <div style={{fontSize:12,color:"#2a5a57",marginTop:4,fontWeight:700}}>日 / 月</div>
+          </div>
+          <button onClick={()=>setVal(days+1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
         </div>
-        <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(values,mk)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
+        <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(days,mk)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
       </div>
     </div>
   );
@@ -2619,7 +2625,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const saveStaff = (form) => { setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
   const deleteStaff = (id) => { const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
-  const handleBulkKyuko = (values, mk) => { setStaffList(prev=>prev.map(s=>{if(values[s.dept]===undefined)return s;return{...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:values[s.dept]}};})); setBulkKyukoModal(false); };
+  const handleBulkKyuko = (days, mk) => { setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}}))); setBulkKyukoModal(false); };
 
   const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
@@ -2796,7 +2802,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend} onImport={(newTrend)=>{setShiftTrend(prev=>{const pm=prev._months||[],nm=newTrend._months||[];const m={...prev,...newTrend};m._months=[...new Set([...pm,...nm])].sort();return m;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend({});setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
-      {bulkKyukoModal&&<BulkKyukoModal depts={depts} staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
+      {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#8ecece",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#2BBFBA",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
