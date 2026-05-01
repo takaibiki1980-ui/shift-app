@@ -2470,7 +2470,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const dept = depts.find(d=>d.id===activeDeptId) || depts[0];
   const deptShifts = allShifts[activeDeptId]||{};
-  const setDeptShifts = useCallback(updater => { setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater})); }, [activeDeptId]);
+  const setDeptShifts = useCallback(updater => {
+    // ユーザー操作（クリア・セル編集・AI調整等）は常にRealtimeより優先する
+    isLoadingMonth.current = false;
+    saveStatusRef.current = "unsaved";
+    setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater}));
+  }, [activeDeptId]);
 
   const deptYotei = allYotei[activeDeptId]||{};
   const handleUpdateYotei = useCallback((day, assignments) => {
