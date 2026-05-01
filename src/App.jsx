@@ -2209,11 +2209,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
         if (byKey['aiRules']) setAiRules(byKey['aiRules']);
-        const shiftKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
-        if (byKey[shiftKey]) {
+        const shiftPrefix = `shifts_${now.getFullYear()}_${now.getMonth()+1}_`;
+        const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
+        if (deptShiftEntries.length > 0) {
+          const merged = {};
+          for (const [k, v] of deptShiftEntries) { merged[k.slice(shiftPrefix.length)] = v; }
           isLoadingMonth.current = true;
-          setAllShifts(restoreShifts(byKey[shiftKey]));
+          setAllShifts(restoreShifts(merged));
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
+        } else {
+          // 旧フォーマット（全部署1つのJSON）からの移行
+          const legacyKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
+          if (byKey[legacyKey]) {
+            isLoadingMonth.current = true;
+            setAllShifts(restoreShifts(byKey[legacyKey]));
+            setTimeout(() => { isLoadingMonth.current = false; }, 100);
+          }
         }
         const yoteiKey = `yotei_${now.getFullYear()}_${now.getMonth()+1}`;
         if (byKey[yoteiKey]) setAllYotei(byKey[yoteiKey]);
@@ -2232,7 +2243,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (dbLoading) return;
 
     const reloadFromRemote = async () => {
-      if (saveStatusRef.current === 'unsaved') return; // 未保存の変更があれば上書きしない
       isInitializing.current = true; // 受信データが再保存されるのを防ぐ
       try {
         const { data, error } = await supabase
@@ -2244,11 +2254,30 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['depts'])      setDepts(byKey['depts']);
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
-        const shiftKey = `shifts_${year}_${month+1}`;
-        if (byKey[shiftKey]) {
+        const shiftPrefix = `shifts_${year}_${month+1}_`;
+        const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
+        if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
-          setAllShifts(restoreShifts(byKey[shiftKey]));
+          setAllShifts(prev => {
+            const result = { ...prev };
+            for (const [k, v] of deptShiftEntries) {
+              const deptId = k.slice(shiftPrefix.length);
+              // 編集中の部署は未保存の変更を保護、それ以外は即時反映
+              if (saveStatusRef.current !== 'unsaved' || deptId !== activeDeptId) {
+                result[deptId] = v;
+              }
+            }
+            return restoreShifts(result);
+          });
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
+        } else {
+          // 旧フォーマット: 未保存の変更がなければ更新
+          const legacyKey = `shifts_${year}_${month+1}`;
+          if (byKey[legacyKey] && saveStatusRef.current !== 'unsaved') {
+            isLoadingMonth.current = true;
+            setAllShifts(restoreShifts(byKey[legacyKey]));
+            setTimeout(() => { isLoadingMonth.current = false; }, 100);
+          }
         }
       } catch(e) { console.warn('リモート同期エラー:', e); }
       finally { setTimeout(() => { isInitializing.current = false; }, 300); }
@@ -2298,18 +2327,28 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     };
   }, [dbLoading, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── 月切替: Supabase から当月シフトをロード ──
+  // ── 月切替: Supabase から当月シフトをロード（部署ごとに別キー）──
   useEffect(() => {
     if (isInitializing.current) return;
     isLoadingMonth.current = true;
-    const key = `shifts_${year}_${month+1}`;
-    supabase.from('shift_data').select('data_value')
-      .eq('user_id', session.user.id).eq('data_key', key).maybeSingle()
+    const prefix = `shifts_${year}_${month+1}_`;
+    supabase.from('shift_data').select('data_key,data_value')
+      .eq('user_id', session.user.id)
+      .like('data_key', prefix + '%')
       .then(({ data, error }) => {
-        if (!error && data?.data_value) {
-          setAllShifts(restoreShifts(data.data_value));
+        if (!error && data && data.length > 0) {
+          const merged = {};
+          for (const row of data) { merged[row.data_key.slice(prefix.length)] = row.data_value; }
+          setAllShifts(restoreShifts(merged));
         } else {
-          try { const saved=localStorage.getItem(SAVE_KEY(year,month)); setAllShifts(saved ? restoreShifts(JSON.parse(saved)) : {}); } catch { setAllShifts({}); }
+          // 旧フォーマット fallback
+          const legacyKey = `shifts_${year}_${month+1}`;
+          supabase.from('shift_data').select('data_value')
+            .eq('user_id', session.user.id).eq('data_key', legacyKey).maybeSingle()
+            .then(({ data: ld }) => {
+              if (ld?.data_value) { setAllShifts(restoreShifts(ld.data_value)); }
+              else { try { const saved=localStorage.getItem(SAVE_KEY(year,month)); setAllShifts(saved ? restoreShifts(JSON.parse(saved)) : {}); } catch { setAllShifts({}); } }
+            });
         }
         setTimeout(() => { isLoadingMonth.current = false; }, 100);
         // Load yotei for new month
@@ -2329,10 +2368,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
-      const key = `shifts_${year}_${month+1}`;
+      // 部署ごとに別キーで保存（同時編集の競合を防ぐ）
+      const key = `shifts_${year}_${month+1}_${activeDeptId}`;
+      const deptData = allShifts[activeDeptId] || {};
       try {
         const { error } = await supabase.from('shift_data').upsert(
-          { user_id:session.user.id, data_key:key, data_value:allShifts, updated_at:new Date().toISOString() },
+          { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
           { onConflict:'user_id,data_key' }
         );
         if (error) {
@@ -2362,7 +2403,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       }
     }, 1000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allShifts, year, month, activeDeptId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
