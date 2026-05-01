@@ -2185,6 +2185,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
   const saveTimer = useRef(null);
   const isLoadingMonth = useRef(false);
+  const activeDeptIdRef = useRef(activeDeptId);
+  useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -2369,8 +2371,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
       // 部署ごとに別キーで保存（同時編集の競合を防ぐ）
-      const key = `shifts_${year}_${month+1}_${activeDeptId}`;
-      const deptData = allShifts[activeDeptId] || {};
+      // activeDeptId は ref 経由で参照（deps に入れると部署切替のたびに余分なDBアクセスが発生するため）
+      const currentDeptId = activeDeptIdRef.current;
+      const key = `shifts_${year}_${month+1}_${currentDeptId}`;
+      const deptData = allShifts[currentDeptId] || {};
       try {
         const { error } = await supabase.from('shift_data').upsert(
           { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
@@ -2403,7 +2407,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       }
     }, 1000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [allShifts, year, month, activeDeptId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
