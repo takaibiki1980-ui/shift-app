@@ -388,6 +388,54 @@ function calcConsecutive(sShifts, d) {
   return cnt;
 }
 
+// しふぽん蓄積データからスタッフごとのシフト傾向を学習する
+function computeLearnedTrend(allDBData, staffList) {
+  const counts = {}, totals = {};
+  for (const [key, shifts] of Object.entries(allDBData)) {
+    if (!key.startsWith('shifts_') || !shifts || typeof shifts !== 'object') continue;
+    for (const [staffId, staffShifts] of Object.entries(shifts)) {
+      if (!staffShifts || typeof staffShifts !== 'object') continue;
+      if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; }
+      for (const shift of Object.values(staffShifts)) {
+        if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
+        counts[staffId][shift] = (counts[staffId][shift] || 0) + 1;
+        totals[staffId]++;
+      }
+    }
+  }
+  const result = {};
+  for (const staff of staffList) {
+    if (!counts[staff.id] || totals[staff.id] < 15) continue; // 約半月分以上のデータが必要
+    const freq = {};
+    for (const [shift, cnt] of Object.entries(counts[staff.id])) freq[shift] = cnt / totals[staff.id];
+    result[staff.name] = freq;
+  }
+  return result;
+}
+
+// ExcelインポートデータとAI学習データをブレンド（学習データ70%優先）
+function mergeShiftTrends(excelTrend, learnedTrend) {
+  const excelKeys = Object.keys(excelTrend || {}).filter(k => k !== '_months');
+  const learnedKeys = Object.keys(learnedTrend || {});
+  if (learnedKeys.length === 0) return excelTrend || {};
+  if (excelKeys.length === 0) return learnedTrend;
+  const result = excelTrend._months ? { _months: excelTrend._months } : {};
+  const allNames = new Set([...excelKeys, ...learnedKeys]);
+  for (const name of allNames) {
+    const ex = excelTrend[name], le = learnedTrend[name];
+    if (ex && le) {
+      const merged = {};
+      for (const k of new Set([...Object.keys(ex), ...Object.keys(le)])) {
+        merged[k] = (ex[k] || 0) * 0.3 + (le[k] || 0) * 0.7;
+      }
+      result[name] = merged;
+    } else {
+      result[name] = ex || le;
+    }
+  }
+  return result;
+}
+
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}) {
   const days = getDays(year, month);
   const mk = monthKey(year, month);
@@ -2265,6 +2313,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
+        const latestStaffList = byKey['staffList'] || staffList;
+        const learned = computeLearnedTrend(byKey, latestStaffList);
+        if (Object.keys(learned).length > 0) setLearnedTrend(learned);
         if (byKey['aiRules']) setAiRules(byKey['aiRules']);
         const shiftPrefix = `shifts_${now.getFullYear()}_${now.getMonth()+1}_`;
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
@@ -2317,6 +2368,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['depts'])      setDepts(byKey['depts']);
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+        const latestStaffListRT = byKey['staffList'] || staffList;
+        const learnedRT = computeLearnedTrend(byKey, latestStaffListRT);
+        if (Object.keys(learnedRT).length > 0) setLearnedTrend(learnedRT);
         const shiftPrefix = `shifts_${year}_${month+1}_`;
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
@@ -2489,6 +2543,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [shareModal, setShareModal] = useState(false);
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
+  const [learnedTrend, setLearnedTrend] = useState({});
   const [aiMode, setAiMode] = useState(false);
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
@@ -2598,7 +2653,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
     isInitializing.current = false;
-    const cs=staffList, cd=dept, ct=shiftTrend;
+    const cs=staffList, cd=dept, ct=mergeShiftTrends(shiftTrend, learnedTrend);
     generateTimerRef.current = setTimeout(() => {
       // 自動生成もユーザー操作: シーケンス番号を上げてRealtimeをキャンセル
       userEditSeq.current++;
@@ -2610,7 +2665,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
     },700);
-  }, [staffList,dept,year,month,shiftTrend]);
+  }, [staffList,dept,year,month,shiftTrend,learnedTrend]);
 
   const handleLeftClick = useCallback((staffId, day) => {
     if (isLockedRef.current) return;
@@ -2663,7 +2718,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
           <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
-          {!isMobile&&<button onClick={()=>setExcelImportModal(true)} style={{background:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#e8f5ee":"#ffffff",color:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#5cb87a":"#2a6a67",border:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?`📊 傾向ON`:"📊 傾向学習"}</button>}
+          {!isMobile&&(()=>{const excelCnt=Object.keys(shiftTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).length;const hasAny=excelCnt>0||learnedCnt>0;const label=learnedCnt>0?`🧠 学習中(${learnedCnt}名)`:excelCnt>0?`📊 傾向ON`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#e8f5ee":"#ffffff",color:hasAny?"#5cb87a":"#2a6a67",border:hasAny?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
           {!isMobile&&(profile?.plan==='full'
             ? <button onClick={()=>setAiMode(v=>!v)} disabled={isLocked} style={{background:isLocked?"#f3f4f6":aiMode?"#ede9fe":"#ffffff",color:isLocked?"#9ca3af":aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:isLocked?"not-allowed":"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
             : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
