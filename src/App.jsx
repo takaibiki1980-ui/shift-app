@@ -2311,11 +2311,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (staffList.length === 0) return; // 空データで上書きしない
     const cfg = {
       facility_name: profile?.facility_name || '',
-      depts: depts.map(d => ({ id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3 })),
+      depts: depts.map(d => {
+        const ps = portalSettings[d.id] || {};
+        return { id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null, targetMonth: ps.targetMonth || null };
+      }),
       staffList: staffList.map(s => ({ id: s.id, dept: s.dept, name: s.name, role: s.role }))
     };
     supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'facilityConfig', data_value: cfg, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
-  }, [depts, staffList, dbLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [depts, staffList, portalSettings, dbLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if(window.XLSX)return; const script=document.createElement("script"); script.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; document.head.appendChild(script); }, []);
 
