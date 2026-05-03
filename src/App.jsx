@@ -390,43 +390,64 @@ function calcConsecutive(sShifts, d) {
 
 // しふぽん蓄積データからスタッフごとのシフト傾向を学習する
 function computeLearnedTrend(allDBData, staffList) {
-  const counts = {}, totals = {};
+  const counts = {}, totals = {}, monthSets = {};
+  const now = new Date();
+  const nowYM = now.getFullYear() * 12 + now.getMonth();
   for (const [key, shifts] of Object.entries(allDBData)) {
     if (!key.startsWith('shifts_') || !shifts || typeof shifts !== 'object') continue;
+    // キー形式: shifts_YYYY_M_deptId
+    const parts = key.split('_');
+    if (parts.length < 4) continue;
+    const keyYear = parseInt(parts[1]), keyMonth = parseInt(parts[2]) - 1;
+    if (isNaN(keyYear) || isNaN(keyMonth)) continue;
+    // 直近ほど重く: 今月=4, 1ヶ月前=3, 2ヶ月前=2, 3ヶ月以前=1
+    const monthsAgo = Math.max(0, nowYM - (keyYear * 12 + keyMonth));
+    const weight = Math.max(1, 4 - monthsAgo);
     for (const [staffId, staffShifts] of Object.entries(shifts)) {
       if (!staffShifts || typeof staffShifts !== 'object') continue;
-      if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; }
+      if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; monthSets[staffId] = new Set(); }
+      monthSets[staffId].add(`${keyYear}-${keyMonth}`);
       for (const shift of Object.values(staffShifts)) {
         if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
-        counts[staffId][shift] = (counts[staffId][shift] || 0) + 1;
-        totals[staffId]++;
+        counts[staffId][shift] = (counts[staffId][shift] || 0) + weight;
+        totals[staffId] += weight;
       }
     }
   }
-  const result = {};
+  const result = {}, monthCounts = {};
   for (const staff of staffList) {
-    if (!counts[staff.id] || totals[staff.id] < 15) continue; // 約半月分以上のデータが必要
+    if (!counts[staff.id] || totals[staff.id] < 10) continue;
     const freq = {};
     for (const [shift, cnt] of Object.entries(counts[staff.id])) freq[shift] = cnt / totals[staff.id];
     result[staff.name] = freq;
+    monthCounts[staff.name] = monthSets[staff.id].size;
   }
+  result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
   return result;
 }
 
-// ExcelインポートデータとAI学習データをブレンド（学習データ70%優先）
+// ExcelインポートデータとDB学習データをブレンド（月数に応じた動的比率）
 function mergeShiftTrends(excelTrend, learnedTrend) {
   const excelKeys = Object.keys(excelTrend || {}).filter(k => k !== '_months');
-  const learnedKeys = Object.keys(learnedTrend || {});
+  const learnedKeys = Object.keys(learnedTrend || {}).filter(k => k !== '_monthCounts');
   if (learnedKeys.length === 0) return excelTrend || {};
-  if (excelKeys.length === 0) return learnedTrend;
+  if (excelKeys.length === 0) {
+    const clean = {};
+    for (const name of learnedKeys) clean[name] = learnedTrend[name];
+    return clean;
+  }
+  const monthCounts = learnedTrend._monthCounts || {};
   const result = excelTrend._months ? { _months: excelTrend._months } : {};
   const allNames = new Set([...excelKeys, ...learnedKeys]);
   for (const name of allNames) {
     const ex = excelTrend[name], le = learnedTrend[name];
     if (ex && le) {
+      // n / (n+2): 1ヶ月=0.33, 3ヶ月=0.60, 6ヶ月=0.75, 12ヶ月=0.86
+      const n = monthCounts[name] || 1;
+      const lw = Math.min(0.95, n / (n + 2));
       const merged = {};
       for (const k of new Set([...Object.keys(ex), ...Object.keys(le)])) {
-        merged[k] = (ex[k] || 0) * 0.3 + (le[k] || 0) * 0.7;
+        merged[k] = (ex[k] || 0) * (1 - lw) + (le[k] || 0) * lw;
       }
       result[name] = merged;
     } else {
@@ -2718,7 +2739,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
           <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
-          {!isMobile&&(()=>{const excelCnt=Object.keys(shiftTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).length;const hasAny=excelCnt>0||learnedCnt>0;const label=learnedCnt>0?`🧠 学習中(${learnedCnt}名)`:excelCnt>0?`📊 傾向ON`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#e8f5ee":"#ffffff",color:hasAny?"#5cb87a":"#2a6a67",border:hasAny?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          {!isMobile&&(()=>{const excelCnt=Object.keys(shiftTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const label=learnedCnt>0?`🧠 学習中(${learnedCnt}名)`:excelCnt>0?`📊 傾向ON`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#e8f5ee":"#ffffff",color:hasAny?"#5cb87a":"#2a6a67",border:hasAny?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
           {!isMobile&&(profile?.plan==='full'
             ? <button onClick={()=>setAiMode(v=>!v)} disabled={isLocked} style={{background:isLocked?"#f3f4f6":aiMode?"#ede9fe":"#ffffff",color:isLocked?"#9ca3af":aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:isLocked?"not-allowed":"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
             : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
