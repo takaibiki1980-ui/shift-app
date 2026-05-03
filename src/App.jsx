@@ -1885,7 +1885,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         const c = JSON.parse(json);
         const cfg = {
           facility_name: c.fn || '',
-          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3 }],
+          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null, targetMonth: c.d.tm || null }],
           staffList: (c.sl || []).map(s => ({ id: s.i ? shortToUuid(s.i) : s.id, name: s.n || s.name, dept: c.d.id }))
         };
         setConfig(cfg);
@@ -1921,11 +1921,24 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
   useEffect(() => { loadConfig(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 対象月が指定されていればその月に固定する
+  useEffect(() => {
+    if (!config) return;
+    const dept = config.depts?.[0];
+    if (!dept?.targetMonth) return;
+    const [ty, tm] = dept.targetMonth.split('-').map(Number);
+    if (!isNaN(ty) && !isNaN(tm)) { setYear(ty); setMonth(tm - 1); }
+  }, [config]);
+
   const mk = monthKey(year, month);
   const selDept = config?.depts?.find(d => d.id === selDeptId);
   const deptStaff = (config?.staffList || []).filter(s => s.dept === selDeptId);
   const selStaff = deptStaff.find(s => s.id === selStaffId);
   const lim = selDept?.kiboLimit || 3;
+
+  // 締め切りチェック
+  const isPastDeadline = selDept?.deadline ? new Date() > new Date(selDept.deadline + 'T23:59:59') : false;
+  const isMonthLocked = !!selDept?.targetMonth;
 
   useEffect(() => {
     if (!selStaffId || !selDeptId) return;
@@ -2017,9 +2030,9 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>◀</button>
-          <span style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{year}年{month+1}月</span>
-          <button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>▶</button>
+          {!isMonthLocked&&<button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>◀</button>}
+          <span style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{year}年{month+1}月{isMonthLocked&&<span style={{fontSize:10,color:"#2BBFBA",marginLeft:4}}>📌固定</span>}</span>
+          {!isMonthLocked&&<button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>▶</button>}
         </div>
       </div>
 
@@ -2060,8 +2073,17 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         </div>
       )}
 
+      {/* 締め切り超過メッセージ */}
+      {isPastDeadline && (
+        <div style={{background:"#fff5f5",border:"2px solid #ef4444",borderRadius:12,padding:20,textAlign:"center",marginBottom:12}}>
+          <div style={{fontSize:28,marginBottom:6}}>🔒</div>
+          <div style={{fontSize:15,fontWeight:900,color:"#ef4444",marginBottom:4}}>受付を終了しました</div>
+          <div style={{fontSize:12,color:"#6b7280"}}>締め切り日（{selDept?.deadline}）を過ぎています。<br/>管理者にお問い合わせください。</div>
+        </div>
+      )}
+
       {/* カレンダー */}
-      {selStaff && !submitted && (
+      {selStaff && !submitted && !isPastDeadline && (
         <>
           {/* 希望休 */}
           <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
@@ -2338,6 +2360,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const learned = computeLearnedTrend(byKey, latestStaffList);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
         if (byKey['aiRules']) setAiRules(byKey['aiRules']);
+        if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         const shiftPrefix = `shifts_${now.getFullYear()}_${now.getMonth()+1}_`;
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
@@ -2389,6 +2412,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['depts'])      setDepts(byKey['depts']);
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+        if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         const latestStaffListRT = byKey['staffList'] || staffList;
         const learnedRT = computeLearnedTrend(byKey, latestStaffListRT);
         if (Object.keys(learnedRT).length > 0) setLearnedTrend(learnedRT);
@@ -2565,6 +2589,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
   const [learnedTrend, setLearnedTrend] = useState({});
+  const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null, targetMonth: "YYYY-M"|null } }
   const [aiMode, setAiMode] = useState(false);
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
@@ -2594,6 +2619,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
     }
   }, [shiftTrend]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (isInitializing.current || dbLoading) return;
+    supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'portalSettings', data_value:portalSettings, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{}).catch(()=>{});
+  }, [portalSettings]); // eslint-disable-line react-hooks/exhaustive-deps
   const [ctxMenu, setCtxMenu] = useState(null);
   const [staffModal, setStaffModal] = useState(null);
 
@@ -2922,20 +2951,41 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:10,fontWeight:700}}>▍ 部署別 スタッフ希望休ポータル</div>
             {depts.map(d=>{
+              const ps=portalSettings[d.id]||{};
+              const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
-              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3},sl:deptSl};
+              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:ps.deadline||null,tm:ps.targetMonth||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               const urlShort=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlFull).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlFull}`));}else{alert(`URLをコピーしてください:\n${urlFull}`);}};
               const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url:urlFull});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
+              // 対象月の選択肢（今月・来月・再来月）
+              const monthOptions=[0,1,2].map(offset=>{const d2=new Date(now.getFullYear(),now.getMonth()+offset,1);return{value:`${d2.getFullYear()}-${d2.getMonth()+1}`,label:`${d2.getFullYear()}年${d2.getMonth()+1}月`};});
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:6}}>{d.icon} {d.label}</div>
+                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:10}}>{d.icon} {d.label}</div>
+                  {/* 対象月 */}
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:4}}>📅 対象月</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      <button onClick={()=>setPsDept('targetMonth',null)} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${!ps.targetMonth?"#2BBFBA":"#b8deda"}`,background:!ps.targetMonth?"#d5edeb":"#fff",color:!ps.targetMonth?"#1a3635":"#3a8a87",fontSize:11,cursor:"pointer",fontWeight:!ps.targetMonth?800:400}}>制限なし</button>
+                      {monthOptions.map(opt=><button key={opt.value} onClick={()=>setPsDept('targetMonth',opt.value)} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${ps.targetMonth===opt.value?"#2BBFBA":"#b8deda"}`,background:ps.targetMonth===opt.value?"#d5edeb":"#fff",color:ps.targetMonth===opt.value?"#1a3635":"#3a8a87",fontSize:11,cursor:"pointer",fontWeight:ps.targetMonth===opt.value?800:400}}>{opt.label}</button>)}
+                    </div>
+                  </div>
+                  {/* 締め切り */}
+                  <div style={{marginBottom:10}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:4}}>⏰ 締め切り日</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <input type="date" value={ps.deadline||""} onChange={e=>setPsDept('deadline',e.target.value||null)} style={{border:"1px solid #90cbc8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#1a3635",outline:"none",background:"#f3fffe"}}/>
+                      {ps.deadline&&<button onClick={()=>setPsDept('deadline',null)} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}>✕ クリア</button>}
+                    </div>
+                    {ps.deadline&&<div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>⚠ {ps.deadline} 以降は送信不可になります</div>}
+                  </div>
                   <div style={{textAlign:"center",marginBottom:6}}>
                     <div style={{fontSize:10,color:"#3a8a87",marginBottom:6,fontWeight:700}}>📷 カメラで読み取り</div>
                     <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #90cbc8",borderRadius:8}}>
-                      <QRCodeSVG value={urlShort} size={160} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
+                      <QRCodeSVG value={urlShort} size={140} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
                     </div>
                   </div>
                   <div style={{display:"flex",gap:8,marginTop:8}}>
