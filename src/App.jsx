@@ -1503,7 +1503,7 @@ function Legend() {
   const normalShifts=["早番","日勤","遅番","夜勤","明け","休み","希望休","有休"], halfShifts=["日/休","休/日","早/休","休/遅"];
   return (
     <div style={{padding:"6px 0 6px",borderBottom:"1px solid #b8deda",marginBottom:10}}>
-      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:4}}>{normalShifts.map(key=><div key={key} style={{display:"flex",alignItems:"center",gap:3}}><ShiftBadge type={key}/><span style={{fontSize:9,color:"#2a5a57"}}>{SHIFTS[key].time||key}</span></div>)}</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:4}}>{normalShifts.map(key=><div key={key} style={{display:"flex",alignItems:"center",gap:3}}><ShiftBadge type={key}/><span style={{fontSize:9,color:"#2a5a57"}}>{key}</span></div>)}</div>
       <div style={{display:"flex",flexWrap:"wrap",gap:5,alignItems:"center"}}><span style={{fontSize:9,color:"#8ecece",fontWeight:700}}>半休:</span>{halfShifts.map(key=><div key={key} style={{display:"flex",alignItems:"center",gap:3}}><ShiftBadge type={key}/><span style={{fontSize:9,color:"#2a5a57"}}>{SHIFTS[key].time}</span></div>)}<span style={{fontSize:9,color:"#8ecece",marginLeft:4}}>左クリック：順番切替 ／ 右クリック：メニュー選択</span></div>
     </div>
   );
