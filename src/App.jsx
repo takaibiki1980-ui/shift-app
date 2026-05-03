@@ -320,7 +320,7 @@ const SHIFTS = {
   日勤:  { short:"日", color:"#1E88E5", bg:"#e3f2fd", border:"#1E88E5", time:"9:00〜18:00" },
   遅番:  { short:"遅", color:"#8E24AA", bg:"#f3e5f5", border:"#8E24AA", time:"11:30〜20:30" },
   夜勤:  { short:"夜", color:"#263238", bg:"#eceff1", border:"#455A64", time:"16:30〜翌9:30" },
-  明け:  { short:"明", color:"#78909C", bg:"#f5f7f8", border:"#B0BEC5", time:"夜勤明け" },
+  明け:  { short:"明", color:"#263238", bg:"#eceff1", border:"#455A64", time:"夜勤明け" },
   休み:  { short:"休", color:"#E53935", bg:"#ffebee", border:"#E53935", time:"－" },
   希望休: { short:"希", color:"#E53935", bg:"#ffffff", border:"#E53935", time:"希望休" },
   有休:  { short:"有", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"有給" },
