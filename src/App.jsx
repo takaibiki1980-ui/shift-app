@@ -2955,14 +2955,27 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:10,fontWeight:700}}>▍ 部署別 スタッフ希望休ポータル</div>
             {depts.map(d=>{
               const ps=portalSettings[d.id]||{};
+              const [localPs, setLocalPs] = [ps, (key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}))];
               const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
-              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:ps.deadline||null,tm:ps.targetMonth||null},sl:deptSl};
+              const buildCfg=(psVal)=>({fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:psVal.deadline||null,tm:psVal.targetMonth||null},sl:deptSl});
+              const cfgObj=buildCfg(ps);
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               const urlShort=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlFull).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlFull}`));}else{alert(`URLをコピーしてください:\n${urlFull}`);}};
               const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url:urlFull});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
+              // 設定を明示的にSupabaseへ保存
+              const doSaveSettings=async()=>{
+                const newPs={...portalSettings,[d.id]:ps};
+                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,icon:dep.icon,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null,targetMonth:p.targetMonth||null};});
+                const facilityVal={facility_name:profile?.facility_name||'',depts:deptsCfg,staffList:staffList.map(s=>({id:s.id,dept:s.dept,name:s.name,role:s.role}))};
+                await Promise.all([
+                  supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'portalSettings',data_value:newPs,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
+                  supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'facilityConfig',data_value:facilityVal,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
+                ]);
+                alert(`✅ ${d.label} の設定を保存しました\n対象月: ${ps.targetMonth||'制限なし'}\n締め切り: ${ps.deadline||'なし'}`);
+              };
               // 対象月の選択肢（今月・来月・再来月）
               const monthOptions=[0,1,2].map(offset=>{const d2=new Date(now.getFullYear(),now.getMonth()+offset,1);return{value:`${d2.getFullYear()}-${d2.getMonth()+1}`,label:`${d2.getFullYear()}年${d2.getMonth()+1}月`};});
               return(
@@ -2977,7 +2990,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                     </div>
                   </div>
                   {/* 締め切り */}
-                  <div style={{marginBottom:10}}>
+                  <div style={{marginBottom:12}}>
                     <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:4}}>⏰ 締め切り日</div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <input type="date" value={ps.deadline||""} onChange={e=>setPsDept('deadline',e.target.value||null)} style={{border:"1px solid #90cbc8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#1a3635",outline:"none",background:"#f3fffe"}}/>
@@ -2985,6 +2998,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                     </div>
                     {ps.deadline&&<div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>⚠ {ps.deadline} 以降は送信不可になります</div>}
                   </div>
+                  {/* 保存ボタン */}
+                  <button onClick={doSaveSettings} style={{width:"100%",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12}}>💾 この設定を保存する</button>
                   <div style={{textAlign:"center",marginBottom:6}}>
                     <div style={{fontSize:10,color:"#3a8a87",marginBottom:6,fontWeight:700}}>📷 カメラで読み取り</div>
                     <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #90cbc8",borderRadius:8}}>
