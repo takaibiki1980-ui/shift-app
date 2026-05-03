@@ -1885,7 +1885,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         const c = JSON.parse(json);
         const cfg = {
           facility_name: c.fn || '',
-          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null, targetMonth: c.d.tm || null }],
+          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null }],
           staffList: (c.sl || []).map(s => ({ id: s.i ? shortToUuid(s.i) : s.id, name: s.n || s.name, dept: c.d.id }))
         };
         setConfig(cfg);
@@ -1921,15 +1921,6 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
   useEffect(() => { loadConfig(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 対象月が指定されていればその月に固定する
-  useEffect(() => {
-    if (!config) return;
-    const dept = config.depts?.[0];
-    if (!dept?.targetMonth) return;
-    const [ty, tm] = dept.targetMonth.split('-').map(Number);
-    if (!isNaN(ty) && !isNaN(tm)) { setYear(ty); setMonth(tm - 1); }
-  }, [config]);
-
   const mk = monthKey(year, month);
   const selDept = config?.depts?.find(d => d.id === selDeptId);
   const deptStaff = (config?.staffList || []).filter(s => s.dept === selDeptId);
@@ -1938,7 +1929,6 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
   // 締め切りチェック
   const isPastDeadline = selDept?.deadline ? new Date() > new Date(selDept.deadline + 'T23:59:59') : false;
-  const isMonthLocked = !!selDept?.targetMonth;
 
   useEffect(() => {
     if (!selStaffId || !selDeptId) return;
@@ -2030,9 +2020,9 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          {!isMonthLocked&&<button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>◀</button>}
-          <span style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{year}年{month+1}月{isMonthLocked&&<span style={{fontSize:10,color:"#2BBFBA",marginLeft:4}}>📌固定</span>}</span>
-          {!isMonthLocked&&<button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>▶</button>}
+          <button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>◀</button>
+          <span style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{year}年{month+1}月</span>
+          <button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>▶</button>
         </div>
       </div>
 
@@ -2282,7 +2272,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isInitializing = useRef(true);
   const isMergingKibo = useRef(false); // mergeStaffKibo中にstaffListが再保存されるのを防ぐ
   const [dbLoading, setDbLoading] = useState(true);
-  const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null, targetMonth: "YYYY-M"|null } }
+  const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
   const [depts, setDepts] = useState(() => { try { const s=localStorage.getItem("shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
   useEffect(() => {
@@ -2314,7 +2304,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       facility_name: profile?.facility_name || '',
       depts: depts.map(d => {
         const ps = portalSettings[d.id] || {};
-        return { id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null, targetMonth: ps.targetMonth || null };
+        return { id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null };
       }),
       staffList: staffList.map(s => ({ id: s.id, dept: s.dept, name: s.name, role: s.role }))
     };
@@ -2955,40 +2945,28 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:10,fontWeight:700}}>▍ 部署別 スタッフ希望休ポータル</div>
             {depts.map(d=>{
               const ps=portalSettings[d.id]||{};
-              const [localPs, setLocalPs] = [ps, (key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}))];
               const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
-              const buildCfg=(psVal)=>({fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:psVal.deadline||null,tm:psVal.targetMonth||null},sl:deptSl});
-              const cfgObj=buildCfg(ps);
+              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:ps.deadline||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               const urlShort=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlFull).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlFull}`));}else{alert(`URLをコピーしてください:\n${urlFull}`);}};
               const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url:urlFull});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
-              // 設定を明示的にSupabaseへ保存
               const doSaveSettings=async()=>{
-                const newPs={...portalSettings,[d.id]:ps};
-                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,icon:dep.icon,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null,targetMonth:p.targetMonth||null};});
+                const newPs={...portalSettings,[d.id]:{deadline:ps.deadline||null}};
+                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,icon:dep.icon,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null};});
                 const facilityVal={facility_name:profile?.facility_name||'',depts:deptsCfg,staffList:staffList.map(s=>({id:s.id,dept:s.dept,name:s.name,role:s.role}))};
-                await Promise.all([
+                const [r1,r2]=await Promise.all([
                   supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'portalSettings',data_value:newPs,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
                   supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'facilityConfig',data_value:facilityVal,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
                 ]);
-                alert(`✅ ${d.label} の設定を保存しました\n対象月: ${ps.targetMonth||'制限なし'}\n締め切り: ${ps.deadline||'なし'}`);
+                if(r1.error||r2.error){alert('保存に失敗しました。もう一度お試しください。');return;}
+                alert(`✅ ${d.label} の設定を保存しました\n締め切り: ${ps.deadline||'なし'}`);
               };
-              // 対象月の選択肢（今月・来月・再来月）
-              const monthOptions=[0,1,2].map(offset=>{const d2=new Date(now.getFullYear(),now.getMonth()+offset,1);return{value:`${d2.getFullYear()}-${d2.getMonth()+1}`,label:`${d2.getFullYear()}年${d2.getMonth()+1}月`};});
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
                   <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:10}}>{d.icon} {d.label}</div>
-                  {/* 対象月 */}
-                  <div style={{marginBottom:8}}>
-                    <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:4}}>📅 対象月</div>
-                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                      <button onClick={()=>setPsDept('targetMonth',null)} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${!ps.targetMonth?"#2BBFBA":"#b8deda"}`,background:!ps.targetMonth?"#d5edeb":"#fff",color:!ps.targetMonth?"#1a3635":"#3a8a87",fontSize:11,cursor:"pointer",fontWeight:!ps.targetMonth?800:400}}>制限なし</button>
-                      {monthOptions.map(opt=><button key={opt.value} onClick={()=>setPsDept('targetMonth',opt.value)} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${ps.targetMonth===opt.value?"#2BBFBA":"#b8deda"}`,background:ps.targetMonth===opt.value?"#d5edeb":"#fff",color:ps.targetMonth===opt.value?"#1a3635":"#3a8a87",fontSize:11,cursor:"pointer",fontWeight:ps.targetMonth===opt.value?800:400}}>{opt.label}</button>)}
-                    </div>
-                  </div>
                   {/* 締め切り */}
                   <div style={{marginBottom:12}}>
                     <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:4}}>⏰ 締め切り日</div>
