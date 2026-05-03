@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -388,6 +388,75 @@ function calcConsecutive(sShifts, d) {
   return cnt;
 }
 
+// しふぽん蓄積データからスタッフごとのシフト傾向を学習する
+function computeLearnedTrend(allDBData, staffList) {
+  const counts = {}, totals = {}, monthSets = {};
+  const now = new Date();
+  const nowYM = now.getFullYear() * 12 + now.getMonth();
+  for (const [key, shifts] of Object.entries(allDBData)) {
+    if (!key.startsWith('shifts_') || !shifts || typeof shifts !== 'object') continue;
+    // キー形式: shifts_YYYY_M_deptId
+    const parts = key.split('_');
+    if (parts.length < 4) continue;
+    const keyYear = parseInt(parts[1]), keyMonth = parseInt(parts[2]) - 1;
+    if (isNaN(keyYear) || isNaN(keyMonth)) continue;
+    // 直近ほど重く: 今月=4, 1ヶ月前=3, 2ヶ月前=2, 3ヶ月以前=1
+    const monthsAgo = Math.max(0, nowYM - (keyYear * 12 + keyMonth));
+    const weight = Math.max(1, 4 - monthsAgo);
+    for (const [staffId, staffShifts] of Object.entries(shifts)) {
+      if (!staffShifts || typeof staffShifts !== 'object') continue;
+      if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; monthSets[staffId] = new Set(); }
+      monthSets[staffId].add(`${keyYear}-${keyMonth}`);
+      for (const shift of Object.values(staffShifts)) {
+        if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
+        counts[staffId][shift] = (counts[staffId][shift] || 0) + weight;
+        totals[staffId] += weight;
+      }
+    }
+  }
+  const result = {}, monthCounts = {};
+  for (const staff of staffList) {
+    if (!counts[staff.id] || totals[staff.id] < 10) continue;
+    const freq = {};
+    for (const [shift, cnt] of Object.entries(counts[staff.id])) freq[shift] = cnt / totals[staff.id];
+    result[staff.name] = freq;
+    monthCounts[staff.name] = monthSets[staff.id].size;
+  }
+  result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
+  return result;
+}
+
+// ExcelインポートデータとDB学習データをブレンド（月数に応じた動的比率）
+function mergeShiftTrends(excelTrend, learnedTrend) {
+  const excelKeys = Object.keys(excelTrend || {}).filter(k => k !== '_months');
+  const learnedKeys = Object.keys(learnedTrend || {}).filter(k => k !== '_monthCounts');
+  if (learnedKeys.length === 0) return excelTrend || {};
+  if (excelKeys.length === 0) {
+    const clean = {};
+    for (const name of learnedKeys) clean[name] = learnedTrend[name];
+    return clean;
+  }
+  const monthCounts = learnedTrend._monthCounts || {};
+  const result = excelTrend._months ? { _months: excelTrend._months } : {};
+  const allNames = new Set([...excelKeys, ...learnedKeys]);
+  for (const name of allNames) {
+    const ex = excelTrend[name], le = learnedTrend[name];
+    if (ex && le) {
+      // n / (n+2): 1ヶ月=0.33, 3ヶ月=0.60, 6ヶ月=0.75, 12ヶ月=0.86
+      const n = monthCounts[name] || 1;
+      const lw = Math.min(0.95, n / (n + 2));
+      const merged = {};
+      for (const k of new Set([...Object.keys(ex), ...Object.keys(le)])) {
+        merged[k] = (ex[k] || 0) * (1 - lw) + (le[k] || 0) * lw;
+      }
+      result[name] = merged;
+    } else {
+      result[name] = ex || le;
+    }
+  }
+  return result;
+}
+
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}) {
   const days = getDays(year, month);
   const mk = monthKey(year, month);
@@ -651,9 +720,10 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
     const shifts = allShifts[dept.id] || {};
     staffList.filter(s=>s.dept===dept.id).forEach(s => {
       const kibodays = s.kiboByMonth?.[mk] || [];
+      const yukyudays = s.yukyuByMonth?.[mk] || [];
       const cells = [dept.label, s.name, s.role];
       let workCnt=0, nightCnt=0, restCnt=0;
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const out=v||(kibodays.includes(d)?"希望休":""); cells.push(out); if(WORK_TYPES.has(v)) workCnt++; if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け") restCnt+=HALF_REST_TYPES.has(v)?0.5:1; }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const out=v||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); if(WORK_TYPES.has(v)) workCnt++; if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け") restCnt+=HALF_REST_TYPES.has(v)?0.5:1; }
       cells.push(workCnt, nightCnt, restCnt);
       rows.push(cells.map(c=>`"${c}"`).join(","));
     });
@@ -678,8 +748,9 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts)
     staffList.filter(s=>s.dept===dept.id).forEach(s => {
       let w=0,n=0,r=0;
       const kibodays = s.kiboByMonth?.[mk] || [];
+      const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け") r+=HALF_REST_TYPES.has(v)?0.5:1; html += TAG('td')+(isKibo?'<span style="color:#c44b4b">希</span>':(SHIFTS[v]?.short||"－"))+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け") r+=HALF_REST_TYPES.has(v)?0.5:1; html += TAG('td')+(isKibo?'<span style="color:#c44b4b">希</span>':isYukyu2?'<span style="color:#9b4db5">有</span>':(SHIFTS[v]?.short||"－"))+CTAG('td'); }
       html += TAG('td')+w+CTAG('td')+TAG('td')+(n||"－")+CTAG('td')+TAG('td')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
@@ -932,9 +1003,9 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
 const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
 const DEPT_ICONS = ["🏠","🏢","🏥","💉","📋","🍱","🌸","⭐","🔵","🟢","🟡","🟠","🔴","💜"];
 function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
-  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n"));
+  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||"");
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"]}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],pin:pinCode||undefined}); };
   const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -953,7 +1024,13 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={1} max={10} value={kiboLimit} onChange={e=>setKiboLimit(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
         </div>
         <label style={LS}>役職一覧（1行に1つ）</label>
-        <textarea value={rolesText} onChange={e=>setRolesText(e.target.value)} rows={4} placeholder={"介護福祉士\n介護職員\n介護補助"} style={{...INPUT_STYLE,resize:"vertical",lineHeight:1.7,marginBottom:18}}/>
+        <textarea value={rolesText} onChange={e=>setRolesText(e.target.value)} rows={4} placeholder={"介護福祉士\n介護職員\n介護補助"} style={{...INPUT_STYLE,resize:"vertical",lineHeight:1.7,marginBottom:14}}/>
+        <label style={LS}>🔒 編集PINコード（4桁・任意）</label>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <input type="text" inputMode="numeric" maxLength={4} value={pinCode} onChange={e=>setPinCode(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="例：1234（空欄でPINなし）" style={{...INPUT_STYLE,width:180,letterSpacing:6,textAlign:"center",marginBottom:0}}/>
+          {pinCode&&<button onClick={()=>setPinCode("")} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11}}>✕ 解除</button>}
+        </div>
+        <div style={{fontSize:10,color:"#5a9e9b",marginBottom:18}}>設定すると部署タブ切替後に編集前にPINが必要になります</div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={handleSave} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:9,padding:"12px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>{isNew?"➕ 追加する":"💾 保存する"}</button>
           {!isNew&&onDelete&&<button onClick={()=>onConfirm(`「${label}」を削除します。この部署のスタッフとシフトデータもすべて削除されます。`,()=>onDelete(dept.id),"削除する")} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:9,padding:"12px 14px",cursor:"pointer",color:"#c44b4b",fontSize:12,fontWeight:700}}>🗑 削除</button>}
@@ -978,15 +1055,57 @@ function ConfirmDialog({ message, onOk, onCancel, okLabel="削除" }) {
   );
 }
 
-function ClearModal({ deptLabel, onClearDept, onClearAll, onClose }) {
+function ClearModal({ deptLabel, onClearDept, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #450a0a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
         <div style={{fontSize:15,fontWeight:900,color:"#f87171",marginBottom:6}}>🗑 シフトのクリア</div>
-        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:20}}>クリアする範囲を選んでください。この操作は元に戻せません。</div>
-        <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:10,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🏠</span><div><div style={{fontSize:13,fontWeight:800,color:"#fca5a5"}}>{deptLabel} のみクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>現在表示中のフロアのシフトだけ削除</div></div></button>
-        <button onClick={onClearAll} style={{width:"100%",background:"#fff0f0",border:"1px solid #991b1b",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:18,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🏢</span><div><div style={{fontSize:13,fontWeight:800,color:"#ef4444"}}>全部署をクリア</div><div style={{fontSize:11,color:"#991b1b",marginTop:2}}>すべてのフロアのシフトを削除</div></div></button>
+        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:20}}>「{deptLabel}」のシフトを削除します。この操作は元に戻せません。</div>
+        <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🗑</span><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトをクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトをすべて削除します</div></div></button>
         <button onClick={onClose} style={{width:"100%",background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
+      </div>
+    </div>
+  );
+}
+
+function PinModal({ deptLabel, onVerify, onClose }) {
+  const [digits, setDigits] = useState(['','','','']);
+  const [error, setError] = useState(false);
+  const refs = [useRef(), useRef(), useRef(), useRef()];
+  useEffect(() => { refs[0].current?.focus(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const handleChange = (idx, val) => {
+    const d = val.replace(/\D/g,'').slice(-1);
+    const next = [...digits]; next[idx] = d; setDigits(next);
+    if (d && idx < 3) refs[idx+1].current?.focus();
+  };
+  const handleKeyDown = (idx, e) => {
+    if (e.key === 'Backspace' && !digits[idx] && idx > 0) { refs[idx-1].current?.focus(); }
+  };
+  const handleVerify = () => {
+    const pin = digits.join('');
+    if (pin.length < 4) return;
+    if (onVerify(pin)) return;
+    setError(true); setDigits(['','','','']);
+    setTimeout(() => { setError(false); refs[0].current?.focus(); }, 1200);
+  };
+  const filled = digits.every(d => d !== '');
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#f3fffe",border:"2px solid #2BBFBA",borderRadius:16,padding:28,width:"100%",maxWidth:320,boxShadow:"0 30px 80px #000",textAlign:"center"}}>
+        <div style={{fontSize:32,marginBottom:8}}>🔒</div>
+        <div style={{fontSize:15,fontWeight:900,color:"#1a3635",marginBottom:4}}>{deptLabel} 編集ロック</div>
+        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:24}}>4桁のPINを入力してください</div>
+        <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:16}}>
+          {digits.map((d,i) => (
+            <input key={i} ref={refs[i]} type="text" inputMode="numeric" maxLength={1} value={d}
+              onChange={e=>handleChange(i,e.target.value)} onKeyDown={e=>handleKeyDown(i,e)}
+              onKeyUp={e=>{ if(e.key==='Enter'&&filled) handleVerify(); }}
+              style={{width:52,height:56,textAlign:"center",fontSize:24,fontWeight:900,border:`2px solid ${error?"#ef4444":d?"#2BBFBA":"#90cbc8"}`,borderRadius:10,background:error?"#fff0f0":"#fff",outline:"none",color:"#1a3635",caretColor:"transparent"}}/>
+          ))}
+        </div>
+        {error && <div style={{color:"#ef4444",fontSize:12,marginBottom:12,fontWeight:700}}>PINが違います。もう一度お試しください。</div>}
+        <button onClick={handleVerify} disabled={!filled} style={{width:"100%",background:filled?"linear-gradient(135deg,#2BBFBA,#45B7D1)":"#d5edeb",color:filled?"#fff":"#7a9e9b",border:"none",borderRadius:9,padding:"12px 0",cursor:filled?"pointer":"not-allowed",fontSize:14,fontWeight:800,marginBottom:10}}>🔓 解錠する</button>
+        <button onClick={onClose} style={{width:"100%",background:"none",border:"none",color:"#9ca3af",cursor:"pointer",fontSize:13}}>キャンセル</button>
       </div>
     </div>
   );
@@ -1019,20 +1138,26 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm 
   );
 }
 
-function BulkKyukoModal({ depts, staffList, year, month, onApply, onClose }) {
+function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   const mk = monthKey(year, month);
-  const initValues = () => { const vals={}; depts.forEach(d=>{const ds=staffList.filter(s=>s.dept===d.id);if(ds.length===0)return;const first=ds[0];vals[d.id]=first.kyukoDaysByMonth?.[mk]??first.kyukoDays??8;}); return vals; };
-  const [values, setValues] = useState(initValues);
-  const setVal = (deptId, v) => setValues(prev=>({...prev,[deptId]:Math.max(0,Math.min(20,+v||0))}));
+  const initDays = () => { const first = staffList[0]; return first ? (first.kyukoDaysByMonth?.[mk] ?? first.kyukoDays ?? 8) : 8; };
+  const [days, setDays] = useState(initDays);
+  const setVal = (v) => setDays(Math.max(0, Math.min(20, +v || 0)));
+  const totalStaff = staffList.length;
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000"}}>
+      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>📅 休み日数 一括設定</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button></div>
-        <div style={{fontSize:11,color:"#2a5a57",marginBottom:16,marginTop:8,background:"#d5edeb",borderRadius:7,padding:"8px 12px",border:"1px solid #0e3a38"}}>💡 部署ごとに設定した日数を、その部署の全スタッフに一括適用します。</div>
-        <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
-          {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length;if(cnt===0)return null;return(<div key={d.id} style={{display:"flex",alignItems:"center",gap:12,background:"#d5edeb",borderRadius:9,padding:"10px 14px",border:"1px solid #90cbc8"}}><span style={{fontSize:20}}>{d.icon}</span><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{d.label}</div><div style={{fontSize:10,color:"#2a5a57"}}>{cnt}名</div></div><div style={{display:"flex",alignItems:"center",gap:6}}><button onClick={()=>setVal(d.id,(values[d.id]||8)-1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:6,color:"#6ab5b2",cursor:"pointer",width:28,height:28,fontSize:16,fontWeight:800}}>−</button><input type="number" value={values[d.id]??8} min={0} max={20} onChange={e=>setVal(d.id,e.target.value)} style={{width:48,background:"#f0fffe",border:"1px solid #90cbc8",borderRadius:6,color:"#2BBFBA",fontSize:16,fontWeight:800,textAlign:"center",padding:"4px 0",outline:"none"}}/><button onClick={()=>setVal(d.id,(values[d.id]||8)+1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:6,color:"#6ab5b2",cursor:"pointer",width:28,height:28,fontSize:16,fontWeight:800}}>＋</button><span style={{fontSize:11,color:"#2a5a57"}}>日</span></div></div>);})}
+        <div style={{fontSize:11,color:"#2a5a57",marginBottom:20,marginTop:8,background:"#d5edeb",borderRadius:7,padding:"8px 12px",border:"1px solid #0e3a38"}}>💡 施設全体の休み日数を設定します。全部署・全スタッフ（{totalStaff}名）に一括適用されます。</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:28,background:"#d5edeb",borderRadius:12,padding:"18px 20px",border:"1px solid #90cbc8"}}>
+          <button onClick={()=>setVal(days-1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+          <div style={{textAlign:"center"}}>
+            <input type="number" value={days} min={0} max={20} onChange={e=>setVal(e.target.value)} style={{width:72,background:"#f0fffe",border:"2px solid #2BBFBA",borderRadius:8,color:"#2BBFBA",fontSize:28,fontWeight:900,textAlign:"center",padding:"6px 0",outline:"none"}}/>
+            <div style={{fontSize:12,color:"#2a5a57",marginTop:4,fontWeight:700}}>日 / 月</div>
+          </div>
+          <button onClick={()=>setVal(days+1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
         </div>
-        <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(values,mk)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
+        <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(days,mk)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
       </div>
     </div>
   );
@@ -1298,7 +1423,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
         </thead>
         <tbody>
           {ds.map((s,si)=>{
-            const sShifts=shifts[s.id]||{}, kibodays=s.kiboByMonth?.[mk]||[];
+            const sShifts=shifts[s.id]||{}, kibodays=s.kiboByMonth?.[mk]||[], yukyudays=s.yukyuByMonth?.[mk]||[];
             const workCnt=Object.values(sShifts).filter(v=>WORK_TYPES.has(v)).length;
             const nightCnt=Object.values(sShifts).filter(v=>v==="夜勤").length;
             const restCnt=Object.values(sShifts).reduce((acc,v)=>REST_TYPES.has(v)&&v!=="明け"?acc+(HALF_REST_TYPES.has(v)?0.5:1):acc,0);
@@ -1310,8 +1435,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   <div style={{fontSize:10,color:"#2a5a57",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#c45c35",fontSize:9}}>🌙{nightCnt}/{s.nightMax}</span>}</div>
                 </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
-                  const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, consecViol=isConsecViolation(sShifts,d);
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:consecViol?"#ffe8e8":isKibo?"#fff5f5":undefined,cursor:"pointer",outline:consecViol?"1px solid #e0707060":undefined}} onClick={(e)=>onLeftClick(s.id,d,e)} onContextMenu={(e)=>{e.preventDefault();onRightClick(s.id,d,e);}}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:<ShiftBadge type={type}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:consecViol?"1px solid #e0707060":undefined}} onClick={(e)=>onLeftClick(s.id,d,e)} onContextMenu={(e)=>{e.preventDefault();onRightClick(s.id,d,e);}}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 <td style={TD}><span style={{color:workCnt<(s.targetWork-2)?"#f59e0b":workCnt>(s.targetWork+2)?"#ef4444":"#2BBFBA",fontWeight:800,fontSize:12}}>{workCnt}</span></td>
                 <td style={TD}><span style={{color:nightOver?"#ef4444":"#1a9e9a",fontWeight:700,fontSize:12}}>{nightCnt||"－"}</span></td>
@@ -1760,7 +1885,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         const c = JSON.parse(json);
         const cfg = {
           facility_name: c.fn || '',
-          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3 }],
+          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null }],
           staffList: (c.sl || []).map(s => ({ id: s.i ? shortToUuid(s.i) : s.id, name: s.n || s.name, dept: c.d.id }))
         };
         setConfig(cfg);
@@ -1802,6 +1927,9 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   const selStaff = deptStaff.find(s => s.id === selStaffId);
   const lim = selDept?.kiboLimit || 3;
 
+  // 締め切りチェック
+  const isPastDeadline = selDept?.deadline ? new Date() > new Date(selDept.deadline + 'T23:59:59') : false;
+
   useEffect(() => {
     if (!selStaffId || !selDeptId) return;
     setKiboLoading(true);
@@ -1819,32 +1947,38 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           (k.days||[]).forEach(d => { counts[d] = (counts[d]||0) + 1; });
         });
         setOtherCounts(counts);
-      });
+      })
+      .catch(() => { setKiboLoading(false); });
   }, [selStaffId, selDeptId, mk, adminUserId]);
 
   const handleSubmit = async () => {
     if (!selStaff || !selDept) return;
-    if (submittingRef.current) return; // 二重送信防止
+    if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
-    // 送信直前に最新カウントを確認（同時送信による上限突破を検知）
-    const { data: latest } = await supabase.from('staff_kibo')
-      .select('staff_id,days')
-      .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
-    const overDays = myDays.filter(d =>
-      (latest || []).filter(k => k.staff_id !== selStaffId && (k.days||[]).includes(d)).length >= lim
-    );
-    if (overDays.length > 0) {
-      alert(`${overDays.sort((a,b)=>a-b).join('日・')}日は希望休の上限に達しました。別の日を選んでください。`);
-      setSubmitting(false); submittingRef.current = false; return;
+    try {
+      const { data: latest } = await supabase.from('staff_kibo')
+        .select('staff_id,days')
+        .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
+      const overDays = myDays.filter(d =>
+        (latest || []).filter(k => k.staff_id !== selStaffId && (k.days||[]).includes(d)).length >= lim
+      );
+      if (overDays.length > 0) {
+        alert(`${overDays.sort((a,b)=>a-b).join('日・')}日は希望休の上限に達しました。別の日を選んでください。`);
+        return;
+      }
+      const { error } = await supabase.from('staff_kibo').upsert({
+        admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
+        month_key: mk, days: myDays, yukyu_days: myYukyuDays, updated_at: new Date().toISOString()
+      }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
+      if (!error) setSubmitted(true);
+      else alert('送信に失敗しました。もう一度お試しください。');
+    } catch {
+      alert('送信に失敗しました。ネットワークを確認してください。');
+    } finally {
+      setSubmitting(false);
+      submittingRef.current = false;
     }
-    const { error } = await supabase.from('staff_kibo').upsert({
-      admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
-      month_key: mk, days: myDays, yukyu_days: myYukyuDays, updated_at: new Date().toISOString()
-    }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
-    setSubmitting(false); submittingRef.current = false;
-    if (!error) setSubmitted(true);
-    else alert('送信に失敗しました。もう一度お試しください。');
   };
 
   const prevMonth = () => { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); setSubmitted(false); };
@@ -1929,8 +2063,17 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         </div>
       )}
 
+      {/* 締め切り超過メッセージ */}
+      {isPastDeadline && (
+        <div style={{background:"#fff5f5",border:"2px solid #ef4444",borderRadius:12,padding:20,textAlign:"center",marginBottom:12}}>
+          <div style={{fontSize:28,marginBottom:6}}>🔒</div>
+          <div style={{fontSize:15,fontWeight:900,color:"#ef4444",marginBottom:4}}>受付を終了しました</div>
+          <div style={{fontSize:12,color:"#6b7280"}}>締め切り日（{selDept?.deadline}）を過ぎています。<br/>管理者にお問い合わせください。</div>
+        </div>
+      )}
+
       {/* カレンダー */}
-      {selStaff && !submitted && (
+      {selStaff && !submitted && !isPastDeadline && (
         <>
           {/* 希望休 */}
           <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
@@ -1991,6 +2134,29 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 // ─────────────────────────────────────────────
 //  APP（メイン）
 // ─────────────────────────────────────────────
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{minHeight:"100vh",background:"#fff0f0",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"sans-serif",padding:24}}>
+        <div style={{background:"#fff",border:"2px solid #ef4444",borderRadius:12,padding:24,maxWidth:500,width:"100%"}}>
+          <div style={{fontSize:32,marginBottom:8}}>⚠️</div>
+          <div style={{fontSize:16,fontWeight:700,color:"#dc2626",marginBottom:8}}>エラーが発生しました</div>
+          <div style={{fontSize:12,color:"#374151",marginBottom:16}}>以下のエラー内容を開発者にお伝えください：</div>
+          <pre style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:6,padding:12,fontSize:11,color:"#991b1b",overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all"}}>
+            {this.state.error?.message || String(this.state.error)}
+          </pre>
+          <button onClick={()=>window.location.reload()} style={{marginTop:16,background:"#dc2626",color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",cursor:"pointer",fontSize:13,fontWeight:700}}>
+            🔄 ページを再読み込み
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const staffUserId = params.get('staff');
@@ -2035,7 +2201,7 @@ export default function App() {
 
   if (!session) { return <LoginPage onLogin={() => {}} />; }
 
-  return <MainApp session={session} profile={profile} onLogout={handleLogout} onProfileUpdate={setProfile} />;
+  return <ErrorBoundary><MainApp session={session} profile={profile} onLogout={handleLogout} onProfileUpdate={setProfile} /></ErrorBoundary>;
 }
 
 // ─────────────────────────────────────────────
@@ -2106,6 +2272,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isInitializing = useRef(true);
   const isMergingKibo = useRef(false); // mergeStaffKibo中にstaffListが再保存されるのを防ぐ
   const [dbLoading, setDbLoading] = useState(true);
+  const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
   const [depts, setDepts] = useState(() => { try { const s=localStorage.getItem("shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
   useEffect(() => {
@@ -2135,11 +2302,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (staffList.length === 0) return; // 空データで上書きしない
     const cfg = {
       facility_name: profile?.facility_name || '',
-      depts: depts.map(d => ({ id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3 })),
+      depts: depts.map(d => {
+        const ps = portalSettings[d.id] || {};
+        return { id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null };
+      }),
       staffList: staffList.map(s => ({ id: s.id, dept: s.dept, name: s.name, role: s.role }))
     };
     supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'facilityConfig', data_value: cfg, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
-  }, [depts, staffList, dbLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [depts, staffList, portalSettings, dbLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if(window.XLSX)return; const script=document.createElement("script"); script.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"; document.head.appendChild(script); }, []);
 
@@ -2154,6 +2324,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
   const saveTimer = useRef(null);
   const isLoadingMonth = useRef(false);
+  const activeDeptIdRef = useRef(activeDeptId);
+  useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
+  const userEditSeq = useRef(0); // ユーザー編集のたびにインクリメント（Realtime競合検出用）
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -2177,11 +2350,27 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
-        const shiftKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
-        if (byKey[shiftKey]) {
+        const latestStaffList = byKey['staffList'] || staffList;
+        const learned = computeLearnedTrend(byKey, latestStaffList);
+        if (Object.keys(learned).length > 0) setLearnedTrend(learned);
+        if (byKey['aiRules']) setAiRules(byKey['aiRules']);
+        if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
+        const shiftPrefix = `shifts_${now.getFullYear()}_${now.getMonth()+1}_`;
+        const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
+        if (deptShiftEntries.length > 0) {
+          const merged = {};
+          for (const [k, v] of deptShiftEntries) { merged[k.slice(shiftPrefix.length)] = v; }
           isLoadingMonth.current = true;
-          setAllShifts(restoreShifts(byKey[shiftKey]));
+          setAllShifts(restoreShifts(merged));
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
+        } else {
+          // 旧フォーマット（全部署1つのJSON）からの移行
+          const legacyKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
+          if (byKey[legacyKey]) {
+            isLoadingMonth.current = true;
+            setAllShifts(restoreShifts(byKey[legacyKey]));
+            setTimeout(() => { isLoadingMonth.current = false; }, 100);
+          }
         }
         const yoteiKey = `yotei_${now.getFullYear()}_${now.getMonth()+1}`;
         if (byKey[yoteiKey]) setAllYotei(byKey[yoteiKey]);
@@ -2200,23 +2389,51 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (dbLoading) return;
 
     const reloadFromRemote = async () => {
-      if (saveStatusRef.current === 'unsaved') return; // 未保存の変更があれば上書きしない
-      isInitializing.current = true; // 受信データが再保存されるのを防ぐ
+      // 編集中（unsaved）はスキップ — saveStatusRefはユーザー操作で即時更新されるため確実
+      if (saveStatusRef.current === 'unsaved') return;
+      // fetch開始時のシーケンス番号を記録（fetch中にユーザーが編集したら検出するため）
+      const seqAtStart = userEditSeq.current;
+      isInitializing.current = true;
       try {
         const { data, error } = await supabase
           .from('shift_data')
           .select('data_key,data_value')
           .eq('user_id', session.user.id);
         if (error) throw error;
+        // fetch中にユーザーが編集していたらシフト更新をキャンセル
+        if (userEditSeq.current !== seqAtStart) return;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts'])      setDepts(byKey['depts']);
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
-        const shiftKey = `shifts_${year}_${month+1}`;
-        if (byKey[shiftKey]) {
+        if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
+        const latestStaffListRT = byKey['staffList'] || staffList;
+        const learnedRT = computeLearnedTrend(byKey, latestStaffListRT);
+        if (Object.keys(learnedRT).length > 0) setLearnedTrend(learnedRT);
+        const shiftPrefix = `shifts_${year}_${month+1}_`;
+        const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
+        if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
-          setAllShifts(restoreShifts(byKey[shiftKey]));
+          setAllShifts(prev => {
+            // updater実行時に再チェック（fetch後に編集があればキャンセル）
+            if (userEditSeq.current !== seqAtStart) return prev;
+            const result = { ...prev };
+            for (const [k, v] of deptShiftEntries) {
+              result[k.slice(shiftPrefix.length)] = v;
+            }
+            return restoreShifts(result);
+          });
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
+        } else {
+          const legacyKey = `shifts_${year}_${month+1}`;
+          if (byKey[legacyKey]) {
+            isLoadingMonth.current = true;
+            setAllShifts(prev => {
+              if (userEditSeq.current !== seqAtStart) return prev;
+              return restoreShifts(byKey[legacyKey]);
+            });
+            setTimeout(() => { isLoadingMonth.current = false; }, 100);
+          }
         }
       } catch(e) { console.warn('リモート同期エラー:', e); }
       finally { setTimeout(() => { isInitializing.current = false; }, 300); }
@@ -2266,18 +2483,28 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     };
   }, [dbLoading, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── 月切替: Supabase から当月シフトをロード ──
+  // ── 月切替: Supabase から当月シフトをロード（部署ごとに別キー）──
   useEffect(() => {
     if (isInitializing.current) return;
     isLoadingMonth.current = true;
-    const key = `shifts_${year}_${month+1}`;
-    supabase.from('shift_data').select('data_value')
-      .eq('user_id', session.user.id).eq('data_key', key).maybeSingle()
+    const prefix = `shifts_${year}_${month+1}_`;
+    supabase.from('shift_data').select('data_key,data_value')
+      .eq('user_id', session.user.id)
+      .like('data_key', prefix + '%')
       .then(({ data, error }) => {
-        if (!error && data?.data_value) {
-          setAllShifts(restoreShifts(data.data_value));
+        if (!error && data && data.length > 0) {
+          const merged = {};
+          for (const row of data) { merged[row.data_key.slice(prefix.length)] = row.data_value; }
+          setAllShifts(restoreShifts(merged));
         } else {
-          try { const saved=localStorage.getItem(SAVE_KEY(year,month)); setAllShifts(saved ? restoreShifts(JSON.parse(saved)) : {}); } catch { setAllShifts({}); }
+          // 旧フォーマット fallback
+          const legacyKey = `shifts_${year}_${month+1}`;
+          supabase.from('shift_data').select('data_value')
+            .eq('user_id', session.user.id).eq('data_key', legacyKey).maybeSingle()
+            .then(({ data: ld }) => {
+              if (ld?.data_value) { setAllShifts(restoreShifts(ld.data_value)); }
+              else { try { const saved=localStorage.getItem(SAVE_KEY(year,month)); setAllShifts(saved ? restoreShifts(JSON.parse(saved)) : {}); } catch { setAllShifts({}); } }
+            });
         }
         setTimeout(() => { isLoadingMonth.current = false; }, 100);
         // Load yotei for new month
@@ -2293,14 +2520,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // isLoadingMonth中（Supabaseからのロード中）のみスキップ
     // isInitializingは不要: reloadFromRemoteはisLoadingMonth=trueでsetAllShiftsするため
     if (isLoadingMonth.current) return;
+    saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
-      const key = `shifts_${year}_${month+1}`;
+      // 部署ごとに別キーで保存（同時編集の競合を防ぐ）
+      // activeDeptId は ref 経由で参照（deps に入れると部署切替のたびに余分なDBアクセスが発生するため）
+      const currentDeptId = activeDeptIdRef.current;
+      const key = `shifts_${year}_${month+1}_${currentDeptId}`;
+      const deptData = allShifts[currentDeptId] || {};
       try {
         const { error } = await supabase.from('shift_data').upsert(
-          { user_id:session.user.id, data_key:key, data_value:allShifts, updated_at:new Date().toISOString() },
+          { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
           { onConflict:'user_id,data_key' }
         );
         if (error) {
@@ -2350,15 +2582,40 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [shareModal, setShareModal] = useState(false);
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
+  const [learnedTrend, setLearnedTrend] = useState({});
   const [aiMode, setAiMode] = useState(false);
+  // ── 部署編集ロック ──
+  const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
+  const [pinModal, setPinModal] = useState(false);
+  // タブ切替で自動ロック
+  useEffect(() => { setUnlockedDeptId(null); }, [activeDeptId]);
+  const isLocked = !!(depts.find(d=>d.id===activeDeptId)?.pin && unlockedDeptId !== activeDeptId);
+  const isLockedRef = useRef(isLocked);
+  useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiRules, setAiRules] = useState("");
+  const [showAiRules, setShowAiRules] = useState(false);
+  const aiRulesTimerRef = useRef(null);
+  const generateTimerRef = useRef(null);
+  useEffect(() => {
+    if (isInitializing.current) return;
+    if (aiRulesTimerRef.current) clearTimeout(aiRulesTimerRef.current);
+    aiRulesTimerRef.current = setTimeout(() => {
+      supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'aiRules', data_value: aiRules, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {}).catch(() => {});
+    }, 1000);
+    return () => { if (aiRulesTimerRef.current) clearTimeout(aiRulesTimerRef.current); };
+  }, [aiRules]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_shiftTrend",JSON.stringify(shiftTrend)); } catch {}
     if (!isInitializing.current) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
     }
   }, [shiftTrend]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (isInitializing.current || dbLoading) return;
+    supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'portalSettings', data_value:portalSettings, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{}).catch(()=>{});
+  }, [portalSettings]); // eslint-disable-line react-hooks/exhaustive-deps
   const [ctxMenu, setCtxMenu] = useState(null);
   const [staffModal, setStaffModal] = useState(null);
 
@@ -2381,7 +2638,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const dept = depts.find(d=>d.id===activeDeptId) || depts[0];
   const deptShifts = allShifts[activeDeptId]||{};
-  const setDeptShifts = useCallback(updater => { setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater})); }, [activeDeptId]);
+  const setDeptShifts = useCallback(updater => {
+    // ユーザー操作はRealtimeより常に優先: 編集前にシーケンス番号を上げてRealtimeをキャンセル
+    userEditSeq.current++;
+    saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
+    setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater}));
+  }, [activeDeptId]);
 
   const deptYotei = allYotei[activeDeptId]||{};
   const handleUpdateYotei = useCallback((day, assignments) => {
@@ -2396,65 +2658,72 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const handleAiAdjust = useCallback(async () => {
     if (!aiInstruction.trim()) return;
+    if (!dept) { alert("部署が選択されていません。"); return; }
     setAiLoading(true);
     try {
       const fnUrl = "/api/ai-shift-adjust";
-      console.log("[AI] 呼び出しURL:", fnUrl);
       const res = await fetch(fnUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shifts: deptShifts, staffList, dept, instruction: aiInstruction, year, month: month + 1 }),
+        body: JSON.stringify({ shifts: deptShifts, staffList, dept, instruction: aiInstruction, aiRules: aiRules.trim(), year, month: month + 1 }),
       });
-      console.log("[AI] レスポンスステータス:", res.status);
       if (!res.ok) {
         const errText = await res.text();
         throw new Error(`HTTP ${res.status}: ${errText}`);
       }
       const data = await res.json();
       if (data?.error) throw new Error(data.error);
-      if (data.changes && data.changes.length > 0) {
+      if (Array.isArray(data.changes) && data.changes.length > 0) {
         setDeptShifts(prev => {
           const next = { ...prev };
           for (const c of data.changes) {
-            next[c.staffId] = { ...(next[c.staffId] || {}), [c.day]: c.shift };
+            if (c?.staffId && c?.day) next[c.staffId] = { ...(next[c.staffId] || {}), [c.day]: c.shift };
           }
           return next;
         });
         alert(`✨ AI調整完了\n\n${data.explanation}\n\n変更: ${data.changes.length}件`);
       } else {
-        alert(`✨ AIからの回答\n\n${data.explanation}`);
+        alert(`✨ AIからの回答\n\n${data.explanation || "変更なし"}`);
       }
     } catch (e) {
       alert("AI調整エラー: " + e.message);
     } finally {
       setAiLoading(false);
     }
-  }, [aiInstruction, deptShifts, staffList, dept, year, month, setDeptShifts]);
+  }, [aiInstruction, aiRules, deptShifts, staffList, dept, year, month, setDeptShifts]);
 
   const handleGenerate = useCallback(() => {
+    if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
-    isInitializing.current = false; // Realtimeリロード中でも生成を確実に反映させる
-    const cs=staffList, cd=dept, ct=shiftTrend;
-    setTimeout(() => {
+    isInitializing.current = false;
+    const cs=staffList, cd=dept, ct=mergeShiftTrends(shiftTrend, learnedTrend);
+    generateTimerRef.current = setTimeout(() => {
+      // 自動生成もユーザー操作: シーケンス番号を上げてRealtimeをキャンセル
+      userEditSeq.current++;
+      saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
       try {
         setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings}=autoGenerate(cs,cd,year,month,cs2,ct);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label}),0);return{...prevAll,[cd.id]:result};});
-        setSaveStatus("unsaved"); // 生成直後にunsavedをセットしてRealtimeによる上書きを防ぐ
+        setSaveStatus("unsaved");
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
     },700);
-  }, [staffList,dept,year,month,shiftTrend]);
+  }, [staffList,dept,year,month,shiftTrend,learnedTrend]);
 
   const handleLeftClick = useCallback((staffId, day) => {
+    if (isLockedRef.current) return;
     setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const idx=SHIFT_KEYS.indexOf(cur);const next=SHIFT_KEYS[(idx+1)%SHIFT_KEYS.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
   }, [setDeptShifts]);
 
-  const handleRightClick = useCallback((staffId, day, e) => { setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4}); }, []);
+  const handleRightClick = useCallback((staffId, day, e) => {
+    if (isLockedRef.current) return;
+    setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4});
+  }, []);
   const handleMenuSelect = (shiftKey) => { if(!ctxMenu)return; const{staffId,day}=ctxMenu; setDeptShifts(prev=>({...prev,[staffId]:{...(prev[staffId]||{}),[day]:shiftKey}})); setCtxMenu(null); };
 
   const saveStaff = (form) => { setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
   const deleteStaff = (id) => { const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
-  const handleBulkKyuko = (values, mk) => { setStaffList(prev=>prev.map(s=>{if(values[s.dept]===undefined)return s;return{...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:values[s.dept]}};})); setBulkKyukoModal(false); };
+  const handleBulkKyuko = (days, mk) => { setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}}))); setBulkKyukoModal(false); };
 
   const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
@@ -2486,15 +2755,18 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             {saveStatus==="saved"&&<><span>💾</span>{!isMobile&&<span>保存済</span>}</>}
             {saveStatus==="unsaved"&&<><span>⏳</span>{!isMobile&&<span>未保存</span>}</>}
           </div>
-          <button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 生成中…":" 自動生成")}</button>
+          {isLocked
+            ? <button onClick={()=>setPinModal(true)} style={{background:"linear-gradient(135deg,#374151,#1f2937)",color:"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>🔒{!isMobile&&" 解錠する"}</button>
+            : <><button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 生成中…":" 自動生成")}</button></>
+          }
           <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
-          {!isMobile&&<button onClick={()=>setExcelImportModal(true)} style={{background:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#e8f5ee":"#ffffff",color:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"#5cb87a":"#2a6a67",border:Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{Object.keys(shiftTrend).filter(k=>k!=='_months').length>0?`📊 傾向ON`:"📊 傾向学習"}</button>}
+          {!isMobile&&(()=>{const excelCnt=Object.keys(shiftTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const label=learnedCnt>0?`🧠 学習中(${learnedCnt}名)`:excelCnt>0?`📊 傾向ON`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#e8f5ee":"#ffffff",color:hasAny?"#5cb87a":"#2a6a67",border:hasAny?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
           {!isMobile&&(profile?.plan==='full'
-            ? <button onClick={()=>setAiMode(v=>!v)} style={{background:aiMode?"#ede9fe":"#ffffff",color:aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
+            ? <button onClick={()=>setAiMode(v=>!v)} disabled={isLocked} style={{background:isLocked?"#f3f4f6":aiMode?"#ede9fe":"#ffffff",color:isLocked?"#9ca3af":aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:isLocked?"not-allowed":"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
             : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
           )}
-          <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>
+          {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
           <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
           {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🏢":"🏢 管理"}</button>}
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
@@ -2507,10 +2779,51 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* AI PANEL */}
       {aiMode&&(
         <div style={{background:"#f3f0ff",borderBottom:"1px solid #c4b5fd",padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#7c3aed",display:"flex",alignItems:"center",gap:6}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#7c3aed",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
             <span>🤖 AI調整モード</span>
             <span style={{fontSize:10,fontWeight:400,color:"#a78bfa"}}>自動生成後のシフトを指示で調整できます</span>
+            <button onClick={()=>setShowAiRules(v=>!v)} style={{marginLeft:"auto",background:showAiRules?"#ede9fe":"#fff",border:"1px solid #c4b5fd",borderRadius:6,color:"#7c3aed",fontSize:10,padding:"2px 8px",cursor:"pointer",fontWeight:showAiRules?800:400}}>
+              {aiRules.trim()?"⚙️ ルール設定 ✓":"⚙️ ルール設定"}
+            </button>
           </div>
+
+          {/* AIルール設定（折りたたみ） */}
+          {showAiRules&&(
+            <div style={{background:"#ede9fe",borderRadius:10,padding:"10px 12px",border:"1px solid #c4b5fd"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#5b21b6",marginBottom:6}}>施設固有のAIルール（毎回自動で適用されます）</div>
+              <div style={{fontSize:10,color:"#7c3aed",marginBottom:6}}>役職・業務ごとのルールを書いておくと、AI がシフト調整時に自動で従います。</div>
+              {/* プリセットボタン */}
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
+                {[
+                  "介護補助は夜勤禁止",
+                  "パート職員は日勤か早番のみ",
+                  "主任は月に夜勤2回まで",
+                  "新人（研修中）は日勤のみ",
+                  "夜勤担当者は最低2名以上",
+                  "同じ役職の職員を夜勤に偏らせない",
+                  "連続夜勤は禁止",
+                  "リーダーが夜勤の日は経験者を早番に"
+                ].map(preset=>(
+                  <button key={preset} onClick={()=>setAiRules(r=>r?r+"\n"+preset:preset)}
+                    style={{background:"#fff",border:"1px solid #c4b5fd",borderRadius:12,padding:"2px 8px",fontSize:10,color:"#6d28d9",cursor:"pointer"}}>
+                    ＋{preset}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={aiRules}
+                onChange={e=>setAiRules(e.target.value)}
+                placeholder={"例）介護補助は夜勤禁止\n例）パート職員は日勤か早番のみ\n例）○○さんは土日優先で休みにする\n例）新しく追加した役職名はここにルールを書いてください"}
+                style={{width:"100%",minHeight:90,borderRadius:8,border:"1px solid #c4b5fd",padding:"8px 10px",fontSize:11,color:"#4c1d95",background:"#faf5ff",resize:"vertical",boxSizing:"border-box",outline:"none",fontFamily:"inherit"}}
+              />
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
+                <div style={{fontSize:10,color:"#a78bfa"}}>{aiRules.trim()?`${aiRules.trim().split("\n").filter(Boolean).length}件のルール設定中`:"ルール未設定（任意）"}</div>
+                {aiRules.trim()&&<button onClick={()=>{if(confirm("ルールをクリアしますか？"))setAiRules("");}} style={{background:"none",border:"none",color:"#ef4444",fontSize:10,cursor:"pointer"}}>🗑 クリア</button>}
+              </div>
+            </div>
+          )}
+
+          {/* 今回の指示 */}
           <textarea
             value={aiInstruction}
             onChange={e=>setAiInstruction(e.target.value)}
@@ -2566,6 +2879,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <span style={{fontSize:11,fontWeight:700,color:"#2BBFBA",minWidth:34,textAlign:"right"}}>{tableZoom}%</span>
           <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
           <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#fff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
+          {profile?.plan==='full'
+            ? <button onClick={()=>setAiMode(v=>!v)} style={{background:aiMode?"#ede9fe":"#fff",color:aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:4,fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:aiMode?800:400}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
+            : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:4,fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>🔒 AI</button>
+          }
         </div>
       )}
 
@@ -2580,9 +2897,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)}/>}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
-      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClearAll={()=>{setAllShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend} onImport={(newTrend)=>{setShiftTrend(prev=>{const pm=prev._months||[],nm=newTrend._months||[];const m={...prev,...newTrend};m._months=[...new Set([...pm,...nm])].sort();return m;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend({});setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
-      {bulkKyukoModal&&<BulkKyukoModal depts={depts} staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
+      {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#8ecece",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#2BBFBA",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
@@ -2596,21 +2914,74 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <button onClick={()=>setShareModal(false)} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
             </div>
             <div style={{fontSize:11,color:"#3a8a87",marginBottom:16,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
+
+            {/* ── サイト全体QR（新規登録・ログイン用） ── */}
+            <div style={{background:"#fff",border:"2px solid #2BBFBA",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+              <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:4}}>🏠 しふぽん サイトQRコード</div>
+              <div style={{fontSize:10,color:"#3a8a87",marginBottom:10}}>自分のサイトに貼り付けると、スキャンしたらしふぽんのログイン・新規登録画面へ移動します。</div>
+              <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+                  <div style={{padding:8,background:"#fff",border:"2px solid #90cbc8",borderRadius:8,display:"inline-block"}}>
+                    <QRCodeSVG value={window.location.origin} size={160} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
+                  </div>
+                  <div style={{fontSize:9,color:"#6ab5b2",wordBreak:"break-all",textAlign:"center",maxWidth:176}}>{window.location.origin}</div>
+                </div>
+                <div style={{flex:1,minWidth:160}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:8}}>使い方</div>
+                  <div style={{fontSize:11,color:"#3a8a87",lineHeight:1.8}}>
+                    ① このQRコードを<strong>スクリーンショット</strong><br/>
+                    ② 自分のサイトに画像として貼り付け<br/>
+                    ③ 読み取るとしふぽんに到達<br/>
+                    ④ 「ログイン」または「新規登録」が表示されます
+                  </div>
+                  <div style={{marginTop:10,fontSize:10,background:"#fef3c7",border:"1px solid #fbbf24",borderRadius:6,padding:"6px 8px",color:"#92400e"}}>
+                    💡 URLもリンクとして貼れます<br/>
+                    <span style={{wordBreak:"break-all",fontWeight:700}}>{window.location.origin}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{fontSize:11,color:"#3a8a87",marginBottom:10,fontWeight:700}}>▍ 部署別 スタッフ希望休ポータル</div>
             {depts.map(d=>{
+              const ps=portalSettings[d.id]||{};
+              const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
-              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3},sl:deptSl};
+              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:ps.deadline||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               const urlShort=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlFull).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlFull}`));}else{alert(`URLをコピーしてください:\n${urlFull}`);}};
               const doShare=async()=>{if(navigator.share){try{await navigator.share({title:`しふぽん 希望休入力（${d.label}）`,text:`${d.label}の希望休入力はこちら`,url:urlFull});}catch(e){if(e?.name!=='AbortError')doCopy();}}else{doCopy();}};
+              const doSaveSettings=async()=>{
+                const newPs={...portalSettings,[d.id]:{deadline:ps.deadline||null}};
+                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,icon:dep.icon,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null};});
+                const facilityVal={facility_name:profile?.facility_name||'',depts:deptsCfg,staffList:staffList.map(s=>({id:s.id,dept:s.dept,name:s.name,role:s.role}))};
+                const [r1,r2]=await Promise.all([
+                  supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'portalSettings',data_value:newPs,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
+                  supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'facilityConfig',data_value:facilityVal,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
+                ]);
+                if(r1.error||r2.error){alert('保存に失敗しました。もう一度お試しください。');return;}
+                alert(`✅ ${d.label} の設定を保存しました\n締め切り: ${ps.deadline||'なし'}`);
+              };
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:6}}>{d.icon} {d.label}</div>
+                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:10}}>{d.icon} {d.label}</div>
+                  {/* 締め切り */}
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:4}}>⏰ 締め切り日</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <input type="date" value={ps.deadline||""} onChange={e=>setPsDept('deadline',e.target.value||null)} style={{border:"1px solid #90cbc8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#1a3635",outline:"none",background:"#f3fffe"}}/>
+                      {ps.deadline&&<button onClick={()=>setPsDept('deadline',null)} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}>✕ クリア</button>}
+                    </div>
+                    {ps.deadline&&<div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>⚠ {ps.deadline} 以降は送信不可になります</div>}
+                  </div>
+                  {/* 保存ボタン */}
+                  <button onClick={doSaveSettings} style={{width:"100%",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12}}>💾 この設定を保存する</button>
                   <div style={{textAlign:"center",marginBottom:6}}>
                     <div style={{fontSize:10,color:"#3a8a87",marginBottom:6,fontWeight:700}}>📷 カメラで読み取り</div>
                     <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #90cbc8",borderRadius:8}}>
-                      <QRCodeSVG value={urlShort} size={160} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
+                      <QRCodeSVG value={urlShort} size={140} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
                     </div>
                   </div>
                   <div style={{display:"flex",gap:8,marginTop:8}}>
