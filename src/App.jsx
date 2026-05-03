@@ -1921,6 +1921,15 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
   useEffect(() => { loadConfig(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 締め切り日の月を対象月として自動設定
+  useEffect(() => {
+    if (!config) return;
+    const dept = config.depts?.find(d => d.id === (fixedDeptId || config.depts?.[0]?.id));
+    if (!dept?.deadline) return;
+    const [dy, dm] = dept.deadline.split('-').map(Number);
+    if (!isNaN(dy) && !isNaN(dm)) { setYear(dy); setMonth(dm - 1); }
+  }, [config, fixedDeptId]);
+
   const mk = monthKey(year, month);
   const selDept = config?.depts?.find(d => d.id === selDeptId);
   const deptStaff = (config?.staffList || []).filter(s => s.dept === selDeptId);
