@@ -389,7 +389,8 @@ function calcConsecutive(sShifts, d) {
 }
 
 // しふぽん蓄積データからスタッフごとのシフト傾向を学習する
-function computeLearnedTrend(allDBData, staffList) {
+function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
+  const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
   const counts = {}, totals = {}, monthSets = {};
   const now = new Date();
   const nowYM = now.getFullYear() * 12 + now.getMonth();
@@ -398,8 +399,11 @@ function computeLearnedTrend(allDBData, staffList) {
     // キー形式: shifts_YYYY_M_deptId
     const parts = key.split('_');
     if (parts.length < 4) continue;
-    const keyYear = parseInt(parts[1]), keyMonth = parseInt(parts[2]) - 1;
+    const keyYear = parseInt(parts[1]), keyMonthRaw = parseInt(parts[2]);
+    const keyMonth = keyMonthRaw - 1; // 0始まり
     if (isNaN(keyYear) || isNaN(keyMonth)) continue;
+    // 例外月はスキップ
+    if (exceptionSet.has(`${keyYear}-${keyMonthRaw}`)) continue;
     // 直近ほど重く: 今月=4, 1ヶ月前=3, 2ヶ月前=2, 3ヶ月以前=1
     const monthsAgo = Math.max(0, nowYM - (keyYear * 12 + keyMonth));
     const weight = Math.max(1, 4 - monthsAgo);
@@ -1111,8 +1115,9 @@ function PinModal({ deptLabel, onVerify, onClose }) {
   );
 }
 
-function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm }) {
+function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm, exceptionMonths = [], onExceptionMonthsChange }) {
   const [status, setStatus] = useState("idle"), [preview, setPreview] = useState(null), [errorMsg, setErrorMsg] = useState("");
+  const [exInput, setExInput] = useState(""); // "YYYY-M" 入力用
   const fileRef = useRef(null);
   const handleFile = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
@@ -1122,6 +1127,17 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm 
     catch(err) { setErrorMsg("読み込み失敗: "+err.message); setStatus("error"); }
     finally { if(fileRef.current)fileRef.current.value=""; }
   };
+  const addException = () => {
+    const val = exInput.trim();
+    if (!val) return;
+    // "YYYY-M" または "YYYY/M" または "YYYY年M月" を正規化
+    const m = val.match(/(\d{4})[年\-\/](\d{1,2})/);
+    if (!m) { alert('形式は「2024-3」または「2024年3月」で入力してください'); return; }
+    const key = `${m[1]}-${parseInt(m[2])}`;
+    if (!exceptionMonths.includes(key)) onExceptionMonthsChange([...exceptionMonths, key].sort());
+    setExInput("");
+  };
+  const removeException = (key) => onExceptionMonthsChange(exceptionMonths.filter(k => k !== key));
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
@@ -1132,7 +1148,27 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm 
         {status==="parsing"&&<div style={{textAlign:"center",color:"#2BBFBA",padding:"16px 0"}}>⏳ 解析中…</div>}
         {status==="error"&&<div style={{background:"#fff0f0",border:"1px solid #dc2626",borderRadius:8,padding:"10px 14px",color:"#f87171",fontSize:12,marginBottom:14}}>{errorMsg}</div>}
         {status==="done"&&preview&&(<div><div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>✅ {Object.keys(preview).filter(k=>k!=='_months').length} 名分のデータを読み込みました</div><div style={{display:"flex",gap:10}}><button onClick={()=>onImport(preview)} style={{flex:1,background:"linear-gradient(135deg,#2d8a52,#2a7a6e)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div></div>)}
-        {status==="idle"&&<button onClick={onClose} style={{width:"100%",background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>閉じる</button>}
+        {/* 例外月設定 */}
+        <div style={{marginTop:20,borderTop:"1px solid #b8deda",paddingTop:16}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#1a3635",marginBottom:4}}>🚫 例外月（学習から除外）</div>
+          <div style={{fontSize:11,color:"#3a8a87",marginBottom:10}}>インフルエンザ・コロナ等でシフトが崩れた月を除外すると学習精度が上がります。</div>
+          <div style={{display:"flex",gap:6,marginBottom:8}}>
+            <input value={exInput} onChange={e=>setExInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addException()} placeholder="例: 2024-1 または 2024年1月" style={{flex:1,border:"1px solid #90cbc8",borderRadius:6,padding:"6px 10px",fontSize:12,color:"#1a3635",outline:"none"}}/>
+            <button onClick={addException} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>追加</button>
+          </div>
+          {exceptionMonths.length===0
+            ? <div style={{fontSize:11,color:"#8ecece"}}>除外月なし（すべての月を学習に使用）</div>
+            : <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {exceptionMonths.map(k=>{const [y,m]=k.split('-');return(
+                  <div key={k} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:16,padding:"3px 10px",fontSize:11,color:"#c44b4b",display:"flex",alignItems:"center",gap:6}}>
+                    <span>{y}年{m}月</span>
+                    <button onClick={()=>removeException(k)} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>✕</button>
+                  </div>
+                );})}
+              </div>
+          }
+        </div>
+        {status==="idle"&&<button onClick={onClose} style={{width:"100%",background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,marginTop:16}}>閉じる</button>}
       </div>
     </div>
   );
@@ -2361,7 +2397,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
         const latestStaffList = byKey['staffList'] || staffList;
-        const learned = computeLearnedTrend(byKey, latestStaffList);
+        const latestExceptionMonths = byKey['exceptionMonths'] || [];
+        if (byKey['exceptionMonths']) setExceptionMonths(byKey['exceptionMonths']);
+        const learned = computeLearnedTrend(byKey, latestStaffList, latestExceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
         if (byKey['aiRules']) setAiRules(byKey['aiRules']);
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
@@ -2417,8 +2455,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
+        if (byKey['exceptionMonths']) setExceptionMonths(byKey['exceptionMonths']);
         const latestStaffListRT = byKey['staffList'] || staffList;
-        const learnedRT = computeLearnedTrend(byKey, latestStaffListRT);
+        const latestExcRT = byKey['exceptionMonths'] || exceptionMonths;
+        const learnedRT = computeLearnedTrend(byKey, latestStaffListRT, latestExcRT);
         if (Object.keys(learnedRT).length > 0) setLearnedTrend(learnedRT);
         const shiftPrefix = `shifts_${year}_${month+1}_`;
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
@@ -2593,6 +2633,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
   const [learnedTrend, setLearnedTrend] = useState({});
+  const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
   const [aiMode, setAiMode] = useState(false);
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
@@ -2622,6 +2663,18 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
     }
   }, [shiftTrend]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!isInitializing.current) {
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'exceptionMonths', data_value:exceptionMonths, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
+      // 例外月変更時は学習データを再計算
+      supabase.from('shift_data').select('data_key,data_value').eq('user_id',session.user.id).then(({data})=>{
+        if (!data) return;
+        const byKey = Object.fromEntries(data.map(r=>[r.data_key,r.data_value]));
+        const learned = computeLearnedTrend(byKey, staffList, exceptionMonths);
+        if (Object.keys(learned).length > 0) setLearnedTrend(learned);
+      });
+    }
+  }, [exceptionMonths]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isInitializing.current || dbLoading) return;
     supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'portalSettings', data_value:portalSettings, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{}).catch(()=>{});
@@ -2909,7 +2962,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
-      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend} onImport={(newTrend)=>{setShiftTrend(prev=>{const pm=prev._months||[],nm=newTrend._months||[];const m={...prev,...newTrend};m._months=[...new Set([...pm,...nm])].sort();return m;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend({});setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
+      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} onImport={(newTrend)=>{setShiftTrend(prev=>{const pm=prev._months||[],nm=newTrend._months||[];const m={...prev,...newTrend};m._months=[...new Set([...pm,...nm])].sort();return m;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend({});setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} onClose={()=>setGenerateWarnings(null)}/>}
