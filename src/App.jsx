@@ -1936,8 +1936,9 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   const selStaff = deptStaff.find(s => s.id === selStaffId);
   const lim = selDept?.kiboLimit || 3;
 
-  // 締め切りチェック
+  // 締め切りチェック・月固定
   const isPastDeadline = selDept?.deadline ? new Date() > new Date(selDept.deadline + 'T23:59:59') : false;
+  const isMonthLocked = !!selDept?.deadline;
 
   useEffect(() => {
     if (!selStaffId || !selDeptId) return;
@@ -2029,9 +2030,9 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>◀</button>
+          {!isMonthLocked&&<button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>◀</button>}
           <span style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{year}年{month+1}月</span>
-          <button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>▶</button>
+          {!isMonthLocked&&<button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>▶</button>}
         </div>
       </div>
 
