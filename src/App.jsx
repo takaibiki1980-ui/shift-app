@@ -388,6 +388,31 @@ function calcConsecutive(sShifts, d) {
   return cnt;
 }
 
+// Excel月別生データから除外月を除いてshiftTrendを再計算
+function computeShiftTrendFromRaw(rawByMonth, exceptionMonths = []) {
+  const exceptions = new Set(exceptionMonths);
+  const COUNT_KEYS = ['早番','日勤','遅番','夜勤'];
+  const trendMap = {};
+  for (const [month, staffData] of Object.entries(rawByMonth || {})) {
+    if (exceptions.has(month)) continue;
+    for (const [name, d] of Object.entries(staffData)) {
+      if (!trendMap[name]) trendMap[name] = { 早番:0, 日勤:0, 遅番:0, 夜勤:0, total:0, dowRest:[0,0,0,0,0,0,0], dowTotal:[0,0,0,0,0,0,0] };
+      COUNT_KEYS.forEach(k => { trendMap[name][k] += (d[k]||0); });
+      trendMap[name].total += (d.total||0);
+      if (d.dowRest) for (let i=0;i<7;i++) { trendMap[name].dowRest[i]+=(d.dowRest[i]||0); trendMap[name].dowTotal[i]+=(d.dowTotal[i]||0); }
+    }
+  }
+  const result = {};
+  for (const [name, d] of Object.entries(trendMap)) {
+    if (d.total < 3) continue;
+    const freq = {};
+    COUNT_KEYS.forEach(k => { freq[k] = d.total > 0 ? d[k]/d.total : 0; });
+    result[name] = { ...freq, dowRestRate: d.dowTotal.map((tot,i) => tot>0 ? d.dowRest[i]/tot : null), _workTotal: d.total };
+  }
+  result._months = Object.keys(rawByMonth||{}).filter(m=>!exceptions.has(m)).sort();
+  return result;
+}
+
 // 18ヶ月以上前の例外月を自動削除（期限切れ）
 function filterExpiredExceptions(list) {
   const now = new Date();
@@ -803,6 +828,7 @@ function parseShiftExcel(workbook) {
   const COUNT_KEYS = ["早番","日勤","遅番","夜勤"];
   const trendMap = {};
   const processedYearMonths = new Set();
+  const monthlyData = {}; // { "YYYY-M": { name: { 早番, 日勤, 遅番, 夜勤, total, dowRest, dowTotal } } }
   workbook.SheetNames.forEach(sheetName => {
     if (/祝日|holidays|calendar|カレンダー/i.test(sheetName)) return;
     const wsDates = workbook.Sheets[sheetName];
@@ -860,6 +886,12 @@ function parseShiftExcel(workbook) {
       COUNT_KEYS.forEach(k => { trendMap[nameCell][k] += counts[k]; });
       trendMap[nameCell].total += total;
       for (let i = 0; i < 7; i++) { trendMap[nameCell].dowRest[i] += dowRest[i]; trendMap[nameCell].dowTotal[i] += dowTotal[i]; }
+      // 月別生データを保存
+      if (!monthlyData[sheetYearMonth]) monthlyData[sheetYearMonth] = {};
+      if (!monthlyData[sheetYearMonth][nameCell]) monthlyData[sheetYearMonth][nameCell] = { 早番:0, 日勤:0, 遅番:0, 夜勤:0, total:0, dowRest:[0,0,0,0,0,0,0], dowTotal:[0,0,0,0,0,0,0] };
+      COUNT_KEYS.forEach(k => { monthlyData[sheetYearMonth][nameCell][k] += counts[k]; });
+      monthlyData[sheetYearMonth][nameCell].total += total;
+      for (let i = 0; i < 7; i++) { monthlyData[sheetYearMonth][nameCell].dowRest[i] += dowRest[i]; monthlyData[sheetYearMonth][nameCell].dowTotal[i] += dowTotal[i]; }
     });
   });
   const result = {};
@@ -870,6 +902,7 @@ function parseShiftExcel(workbook) {
     result[name] = { ...shiftTrend, dowRestRate: counts.dowTotal.map((tot, i) => tot > 0 ? counts.dowRest[i] / tot : null), _workTotal: counts.total };
   });
   result._months = Array.from(processedYearMonths).sort();
+  result._rawByMonth = monthlyData;
   return result;
 }
 
@@ -1125,7 +1158,7 @@ function PinModal({ deptLabel, onVerify, onClose }) {
   );
 }
 
-function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm, exceptionMonths = [], onExceptionMonthsChange }) {
+function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm, exceptionMonths = [], onExceptionMonthsChange, excelRawMonths = {}, onExcelRawMonthsChange }) {
   const [status, setStatus] = useState("idle"), [preview, setPreview] = useState(null), [errorMsg, setErrorMsg] = useState("");
   const [exInput, setExInput] = useState(""); // "YYYY-M" 入力用
   const fileRef = useRef(null);
@@ -1158,9 +1191,33 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
         {status==="parsing"&&<div style={{textAlign:"center",color:"#2BBFBA",padding:"16px 0"}}>⏳ 解析中…</div>}
         {status==="error"&&<div style={{background:"#fff0f0",border:"1px solid #dc2626",borderRadius:8,padding:"10px 14px",color:"#f87171",fontSize:12,marginBottom:14}}>{errorMsg}</div>}
         {status==="done"&&preview&&(<div><div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>✅ {Object.keys(preview).filter(k=>k!=='_months').length} 名分のデータを読み込みました</div><div style={{display:"flex",gap:10}}><button onClick={()=>onImport(preview)} style={{flex:1,background:"linear-gradient(135deg,#2d8a52,#2a7a6e)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div></div>)}
+        {/* インポート済み月一覧 */}
+        {Object.keys(excelRawMonths).length > 0 && (
+          <div style={{marginTop:20,borderTop:"1px solid #b8deda",paddingTop:16}}>
+            <div style={{fontSize:13,fontWeight:800,color:"#1a3635",marginBottom:4}}>📅 インポート済み月</div>
+            <div style={{fontSize:11,color:"#3a8a87",marginBottom:8}}>不要な月を削除すると学習から除外されます（元に戻すには再インポートが必要）。</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {Object.keys(excelRawMonths).sort().map(k => {
+                const [y,m] = k.split('-');
+                const isExcl = exceptionMonths.includes(k);
+                const staffCount = Object.keys(excelRawMonths[k]||{}).length;
+                return (
+                  <div key={k} style={{background:isExcl?"#fff0f0":"#e8f5ee",border:`1px solid ${isExcl?"#e07070":"#5cb87a"}`,borderRadius:16,padding:"3px 10px",fontSize:11,color:isExcl?"#c44b4b":"#2d8a52",display:"flex",alignItems:"center",gap:6}}>
+                    <span>{y}年{m}月</span>
+                    <span style={{fontSize:9,opacity:0.7}}>{staffCount}名{isExcl?" (除外中)":""}</span>
+                    <button onClick={()=>onConfirm(`${y}年${m}月のデータを削除しますか？\n元に戻すには再インポートが必要です。`,()=>{
+                      const newRaw = {...excelRawMonths}; delete newRaw[k];
+                      if(onExcelRawMonthsChange) onExcelRawMonthsChange(newRaw);
+                    },'削除')} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>🗑</button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {/* 例外月設定 */}
         <div style={{marginTop:20,borderTop:"1px solid #b8deda",paddingTop:16}}>
-          <div style={{fontSize:13,fontWeight:800,color:"#1a3635",marginBottom:4}}>🚫 例外月（学習から除外）</div>
+          <div style={{fontSize:13,fontWeight:800,color:"#1a3635",marginBottom:4}}>🚫 例外月（一時除外・自動期限切れ）</div>
           <div style={{fontSize:11,color:"#3a8a87",marginBottom:10}}>インフルエンザ・コロナ等でシフトが崩れた月を除外すると学習精度が上がります。</div>
           <div style={{display:"flex",gap:6,marginBottom:8}}>
             <input value={exInput} onChange={e=>setExInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addException()} placeholder="例: 2024-1 または 2024年1月" style={{flex:1,border:"1px solid #90cbc8",borderRadius:6,padding:"6px 10px",fontSize:12,color:"#1a3635",outline:"none"}}/>
@@ -2405,7 +2462,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         } else {
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
         }
-        if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+        if (byKey['excelRawMonths']) {
+          setExcelRawMonths(byKey['excelRawMonths']);
+          const excl = filterExpiredExceptions(byKey['exceptionMonths'] || []);
+          const recomputed = computeShiftTrendFromRaw(byKey['excelRawMonths'], excl);
+          if (Object.keys(recomputed).filter(k=>k!=='_months').length > 0) setShiftTrend(recomputed);
+          else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+        } else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
         const latestStaffList = byKey['staffList'] || staffList;
         const latestExceptionMonths = filterExpiredExceptions(byKey['exceptionMonths'] || []);
@@ -2464,9 +2527,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts'])      setDepts(byKey['depts']);
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
-        if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
-        if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         const latestExcRT = filterExpiredExceptions(byKey['exceptionMonths'] || exceptionMonths);
+        if (byKey['excelRawMonths']) {
+          setExcelRawMonths(byKey['excelRawMonths']);
+          const recomp = computeShiftTrendFromRaw(byKey['excelRawMonths'], latestExcRT);
+          if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) setShiftTrend(recomp);
+          else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+        } else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+        if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         if (byKey['exceptionMonths']) setExceptionMonths(latestExcRT);
         const latestStaffListRT = byKey['staffList'] || staffList;
         const learnedRT = computeLearnedTrend(byKey, latestStaffListRT, latestExcRT);
@@ -2645,6 +2713,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
   const [learnedTrend, setLearnedTrend] = useState({});
   const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
+  const [excelRawMonths, setExcelRawMonths] = useState({}); // { "YYYY-M": { name: {counts} } }
   const [aiMode, setAiMode] = useState(false);
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
@@ -2677,7 +2746,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => {
     if (!isInitializing.current) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'exceptionMonths', data_value:exceptionMonths, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
-      // 例外月変更時は学習データを再計算
+      // 例外月変更時: DBデータとExcelデータ両方を再計算
+      if (Object.keys(excelRawMonths).length > 0) {
+        const recomp = computeShiftTrendFromRaw(excelRawMonths, exceptionMonths);
+        if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) setShiftTrend(recomp);
+      }
       supabase.from('shift_data').select('data_key,data_value').eq('user_id',session.user.id).then(({data})=>{
         if (!data) return;
         const byKey = Object.fromEntries(data.map(r=>[r.data_key,r.data_value]));
@@ -2686,6 +2759,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       });
     }
   }, [exceptionMonths]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!isInitializing.current) {
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'excelRawMonths', data_value:excelRawMonths, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
+    }
+  }, [excelRawMonths]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isInitializing.current || dbLoading) return;
     supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'portalSettings', data_value:portalSettings, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{}).catch(()=>{});
@@ -2973,7 +3051,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
-      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} onImport={(newTrend)=>{setShiftTrend(prev=>{const pm=prev._months||[],nm=newTrend._months||[];const m={...prev,...newTrend};m._months=[...new Set([...pm,...nm])].sort();return m;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend({});setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
+      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths} onExcelRawMonthsChange={(newRaw)=>{setExcelRawMonths(newRaw);const recomp=computeShiftTrendFromRaw(newRaw,exceptionMonths);setShiftTrend(recomp);}} onImport={(newTrend)=>{
+        const newRaw = newTrend._rawByMonth || {};
+        setExcelRawMonths(prev => {
+          const merged = {...prev, ...newRaw};
+          const recomp = computeShiftTrendFromRaw(merged, exceptionMonths);
+          setShiftTrend(recomp);
+          return merged;
+        });
+        setExcelImportModal(false);
+      }} onReset={()=>{setShiftTrend({});setExcelRawMonths({});setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} onClose={()=>setGenerateWarnings(null)}/>}
