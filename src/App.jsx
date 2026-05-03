@@ -2912,7 +2912,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <ShifuponIcon size={36} radius={9}/>
           <div>
             <ShifuponLogo size={18}/>
-            <div style={{fontSize:9,color:"#8ecece",letterSpacing:"0.08em"}}>介護施設シフト管理</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
