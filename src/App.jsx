@@ -388,6 +388,16 @@ function calcConsecutive(sShifts, d) {
   return cnt;
 }
 
+// 18ヶ月以上前の例外月を自動削除（期限切れ）
+function filterExpiredExceptions(list) {
+  const now = new Date();
+  const cutoff = now.getFullYear() * 12 + now.getMonth() - 17; // 18ヶ月前
+  return (list || []).filter(k => {
+    const [y, m] = k.split('-').map(Number);
+    return (y * 12 + (m - 1)) >= cutoff;
+  });
+}
+
 // しふぽん蓄積データからスタッフごとのシフト傾向を学習する
 function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
@@ -1159,9 +1169,10 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
           {exceptionMonths.length===0
             ? <div style={{fontSize:11,color:"#8ecece"}}>除外月なし（すべての月を学習に使用）</div>
             : <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                {exceptionMonths.map(k=>{const [y,m]=k.split('-');return(
+                {exceptionMonths.map(k=>{const [y,m]=k.split('-').map(Number);const now=new Date();const mAgo=now.getFullYear()*12+now.getMonth()-(y*12+(m-1));const remaining=18-mAgo;return(
                   <div key={k} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:16,padding:"3px 10px",fontSize:11,color:"#c44b4b",display:"flex",alignItems:"center",gap:6}}>
                     <span>{y}年{m}月</span>
+                    <span style={{fontSize:9,color:"#e07070",opacity:0.8}}>{remaining}ヶ月後に自動削除</span>
                     <button onClick={()=>removeException(k)} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>✕</button>
                   </div>
                 );})}
@@ -2397,8 +2408,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
         const latestStaffList = byKey['staffList'] || staffList;
-        const latestExceptionMonths = byKey['exceptionMonths'] || [];
-        if (byKey['exceptionMonths']) setExceptionMonths(byKey['exceptionMonths']);
+        const latestExceptionMonths = filterExpiredExceptions(byKey['exceptionMonths'] || []);
+        if (byKey['exceptionMonths']) setExceptionMonths(latestExceptionMonths);
         const learned = computeLearnedTrend(byKey, latestStaffList, latestExceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
         if (byKey['aiRules']) setAiRules(byKey['aiRules']);
@@ -2455,9 +2466,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
         if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
-        if (byKey['exceptionMonths']) setExceptionMonths(byKey['exceptionMonths']);
+        const latestExcRT = filterExpiredExceptions(byKey['exceptionMonths'] || exceptionMonths);
+        if (byKey['exceptionMonths']) setExceptionMonths(latestExcRT);
         const latestStaffListRT = byKey['staffList'] || staffList;
-        const latestExcRT = byKey['exceptionMonths'] || exceptionMonths;
         const learnedRT = computeLearnedTrend(byKey, latestStaffListRT, latestExcRT);
         if (Object.keys(learnedRT).length > 0) setLearnedTrend(learnedRT);
         const shiftPrefix = `shifts_${year}_${month+1}_`;
