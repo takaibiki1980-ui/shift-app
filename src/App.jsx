@@ -2593,6 +2593,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
   const [learnedTrend, setLearnedTrend] = useState({});
+  const [aiMode, setAiMode] = useState(false);
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
   const [pinModal, setPinModal] = useState(false);
