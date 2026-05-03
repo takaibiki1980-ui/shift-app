@@ -316,18 +316,18 @@ function PrivacyModal({ onClose }) {
 
 
 const SHIFTS = {
-  早番:  { short:"早", color:"#c45c35", bg:"#fff0e8", border:"#e0894f", time:"7:00〜16:00" },
-  日勤:  { short:"日", color:"#3b6eea", bg:"#eef3ff", border:"#6b96f5", time:"9:00〜18:00" },
-  遅番:  { short:"遅", color:"#8b5cc4", bg:"#f5eeff", border:"#b07fd4", time:"11:30〜20:30" },
-  夜勤:  { short:"夜", color:"#2a7a9a", bg:"#e8f6fb", border:"#4ba8c8", time:"16:30〜翌9:30" },
-  明け:  { short:"明", color:"#9e8d80", bg:"#f5f0eb", border:"#c8b8a8", time:"夜勤明け" },
-  休み:  { short:"休", color:"#3a9659", bg:"#edf7f0", border:"#5cb87a", time:"－" },
-  希望休: { short:"希", color:"#c44b4b", bg:"#fff0f0", border:"#e07070", time:"希望休" },
+  早番:  { short:"早", color:"#FB8C00", bg:"#fff3e0", border:"#FB8C00", time:"7:00〜16:00" },
+  日勤:  { short:"日", color:"#1E88E5", bg:"#e3f2fd", border:"#1E88E5", time:"9:00〜18:00" },
+  遅番:  { short:"遅", color:"#8E24AA", bg:"#f3e5f5", border:"#8E24AA", time:"11:30〜20:30" },
+  夜勤:  { short:"夜", color:"#263238", bg:"#eceff1", border:"#455A64", time:"16:30〜翌9:30" },
+  明け:  { short:"明", color:"#78909C", bg:"#f5f7f8", border:"#B0BEC5", time:"夜勤明け" },
+  休み:  { short:"休", color:"#E53935", bg:"#ffebee", border:"#E53935", time:"－" },
+  希望休: { short:"希", color:"#E53935", bg:"#ffffff", border:"#E53935", time:"希望休" },
   有休:  { short:"有", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"有給" },
-  "日/休": { short:"日休", color:"#3b6eea", bg:"#f0f5ff", border:"#93b4f5", time:"午前日勤／午後休" },
-  "休/日": { short:"休日", color:"#3a9659", bg:"#f0faf4", border:"#8fcfa8", time:"午前休／午後日勤" },
-  "早/休": { short:"早休", color:"#c45c35", bg:"#fff5ee", border:"#f0a882", time:"早番半日／午後休" },
-  "休/遅": { short:"休遅", color:"#8b5cc4", bg:"#faf5ff", border:"#c4a0e0", time:"午前休／遅番半日" },
+  "日/休": { short:"日休", color:"#1E88E5", bg:"#e8f4fd", border:"#1E88E5", time:"午前日勤／午後休" },
+  "休/日": { short:"休日", color:"#E53935", bg:"#ffebee", border:"#E53935", time:"午前休／午後日勤" },
+  "早/休": { short:"早休", color:"#FB8C00", bg:"#fff3e0", border:"#FB8C00", time:"早番半日／午後休" },
+  "休/遅": { short:"休遅", color:"#8E24AA", bg:"#f3e5f5", border:"#8E24AA", time:"午前休／遅番半日" },
   "": { short:"－", color:"#c8b8a8", bg:"transparent", border:"transparent", time:"" },
 };
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
