@@ -810,7 +810,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
     html += TAG('table')+TAG('thead')+TAG('tr')+TAG('th class="name"')+'氏名'+CTAG('th');
     for(let d=1;d<=days;d++){ const wd=WD[new Date(year,month,d).getDay()]; html += TAG(`th class="${(wd==="日"||wd==="土")?"we":""}"`)+''+d+'<br>'+wd+CTAG('th'); }
     html += TAG('th')+'勤務'+CTAG('th')+TAG('th')+'夜勤'+CTAG('th')+TAG('th')+'休'+CTAG('th')+CTAG('tr');
-    if(Object.keys(deptEvents).length>0){ html += '<tr class="ev-row"><th class="name">行事</th>'; for(let d=1;d<=days;d++){ const ev=deptEvents[d]||''; html += '<th style="writing-mode:vertical-rl;text-orientation:mixed;vertical-align:top;padding:2px 1px;background:'+(ev?'#fef3c7':'#fffdf0')+';">'+ev+'</th>'; } html += '<th></th><th></th><th></th></tr>'; }
+    if(Object.keys(deptEvents).length>0){ html += '<tr class="ev-row"><th class="name">行事</th>'; for(let d=1;d<=days;d++){ const ev=deptEvents[d]||''; html += '<th style="text-align:center;vertical-align:top;padding:2px 1px;background:'+(ev?'#fef3c7':'#fffdf0')+';">'+(ev?'<span style="writing-mode:vertical-rl;text-orientation:mixed;font-size:8px;color:#92400e;font-weight:bold;">'+ev+'</span>':'')+'</th>'; } html += '<th></th><th></th><th></th></tr>'; }
     html += CTAG('thead')+TAG('tbody');
     staffList.filter(s=>s.dept===dept.id).forEach(s => {
       let w=0,n=0,r=0;
