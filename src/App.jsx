@@ -1416,24 +1416,6 @@ function HelpModal({ onClose }) {
   );
 }
 
-function EventEditModal({ day, month, year, currentText, onSave, onClose }) {
-  const [text, setText] = useState(currentText || "");
-  const wd = ["日","月","火","水","木","金","土"][(new Date(year, month, day)).getDay()];
-  return (
-    <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#fff",border:"1px solid #fde68a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 20px 60px #0004"}}>
-        <div style={{fontSize:14,fontWeight:900,color:"#92400e",marginBottom:14}}>📅 {month+1}月{day}日（{wd}）の行事</div>
-        <input autoFocus value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")onSave(text.trim());if(e.key==="Escape")onClose();}} placeholder="例：運営会議、研修、師長会議" maxLength={20} style={{width:"100%",fontSize:14,padding:"9px 12px",border:"1px solid #fde68a",borderRadius:8,outline:"none",boxSizing:"border-box",marginBottom:12}} />
-        <div style={{display:"flex",gap:8}}>
-          <button onClick={()=>onSave(text.trim())} style={{flex:1,background:"linear-gradient(135deg,#f59e0b,#d97706)",color:"#fff",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontSize:13,fontWeight:800}}>保存</button>
-          {currentText&&<button onClick={()=>onSave("")} style={{background:"#fff5f5",color:"#ef4444",border:"1px solid #ef4444",borderRadius:8,padding:"10px 14px",cursor:"pointer",fontSize:13,fontWeight:700}}>削除</button>}
-          <button onClick={onClose} style={{background:"#f0f0f0",color:"#666",border:"none",borderRadius:8,padding:"10px 14px",cursor:"pointer",fontSize:13}}>閉じる</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
   const entries = Object.entries(warnings);
   const days = new Date(year, month + 1, 0).getDate();
@@ -1651,7 +1633,7 @@ function SuggestionPanel({ staffList, shifts, year, month, dept, onApply }) {
   );
 }
 
-function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit }) {
+function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
@@ -1669,11 +1651,6 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             <th style={TH({w:36})}><span style={{fontSize:10,color:"#2a5a57"}}>夜勤</span></th>
             <th style={TH({w:36})}><span style={{fontSize:10,color:"#2a5a57"}}>休日</span></th>
           </tr>
-          {onEventEdit&&<tr>
-            <th style={{...TH({sticky:true,w:148}),background:"#fffbea",borderBottom:"1px solid #fde68a"}}><span style={{fontSize:10,color:"#92400e",fontWeight:700}}>行事</span></th>
-            {Array.from({length:days},(_,i)=>i+1).map(d=>{const ev=(events||{})[d]||"";return(<th key={d} title={ev||"クリックして行事を追加"} onClick={()=>onEventEdit(d)} style={{...TH({}),background:ev?"#fef3c7":"#fffdf0",borderBottom:"1px solid #fde68a",padding:"2px 1px",cursor:"pointer",minWidth:30,width:30}}><span style={{fontSize:8,color:"#92400e",fontWeight:700,display:"block",overflow:"hidden",maxWidth:28,whiteSpace:"nowrap",textOverflow:"ellipsis",textAlign:"center"}}>{ev||""}</span></th>);})}
-            <th colSpan={3} style={{background:"#fffbea",borderBottom:"1px solid #fde68a"}}/>
-          </tr>}
         </thead>
         <tbody>
           {ds.map((s,si)=>{
@@ -2582,8 +2559,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [allShifts, setAllShifts] = useState(() => {
     try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
   });
-  const [allEvents, setAllEvents] = useState({});
-  const [eventEditDay, setEventEditDay] = useState(null);
 
   const [saveStatus, setSaveStatus] = useState("saved");
   const saveStatusRef = useRef("saved");
@@ -2623,7 +2598,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         } else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
-        if (byKey['events_data']) setAllEvents(byKey['events_data']);
         const latestStaffList = byKey['staffList'] || staffList;
         const latestExceptionMonths = filterExpiredExceptions(byKey['exceptionMonths'] || []);
         if (byKey['exceptionMonths']) setExceptionMonths(latestExceptionMonths);
@@ -2847,16 +2821,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }, 1000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const eventsTimer = useRef(null);
-  useEffect(() => {
-    if (isInitializing.current) return;
-    if (eventsTimer.current) clearTimeout(eventsTimer.current);
-    eventsTimer.current = setTimeout(() => {
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'events_data', data_value:allEvents, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{ if(error)console.error('[events] 保存失敗:',error); });
-    }, 1200);
-    return () => { if (eventsTimer.current) clearTimeout(eventsTimer.current); };
-  }, [allEvents]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
@@ -3227,7 +3191,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* CONTENT */}
       <div style={{padding:"10px 8px",minHeight:"calc(100vh - 180px)"}}>
-        {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
+        {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
@@ -3255,7 +3219,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
       {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
-      {eventEditDay!==null&&<EventEditModal day={eventEditDay} month={month} year={year} currentText={(allEvents[activeDeptId]?.[monthKey(year,month)]||{})[eventEditDay]||""} onSave={(text)=>{setAllEvents(prev=>{const mk2=monthKey(year,month);const deptEv={...(prev[activeDeptId]||{}),[mk2]:{...((prev[activeDeptId]||{})[mk2]||{}),[eventEditDay]:text||undefined}};if(!text)delete deptEv[mk2][eventEditDay];return{...prev,[activeDeptId]:deptEv};});setEventEditDay(null);}} onClose={()=>setEventEditDay(null)}/>}
       {shareModal&&(
         <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&setShareModal(false)}>
           <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
