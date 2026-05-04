@@ -771,6 +771,28 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
   }
 
+  // 最終チェック: 遅番翌日早番/日勤、日勤翌日早番 の残存違反を強制修正（ロック外のみ）
+  for (const s of ds) {
+    for (let d = 2; d <= days; d++) {
+      if (lockedDays[s.id].has(d)) continue;
+      const prev = res[s.id][d - 1];
+      const curr = res[s.id][d];
+      const violated = (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
+      if (!violated) continue;
+      const dayCnts = {};
+      dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][d] === k).length; });
+      const nextShift = res[s.id][d + 1];
+      const alt = dayTypes.find(k => {
+        if (prev === "遅番" && (k === "早番" || k === "日勤")) return false;
+        if (prev === "日勤" && k === "早番") return false;
+        if (nextShift === "早番" && (k === "遅番" || k === "日勤")) return false;
+        if (nextShift === "日勤" && k === "遅番") return false;
+        return dayCnts[k] < (maxStaff[k] ?? 99);
+      });
+      res[s.id][d] = alt || "休み";
+    }
+  }
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
