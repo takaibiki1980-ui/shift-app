@@ -697,7 +697,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if ((consecWork(s.id, d - 1) + 1) > maxConsec) { res[s.id][d] = "休み"; continue; }
         let available = dayTypes.filter(k => cnts[k] < (maxStaff[k] ?? 99));
         if (s.role === "介護補助" || s.role === "介護助手") available = available.filter(k => k === "日勤");
-        if (res[s.id][d - 1] === "遅番") available = available.filter(k => k !== "早番");
+        if (res[s.id][d - 1] === "遅番") available = available.filter(k => k !== "早番" && k !== "日勤");
+        if (res[s.id][d - 1] === "日勤") available = available.filter(k => k !== "早番");
         if (available.length === 0) { res[s.id][d] = "休み"; continue; }
         const pick = pickWithTrend(s, available, cnts);
         res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1;
@@ -724,9 +725,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
           if (s.role === "介護補助" || s.role === "介護助手") av = av.filter(k => k === "日勤");
-          if (res[s.id][d - 1] === "遅番") av = av.filter(k => k !== "早番");
+          if (res[s.id][d - 1] === "遅番") av = av.filter(k => k !== "早番" && k !== "日勤");
+          if (res[s.id][d - 1] === "日勤") av = av.filter(k => k !== "早番");
           if (!av.length) {
-            const forceShift = (s.role === "介護補助" || s.role === "介護助手") ? "日勤" : dayTypes.find(k => res[s.id][d - 1] !== "遅番" || k !== "早番") || "日勤";
+            const prevShift = res[s.id][d - 1];
+            const forceShift = (s.role === "介護補助" || s.role === "介護助手") ? "日勤" : dayTypes.find(k => { if (prevShift === "遅番" && (k === "早番" || k === "日勤")) return false; if (prevShift === "日勤" && k === "早番") return false; return true; }) || "遅番";
             res[s.id][d] = forceShift; excess--; continue;
           }
           const pick = [...av].sort((a, b) => { const dA = Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]); const dB = Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if (dA!==dB) return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
@@ -754,6 +757,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
         let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
         if (s.role === "介護補助" || s.role === "介護助手") av = av.filter(k => k === "日勤");
+        if (res[s.id][d - 1] === "遅番") av = av.filter(k => k !== "早番" && k !== "日勤");
+        if (res[s.id][d - 1] === "日勤") av = av.filter(k => k !== "早番");
         if (!av.length) continue;
         res[s.id][d] = [...av].sort((a, b) => fixCnts[a] - fixCnts[b])[0];
       }
