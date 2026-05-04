@@ -791,13 +791,12 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
   }
 
-  // ★設定絶対優先: maxStaff超過を強制修正（ロック外を休みへ）
+  // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
   const enforceMaxStaff = () => {
     for (let d = 1; d <= days; d++) {
       for (const [shiftKey, limit] of Object.entries(maxStaff)) {
         const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
         if (overStaff.length <= limit) continue;
-        // ロック外を優先して休みに変換
         const toFix = [
           ...overStaff.filter(s => !lockedDays[s.id].has(d)),
           ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
@@ -805,8 +804,21 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         let excess = overStaff.length - limit;
         for (const s of toFix) {
           if (excess <= 0) break;
-          if (lockedDays[s.id].has(d) && excess < overStaff.length) break; // ロック分は最後の手段
-          res[s.id][d] = "休み"; excess--;
+          if (lockedDays[s.id].has(d) && excess < overStaff.length) break;
+          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          // 超過シフト以外で空きのある種別に振替を試みる
+          const altShift = dayTypes.find(k => {
+            if (k === shiftKey) return false;
+            if ((s.role === "介護補助" || s.role === "介護助手") && k !== "日勤") return false;
+            if (prev === "遅番" && (k === "早番" || k === "日勤")) return false;
+            if (prev === "日勤" && k === "早番") return false;
+            if (next === "早番" && (k === "遅番" || k === "日勤")) return false;
+            if (next === "日勤" && k === "遅番") return false;
+            const cnt = ds.filter(sx => res[sx.id][d] === k).length;
+            return cnt < (maxStaff[k] ?? 99);
+          });
+          res[s.id][d] = altShift || "休み";
+          excess--;
         }
       }
     }
