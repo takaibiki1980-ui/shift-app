@@ -414,15 +414,28 @@ function computeShiftTrendFromRaw(rawByMonth, exceptionMonths = []) {
 }
 
 // 24ヶ月以上前のExcel月別データを自動削除
-function filterExpiredExcelMonths(rawByMonth) {
+function filterExpiredExcelMonths(rawByDept) {
   const now = new Date();
-  const cutoff = now.getFullYear() * 12 + now.getMonth() - 23; // 24ヶ月前
-  const filtered = {};
-  for (const [k, v] of Object.entries(rawByMonth || {})) {
-    const [y, m] = k.split('-').map(Number);
-    if ((y * 12 + (m - 1)) >= cutoff) filtered[k] = v;
+  const cutoff = now.getFullYear() * 12 + now.getMonth() - 23;
+  const result = {};
+  for (const [deptId, rawByMonth] of Object.entries(rawByDept || {})) {
+    if (typeof rawByMonth !== 'object' || !rawByMonth) continue;
+    const filtered = {};
+    for (const [k, v] of Object.entries(rawByMonth)) {
+      const [y, m] = k.split('-').map(Number);
+      if (!isNaN(y) && (y * 12 + (m - 1)) >= cutoff) filtered[k] = v;
+    }
+    if (Object.keys(filtered).length > 0) result[deptId] = filtered;
   }
-  return filtered;
+  return result;
+}
+function migrateLegacyExcelRaw(data, depts) {
+  if (!data || Object.keys(data).length === 0) return {};
+  const keys = Object.keys(data);
+  const isOldFormat = keys.some(k => /^\d{4}-\d+$/.test(k));
+  if (!isOldFormat) return data;
+  const firstDeptId = depts?.[0]?.id;
+  return firstDeptId ? { [firstDeptId]: data } : {};
 }
 
 // 18ヶ月以上前の例外月を自動削除（期限切れ）
@@ -2621,13 +2634,18 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
         }
         if (byKey['excelRawMonths']) {
-          const filteredRaw = filterExpiredExcelMonths(byKey['excelRawMonths']);
+          const actualDepts = byKey['depts'] || depts;
+          const migrated = migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts);
+          const filteredRaw = filterExpiredExcelMonths(migrated);
           setExcelRawMonths(filteredRaw);
           const excl = filterExpiredExceptions(byKey['exceptionMonths'] || []);
-          const recomputed = computeShiftTrendFromRaw(filteredRaw, excl);
-          if (Object.keys(recomputed).filter(k=>k!=='_months').length > 0) setShiftTrend(recomputed);
-          else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
-        } else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+          const trend = {};
+          for (const [dId, deptRaw] of Object.entries(filteredRaw)) {
+            const recomp = computeShiftTrendFromRaw(deptRaw, excl);
+            if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend[dId] = recomp;
+          }
+          if (Object.keys(trend).length > 0) setShiftTrend(trend);
+        }
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
         if (byKey['events_data']) setAllEvents(byKey['events_data']);
         const latestStaffList = byKey['staffList'] || staffList;
@@ -2689,12 +2707,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['staffList'])  setStaffList(byKey['staffList']);
         const latestExcRT = filterExpiredExceptions(byKey['exceptionMonths'] || exceptionMonths);
         if (byKey['excelRawMonths']) {
-          const filteredRaw2 = filterExpiredExcelMonths(byKey['excelRawMonths']);
+          const actualDepts2 = byKey['depts'] || depts;
+          const migrated2 = migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts2);
+          const filteredRaw2 = filterExpiredExcelMonths(migrated2);
           setExcelRawMonths(filteredRaw2);
-          const recomp = computeShiftTrendFromRaw(filteredRaw2, latestExcRT);
-          if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) setShiftTrend(recomp);
-          else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
-        } else if (byKey['shiftTrend']) setShiftTrend(byKey['shiftTrend']);
+          const trend2 = {};
+          for (const [dId, deptRaw] of Object.entries(filteredRaw2)) {
+            const recomp = computeShiftTrendFromRaw(deptRaw, latestExcRT);
+            if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend2[dId] = recomp;
+          }
+          if (Object.keys(trend2).length > 0) setShiftTrend(trend2);
+        }
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         if (byKey['exceptionMonths']) setExceptionMonths(latestExcRT);
         const latestStaffListRT = byKey['staffList'] || staffList;
@@ -2887,10 +2910,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
   const [showSuggestion, setShowSuggestion] = useState(false);
-  const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
+  const [shiftTrend, setShiftTrend] = useState({}); // { deptId: { staffName: { freq } } }
   const [learnedTrend, setLearnedTrend] = useState({});
   const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
-  const [excelRawMonths, setExcelRawMonths] = useState({}); // { "YYYY-M": { name: {counts} } }
+  const [excelRawMonths, setExcelRawMonths] = useState({}); // { deptId: { "YYYY-M": { name: {counts} } } }
   const [excelResetDismissed, setExcelResetDismissed] = useState(() => { try{return localStorage.getItem('shiftNavi_excelResetDismissed')==='true';}catch{return false;} });
   const [aiMode, setAiMode] = useState(false);
   // ── 部署編集ロック ──
@@ -2916,7 +2939,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     return () => { if (aiRulesTimerRef.current) clearTimeout(aiRulesTimerRef.current); };
   }, [aiRules]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    try { localStorage.setItem("shiftNavi_shiftTrend",JSON.stringify(shiftTrend)); } catch {}
     if (!isInitializing.current) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
     }
@@ -2926,8 +2948,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'exceptionMonths', data_value:exceptionMonths, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
       // 例外月変更時: DBデータとExcelデータ両方を再計算
       if (Object.keys(excelRawMonths).length > 0) {
-        const recomp = computeShiftTrendFromRaw(excelRawMonths, exceptionMonths);
-        if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) setShiftTrend(recomp);
+        const trend3 = {};
+        for (const [dId, deptRaw] of Object.entries(excelRawMonths)) {
+          const recomp = computeShiftTrendFromRaw(deptRaw, exceptionMonths);
+          if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend3[dId] = recomp;
+        }
+        if (Object.keys(trend3).length > 0) setShiftTrend(trend3);
       }
       supabase.from('shift_data').select('data_key,data_value').eq('user_id',session.user.id).then(({data})=>{
         if (!data) return;
@@ -3026,7 +3052,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
     isInitializing.current = false;
-    const cs=staffList, cd=dept, ct=mergeShiftTrends(shiftTrend, learnedTrend);
+    const cs=staffList, cd=dept, ct=mergeShiftTrends(shiftTrend[activeDeptId]||{}, learnedTrend);
     generateTimerRef.current = setTimeout(() => {
       // 自動生成もユーザー操作: シーケンス番号を上げてRealtimeをキャンセル
       userEditSeq.current++;
@@ -3090,7 +3116,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
           <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
-          {!isMobile&&(()=>{const excelCnt=Object.keys(shiftTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const label=learnedCnt>0?`🧠 学習中(${learnedCnt}名)`:excelCnt>0?`📊 傾向ON`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#e8f5ee":"#ffffff",color:hasAny?"#5cb87a":"#2a6a67",border:hasAny?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          {!isMobile&&(()=>{const deptTrend=shiftTrend[activeDeptId]||{};const excelCnt=Object.keys(deptTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const label=learnedCnt>0?`🧠 学習中(${learnedCnt}名)`:excelCnt>0?`📊 傾向ON`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#e8f5ee":"#ffffff",color:hasAny?"#5cb87a":"#2a6a67",border:hasAny?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
           {!isMobile&&(profile?.plan==='full'
             ? <button onClick={()=>setAiMode(v=>!v)} disabled={isLocked} style={{background:isLocked?"#f3f4f6":aiMode?"#ede9fe":"#ffffff",color:isLocked?"#9ca3af":aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:isLocked?"not-allowed":"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
             : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
@@ -3111,7 +3137,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const mc=learnedTrend._monthCounts||{};
         const names=Object.keys(mc);
         const avgMonths=names.length>0?names.reduce((s,n)=>s+(mc[n]||0),0)/names.length:0;
-        const hasExcel=Object.keys(excelRawMonths).length>0||Object.keys(shiftTrend).filter(k=>k!=='_months').length>0;
+        const deptRawMon=excelRawMonths[activeDeptId]||{};const hasExcel=Object.keys(deptRawMon).length>0||Object.keys(shiftTrend[activeDeptId]||{}).filter(k=>k!=='_months').length>0;
         if(!hasExcel||avgMonths<6||excelResetDismissed) return null;
         return(
           <div style={{background:"#fff7ed",borderBottom:"2px solid #f59e0b",padding:"8px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
@@ -3249,16 +3275,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
-      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths} onExcelRawMonthsChange={(newRaw)=>{setExcelRawMonths(newRaw);const recomp=computeShiftTrendFromRaw(newRaw,exceptionMonths);setShiftTrend(recomp);}} onImport={(newTrend)=>{
-        const newRaw = newTrend._rawByMonth || {};
-        setExcelRawMonths(prev => {
-          const merged = {...prev, ...newRaw};
-          const recomp = computeShiftTrendFromRaw(merged, exceptionMonths);
-          setShiftTrend(recomp);
-          return merged;
-        });
-        setExcelImportModal(false);
-      }} onReset={()=>{setShiftTrend({});setExcelRawMonths({});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
+      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{setExcelRawMonths(prev=>{const next={...prev};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;return next;});const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};setExcelRawMonths(prev=>{const deptRaw={...(prev[activeDeptId]||{}),...newRaw};const next={...prev,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));return next;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} onClose={()=>setGenerateWarnings(null)}/>}
