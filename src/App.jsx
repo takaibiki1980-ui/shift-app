@@ -1304,6 +1304,118 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   );
 }
 
+const HELP_SECTIONS = [
+  {
+    id: "staff", icon: "👥", label: "スタッフ登録",
+    steps: [
+      { title: "「スタッフ」タブを開く", body: "画面上部のタブから「👥 スタッフ」をタップします。" },
+      { title: "「＋ 追加」ボタンを押す", body: "右下または一覧上部の「＋ スタッフ追加」ボタンを押します。" },
+      { title: "情報を入力して保存", body: "氏名・部署・役職・スキルを入力し「保存」を押します。複数部署を掛け持ちする場合は所属部署を追加してください。" },
+      { title: "希望休を設定する（任意）", body: "スタッフ詳細画面のカレンダーから希望休の日付をタップすると選択できます。" },
+    ],
+    tips: ["スタッフ名は後から変更できます。", "削除したスタッフのシフトデータは残りますが再表示はできません。"],
+  },
+  {
+    id: "dept", icon: "🏢", label: "部署設定",
+    steps: [
+      { title: "部署タブ横の「⚙️ 設定」を押す", body: "部署名タブの右にある設定ボタンをクリックします。" },
+      { title: "部署名・アイコンを設定", body: "部署名とアイコン（絵文字）を入力します。" },
+      { title: "シフト種別・人数基準を設定", body: "使用するシフト種別と、各シフトの必要人数目安を設定します。自動生成時の基準になります。" },
+      { title: "締め切り日を設定（任意）", body: "スタッフポータルの希望休締め切り日を設定できます。設定するとポータルの月が自動的に固定されます。" },
+    ],
+    tips: ["部署は複数追加できます（＋ 部署追加）。", "PINロックを設定すると、シフト編集に暗証番号が必要になります。"],
+  },
+  {
+    id: "shift", icon: "📅", label: "シフト入力",
+    steps: [
+      { title: "「シフト表」タブを開く", body: "「📅 シフト表」タブがデフォルトで開いています。" },
+      { title: "セルを左クリック（タップ）", body: "スタッフ名×日付のセルを左クリックまたはタップするとシフト種別が順番に切り替わります。" },
+      { title: "右クリックでメニュー", body: "PC では右クリックするとシフト一覧のコンテキストメニューが表示され、直接選択できます。" },
+      { title: "「⚡ 自動生成」で一括作成", body: "ツールバーの「⚡ 自動生成」を押すと、傾向学習データと希望休を考慮してシフトを自動作成します。" },
+    ],
+    tips: ["夜勤を入力すると翌日が自動で「明け」になります。", "ズームスライダーで表示サイズを調整できます。"],
+    warn: "自動生成すると現在のシフトが上書きされます。",
+  },
+  {
+    id: "portal", icon: "🔗", label: "希望休ポータル",
+    steps: [
+      { title: "「🔗 共有」ボタンを押す", body: "ツールバーの「🔗 共有」から部署ごとのURLとQRコードを確認します。" },
+      { title: "URLをスタッフに送る", body: "「LINEで送る」ボタン、またはURLをコピーしてLINEやメールで送ります。" },
+      { title: "スタッフが希望休を入力", body: "スタッフは受け取ったURLを開き、自分の名前を選んでカレンダーで希望休をタップ→送信します。" },
+      { title: "管理者に自動反映", body: "スタッフが送信すると管理者のシフト表にリアルタイムで反映されます。" },
+    ],
+    tips: ["締め切り日を設定すると、期限を超えた送信はできなくなります。", "QRコードを印刷して掲示板に貼ることもできます。"],
+  },
+  {
+    id: "summary", icon: "📊", label: "集計・書き出し",
+    steps: [
+      { title: "「📊 集計」タブを開く", body: "「📊 集計」タブを押すと月間集計表が表示されます。" },
+      { title: "各スタッフの勤務数を確認", body: "早・日・遅・夜・明・休の回数と合計勤務日数が表示されます。" },
+      { title: "「📤 書き出し」で保存", body: "ツールバーの「📤 書き出し」から CSV・HTML・印刷を選択できます。" },
+    ],
+    tips: ["CSVはExcelやGoogleスプレッドシートで開けます。", "HTMLは他のPCでも印刷できる形式です。"],
+  },
+  {
+    id: "ai", icon: "🧠", label: "傾向学習・AI",
+    steps: [
+      { title: "Excelデータのインポート（初回）", body: "「📊 傾向学習」ボタン→「Excelをインポート」で過去のシフト表（Excel）を読み込みます。初回シフト作成の精度が上がります。" },
+      { title: "しふぽんで作成するほど精度UP", body: "しふぽんでシフトを作成・保存するたびに自動で学習が進みます。6ヶ月分たまるとExcelデータよりしふぽんの学習が優先されます。" },
+      { title: "例外月の除外", body: "コロナ・インフルエンザ等で通常のシフトが崩れた月は「例外月」に設定すると学習から除外できます。除外は18ヶ月後に自動解除されます。" },
+      { title: "🤖 AI調整（フルプランのみ）", body: "「🤖 AI」ボタンをONにして指示を入力すると、AIがシフトを調整します（例：「〇〇さんを15日に休みにして」）。" },
+    ],
+    tips: ["Excelデータは月別に管理され、古いデータは24ヶ月後に自動削除されます。", "学習が6ヶ月以上たまったらExcelデータのリセットを促すバナーが表示されます。"],
+  },
+];
+
+function HelpModal({ onClose }) {
+  const [activeId, setActiveId] = useState("staff");
+  const sec = HELP_SECTIONS.find(s => s.id === activeId);
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#f5fffe",border:"1px solid #90cbc8",borderRadius:16,width:"100%",maxWidth:600,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 30px 80px #000"}}>
+        {/* ヘッダー */}
+        <div style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",padding:"16px 20px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div style={{fontWeight:900,fontSize:16}}>❓ 使い方ガイド</div>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.25)",border:"none",color:"#fff",cursor:"pointer",fontSize:18,width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>✕</button>
+        </div>
+        {/* タブ */}
+        <div style={{display:"flex",overflowX:"auto",borderBottom:"2px solid #d5edeb",background:"#eaf8f6",flexShrink:0}}>
+          {HELP_SECTIONS.map(s=>(
+            <button key={s.id} onClick={()=>setActiveId(s.id)} style={{padding:"9px 12px",background:"transparent",border:"none",color:activeId===s.id?"#1a9e9a":"#2a6a67",borderBottom:activeId===s.id?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:11,fontWeight:activeId===s.id?800:500,whiteSpace:"nowrap",flexShrink:0}}>
+              {s.icon} {s.label}
+            </button>
+          ))}
+        </div>
+        {/* コンテンツ */}
+        <div style={{overflowY:"auto",padding:"20px 24px",flex:1}}>
+          <div style={{fontSize:16,fontWeight:900,color:"#1a3635",marginBottom:16}}>{sec.icon} {sec.label}</div>
+          {sec.steps.map((st,i)=>(
+            <div key={i} style={{display:"flex",gap:14,marginBottom:20,alignItems:"flex-start"}}>
+              <div style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",borderRadius:"50%",width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,flexShrink:0,marginTop:2}}>{i+1}</div>
+              <div>
+                <div style={{fontSize:13,fontWeight:800,color:"#1a3635",marginBottom:4}}>{st.title}</div>
+                <div style={{fontSize:12,color:"#3a5a57",lineHeight:1.8}}>{st.body}</div>
+              </div>
+            </div>
+          ))}
+          {sec.warn&&(
+            <div style={{background:"#fff3e0",borderLeft:"4px solid #FB8C00",borderRadius:"0 8px 8px 0",padding:"10px 14px",margin:"8px 0",fontSize:12,color:"#1a3635"}}>
+              <div style={{fontWeight:800,color:"#FB8C00",marginBottom:3}}>⚠ 注意</div>
+              {sec.warn}
+            </div>
+          )}
+          {sec.tips&&sec.tips.length>0&&(
+            <div style={{background:"#e8f5ee",borderLeft:"4px solid #2d8a52",borderRadius:"0 8px 8px 0",padding:"10px 14px",margin:"8px 0"}}>
+              <div style={{fontWeight:800,color:"#2d8a52",fontSize:12,marginBottom:6}}>💡 ポイント</div>
+              {sec.tips.map((t,i)=><div key={i} style={{fontSize:12,color:"#1a3635",lineHeight:1.8}}>・{t}</div>)}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
   const entries = Object.entries(warnings);
   const days = new Date(year, month + 1, 0).getDate();
@@ -2726,6 +2838,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [adminModal, setAdminModal] = useState(false);
   const [shareModal, setShareModal] = useState(false);
+  const [helpModal, setHelpModal] = useState(false);
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [shiftTrend, setShiftTrend] = useState(() => { try{const s=localStorage.getItem("shiftNavi_shiftTrend");if(s)return JSON.parse(s);}catch{} return {}; });
   const [learnedTrend, setLearnedTrend] = useState({});
@@ -2938,6 +3051,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
           <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
           {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🏢":"🏢 管理"}</button>}
+          <button onClick={()=>setHelpModal(true)} style={{background:"#f0f8ff",color:"#1E88E5",border:"1px solid #90caf9",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?12:13,fontWeight:800}}>?</button>
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
             <span style={{fontSize:10,fontWeight:800,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
             <span style={{fontSize:10,color:"#3a8a87",fontWeight:700}}>👤 ログアウト</span>
@@ -3104,6 +3218,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       <div style={{position:"fixed",bottom:12,right:12,background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#8ecece",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#2BBFBA",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
+      {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
       {shareModal&&(
         <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&setShareModal(false)}>
           <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
