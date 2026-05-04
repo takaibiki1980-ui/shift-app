@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>しふぽん 操作マニュアル｜スタッフ登録</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; background: #f0fafa; color: #1a3635; line-height: 1.7; }
+
+    /* ヘッダー */
+    .cover { background: linear-gradient(135deg, #2BBFBA, #45B7D1); color: #fff; padding: 48px 40px; text-align: center; }
+    .cover .app-name { font-size: 36px; font-weight: 900; letter-spacing: 0.08em; margin-bottom: 8px; }
+    .cover .sub { font-size: 15px; opacity: 0.9; margin-bottom: 24px; }
+    .cover .chapter { background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.6); border-radius: 30px; display: inline-block; padding: 8px 28px; font-size: 18px; font-weight: 800; }
+
+    /* コンテンツ */
+    .container { max-width: 860px; margin: 0 auto; padding: 40px 24px 80px; }
+
+    /* セクション */
+    .section { background: #fff; border-radius: 16px; padding: 32px; margin-bottom: 32px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); border: 1px solid #d5edeb; }
+    .section-title { font-size: 20px; font-weight: 900; color: #1a3635; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #2BBFBA; display: flex; align-items: center; gap: 10px; }
+    .section-title .num { background: #2BBFBA; color: #fff; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 900; flex-shrink: 0; }
+
+    /* ステップ */
+    .step { display: flex; gap: 20px; margin-bottom: 28px; align-items: flex-start; }
+    .step-num { background: linear-gradient(135deg, #2BBFBA, #45B7D1); color: #fff; border-radius: 50%; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 900; flex-shrink: 0; margin-top: 2px; }
+    .step-content { flex: 1; }
+    .step-content h3 { font-size: 15px; font-weight: 800; color: #1a3635; margin-bottom: 6px; }
+    .step-content p { font-size: 13px; color: #3a5a57; margin-bottom: 8px; }
+
+    /* 画像プレースホルダー */
+    .img-placeholder { background: #f0fafa; border: 2px dashed #90cbc8; border-radius: 12px; padding: 32px 20px; text-align: center; color: #8ecece; font-size: 13px; margin: 12px 0; position: relative; }
+    .img-placeholder .img-label { font-size: 11px; font-weight: 700; color: #2BBFBA; margin-bottom: 6px; }
+    .img-placeholder .img-desc { font-size: 12px; color: #3a8a87; }
+    .img-placeholder .placeholder-icon { font-size: 40px; margin-bottom: 8px; }
+
+    /* フィールド説明 */
+    .field-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    .field-table th { background: #d5edeb; padding: 8px 12px; text-align: left; font-weight: 700; color: #1a3635; border: 1px solid #b8deda; }
+    .field-table td { padding: 8px 12px; border: 1px solid #b8deda; color: #2a5a57; vertical-align: top; }
+    .field-table tr:nth-child(even) td { background: #f8fffe; }
+    .required { background: #ffebee; color: #E53935; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; margin-left: 4px; }
+    .optional { background: #e8f5ee; color: #2d8a52; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; margin-left: 4px; }
+
+    /* ヒントボックス */
+    .tip { background: #e8f5ee; border-left: 4px solid #2d8a52; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 12px 0; font-size: 13px; color: #1a3635; }
+    .tip .tip-title { font-weight: 800; color: #2d8a52; margin-bottom: 4px; }
+    .warn { background: #fff3e0; border-left: 4px solid #FB8C00; border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 12px 0; font-size: 13px; color: #1a3635; }
+    .warn .warn-title { font-weight: 800; color: #FB8C00; margin-bottom: 4px; }
+
+    /* バッジ */
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 700; }
+    .badge-teal { background: #d5edeb; color: #1a3635; border: 1px solid #90cbc8; }
+    .badge-blue { background: #e3f2fd; color: #1E88E5; border: 1px solid #1E88E5; }
+    .badge-red { background: #ffebee; color: #E53935; border: 1px solid #E53935; }
+
+    /* チェックリスト */
+    .checklist { list-style: none; }
+    .checklist li { padding: 8px 0; border-bottom: 1px solid #e8f0ef; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+    .checklist li::before { content: "☐"; font-size: 16px; color: #2BBFBA; }
+    .checklist li:last-child { border-bottom: none; }
+
+    /* ナビゲーション */
+    .nav-path { background: #ecf7f7; border-radius: 8px; padding: 10px 16px; font-size: 13px; color: #2a5a57; margin-bottom: 16px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .nav-path span { background: #2BBFBA; color: #fff; border-radius: 6px; padding: 2px 10px; font-weight: 700; font-size: 12px; }
+    .nav-path .arrow { color: #90cbc8; }
+
+    /* フッター */
+    .footer { text-align: center; padding: 32px; color: #8ecece; font-size: 12px; }
+    .page-break { page-break-before: always; }
+
+    @media print {
+      body { background: #fff; }
+      .section { box-shadow: none; border: 1px solid #ddd; break-inside: avoid; }
+      .cover { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- 表紙 -->
+<div class="cover">
+  <div class="app-name">🌸 しふぽん</div>
+  <div class="sub">介護施設シフト管理アプリ｜操作マニュアル</div>
+  <div class="chapter">第2章｜スタッフ登録</div>
+</div>
+
+<div class="container">
+
+  <!-- 概要 -->
+  <div class="section">
+    <div class="section-title">
+      <div class="num">📋</div>
+      この章でできること
+    </div>
+    <p style="font-size:14px; color:#2a5a57; margin-bottom:16px;">
+      スタッフの氏名・役職・勤務条件を登録します。登録したスタッフはシフト表に自動反映されます。
+    </p>
+    <ul class="checklist">
+      <li>スタッフの氏名・役職を登録する</li>
+      <li>目標勤務日数・休み日数を設定する</li>
+      <li>夜勤の可否・上限回数を設定する</li>
+      <li>希望休をカレンダーから選択する</li>
+      <li>登録済みスタッフを編集・削除する</li>
+    </ul>
+  </div>
+
+  <!-- STEP 1 -->
+  <div class="section">
+    <div class="section-title">
+      <div class="num">1</div>
+      スタッフタブを開く
+    </div>
+
+    <div class="nav-path">
+      <span>部署タブ</span>
+      <span class="arrow">→</span>
+      <span>👥 スタッフ</span>
+    </div>
+
+    <div class="step">
+      <div class="step-num">①</div>
+      <div class="step-content">
+        <h3>部署を選ぶ</h3>
+        <p>画面上部の部署タブ（例：介護部 1階）をタップして、スタッフを登録したい部署を選んでください。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">部署タブ（介護部 1階・介護部 2階・事務所 など）が並んだ画面のキャプチャ</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">②</div>
+      <div class="step-content">
+        <h3>「👥 スタッフ」タブをタップ</h3>
+        <p>部署内の下部タブから「👥 スタッフ」を選択します。登録済みスタッフの一覧が表示されます。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">「📅 シフト表」「📊 集計」「👥 スタッフ」の3タブが表示された画面。スタッフタブ選択状態</div>
+    </div>
+
+    <div class="tip">
+      <div class="tip-title">💡 ポイント</div>
+      スタッフは部署ごとに管理されます。「介護部 1階」で登録したスタッフは「介護部 2階」には表示されません。
+    </div>
+  </div>
+
+  <!-- STEP 2 -->
+  <div class="section page-break">
+    <div class="section-title">
+      <div class="num">2</div>
+      新規スタッフを追加する
+    </div>
+
+    <div class="step">
+      <div class="step-num">①</div>
+      <div class="step-content">
+        <h3>「＋ スタッフを追加」ボタンをタップ</h3>
+        <p>スタッフ一覧の下部にある追加ボタンをタップすると、スタッフ登録フォームが開きます。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">スタッフ一覧画面。「＋ スタッフを追加」ボタンが下部に表示された状態</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">②</div>
+      <div class="step-content">
+        <h3>登録フォームに入力する</h3>
+        <p>以下の各項目を入力してください。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">スタッフ追加フォーム全体（氏名・役職・目標勤務日数・休み日数・夜勤チェックボックス・希望休カレンダーが表示された状態）</div>
+    </div>
+
+    <table class="field-table">
+      <thead>
+        <tr>
+          <th style="width:160px;">項目名</th>
+          <th style="width:80px;">必須/任意</th>
+          <th>説明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>氏名</strong></td>
+          <td><span class="required">必須</span></td>
+          <td>スタッフのフルネームを入力します。<br>例：田中 花子</td>
+        </tr>
+        <tr>
+          <td><strong>役職</strong></td>
+          <td><span class="required">必須</span></td>
+          <td>ドロップダウンから選択します。選択肢は部署設定で変更できます。<br>例：介護福祉士 / 介護職員 / 介護補助</td>
+        </tr>
+        <tr>
+          <td><strong>目標勤務日数</strong></td>
+          <td><span class="optional">任意</span></td>
+          <td>1ヶ月の目標勤務日数を数値で入力します（初期値：20日）。自動生成時の基準になります。</td>
+        </tr>
+        <tr>
+          <td><strong>○月の休み日数</strong></td>
+          <td><span class="optional">任意</span></td>
+          <td>その月の休み日数を設定します（初期値：施設設定に従う）。月ごとに個別調整が可能です。</td>
+        </tr>
+        <tr>
+          <td><strong>夜勤対応可</strong></td>
+          <td><span class="optional">任意</span></td>
+          <td>チェックを入れると夜勤シフトに割り当て可能になります。夜勤対応部署（介護部など）のみ表示されます。</td>
+        </tr>
+        <tr>
+          <td><strong>夜勤 月間上限回数</strong></td>
+          <td><span class="optional">任意</span></td>
+          <td>「夜勤対応可」にチェックした場合のみ表示。1ヶ月の夜勤上限回数を設定します（初期値：5回）。</td>
+        </tr>
+        <tr>
+          <td><strong>希望休（カレンダー）</strong></td>
+          <td><span class="optional">任意</span></td>
+          <td>カレンダーから希望休日を選択します。自動生成時に優先的に休みが割り当てられます。</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- STEP 3 希望休 -->
+  <div class="section">
+    <div class="section-title">
+      <div class="num">3</div>
+      希望休をカレンダーで設定する
+    </div>
+
+    <div class="step">
+      <div class="step-num">①</div>
+      <div class="step-content">
+        <h3>カレンダーから日付をタップ</h3>
+        <p>フォーム下部のカレンダーで、休みにしたい日付をタップすると選択（赤表示）になります。もう一度タップすると解除されます。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">希望休カレンダー。複数の日付が赤くハイライトされている状態</div>
+    </div>
+
+    <div class="tip">
+      <div class="tip-title">💡 希望休の上限について</div>
+      部署設定で「希望休の上限日数」が設定されている場合、上限を超えた日付は選択できません。上限は部署設定から変更できます。
+    </div>
+
+    <div class="warn">
+      <div class="warn-title">⚠ 注意</div>
+      カレンダーに表示されている<span style="color:#E53935; font-weight:700;">赤い数字</span>は「その日に希望休を入れている他のスタッフの人数」です。多すぎると自動生成に影響する場合があります。
+    </div>
+
+    <div class="step">
+      <div class="step-num">②</div>
+      <div class="step-content">
+        <h3>勤務希望の指定（上級設定）</h3>
+        <p>カレンダー上でシフト種別を選択すると、特定の日に「早番希望」「夜勤希望」などを指定できます。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">カレンダーのシフト希望指定画面。特定の日にシフト種別（早番・日勤など）が表示されている状態</div>
+    </div>
+  </div>
+
+  <!-- STEP 4 保存 -->
+  <div class="section">
+    <div class="section-title">
+      <div class="num">4</div>
+      保存する
+    </div>
+
+    <div class="step">
+      <div class="step-num">①</div>
+      <div class="step-content">
+        <h3>「保存」ボタンをタップ</h3>
+        <p>入力内容を確認して「保存」ボタンをタップします。スタッフ一覧に追加されたことを確認してください。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">「保存」ボタンと「キャンセル」ボタンが並んだフォーム下部のキャプチャ</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">②</div>
+      <div class="step-content">
+        <h3>スタッフ一覧で確認</h3>
+        <p>保存後、スタッフ一覧に名前・役職が表示されます。クラウドに自動保存されるため、次回ログイン時も保持されます。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">スタッフ登録後の一覧画面。新しいスタッフが追加されて表示されている状態</div>
+    </div>
+
+    <div class="tip">
+      <div class="tip-title">💡 自動クラウド保存</div>
+      保存すると自動的にクラウド（Supabase）に同期されます。別のデバイスからログインしても同じデータが表示されます。
+    </div>
+  </div>
+
+  <!-- STEP 5 編集・削除 -->
+  <div class="section">
+    <div class="section-title">
+      <div class="num">5</div>
+      スタッフを編集・削除する
+    </div>
+
+    <div class="step">
+      <div class="step-num">①</div>
+      <div class="step-content">
+        <h3>スタッフ名をタップして編集</h3>
+        <p>スタッフ一覧のスタッフ名をタップすると編集フォームが開きます。内容を変更して「保存」してください。</p>
+      </div>
+    </div>
+
+    <div class="img-placeholder">
+      <div class="placeholder-icon">📸</div>
+      <div class="img-label">【スクリーンショット挿入】</div>
+      <div class="img-desc">スタッフ一覧で名前をタップした状態。編集フォームが開いた画面</div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">②</div>
+      <div class="step-content">
+        <h3>スタッフを削除する</h3>
+        <p>スタッフ一覧の右端にある「🗑」ボタンをタップすると削除確認が表示されます。確認後、スタッフと関連シフトデータが削除されます。</p>
+      </div>
+    </div>
+
+    <div class="warn">
+      <div class="warn-title">⚠ 削除は取り消せません</div>
+      スタッフを削除すると、そのスタッフの過去のシフトデータも削除されます。退職者などを残しておきたい場合は、削除せずそのままにしておくことをお勧めします。
+    </div>
+  </div>
+
+  <!-- まとめ -->
+  <div class="section" style="background: linear-gradient(135deg, #e8f8f7, #f0fafa);">
+    <div class="section-title">
+      <div class="num">✅</div>
+      この章のまとめ
+    </div>
+    <ul class="checklist">
+      <li>部署タブ → 「👥 スタッフ」タブを開く</li>
+      <li>「＋ スタッフを追加」ボタンで登録フォームを開く</li>
+      <li>氏名・役職・勤務条件を入力する</li>
+      <li>希望休はカレンダーから日付をタップして選択</li>
+      <li>「保存」ボタンでクラウドに保存される</li>
+      <li>編集は名前タップ、削除は「🗑」ボタンから</li>
+    </ul>
+
+    <div style="margin-top: 20px; padding: 16px; background: #fff; border-radius: 10px; border: 1px solid #90cbc8;">
+      <div style="font-size: 13px; font-weight: 800; color: #1a3635; margin-bottom: 8px;">📌 次の章：自動シフト生成</div>
+      <div style="font-size: 12px; color: #3a8a87;">スタッフ登録が完了したら、次はシフトの自動生成を試してみましょう。</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  しふぽん 操作マニュアル｜スタッフ登録編<br>
+  ※スクリーンショットは実際の画面をキャプチャして挿入してください
+</div>
+
+</body>
+</html>
