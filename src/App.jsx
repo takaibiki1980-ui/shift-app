@@ -841,6 +841,44 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   enforceMaxStaff(); // 2回目: 違反修正後に新たな超過が生じた場合も除去
 
+  // 最低配置保証フェーズ: minStaff未満の日に休み→勤務を補充
+  for (let pass = 0; pass < 3; pass++) {
+    let anyFixed = false;
+    for (let d = 1; d <= days; d++) {
+      for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
+        const actual = ds.filter(s => res[s.id][d] === shiftKey).length;
+        if (actual >= minCount) continue;
+        const cands = ds.filter(s => {
+          if (res[s.id][d] !== "休み") return false;
+          if (lockedDays[s.id].has(d)) return false;
+          if ((s.role === "介護補助" || s.role === "介護助手") && shiftKey !== "日勤") return false;
+          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          if (prev === "夜勤" || prev === "明け") return false;
+          if (prev === "遅番" && (shiftKey === "早番" || shiftKey === "日勤")) return false;
+          if (prev === "日勤" && shiftKey === "早番") return false;
+          if (next === "早番" && (shiftKey === "遅番" || shiftKey === "日勤")) return false;
+          if (next === "日勤" && shiftKey === "遅番") return false;
+          if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
+          const curCount = ds.filter(sx => res[sx.id][d] === shiftKey).length;
+          if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
+          return true;
+        }).sort((a, b) => {
+          const rA = Object.values(res[a.id]).filter(v => v === "休み").length;
+          const rB = Object.values(res[b.id]).filter(v => v === "休み").length;
+          return rB - rA; // 休みが多い人から振り分け
+        });
+        let need = minCount - actual;
+        for (const s of cands) {
+          if (need <= 0) break;
+          res[s.id][d] = shiftKey; need--; anyFixed = true;
+        }
+      }
+    }
+    if (!anyFixed) break;
+  }
+
+  enforceMaxStaff(); // 3回目: 補充後の超過確認
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
