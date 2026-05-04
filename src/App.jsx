@@ -642,6 +642,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   }
 
   const dayTypes = dept.shiftTypes.filter(s => s !== "夜勤");
+
+  // 日ごとの休み人数を追跡（休み集中防止）
+  const restByDay = {};
+  for (let d = 1; d <= days; d++) {
+    restByDay[d] = ds.filter(s => REST_TYPES.has(res[s.id][d]) && res[s.id][d] !== "明け").length;
+  }
+  const maxRestPerDay = Math.max(2, Math.ceil(ds.length * 0.35));
+
   ds.forEach(s => {
     const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
     const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休" || v === "有休").length;
@@ -652,7 +660,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       if (alreadyRest >= restTarget) continue;
       let streak = 0;
       for (let i = d - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; streak++; }
-      if (streak >= maxConsec) res[s.id][d] = "休み";
+      if (streak >= maxConsec) { res[s.id][d] = "休み"; restByDay[d] = (restByDay[d]||0) + 1; }
     }
     const alreadyRest = Object.values(res[s.id]).filter(v => REST_TYPES.has(v) && v !== "明け").length;
     let need = restTarget - alreadyRest;
@@ -662,6 +670,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     const trend = getTrend(s);
     const dowRestRate = trend?.dowRestRate || null;
     const candidates = freeDaysAll.filter(d => canRest(s.id, d)).sort((a, b) => {
+      // 休み集中防止：その日に休んでいる人数が少ない日を優先
+      const rdiff = (restByDay[a]||0) - (restByDay[b]||0);
+      if (rdiff !== 0) return rdiff;
       let sa = 0, sb = 0;
       for (let i = a - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; sa++; }
       for (let i = b - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; sb++; }
@@ -680,9 +691,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       let streak = 0;
       for (let i = d - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; streak++; }
       const isUrgent = streak >= maxConsec - 1;
-      const remainCands = candidates.filter(fd => fd > d && !res[s.id][fd] && canRest(s.id, fd)).length;
+      // 休み集中ソフトキャップ：緊急でなければ集中日はスキップ
+      if (!isUrgent && (restByDay[d]||0) >= maxRestPerDay) continue;
+      const remainCands = candidates.filter(fd => fd > d && !res[s.id][fd] && canRest(s.id, fd) && (isUrgent||(restByDay[fd]||0)<maxRestPerDay)).length;
       if (!isUrgent && remainCands >= need && (d - lastRest) < interval) continue;
-      res[s.id][d] = "休み"; lastRest = d; need--;
+      res[s.id][d] = "休み"; restByDay[d] = (restByDay[d]||0) + 1; lastRest = d; need--;
     }
   });
 
