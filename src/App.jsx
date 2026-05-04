@@ -551,13 +551,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   // ★ステップ1: 希望休・希望勤務を最初にセット（最優先・絶対変更しない）
   ds.forEach(s => {
-    // prevShiftsから希望休・有休を引き継ぎ
+    // prevShiftsから有休を引き継ぎ（希望休は自動生成では休みに変換）
     Object.entries(prevShifts[s.id] || {}).forEach(([d, v]) => {
-      if (v === "希望休" || v === "有休") res[s.id][Number(d)] = v;
+      if (v === "有休") res[s.id][Number(d)] = v;
+      else if (v === "希望休") res[s.id][Number(d)] = "休み";
     });
-    // kiboByMonthの希望休
+    // kiboByMonthの希望休 → 自動生成では休みとして扱う
     (s.kiboByMonth?.[mk] || []).forEach(d => {
-      res[s.id][Number(d)] = "希望休";
+      res[s.id][Number(d)] = "休み";
     });
     // yukyuByMonthの有休（希望休より優先度は同等・後勝ち）
     (s.yukyuByMonth?.[mk] || []).forEach(d => {
