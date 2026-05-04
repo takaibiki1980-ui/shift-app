@@ -771,25 +771,30 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
   }
 
-  // 最終チェック: 遅番翌日早番/日勤、日勤翌日早番 の残存違反を強制修正（ロック外のみ）
+  // 最終チェック: 遅番翌日早番/日勤、日勤翌日早番 の残存違反を強制修正
+  const isViolation = (prev, curr) =>
+    (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
   for (const s of ds) {
     for (let d = 2; d <= days; d++) {
-      if (lockedDays[s.id].has(d)) continue;
-      const prev = res[s.id][d - 1];
-      const curr = res[s.id][d];
-      const violated = (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
-      if (!violated) continue;
-      const dayCnts = {};
-      dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][d] === k).length; });
-      const nextShift = res[s.id][d + 1];
-      const alt = dayTypes.find(k => {
-        if (prev === "遅番" && (k === "早番" || k === "日勤")) return false;
-        if (prev === "日勤" && k === "早番") return false;
-        if (nextShift === "早番" && (k === "遅番" || k === "日勤")) return false;
-        if (nextShift === "日勤" && k === "遅番") return false;
-        return dayCnts[k] < (maxStaff[k] ?? 99);
-      });
-      res[s.id][d] = alt || "休み";
+      if (!isViolation(res[s.id][d - 1], res[s.id][d])) continue;
+      // まず翌日(d)を変更 → ダメなら前日(d-1)を変更
+      const fixDay = (target) => {
+        if (lockedDays[s.id].has(target)) return false;
+        const p = res[s.id][target - 1];
+        const n = res[s.id][target + 1];
+        const cnts = {};
+        dayTypes.forEach(k => { cnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][target] === k).length; });
+        const alt = dayTypes.find(k => {
+          if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
+          if (p === "日勤" && k === "早番") return false;
+          if (n === "早番" && (k === "遅番" || k === "日勤")) return false;
+          if (n === "日勤" && k === "遅番") return false;
+          return cnts[k] < (maxStaff[k] ?? 99);
+        }) || "休み";
+        res[s.id][target] = alt;
+        return true;
+      };
+      if (!fixDay(d)) fixDay(d - 1);
     }
   }
 
