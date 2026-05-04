@@ -539,15 +539,21 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const pickWithTrend = (s, available, cnts) => {
     const trend = getTrend(s);
     return [...available].sort((a, b) => {
+      // 1. 設定優先: 最低配置の不足分を先に埋める
       const dA = Math.max(0, (dept.minStaff[a]||0) - cnts[a]);
       const dB = Math.max(0, (dept.minStaff[b]||0) - cnts[b]);
       if (dA !== dB) return dB - dA;
+      // 2. シフト種別の優先度
       const pA = PRIORITY[a]??3, pB = PRIORITY[b]??3;
       if (pA !== pB) return pA - pB;
+      // 3. 配置バランス（少ない方を優先）
+      if (cnts[a] !== cnts[b]) return cnts[a] - cnts[b];
+      // 4. 学習データ（最後の補助）
       const tA = trend ? (trend[a] || 0) : 0;
       const tB = trend ? (trend[b] || 0) : 0;
       if (Math.abs(tA - tB) > 0.05) return tB - tA;
-      return cnts[a] - cnts[b];
+      // 5. 同点時はランダムで毎回異なる結果に
+      return Math.random() - 0.5;
     })[0];
   };
 
@@ -785,13 +791,34 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
   }
 
-  // 最終チェック: 遅番翌日早番/日勤、日勤翌日早番 の残存違反を強制修正
+  // ★設定絶対優先: maxStaff超過を強制修正（ロック外を休みへ）
+  const enforceMaxStaff = () => {
+    for (let d = 1; d <= days; d++) {
+      for (const [shiftKey, limit] of Object.entries(maxStaff)) {
+        const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
+        if (overStaff.length <= limit) continue;
+        // ロック外を優先して休みに変換
+        const toFix = [
+          ...overStaff.filter(s => !lockedDays[s.id].has(d)),
+          ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
+        ];
+        let excess = overStaff.length - limit;
+        for (const s of toFix) {
+          if (excess <= 0) break;
+          if (lockedDays[s.id].has(d) && excess < overStaff.length) break; // ロック分は最後の手段
+          res[s.id][d] = "休み"; excess--;
+        }
+      }
+    }
+  };
+  enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
+
+  // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
   const isViolation = (prev, curr) =>
     (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
   for (const s of ds) {
     for (let d = 2; d <= days; d++) {
       if (!isViolation(res[s.id][d - 1], res[s.id][d])) continue;
-      // まず翌日(d)を変更 → ダメなら前日(d-1)を変更
       const fixDay = (target) => {
         if (lockedDays[s.id].has(target)) return false;
         const p = res[s.id][target - 1];
@@ -812,19 +839,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
-  // 最大配置人数の超過を修正（ロックなしの日を休みに）
-  for (let d = 1; d <= days; d++) {
-    for (const [shiftKey, limit] of Object.entries(maxStaff)) {
-      const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
-      if (overStaff.length <= limit) continue;
-      const toFix = overStaff.filter(s => !lockedDays[s.id].has(d));
-      let excess = overStaff.length - limit;
-      for (const s of toFix) {
-        if (excess <= 0) break;
-        res[s.id][d] = "休み"; excess--;
-      }
-    }
-  }
+  enforceMaxStaff(); // 2回目: 違反修正後に新たな超過が生じた場合も除去
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
