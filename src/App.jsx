@@ -1027,6 +1027,8 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const setShiftRequests = (reqs) => set("shiftRequestsByMonth",{...(form.shiftRequestsByMonth||{}),[mk]:reqs});
   const kyukoThisMonth = form.kyukoDaysByMonth?.[mk] ?? form.kyukoDays ?? 8;
   const setKyukoThisMonth = (v) => set("kyukoDaysByMonth",{...(form.kyukoDaysByMonth||{}),[mk]:+v});
+  const yukyuSelected = form.yukyuByMonth?.[mk] || [];
+  const setYukyu = (days) => set("yukyuByMonth",{...(form.yukyuByMonth||{}),[mk]:days});
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
@@ -1049,6 +1051,10 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
           <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId} kiboCountByDay={kiboCountByDay} kiboLimit={kiboLimit}/>
+        </div>
+        <div style={{fontSize:11,color:"#9b4db5",fontWeight:700,marginBottom:10,marginTop:16}}>▍ {year}年{month+1}月 有休{yukyuSelected.length>0&&<span style={{marginLeft:8,background:"#f3e5f5",border:"1px solid #c07ad5",borderRadius:10,padding:"1px 8px",fontSize:10}}>{yukyuSelected.length}日</span>}</div>
+        <div style={{background:"#faf0ff",borderRadius:8,padding:12,border:"1px solid #c07ad5"}}>
+          {(()=>{const days=getDays(year,month),firstDow=new Date(year,month,1).getDay(),cells=[];for(let i=0;i<firstDow;i++)cells.push(null);for(let d=1;d<=days;d++)cells.push(d);return(<div><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}}>{["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10,color:i===0?"#f87171":i===6?"#2BBFBA":"#3a8a87",padding:"2px 0"}}>{w}</div>)}</div><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6}}>{cells.map((d,i)=>{if(!d)return<div key={i}/>;const isY=yukyuSelected.includes(d),dow=(firstDow+d-1)%7,we=dow===0||dow===6;return<button key={d} onClick={()=>setYukyu(isY?yukyuSelected.filter(x=>x!==d):[...yukyuSelected,d])} style={{background:isY?"#e8d5f5":"transparent",border:isY?"1px solid #9b4db5":"1px solid #c4a0d4",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isY?"#6b21a8":we?"#2BBFBA":"#5a9e9b",fontSize:10,fontWeight:isY?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32}}><span>{d}</span>{isY&&<span style={{fontSize:8,lineHeight:1,color:"#9b4db5"}}>有休</span>}</button>;})}</div>{yukyuSelected.length>0&&<button onClick={()=>setYukyu([])} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>全てクリア</button>}</div>);})()}
         </div>
         <div style={{display:"flex",gap:10,marginTop:20}}>
           <button onClick={()=>form.name&&onSave(form)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
