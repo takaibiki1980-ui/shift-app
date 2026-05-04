@@ -2737,17 +2737,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const mergeStaffKibo = async () => {
       const mk = monthKey(year, month);
       const { data } = await supabase.from('staff_kibo').select('*').eq('admin_user_id', session.user.id).eq('month_key', mk);
-      if (!data || data.length === 0) return;
-      isMergingKibo.current = true; // DB保存をスキップさせる
-      setStaffList(prev => prev.map(s => {
-        const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
-        if (!kibo) return s;
-        return {
-          ...s,
-          kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days || [] },
-          yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: kibo.yukyu_days || [] }
-        };
-      }));
+      isMergingKibo.current = true;
+      setStaffList(prev => {
+        const merged = prev.map(s => {
+          if (!data || data.length === 0) return s;
+          const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
+          if (!kibo) return s;
+          return {
+            ...s,
+            kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days || [] },
+            yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: kibo.yukyu_days || [] }
+          };
+        });
+        // マージ後のデータを即座にSupabaseへ保存（reloadFromRemoteで古いデータに上書きされるのを防ぐ）
+        supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:merged, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
+        return merged;
+      });
       setTimeout(() => { isMergingKibo.current = false; }, 200);
     };
     mergeStaffKibo();
