@@ -693,6 +693,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (!isUrgent && remainCands >= remaining && (d - lastRest) < interval) continue;
         res[s.id][d] = "休み"; restSlots[s.id]--; restByDay[d] = (restByDay[d] || 0) + 1; lastRest = d; remaining--;
       }
+      // maxCR 制約を緩和して残りの restSlots を配分（ソフト制約：スコアで減点されるが詰まない）
+      if (restSlots[s.id] > 0) {
+        const softCands = Array.from({ length: days }, (_, i) => i + 1)
+          .filter(d => !res[s.id][d] && res[s.id][d - 1] !== "明け");
+        for (const d of softCands) {
+          if (restSlots[s.id] <= 0) break;
+          res[s.id][d] = "休み"; restSlots[s.id]--; restByDay[d] = (restByDay[d] || 0) + 1;
+        }
+      }
     });
   }
 
@@ -860,58 +869,122 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 }
 
 // 生成結果のペナルティスコアを計算（低いほど良い）
-function scoreShifts(res, ds, dept, days) {
+// スコアリング：高いほど良い（ハード違反で大幅減点、ソフト違反で中程度減点、好ましい状態に加点）
+function scoreShifts(res, ds, dept, days, year, month) {
   let score = 0;
-  const WORK = new Set(["早番","日勤","遅番","夜勤"]);
-  const REST = new Set(["休み","希望休","有休","明け"]);
+  const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
   const maxCR = dept.maxConsecRest ?? 2;
+
   for (const s of ds) {
-    // 連続勤務違反
+    const tgt = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+
+    // ★ ハード違反（絶対禁止）
+    // 公休数超過 -10,000/日
+    const totalRest = Object.values(res[s.id] || {}).filter(v => REST_TYPES.has(v) && v !== "明け").length;
+    if (totalRest > tgt) score -= 10000 * (totalRest - tgt);
+
+    // 希望休・有給の無視 -5,000/件
+    (s.kiboByMonth?.[mk] || []).forEach(d => {
+      const v = res[s.id]?.[d];
+      if (v !== "希望休" && v !== "有休") score -= 5000;
+    });
+    (s.yukyuByMonth?.[mk] || []).forEach(d => {
+      if (res[s.id]?.[d] !== "有休") score -= 5000;
+    });
+
+    // 夜勤→明け→休み チェーン違反 -5,000/件
+    for (let d = 1; d <= days; d++) {
+      if (res[s.id]?.[d] === "夜勤") {
+        if (d + 1 <= days && res[s.id]?.[d + 1] !== "明け") score -= 5000;
+        if (d + 2 <= days && res[s.id]?.[d + 2] !== "休み") score -= 5000;
+      }
+    }
+
+    // ★ ソフト違反（許容するが減点）
+    // 最大連勤超過 -1,000/日
     let consec = 0;
     for (let d = 1; d <= days; d++) {
-      const sh = res[s.id]?.[d];
-      if (WORK.has(sh) && sh !== "明け") { consec++; if (consec > maxConsec) score += 50; }
+      if (WORK_TYPES.has(res[s.id]?.[d])) { consec++; if (consec > maxConsec) score -= 1000; }
       else consec = 0;
     }
-    // 遅番→早番/日勤、日勤→早番 違反
-    for (let d = 2; d <= days; d++) {
-      const prev = res[s.id]?.[d-1], curr = res[s.id]?.[d];
-      if ((prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番")) score += 100;
-    }
-    // 連続休み超過違反（希望休/有休を含む連休はペナルティ軽減）
+
+    // 連続休み超過 -500/日（希望休・有休によるものは -50）
     let cr = 0;
     for (let d = 1; d <= days; d++) {
       const sh = res[s.id]?.[d];
-      if (REST.has(sh) && sh !== "明け") {
+      if (REST_TYPES.has(sh) && sh !== "明け") {
         cr++;
-        if (cr > maxCR) {
-          const isLocked = sh === "希望休" || sh === "有休";
-          score += isLocked ? 5 : 20; // ロック日は軽ペナルティ
-        }
+        if (cr > maxCR) score -= (sh === "希望休" || sh === "有休") ? 50 : 500;
       } else cr = 0;
     }
+
+    // 同一シフト4連続以上 -300/日
+    for (const t of ["早番", "遅番", "日勤"]) {
+      let sc = 0;
+      for (let d = 1; d <= days; d++) {
+        if (res[s.id]?.[d] === t) { sc++; if (sc >= 4) score -= 300; }
+        else sc = 0;
+      }
+    }
+
+    // 遅番→早番/日勤、日勤→早番 の違反 -200/件
+    for (let d = 2; d <= days; d++) {
+      const p = res[s.id]?.[d - 1], c = res[s.id]?.[d];
+      if ((p === "遅番" && (c === "早番" || c === "日勤")) || (p === "日勤" && c === "早番")) score -= 200;
+    }
   }
-  // minStaff不足
+
+  // ★ ハード違反: minStaff 不足 -5,000/人
   for (let d = 1; d <= days; d++) {
     for (const [k, minC] of Object.entries(dept.minStaff || {})) {
       const actual = ds.filter(s => res[s.id]?.[d] === k).length;
-      if (actual < minC) score += actual === 0 ? (minC - actual) * 30 : (minC - actual) * 10;
+      if (actual < minC) score -= 5000 * (minC - actual);
     }
   }
+
+  // ★ 加点（良い状態を評価）
+  // maxStaff 到達 +10/件
+  for (let d = 1; d <= days; d++) {
+    for (const [k, maxC] of Object.entries(dept.maxStaff || {})) {
+      if (ds.filter(s => res[s.id]?.[d] === k).length >= maxC) score += 10;
+    }
+  }
+
+  // 連勤平準化 +0〜+50（標準偏差が小さいほど高加点）
+  const workCounts = ds.map(s =>
+    Array.from({ length: days }, (_, i) => i + 1).filter(d => WORK_TYPES.has(res[s.id]?.[d])).length
+  );
+  if (workCounts.length > 0) {
+    const avg = workCounts.reduce((a, b) => a + b, 0) / workCounts.length;
+    const std = Math.sqrt(workCounts.reduce((acc, c) => acc + (c - avg) ** 2, 0) / workCounts.length);
+    score += Math.max(0, 50 - std * 10);
+  }
+
+  // 休み分散 +0〜+50（最大連休が短いほど高加点）
+  let maxChain = 0;
+  for (const s of ds) {
+    let chain = 0;
+    for (let d = 1; d <= days; d++) {
+      const sh = res[s.id]?.[d];
+      if (REST_TYPES.has(sh) && sh !== "明け") { chain++; maxChain = Math.max(maxChain, chain); }
+      else chain = 0;
+    }
+  }
+  score += Math.max(0, 50 - maxChain * 10);
+
   return score;
 }
 
-// N回試行して最もスコアが低い（違反が少ない）結果を返す
+// N回試行して最もスコアが高い（違反が少なく自然なリズム）の結果を返す
 function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 5) {
-  const days = new Date(year, month + 1, 0).getDate();
+  const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
-  let best = null, bestScore = Infinity;
+  let best = null, bestScore = -Infinity;
   for (let i = 0; i < n; i++) {
     const { shifts, warnings } = autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend);
-    const score = scoreShifts(shifts, ds, dept, days);
-    if (score < bestScore) { bestScore = score; best = { shifts, warnings, score }; }
-    if (bestScore === 0) break; // 違反ゼロなら即採用
+    const score = scoreShifts(shifts, ds, dept, days, year, month);
+    if (score > bestScore) { bestScore = score; best = { shifts, warnings, score }; }
   }
   return best;
 }
@@ -1654,7 +1727,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, score, onClose
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>自動生成の通知</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
-        {score!=null&&<div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:7,padding:"6px 12px",marginBottom:14,fontSize:11,color:"#92400e"}}>5回試行して最もスコアが低い結果を採用しました（違反スコア: <span style={{fontWeight:800}}>{score}</span>）。残る警告は手動で調整してください。</div>}
+        {score!=null&&<div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:7,padding:"6px 12px",marginBottom:14,fontSize:11,color:"#92400e"}}>5回試行して最もスコアが高い結果を採用しました（品質スコア: <span style={{fontWeight:800}}>{score}</span>）。残る警告は手動で調整してください。</div>}
         {underEntries.length>0&&<>
           <div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:10,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
           <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>{underEntries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#f3fffe",border:`1px solid ${s.border||"#2a5a57"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#6ab5b2"}}>{shiftKey}</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#b8deda",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#3a8a87",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div>
