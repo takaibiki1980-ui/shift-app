@@ -566,7 +566,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const consecRestFwd = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (REST_TYPES.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   const canRest = (id, d) => {
     if (res[id][d - 1] === "明け") return false;
-    return (consecRest(id, d - 1) + 1 + consecRestFwd(id, d)) <= 2;
+    return (consecRest(id, d - 1) + 1 + consecRestFwd(id, d)) <= (dept.maxConsecRest ?? 2);
   };
 
   // ★ステップ1: 希望休・希望勤務を最初にセット（最優先・絶対変更しない）
@@ -780,7 +780,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (lockedDays[s.id].has(d)) continue;
         if (res[s.id][d - 1] === "明け") continue;
         if (res[s.id][d + 1] === "明け") continue;
-        if (consecRest(s.id, d) <= 2) continue;
+        if (consecRest(s.id, d) <= (dept.maxConsecRest ?? 2)) continue;
         if ((consecWork(s.id, d - 1) + 1) > maxConsec) continue;
         const fixCnts = {};
         dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
@@ -896,6 +896,28 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   enforceMaxStaff(); // 3回目: 補充後の超過確認
 
+  // 連続休み超過を後処理で解消（ロック日以外で最も休みが多いスタッフから勤務に変換）
+  const maxCR = dept.maxConsecRest ?? 2;
+  for (const s of ds) {
+    for (let d = 1; d <= days; d++) {
+      const sh = res[s.id][d];
+      if (!REST_TYPES.has(sh) || sh === "明け") continue;
+      if (lockedDays[s.id].has(d)) continue;
+      if (consecRest(s.id, d) <= maxCR) continue;
+      if ((consecWork(s.id, d - 1) + 1) > maxConsec) continue;
+      const fixCnts = {};
+      dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
+      let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
+      av = av.filter(k => getAllowedTypes(s).includes(k));
+      const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+      if (prev === "遅番") av = av.filter(k => k !== "早番" && k !== "日勤");
+      if (prev === "日勤") av = av.filter(k => k !== "早番");
+      if (next === "早番") av = av.filter(k => k !== "遅番" && k !== "日勤");
+      if (next === "日勤") av = av.filter(k => k !== "遅番");
+      if (av.length > 0) res[s.id][d] = av.sort((a, b) => fixCnts[a] - fixCnts[b])[0];
+    }
+  }
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
@@ -914,7 +936,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 function scoreShifts(res, ds, dept, days) {
   let score = 0;
   const WORK = new Set(["早番","日勤","遅番","夜勤"]);
+  const REST = new Set(["休み","希望休","有休","明け"]);
   const maxConsec = dept.maxConsecutive || 5;
+  const maxCR = dept.maxConsecRest ?? 2;
   for (const s of ds) {
     // 連続勤務違反
     let consec = 0;
@@ -927,6 +951,18 @@ function scoreShifts(res, ds, dept, days) {
     for (let d = 2; d <= days; d++) {
       const prev = res[s.id]?.[d-1], curr = res[s.id]?.[d];
       if ((prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番")) score += 100;
+    }
+    // 連続休み超過違反（希望休/有休を含む連休はペナルティ軽減）
+    let cr = 0;
+    for (let d = 1; d <= days; d++) {
+      const sh = res[s.id]?.[d];
+      if (REST.has(sh) && sh !== "明け") {
+        cr++;
+        if (cr > maxCR) {
+          const isLocked = sh === "希望休" || sh === "有休";
+          score += isLocked ? 5 : 20; // ロック日は軽ペナルティ
+        }
+      } else cr = 0;
     }
   }
   // minStaff不足
@@ -1264,9 +1300,9 @@ const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
 const DEPT_ICONS = ["🏠","🏢","🏥","💉","📋","🍱","🌸","⭐","🔵","🟢","🟡","🟠","🔴","💜"];
 function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
   const buildInitMaxStaff = (types, existing) => { const d={}; (types||["日勤"]).forEach(k=>{d[k]=existing?.[k]!=null?existing[k]:(k==="日勤"?99:1);}); return d; };
-  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(dept?.shiftTypes,dept?.maxStaff)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
+  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(dept?.shiftTypes,dept?.maxStaff)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [maxConsecRest,setMaxConsecRest]=useState(dept?.maxConsecRest??2), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types&&types.length>0&&types.length<shiftTypes.length)cleanRST[role]=types;}); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types&&types.length>0&&types.length<shiftTypes.length)cleanRST[role]=types;}); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,maxConsecutive:maxConsec,maxConsecRest,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined}); };
   const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -1282,6 +1318,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         {shiftTypes.length>0&&<div style={{background:"#fff3e0",border:"1px solid #e0a000",borderRadius:8,padding:"10px 12px",marginBottom:14}}><div style={{fontSize:11,color:"#b45309",marginBottom:8}}>最大配置人数 <span style={{fontSize:10,color:"#a06010",fontWeight:400}}>（自動生成でこの人数を超えない・99=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700}}>{k}</span><input type="number" min={1} max={99} value={maxStaff[k]!=null?maxStaff[k]:(k==="日勤"?99:1)} onChange={e=>setMaxStaff(p=>({...p,[k]:+e.target.value}))} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:11,color:"#92400e"}}>名</span></div>)}</div></div>}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={3} max={7} value={maxConsec} onChange={e=>setMaxConsec(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
+          <div><label style={LS}>最大連続休み日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={1} max={5} value={maxConsecRest} onChange={e=>setMaxConsecRest(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div><div style={{fontSize:10,color:"#5a9e9b",marginTop:3}}>自動生成のみ適用。希望休の連休は除外</div></div>
           <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={4} max={15} value={defKyuko} onChange={e=>setDefKyuko(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
           <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={1} max={10} value={kiboLimit} onChange={e=>setKiboLimit(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
         </div>
