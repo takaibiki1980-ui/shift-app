@@ -725,7 +725,27 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (res[s.id][d - 1] === "日勤") available = available.filter(k => k !== "早番");
         if (res[s.id][d + 1] === "早番") available = available.filter(k => k !== "遅番" && k !== "日勤");
         if (res[s.id][d + 1] === "日勤") available = available.filter(k => k !== "遅番");
-        if (available.length === 0) { res[s.id][d] = "休み"; continue; }
+        if (available.length === 0) {
+          // 公休目標に達していれば maxStaff を一時的に無視してシフトを強制割当（enforceMaxStaff で後処理）
+          const tgt = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+          const kibo = Object.values(res[s.id]).filter(v => v === "希望休" || v === "有休").length;
+          const curRest = Object.values(res[s.id]).filter(v => v === "休み").length;
+          if (curRest >= Math.max(0, tgt - kibo)) {
+            const p = res[s.id][d - 1], nx = res[s.id][d + 1];
+            const forced = dayTypes.filter(k => getAllowedTypes(s).includes(k)).filter(k => {
+              if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
+              if (p === "日勤" && k === "早番") return false;
+              if (nx === "早番" && (k === "遅番" || k === "日勤")) return false;
+              if (nx === "日勤" && k === "遅番") return false;
+              return true;
+            });
+            if (forced.length > 0) {
+              const pick = forced.sort((a, b) => (cnts[a]||0) - (cnts[b]||0))[0];
+              res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1; continue;
+            }
+          }
+          res[s.id][d] = "休み"; continue;
+        }
         const pick = pickWithTrend(s, available, cnts);
         res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1;
       }
@@ -914,9 +934,22 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       if (prev === "日勤") av = av.filter(k => k !== "早番");
       if (next === "早番") av = av.filter(k => k !== "遅番" && k !== "日勤");
       if (next === "日勤") av = av.filter(k => k !== "遅番");
-      if (av.length > 0) res[s.id][d] = av.sort((a, b) => fixCnts[a] - fixCnts[b])[0];
+      if (av.length > 0) {
+        res[s.id][d] = av.sort((a, b) => fixCnts[a] - fixCnts[b])[0];
+      } else {
+        // maxStaff上限を無視して強制割当（連続休み解消を優先 → enforceMaxStaff で再調整）
+        const forced = dayTypes.filter(k => getAllowedTypes(s).includes(k)).filter(k => {
+          if (prev === "遅番" && (k === "早番" || k === "日勤")) return false;
+          if (prev === "日勤" && k === "早番") return false;
+          if (next === "早番" && (k === "遅番" || k === "日勤")) return false;
+          if (next === "日勤" && k === "遅番") return false;
+          return true;
+        });
+        if (forced.length > 0) res[s.id][d] = forced.sort((a, b) => (fixCnts[a]||0) - (fixCnts[b]||0))[0];
+      }
     }
   }
+  enforceMaxStaff(); // 4回目: 連続休み解消で一時的に超過したものを修正
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
