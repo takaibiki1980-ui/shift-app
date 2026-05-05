@@ -910,6 +910,49 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   return { shifts: res, warnings };
 }
 
+// 生成結果のペナルティスコアを計算（低いほど良い）
+function scoreShifts(res, ds, dept, days) {
+  let score = 0;
+  const WORK = new Set(["早番","日勤","遅番","夜勤"]);
+  const maxConsec = dept.maxConsecutive || 5;
+  for (const s of ds) {
+    // 連続勤務違反
+    let consec = 0;
+    for (let d = 1; d <= days; d++) {
+      const sh = res[s.id]?.[d];
+      if (WORK.has(sh) && sh !== "明け") { consec++; if (consec > maxConsec) score += 50; }
+      else consec = 0;
+    }
+    // 遅番→早番/日勤、日勤→早番 違反
+    for (let d = 2; d <= days; d++) {
+      const prev = res[s.id]?.[d-1], curr = res[s.id]?.[d];
+      if ((prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番")) score += 100;
+    }
+  }
+  // minStaff不足
+  for (let d = 1; d <= days; d++) {
+    for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+      const actual = ds.filter(s => res[s.id]?.[d] === k).length;
+      if (actual < minC) score += actual === 0 ? (minC - actual) * 30 : (minC - actual) * 10;
+    }
+  }
+  return score;
+}
+
+// N回試行して最もスコアが低い（違反が少ない）結果を返す
+function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 5) {
+  const days = new Date(year, month + 1, 0).getDate();
+  const ds = staffList.filter(s => s.dept === dept.id);
+  let best = null, bestScore = Infinity;
+  for (let i = 0; i < n; i++) {
+    const { shifts, warnings } = autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend);
+    const score = scoreShifts(shifts, ds, dept, days);
+    if (score < bestScore) { bestScore = score; best = { shifts, warnings, score }; }
+    if (bestScore === 0) break; // 違反ゼロなら即採用
+  }
+  return best;
+}
+
 function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
   const days = getDays(year, month);
   const mk = monthKey(year, month);
@@ -1639,13 +1682,14 @@ function EventEditModal({ day, month, year, currentText, onSave, onClose }) {
   );
 }
 
-function GenerateWarningModal({ warnings, deptLabel, year, month, onClose }) {
+function GenerateWarningModal({ warnings, deptLabel, year, month, score, onClose }) {
   const entries = Object.entries(warnings);
   const days = new Date(year, month + 1, 0).getDate();
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:22}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>人員不足の警告</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
+        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>人員不足の警告</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
+        {score!=null&&<div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:7,padding:"6px 12px",marginBottom:14,fontSize:11,color:"#92400e"}}>5回試行して最もスコアが低い結果を採用しました（違反スコア: <span style={{fontWeight:800}}>{score}</span>）。残る警告は手動で調整してください。</div>}
         <div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:18,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:22}}>{entries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#f3fffe",border:`1px solid ${s.border||"#2a5a57"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#6ab5b2"}}>{shiftKey}</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#b8deda",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#3a8a87",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div>
         <button onClick={onClose} style={{width:"100%",background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>確認しました</button>
@@ -3244,7 +3288,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
       try {
-        setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings}=autoGenerate(cs,cd,year,month,cs2,ct);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label}),0);return{...prevAll,[cd.id]:result};});
+        setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings,score}=bestOfN(cs,cd,year,month,cs2,ct,5);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);return{...prevAll,[cd.id]:result};});
         setSaveStatus("unsaved");
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
@@ -3298,7 +3342,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"linear-gradient(135deg,#374151,#1f2937)",color:"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>🔒{!isMobile&&" 解錠する"}</button>
-            : <><button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 生成中…":" 自動生成")}</button></>
+            : <><button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":" 自動生成")}</button></>
           }
           <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
@@ -3464,7 +3508,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{setExcelRawMonths(prev=>{const next={...prev};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;return next;});const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};setExcelRawMonths(prev=>{const deptRaw={...(prev[activeDeptId]||{}),...newRaw};const next={...prev,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));return next;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
-      {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} onClose={()=>setGenerateWarnings(null)}/>}
+      {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#8ecece",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#2BBFBA",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
