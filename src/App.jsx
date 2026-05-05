@@ -726,12 +726,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (res[s.id][d + 1] === "早番") available = available.filter(k => k !== "遅番" && k !== "日勤");
         if (res[s.id][d + 1] === "日勤") available = available.filter(k => k !== "遅番");
         if (available.length === 0) {
-          // 公休目標に達していれば maxStaff を一時的に無視してシフトを強制割当（enforceMaxStaff で後処理）
+          const p = res[s.id][d - 1], nx = res[s.id][d + 1];
+          const mCR = dept.maxConsecRest ?? 2;
           const tgt = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
           const kibo = Object.values(res[s.id]).filter(v => v === "希望休" || v === "有休").length;
-          const curRest = Object.values(res[s.id]).filter(v => v === "休み").length;
-          if (curRest >= Math.max(0, tgt - kibo)) {
-            const p = res[s.id][d - 1], nx = res[s.id][d + 1];
+          const curRest = Object.values(res[s.id]).filter(v => REST_TYPES.has(v) && v !== "明け").length;
+          // 連続休み上限 or 公休目標到達 → maxStaff無視して強制割当（enforceMaxStaffで後調整）
+          if (consecRest(s.id, d - 1) >= mCR || curRest >= Math.max(0, tgt - kibo)) {
             const forced = dayTypes.filter(k => getAllowedTypes(s).includes(k)).filter(k => {
               if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
               if (p === "日勤" && k === "早番") return false;
@@ -914,42 +915,54 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     if (!anyFixed) break;
   }
 
-  enforceMaxStaff(); // 3回目: 補充後の超過確認
+  enforceMaxStaff(); // 3回目
 
-  // 連続休み超過を後処理で解消（ロック日以外で最も休みが多いスタッフから勤務に変換）
+  // ★最終強制適用: 連続休み + 公休上限を絶対守る（最大3パス）
   const maxCR = dept.maxConsecRest ?? 2;
-  for (const s of ds) {
-    for (let d = 1; d <= days; d++) {
-      const sh = res[s.id][d];
-      if (!REST_TYPES.has(sh) || sh === "明け") continue;
-      if (lockedDays[s.id].has(d)) continue;
-      if (consecRest(s.id, d) <= maxCR) continue;
-      if ((consecWork(s.id, d - 1) + 1) > maxConsec) continue;
-      const fixCnts = {};
-      dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
-      let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
-      av = av.filter(k => getAllowedTypes(s).includes(k));
-      const prev = res[s.id][d - 1], next = res[s.id][d + 1];
-      if (prev === "遅番") av = av.filter(k => k !== "早番" && k !== "日勤");
-      if (prev === "日勤") av = av.filter(k => k !== "早番");
-      if (next === "早番") av = av.filter(k => k !== "遅番" && k !== "日勤");
-      if (next === "日勤") av = av.filter(k => k !== "遅番");
-      if (av.length > 0) {
-        res[s.id][d] = av.sort((a, b) => fixCnts[a] - fixCnts[b])[0];
-      } else {
-        // maxStaff上限を無視して強制割当（連続休み解消を優先 → enforceMaxStaff で再調整）
-        const forced = dayTypes.filter(k => getAllowedTypes(s).includes(k)).filter(k => {
-          if (prev === "遅番" && (k === "早番" || k === "日勤")) return false;
-          if (prev === "日勤" && k === "早番") return false;
-          if (next === "早番" && (k === "遅番" || k === "日勤")) return false;
-          if (next === "日勤" && k === "遅番") return false;
-          return true;
-        });
-        if (forced.length > 0) res[s.id][d] = forced.sort((a, b) => (fixCnts[a]||0) - (fixCnts[b]||0))[0];
+  const forceWork = (s, d) => {
+    if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
+    const p = res[s.id][d - 1], nx = res[s.id][d + 1];
+    const cntNow = {};
+    dayTypes.forEach(k => { cntNow[k] = ds.filter(sx => res[sx.id][d] === k).length; });
+    const av = dayTypes.filter(k => getAllowedTypes(s).includes(k)).filter(k => {
+      if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
+      if (p === "日勤" && k === "早番") return false;
+      if (nx === "早番" && (k === "遅番" || k === "日勤")) return false;
+      if (nx === "日勤" && k === "遅番") return false;
+      return true;
+    }).sort((a, b) => (cntNow[a]||0) - (cntNow[b]||0));
+    if (av.length === 0) return false;
+    res[s.id][d] = av[0]; return true;
+  };
+  for (let pass = 0; pass < 3; pass++) {
+    let changed = false;
+    // (A) 連続休み超過を勤務に変換
+    for (const s of ds) {
+      for (let d = 1; d <= days; d++) {
+        if (!REST_TYPES.has(res[s.id][d]) || res[s.id][d] === "明け") continue;
+        if (lockedDays[s.id].has(d)) continue;
+        if (consecRest(s.id, d) <= maxCR) continue;
+        if (forceWork(s, d)) { changed = true; }
       }
     }
+    enforceMaxStaff();
+    // (B) 公休上限を超えている場合、非ロック休みを勤務に変換
+    for (const s of ds) {
+      const tgt = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const allRest = Object.entries(res[s.id])
+        .filter(([, v]) => REST_TYPES.has(v) && v !== "明け")
+        .map(([d]) => +d).sort((a, b) => a - b);
+      let excess = allRest.length - tgt;
+      for (const d of allRest) {
+        if (excess <= 0) break;
+        if (lockedDays[s.id].has(d)) continue;
+        if (res[s.id][d - 1] === "明け") continue; // 夜明け後は変更不可
+        if (forceWork(s, d)) { excess--; changed = true; }
+      }
+    }
+    enforceMaxStaff();
+    if (!changed) break;
   }
-  enforceMaxStaff(); // 4回目: 連続休み解消で一時的に超過したものを修正
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
