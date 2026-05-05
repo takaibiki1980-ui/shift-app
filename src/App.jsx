@@ -525,12 +525,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
-  const maxCR = dept.maxConsecRest ?? 2;
-  const maxStaffLim = {};
-  dept.shiftTypes.forEach(k => {
-    maxStaffLim[k] = dept.maxStaff?.[k] != null ? dept.maxStaff[k] : (k === "日勤" ? 99 : 1);
-  });
-  const PRIORITY = { 早番: 1, 遅番: 1, 日勤: 2 };
+  const maxStaff = {};
+  dept.shiftTypes.forEach(k => { maxStaff[k] = dept.maxStaff?.[k] != null ? dept.maxStaff[k] : (k === "日勤" ? 99 : 1); });
+  const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
 
   const getTrend = (s) => {
     if (!shiftTrend || Object.keys(shiftTrend).length === 0) return null;
@@ -539,87 +536,85 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     return key ? shiftTrend[key] : null;
   };
 
+  const pickWithTrend = (s, available, cnts) => {
+    const trend = getTrend(s);
+    return [...available].sort((a, b) => {
+      // 1. 設定優先: 最低配置の不足分を先に埋める
+      const dA = Math.max(0, (dept.minStaff[a]||0) - cnts[a]);
+      const dB = Math.max(0, (dept.minStaff[b]||0) - cnts[b]);
+      if (dA !== dB) return dB - dA;
+      // 2. シフト種別の優先度
+      const pA = PRIORITY[a]??3, pB = PRIORITY[b]??3;
+      if (pA !== pB) return pA - pB;
+      // 3. 配置バランス（少ない方を優先）
+      if (cnts[a] !== cnts[b]) return cnts[a] - cnts[b];
+      // 4. 学習データ（最後の補助）
+      const tA = trend ? (trend[a] || 0) : 0;
+      const tB = trend ? (trend[b] || 0) : 0;
+      if (Math.abs(tA - tB) > 0.05) return tB - tA;
+      // 5. 同点時はランダムで毎回異なる結果に
+      return Math.random() - 0.5;
+    })[0];
+  };
+
   const res = {};
   const ds = staffList.filter(s => s.dept === dept.id);
   ds.forEach(s => { res[s.id] = {}; });
 
   const consecWork = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (WORK_TYPES.has(res[id][i])) c++; else break; } return c; };
   const consecRest = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (REST_TYPES.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
-  const canRestAt = (id, d) => {
+  const consecRestFwd = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (REST_TYPES.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
+  const canRest = (id, d) => {
     if (res[id][d - 1] === "明け") return false;
-    let cr = 0; for (let i = d - 1; i >= 1; i--) { if (REST_TYPES.has(res[id][i]) && res[id][i] !== "明け") cr++; else break; }
-    let cf = 0; for (let i = d + 1; i <= days; i++) { if (REST_TYPES.has(res[id][i]) && res[id][i] !== "明け") cf++; else break; }
-    return (cr + 1 + cf) <= maxCR;
+    return (consecRest(id, d - 1) + 1 + consecRestFwd(id, d)) <= 2;
   };
 
-  const dayTypes = dept.shiftTypes.filter(k => k !== "夜勤");
-  const getAllowedTypes = (s) => {
-    const allowed = dept.roleShiftTypes?.[s.role];
-    return allowed ? dayTypes.filter(k => allowed.includes(k)) : dayTypes;
-  };
-
-  const pickWithTrend = (s, available, cnts) => {
-    const trend = getTrend(s);
-    return [...available].sort((a, b) => {
-      const dA = Math.max(0, (dept.minStaff[a] || 0) - cnts[a]);
-      const dB = Math.max(0, (dept.minStaff[b] || 0) - cnts[b]);
-      if (dA !== dB) return dB - dA;
-      const pA = PRIORITY[a] ?? 3, pB = PRIORITY[b] ?? 3;
-      if (pA !== pB) return pA - pB;
-      if (cnts[a] !== cnts[b]) return cnts[a] - cnts[b];
-      const tA = trend ? (trend[a] || 0) : 0, tB = trend ? (trend[b] || 0) : 0;
-      if (Math.abs(tA - tB) > 0.05) return tB - tA;
-      return Math.random() - 0.5;
-    })[0];
-  };
-
-  // ① restSlots 初期化（公休バジェット）
-  const restSlots = {};
-  ds.forEach(s => { restSlots[s.id] = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8; });
-
-  const lockedDays = {};
-  ds.forEach(s => { lockedDays[s.id] = new Set(); });
-
-  // バジェットを消費して休みを確定する
-  const consumeRest = (id, d, type = "休み") => {
-    if (lockedDays[id].has(d)) return false;
-    res[id][d] = type;
-    if (restSlots[id] > 0) restSlots[id]--;
-    lockedDays[id].add(d);
-    return true;
-  };
-
-  // ② 固定休み（希望休・有休・希望シフト）→ restSlots を消費して確定
+  // ★ステップ1: 希望休・希望勤務を最初にセット（最優先・絶対変更しない）
   ds.forEach(s => {
+    // prevShiftsから有休のみ引き継ぎ（希望休はprevShiftsから引き継がない＝手動入力の希望休は再生成で消える）
     Object.entries(prevShifts[s.id] || {}).forEach(([d, v]) => {
-      if (v === "有休") consumeRest(s.id, +d, "有休");
+      if (v === "有休") res[s.id][Number(d)] = v;
     });
-    (s.kiboByMonth?.[mk] || []).forEach(d => consumeRest(s.id, d, "希望休"));
+    // kiboByMonthの希望休 → 希望休として設定（スタッフがポータルで申請したもの）
+    (s.kiboByMonth?.[mk] || []).forEach(d => {
+      res[s.id][Number(d)] = "希望休";
+    });
+    // yukyuByMonthの有休（希望休より優先度は同等・後勝ち）
     (s.yukyuByMonth?.[mk] || []).forEach(d => {
-      if (!lockedDays[s.id].has(d)) consumeRest(s.id, d, "有休");
-      else res[s.id][d] = "有休"; // ラベル上書き（バジェット変動なし）
+      res[s.id][Number(d)] = "有休";
     });
+    // shiftRequestsByMonthの希望勤務（早番・日勤・遅番・夜勤指定）
     Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([day, shiftKey]) => {
-      const d = +day;
-      if (lockedDays[s.id].has(d)) return;
-      if (REST_TYPES.has(shiftKey) && shiftKey !== "明け") consumeRest(s.id, d, shiftKey);
-      else { res[s.id][d] = shiftKey; lockedDays[s.id].add(d); }
+      res[s.id][Number(day)] = shiftKey;
     });
   });
 
-  // 希望勤務内の夜勤チェーン展開（restSlots 消費）
+  // 希望休・希望勤務が入っている日をロック（夜勤配置で絶対に上書きしない）
+  const lockedDays = {};
+  ds.forEach(s => { lockedDays[s.id] = new Set(Object.keys(res[s.id]).map(Number)); });
+
+  // 勤務指定の夜勤・明けに連鎖して翌日を自動セット
   ds.forEach(s => {
     for (let d = 1; d <= days; d++) {
       if (res[s.id][d] === "夜勤") {
-        if (d + 1 <= days && !lockedDays[s.id].has(d + 1)) { res[s.id][d + 1] = "明け"; lockedDays[s.id].add(d + 1); }
-        if (d + 2 <= days) consumeRest(s.id, d + 2);
+        if (d + 1 <= days && !lockedDays[s.id].has(d + 1)) {
+          res[s.id][d + 1] = "明け";
+          lockedDays[s.id].add(d + 1);
+        }
+        if (d + 2 <= days && !lockedDays[s.id].has(d + 2)) {
+          res[s.id][d + 2] = "休み";
+          lockedDays[s.id].add(d + 2);
+        }
       } else if (res[s.id][d] === "明け") {
-        if (d + 1 <= days) consumeRest(s.id, d + 1);
+        if (d + 1 <= days && !lockedDays[s.id].has(d + 1)) {
+          res[s.id][d + 1] = "休み";
+          lockedDays[s.id].add(d + 1);
+        }
       }
     }
   });
 
-  // ③ 夜勤の自動配置（1 夜勤 = 1 休み = restSlots 消費）
+  // ★ステップ2: 夜勤配置（ロック済みの日・翌日がロックの人は候補から除外）
   if (dept.shiftTypes.includes("夜勤")) {
     const nightPool = ds.filter(s => s.nightOk);
     const autoMax = Math.ceil(days / Math.max(nightPool.length, 1));
@@ -627,92 +622,91 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       const already = ds.filter(s => res[s.id][d] === "夜勤").length;
       let need = (dept.minStaff["夜勤"] || 0) - already;
       if (need <= 0) continue;
-      const canNight = (s, checkSlots = true) => {
-        if (lockedDays[s.id].has(d)) return false;
-        if (["夜勤", "明け"].includes(res[s.id][d - 1])) return false;
-        if (d + 1 <= days && lockedDays[s.id].has(d + 1) && res[s.id][d + 1] !== "明け") return false;
-        if (d + 2 <= days && lockedDays[s.id].has(d + 2) && res[s.id][d + 2] !== "休み") return false;
-        return !checkSlots || restSlots[s.id] > 0;
+      const canNight = (s) => {
+        if (lockedDays[s.id].has(d)) return false; // その日がロック済み
+        if (["夜勤","明け"].includes(res[s.id][d - 1])) return false;
+        if (d + 1 <= days && lockedDays[s.id].has(d + 1) && res[s.id][d+1] !== "明け") return false; // 翌日がロック済み（明けを入れられない）
+        return true;
       };
       let cands = nightPool.filter(s => {
         if (!canNight(s)) return false;
-        return Object.values(res[s.id]).filter(v => v === "夜勤").length < Math.max(s.nightMax || 5, autoMax);
+        const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
+        return usedNight < Math.max(s.nightMax || 5, autoMax);
       }).sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
-      if (cands.length === 0) cands = nightPool.filter(s => canNight(s, false))
-        .sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
+      if (cands.length === 0) {
+        cands = nightPool.filter(s => canNight(s))
+          .sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
+      }
       for (const s of cands) {
         if (need <= 0) break;
         res[s.id][d] = "夜勤";
-        if (d + 1 <= days) { res[s.id][d + 1] = "明け"; lockedDays[s.id].add(d + 1); }
-        if (d + 2 <= days) consumeRest(s.id, d + 2);
+        if (d + 1 <= days) res[s.id][d + 1] = "明け";
+        if (d + 2 <= days && !res[s.id][d + 2]) res[s.id][d + 2] = "休み";
         need--;
       }
     }
   }
 
-  // ④ 残りの休み日を restSlots の範囲内で分配（maxCR 遵守）
-  if (dayTypes.length > 0) {
-    const restByDay = {};
-    for (let d = 1; d <= days; d++) {
-      restByDay[d] = ds.filter(s => REST_TYPES.has(res[s.id][d]) && res[s.id][d] !== "明け").length;
-    }
-    const maxRestPerDay = Math.max(2, Math.ceil(ds.length * 0.35));
-    ds.forEach(s => {
-      if (restSlots[s.id] <= 0) return;
-      const freeDays = Array.from({ length: days }, (_, i) => i + 1).filter(d => !res[s.id][d] && canRestAt(s.id, d));
-      if (freeDays.length === 0) { restSlots[s.id] = 0; return; }
-      const trend = getTrend(s);
-      const dowRestRate = trend?.dowRestRate || null;
-      const budget = restSlots[s.id];
-      const interval = Math.max(1, Math.floor(freeDays.length / (budget + 1)));
-      const candidates = [...freeDays].sort((a, b) => {
-        const rdiff = (restByDay[a] || 0) - (restByDay[b] || 0);
-        if (rdiff !== 0) return rdiff;
-        let sa = 0, sb = 0;
-        for (let i = a - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; sa++; }
-        for (let i = b - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; sb++; }
-        if (sb !== sa) return sb - sa;
-        if (dowRestRate) {
-          const rA = dowRestRate[(new Date(year, month, a).getDay() + 6) % 7] ?? 0;
-          const rB = dowRestRate[(new Date(year, month, b).getDay() + 6) % 7] ?? 0;
-          if (Math.abs(rA - rB) > 0.05) return rB - rA;
-        }
-        return a - b;
-      });
-      let lastRest = 0, remaining = budget;
-      for (const d of candidates) {
-        if (remaining <= 0) break;
-        if (res[s.id][d] || !canRestAt(s.id, d)) continue;
-        let streak = 0;
-        for (let i = d - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; streak++; }
-        const isUrgent = streak >= maxConsec - 1;
-        if (!isUrgent && (restByDay[d] || 0) >= maxRestPerDay) continue;
-        const remainCands = candidates.filter(fd =>
-          fd > d && !res[s.id][fd] && canRestAt(s.id, fd) && (isUrgent || (restByDay[fd] || 0) < maxRestPerDay)
-        ).length;
-        if (!isUrgent && remainCands >= remaining && (d - lastRest) < interval) continue;
-        res[s.id][d] = "休み"; restSlots[s.id]--; restByDay[d] = (restByDay[d] || 0) + 1; lastRest = d; remaining--;
-      }
-      // maxCR 制約を緩和して残りの restSlots を配分（ソフト制約：スコアで減点されるが詰まない）
-      if (restSlots[s.id] > 0) {
-        const softCands = Array.from({ length: days }, (_, i) => i + 1)
-          .filter(d => !res[s.id][d] && res[s.id][d - 1] !== "明け");
-        for (const d of softCands) {
-          if (restSlots[s.id] <= 0) break;
-          res[s.id][d] = "休み"; restSlots[s.id]--; restByDay[d] = (restByDay[d] || 0) + 1;
-        }
-      }
-    });
-  }
+  const dayTypes = dept.shiftTypes.filter(s => s !== "夜勤");
+  const getAllowedTypes = (s) => {
+    const allowed = dept.roleShiftTypes?.[s.role];
+    return allowed ? dayTypes.filter(k => allowed.includes(k)) : dayTypes;
+  };
 
-  // ⑤ 残り全日を勤務で埋める（restSlots = 0 以降は絶対に休みを追加しない）
-  const seqFilter = (s, d, types) => types.filter(k => {
-    const p = res[s.id][d - 1], nx = res[s.id][d + 1];
-    if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
-    if (p === "日勤" && k === "早番") return false;
-    if (nx === "早番" && (k === "遅番" || k === "日勤")) return false;
-    if (nx === "日勤" && k === "遅番") return false;
-    return true;
+  // 日ごとの休み人数を追跡（休み集中防止）
+  const restByDay = {};
+  for (let d = 1; d <= days; d++) {
+    restByDay[d] = ds.filter(s => REST_TYPES.has(res[s.id][d]) && res[s.id][d] !== "明け").length;
+  }
+  const maxRestPerDay = Math.max(2, Math.ceil(ds.length * 0.35));
+
+  ds.forEach(s => {
+    const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+    const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休" || v === "有休").length;
+    const restTarget = Math.max(0, totalTarget - kiboCount);
+    for (let d = 1; d <= days; d++) {
+      if (res[s.id][d]) continue;
+      const alreadyRest = Object.values(res[s.id]).filter(v => REST_TYPES.has(v) && v !== "明け").length;
+      if (alreadyRest >= restTarget) continue;
+      let streak = 0;
+      for (let i = d - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; streak++; }
+      if (streak >= maxConsec) { res[s.id][d] = "休み"; restByDay[d] = (restByDay[d]||0) + 1; }
+    }
+    const alreadyRest = Object.values(res[s.id]).filter(v => REST_TYPES.has(v) && v !== "明け").length;
+    let need = restTarget - alreadyRest;
+    if (need <= 0) return;
+    const freeDaysAll = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]);
+    const interval = Math.max(1, Math.floor(freeDaysAll.length / (need + 1)));
+    const trend = getTrend(s);
+    const dowRestRate = trend?.dowRestRate || null;
+    const candidates = freeDaysAll.filter(d => canRest(s.id, d)).sort((a, b) => {
+      // 休み集中防止：その日に休んでいる人数が少ない日を優先
+      const rdiff = (restByDay[a]||0) - (restByDay[b]||0);
+      if (rdiff !== 0) return rdiff;
+      let sa = 0, sb = 0;
+      for (let i = a - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; sa++; }
+      for (let i = b - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; sb++; }
+      if (sb !== sa) return sb - sa;
+      if (dowRestRate) {
+        const rA = dowRestRate[(new Date(year, month, a).getDay() + 6) % 7] ?? 0;
+        const rB = dowRestRate[(new Date(year, month, b).getDay() + 6) % 7] ?? 0;
+        if (Math.abs(rA - rB) > 0.05) return rB - rA;
+      }
+      return a - b;
+    });
+    let lastRest = 0;
+    for (const d of candidates) {
+      if (need <= 0) break;
+      if (res[s.id][d] || !canRest(s.id, d)) continue;
+      let streak = 0;
+      for (let i = d - 1; i >= 1; i--) { if (REST_TYPES.has(res[s.id][i]) && res[s.id][i] !== "明け") break; streak++; }
+      const isUrgent = streak >= maxConsec - 1;
+      // 休み集中ソフトキャップ：緊急でなければ集中日はスキップ
+      if (!isUrgent && (restByDay[d]||0) >= maxRestPerDay) continue;
+      const remainCands = candidates.filter(fd => fd > d && !res[s.id][fd] && canRest(s.id, fd) && (isUrgent||(restByDay[fd]||0)<maxRestPerDay)).length;
+      if (!isUrgent && remainCands >= need && (d - lastRest) < interval) continue;
+      res[s.id][d] = "休み"; restByDay[d] = (restByDay[d]||0) + 1; lastRest = d; need--;
+    }
   });
 
   if (dayTypes.length === 0) {
@@ -723,65 +717,120 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       dayTypes.forEach(k => { cnts[k] = ds.filter(s => res[s.id][d] === k).length; });
       const freeStaff = ds.filter(s => !res[s.id][d]).sort((a, b) => consecWork(a.id, d - 1) - consecWork(b.id, d - 1));
       for (const s of freeStaff) {
-        if (res[s.id][d - 1] === "夜勤") { res[s.id][d] = "明け"; continue; }
-        // 連続勤務上限に達した場合：restSlots があれば休み、なければ勤務継続
-        if ((consecWork(s.id, d - 1) + 1) > maxConsec) {
-          if (restSlots[s.id] > 0 && canRestAt(s.id, d)) { res[s.id][d] = "休み"; restSlots[s.id]--; }
-          else {
-            const av = seqFilter(s, d, getAllowedTypes(s));
-            res[s.id][d] = av.sort((a, b) => (cnts[a] || 0) - (cnts[b] || 0))[0] || dayTypes[0];
-            cnts[res[s.id][d]] = (cnts[res[s.id][d]] || 0) + 1;
+        if (res[s.id][d-1] === "夜勤") { res[s.id][d] = "明け"; continue; }
+        if ((consecWork(s.id, d - 1) + 1) > maxConsec) { res[s.id][d] = "休み"; continue; }
+        let available = dayTypes.filter(k => cnts[k] < (maxStaff[k] ?? 99));
+        available = available.filter(k => getAllowedTypes(s).includes(k));
+        if (res[s.id][d - 1] === "遅番") available = available.filter(k => k !== "早番" && k !== "日勤");
+        if (res[s.id][d - 1] === "日勤") available = available.filter(k => k !== "早番");
+        if (res[s.id][d + 1] === "早番") available = available.filter(k => k !== "遅番" && k !== "日勤");
+        if (res[s.id][d + 1] === "日勤") available = available.filter(k => k !== "遅番");
+        if (available.length === 0) { res[s.id][d] = "休み"; continue; }
+        const pick = pickWithTrend(s, available, cnts);
+        res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1;
+      }
+      ds.forEach(s => { if (!res[s.id][d]) res[s.id][d] = "休み"; });
+    }
+    ds.forEach(s => {
+      const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休" || v === "有休").length;
+      const target = Math.max(0, totalTarget - kiboCount);
+      {
+        const restDays = Object.entries(res[s.id]).filter(([, v]) => v === "休み").map(([d]) => +d).sort((a, b) => a - b);
+        let excess = restDays.length - target;
+        for (const d of restDays) {
+          if (excess <= 0) break;
+          if (lockedDays[s.id].has(d)) continue;
+          if (res[s.id][d - 1] === "明け") continue;
+          if (res[s.id][d - 1] === "夜勤") continue;
+          const actualBefore = consecWork(s.id, d - 1);
+          let actualAfter = 0;
+          for (let i = d + 1; i <= days; i++) { if (WORK_TYPES.has(res[s.id][i])) actualAfter++; else break; }
+          if (actualBefore + 1 + actualAfter > maxConsec) continue;
+          const dayCnts = {};
+          dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
+          let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
+          av = av.filter(k => getAllowedTypes(s).includes(k));
+          if (res[s.id][d - 1] === "遅番") av = av.filter(k => k !== "早番" && k !== "日勤");
+          if (res[s.id][d - 1] === "日勤") av = av.filter(k => k !== "早番");
+          if (res[s.id][d + 1] === "早番") av = av.filter(k => k !== "遅番" && k !== "日勤");
+          if (res[s.id][d + 1] === "日勤") av = av.filter(k => k !== "遅番");
+          if (!av.length) {
+            const prevShift = res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
+            const roleAllowed = getAllowedTypes(s);
+            const forceShift = roleAllowed.length < dayTypes.length ? roleAllowed[0] : dayTypes.find(k => { if (prevShift === "遅番" && (k === "早番" || k === "日勤")) return false; if (prevShift === "日勤" && k === "早番") return false; if (nextShift === "早番" && (k === "遅番" || k === "日勤")) return false; if (nextShift === "日勤" && k === "遅番") return false; return true; }) || "遅番";
+            res[s.id][d] = forceShift; excess--; continue;
           }
-          continue;
-        }
-        // 通常：maxStaff 範囲内で勤務を割り当て
-        const av = seqFilter(s, d, dayTypes.filter(k => cnts[k] < (maxStaffLim[k] ?? 99) && getAllowedTypes(s).includes(k)));
-        if (av.length > 0) {
-          const pick = pickWithTrend(s, av, cnts);
-          res[s.id][d] = pick; cnts[pick] = (cnts[pick] || 0) + 1;
-        } else {
-          // maxStaff 満員：restSlots があれば休み（canRestAt 確認）、なければ maxStaff 無視で勤務
-          if (restSlots[s.id] > 0 && canRestAt(s.id, d)) { res[s.id][d] = "休み"; restSlots[s.id]--; }
-          else {
-            const forced = seqFilter(s, d, getAllowedTypes(s));
-            res[s.id][d] = forced.sort((a, b) => (cnts[a] || 0) - (cnts[b] || 0))[0] || getAllowedTypes(s)[0] || dayTypes[0];
-            cnts[res[s.id][d]] = (cnts[res[s.id][d]] || 0) + 1;
-          }
+          const pick = [...av].sort((a, b) => { const dA = Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]); const dB = Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if (dA!==dB) return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
+          res[s.id][d] = pick; excess--;
         }
       }
-    }
+      {
+        const currentRest = Object.values(res[s.id]).filter(v => v === "休み").length;
+        let shortage = target - currentRest;
+        if (shortage > 0) {
+          const workDays = Object.entries(res[s.id]).filter(([, v]) => WORK_TYPES.has(v)).map(([d]) => +d)
+            .filter(d => res[s.id][d - 1] !== "明け" && res[s.id][d + 1] !== "明け" && canRest(s.id, d))
+            .sort((a, b) => consecWork(s.id, b - 1) - consecWork(s.id, a - 1));
+          for (const d of workDays) { if (shortage <= 0) break; if (!canRest(s.id, d)) continue; res[s.id][d] = "休み"; shortage--; }
+        }
+      }
+      for (let d = 1; d <= days; d++) {
+        if (res[s.id][d] !== "休み") continue;
+        if (lockedDays[s.id].has(d)) continue;
+        if (res[s.id][d - 1] === "明け") continue;
+        if (res[s.id][d + 1] === "明け") continue;
+        if (consecRest(s.id, d) <= 2) continue;
+        if ((consecWork(s.id, d - 1) + 1) > maxConsec) continue;
+        const fixCnts = {};
+        dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
+        let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
+        av = av.filter(k => getAllowedTypes(s).includes(k));
+        if (res[s.id][d - 1] === "遅番") av = av.filter(k => k !== "早番" && k !== "日勤");
+        if (res[s.id][d - 1] === "日勤") av = av.filter(k => k !== "早番");
+        if (res[s.id][d + 1] === "早番") av = av.filter(k => k !== "遅番" && k !== "日勤");
+        if (res[s.id][d + 1] === "日勤") av = av.filter(k => k !== "遅番");
+        if (!av.length) continue;
+        res[s.id][d] = [...av].sort((a, b) => fixCnts[a] - fixCnts[b])[0];
+      }
+    });
   }
 
-  // ⑥ enforceMaxStaff（休みへの変換は禁止：他シフトへ振替のみ）
+  // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
   const enforceMaxStaff = () => {
     for (let d = 1; d <= days; d++) {
-      for (const [shiftKey, limit] of Object.entries(maxStaffLim)) {
+      for (const [shiftKey, limit] of Object.entries(maxStaff)) {
         const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
         if (overStaff.length <= limit) continue;
-        const toFix = [...overStaff.filter(s => !lockedDays[s.id].has(d)), ...overStaff.filter(s => lockedDays[s.id].has(d))];
+        const toFix = [
+          ...overStaff.filter(s => !lockedDays[s.id].has(d)),
+          ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
+        ];
         let excess = overStaff.length - limit;
         for (const s of toFix) {
           if (excess <= 0) break;
           if (lockedDays[s.id].has(d) && excess < overStaff.length) break;
           const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          // 超過シフト以外で空きのある種別に振替を試みる
           const altShift = dayTypes.find(k => {
-            if (k === shiftKey || !getAllowedTypes(s).includes(k)) return false;
+            if (k === shiftKey) return false;
+            if (!getAllowedTypes(s).includes(k)) return false;
             if (prev === "遅番" && (k === "早番" || k === "日勤")) return false;
             if (prev === "日勤" && k === "早番") return false;
             if (next === "早番" && (k === "遅番" || k === "日勤")) return false;
             if (next === "日勤" && k === "遅番") return false;
-            return ds.filter(sx => res[sx.id][d] === k).length < (maxStaffLim[k] ?? 99);
+            const cnt = ds.filter(sx => res[sx.id][d] === k).length;
+            return cnt < (maxStaff[k] ?? 99);
           });
-          if (altShift) res[s.id][d] = altShift;
-          // 振替先なし → そのまま維持（休みには変えない）
+          res[s.id][d] = altShift || "休み";
           excess--;
         }
       }
     }
   };
-  enforceMaxStaff();
+  enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
 
-  // 遅番→早番/日勤、日勤→早番 の違反を修正（休みへの変換は禁止）
+  // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
   const isViolation = (prev, curr) =>
     (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
   for (const s of ds) {
@@ -789,7 +838,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       if (!isViolation(res[s.id][d - 1], res[s.id][d])) continue;
       const fixDay = (target) => {
         if (lockedDays[s.id].has(target)) return false;
-        const p = res[s.id][target - 1], n = res[s.id][target + 1];
+        const p = res[s.id][target - 1];
+        const n = res[s.id][target + 1];
         const cnts = {};
         dayTypes.forEach(k => { cnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][target] === k).length; });
         const alt = dayTypes.find(k => {
@@ -797,23 +847,18 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (p === "日勤" && k === "早番") return false;
           if (n === "早番" && (k === "遅番" || k === "日勤")) return false;
           if (n === "日勤" && k === "遅番") return false;
-          return cnts[k] < (maxStaffLim[k] ?? 99);
-        }) || dayTypes.find(k => { // maxStaff 無視 fallback
-          if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
-          if (p === "日勤" && k === "早番") return false;
-          if (n === "早番" && (k === "遅番" || k === "日勤")) return false;
-          if (n === "日勤" && k === "遅番") return false;
-          return true;
-        });
-        if (alt) { res[s.id][target] = alt; return true; }
-        return false;
+          return cnts[k] < (maxStaff[k] ?? 99);
+        }) || "休み";
+        res[s.id][target] = alt;
+        return true;
       };
       if (!fixDay(d)) fixDay(d - 1);
     }
   }
-  enforceMaxStaff();
 
-  // ⑦ minStaff 保証：非ロック休み → 勤務に変換
+  enforceMaxStaff(); // 2回目: 違反修正後に新たな超過が生じた場合も除去
+
+  // 最低配置保証フェーズ: minStaff未満の日に休み→勤務を補充
   for (let pass = 0; pass < 3; pass++) {
     let anyFixed = false;
     for (let d = 1; d <= days; d++) {
@@ -821,7 +866,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const actual = ds.filter(s => res[s.id][d] === shiftKey).length;
         if (actual >= minCount) continue;
         const cands = ds.filter(s => {
-          if (res[s.id][d] !== "休み" || lockedDays[s.id].has(d)) return false;
+          if (res[s.id][d] !== "休み") return false;
+          if (lockedDays[s.id].has(d)) return false;
           if (!getAllowedTypes(s).includes(shiftKey)) return false;
           const prev = res[s.id][d - 1], next = res[s.id][d + 1];
           if (prev === "夜勤" || prev === "明け") return false;
@@ -830,21 +876,26 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (next === "早番" && (shiftKey === "遅番" || shiftKey === "日勤")) return false;
           if (next === "日勤" && shiftKey === "遅番") return false;
           if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
-          return ds.filter(sx => res[sx.id][d] === shiftKey).length < (maxStaffLim[shiftKey] ?? 99);
+          const curCount = ds.filter(sx => res[sx.id][d] === shiftKey).length;
+          if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
+          return true;
         }).sort((a, b) => {
-          const rA = Object.values(res[a.id]).filter(v => REST_TYPES.has(v) && v !== "明け").length;
-          const rB = Object.values(res[b.id]).filter(v => REST_TYPES.has(v) && v !== "明け").length;
-          return rB - rA;
+          const rA = Object.values(res[a.id]).filter(v => v === "休み").length;
+          const rB = Object.values(res[b.id]).filter(v => v === "休み").length;
+          return rB - rA; // 休みが多い人から振り分け
         });
         let need = minCount - actual;
-        for (const s of cands) { if (need <= 0) break; res[s.id][d] = shiftKey; need--; anyFixed = true; }
+        for (const s of cands) {
+          if (need <= 0) break;
+          res[s.id][d] = shiftKey; need--; anyFixed = true;
+        }
       }
     }
     if (!anyFixed) break;
   }
-  enforceMaxStaff();
 
-  // ⑧ 警告生成
+  enforceMaxStaff(); // 3回目: 補充後の超過確認
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
@@ -855,136 +906,49 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         warnings[shiftKey].maxShort = Math.max(warnings[shiftKey].maxShort, minCount - actual);
       }
     }
-    for (const [shiftKey, limit] of Object.entries(maxStaffLim || {})) {
-      const actual = ds.filter(s => res[s.id][d] === shiftKey).length;
-      if (actual > limit) {
-        const key = shiftKey + "__over";
-        if (!warnings[key]) warnings[key] = { days: 0, maxOver: 0, shiftKey, type: "over" };
-        warnings[key].days++;
-        warnings[key].maxOver = Math.max(warnings[key].maxOver, actual - limit);
-      }
-    }
   }
   return { shifts: res, warnings };
 }
 
 // 生成結果のペナルティスコアを計算（低いほど良い）
-// スコアリング：高いほど良い（ハード違反で大幅減点、ソフト違反で中程度減点、好ましい状態に加点）
-function scoreShifts(res, ds, dept, days, year, month) {
+function scoreShifts(res, ds, dept, days) {
   let score = 0;
-  const mk = monthKey(year, month);
+  const WORK = new Set(["早番","日勤","遅番","夜勤"]);
   const maxConsec = dept.maxConsecutive || 5;
-  const maxCR = dept.maxConsecRest ?? 2;
-
   for (const s of ds) {
-    const tgt = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-
-    // ★ ハード違反（絶対禁止）
-    // 公休数超過 -10,000/日
-    const totalRest = Object.values(res[s.id] || {}).filter(v => REST_TYPES.has(v) && v !== "明け").length;
-    if (totalRest > tgt) score -= 10000 * (totalRest - tgt);
-
-    // 希望休・有給の無視 -5,000/件
-    (s.kiboByMonth?.[mk] || []).forEach(d => {
-      const v = res[s.id]?.[d];
-      if (v !== "希望休" && v !== "有休") score -= 5000;
-    });
-    (s.yukyuByMonth?.[mk] || []).forEach(d => {
-      if (res[s.id]?.[d] !== "有休") score -= 5000;
-    });
-
-    // 夜勤→明け→休み チェーン違反 -5,000/件
-    for (let d = 1; d <= days; d++) {
-      if (res[s.id]?.[d] === "夜勤") {
-        if (d + 1 <= days && res[s.id]?.[d + 1] !== "明け") score -= 5000;
-        if (d + 2 <= days && res[s.id]?.[d + 2] !== "休み") score -= 5000;
-      }
-    }
-
-    // ★ ソフト違反（許容するが減点）
-    // 最大連勤超過 -1,000/日
+    // 連続勤務違反
     let consec = 0;
     for (let d = 1; d <= days; d++) {
-      if (WORK_TYPES.has(res[s.id]?.[d])) { consec++; if (consec > maxConsec) score -= 1000; }
+      const sh = res[s.id]?.[d];
+      if (WORK.has(sh) && sh !== "明け") { consec++; if (consec > maxConsec) score += 50; }
       else consec = 0;
     }
-
-    // 連続休み超過 -500/日（希望休・有休によるものは -50）
-    let cr = 0;
-    for (let d = 1; d <= days; d++) {
-      const sh = res[s.id]?.[d];
-      if (REST_TYPES.has(sh) && sh !== "明け") {
-        cr++;
-        if (cr > maxCR) score -= (sh === "希望休" || sh === "有休") ? 50 : 500;
-      } else cr = 0;
-    }
-
-    // 同一シフト4連続以上 -300/日
-    for (const t of ["早番", "遅番", "日勤"]) {
-      let sc = 0;
-      for (let d = 1; d <= days; d++) {
-        if (res[s.id]?.[d] === t) { sc++; if (sc >= 4) score -= 300; }
-        else sc = 0;
-      }
-    }
-
-    // 遅番→早番/日勤、日勤→早番 の違反 -200/件
+    // 遅番→早番/日勤、日勤→早番 違反
     for (let d = 2; d <= days; d++) {
-      const p = res[s.id]?.[d - 1], c = res[s.id]?.[d];
-      if ((p === "遅番" && (c === "早番" || c === "日勤")) || (p === "日勤" && c === "早番")) score -= 200;
+      const prev = res[s.id]?.[d-1], curr = res[s.id]?.[d];
+      if ((prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番")) score += 100;
     }
   }
-
-  // ★ ハード違反: minStaff 不足 -5,000/人
+  // minStaff不足
   for (let d = 1; d <= days; d++) {
     for (const [k, minC] of Object.entries(dept.minStaff || {})) {
       const actual = ds.filter(s => res[s.id]?.[d] === k).length;
-      if (actual < minC) score -= 5000 * (minC - actual);
+      if (actual < minC) score += actual === 0 ? (minC - actual) * 30 : (minC - actual) * 10;
     }
   }
-
-  // ★ 加点（良い状態を評価）
-  // maxStaff 到達 +10/件
-  for (let d = 1; d <= days; d++) {
-    for (const [k, maxC] of Object.entries(dept.maxStaff || {})) {
-      if (ds.filter(s => res[s.id]?.[d] === k).length >= maxC) score += 10;
-    }
-  }
-
-  // 連勤平準化 +0〜+50（標準偏差が小さいほど高加点）
-  const workCounts = ds.map(s =>
-    Array.from({ length: days }, (_, i) => i + 1).filter(d => WORK_TYPES.has(res[s.id]?.[d])).length
-  );
-  if (workCounts.length > 0) {
-    const avg = workCounts.reduce((a, b) => a + b, 0) / workCounts.length;
-    const std = Math.sqrt(workCounts.reduce((acc, c) => acc + (c - avg) ** 2, 0) / workCounts.length);
-    score += Math.max(0, 50 - std * 10);
-  }
-
-  // 休み分散 +0〜+50（最大連休が短いほど高加点）
-  let maxChain = 0;
-  for (const s of ds) {
-    let chain = 0;
-    for (let d = 1; d <= days; d++) {
-      const sh = res[s.id]?.[d];
-      if (REST_TYPES.has(sh) && sh !== "明け") { chain++; maxChain = Math.max(maxChain, chain); }
-      else chain = 0;
-    }
-  }
-  score += Math.max(0, 50 - maxChain * 10);
-
   return score;
 }
 
-// N回試行して最もスコアが高い（違反が少なく自然なリズム）の結果を返す
+// N回試行して最もスコアが低い（違反が少ない）結果を返す
 function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 5) {
-  const days = getDays(year, month);
+  const days = new Date(year, month + 1, 0).getDate();
   const ds = staffList.filter(s => s.dept === dept.id);
-  let best = null, bestScore = -Infinity;
+  let best = null, bestScore = Infinity;
   for (let i = 0; i < n; i++) {
     const { shifts, warnings } = autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend);
-    const score = scoreShifts(shifts, ds, dept, days, year, month);
-    if (score > bestScore) { bestScore = score; best = { shifts, warnings, score }; }
+    const score = scoreShifts(shifts, ds, dept, days);
+    if (score < bestScore) { bestScore = score; best = { shifts, warnings, score }; }
+    if (bestScore === 0) break; // 違反ゼロなら即採用
   }
   return best;
 }
@@ -1300,9 +1264,9 @@ const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
 const DEPT_ICONS = ["🏠","🏢","🏥","💉","📋","🍱","🌸","⭐","🔵","🟢","🟡","🟠","🔴","💜"];
 function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
   const buildInitMaxStaff = (types, existing) => { const d={}; (types||["日勤"]).forEach(k=>{d[k]=existing?.[k]!=null?existing[k]:(k==="日勤"?99:1);}); return d; };
-  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(dept?.shiftTypes,dept?.maxStaff)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [maxConsecRest,setMaxConsecRest]=useState(dept?.maxConsecRest??2), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
+  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(dept?.shiftTypes,dept?.maxStaff)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types&&types.length>0&&types.length<shiftTypes.length)cleanRST[role]=types;}); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,maxConsecutive:maxConsec,maxConsecRest,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types&&types.length>0&&types.length<shiftTypes.length)cleanRST[role]=types;}); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined}); };
   const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -1318,7 +1282,6 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         {shiftTypes.length>0&&<div style={{background:"#fff3e0",border:"1px solid #e0a000",borderRadius:8,padding:"10px 12px",marginBottom:14}}><div style={{fontSize:11,color:"#b45309",marginBottom:8}}>最大配置人数 <span style={{fontSize:10,color:"#a06010",fontWeight:400}}>（自動生成でこの人数を超えない・99=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700}}>{k}</span><input type="number" min={1} max={99} value={maxStaff[k]!=null?maxStaff[k]:(k==="日勤"?99:1)} onChange={e=>setMaxStaff(p=>({...p,[k]:+e.target.value}))} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:11,color:"#92400e"}}>名</span></div>)}</div></div>}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={3} max={7} value={maxConsec} onChange={e=>setMaxConsec(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
-          <div><label style={LS}>最大連続休み日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={1} max={5} value={maxConsecRest} onChange={e=>setMaxConsecRest(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div><div style={{fontSize:10,color:"#5a9e9b",marginTop:3}}>自動生成のみ適用。希望休の連休は除外</div></div>
           <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={4} max={15} value={defKyuko} onChange={e=>setDefKyuko(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
           <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={1} max={10} value={kiboLimit} onChange={e=>setKiboLimit(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
         </div>
@@ -1720,22 +1683,15 @@ function EventEditModal({ day, month, year, currentText, onSave, onClose }) {
 }
 
 function GenerateWarningModal({ warnings, deptLabel, year, month, score, onClose }) {
+  const entries = Object.entries(warnings);
   const days = new Date(year, month + 1, 0).getDate();
-  const underEntries = Object.entries(warnings).filter(([k]) => !k.endsWith("__over"));
-  const overEntries = Object.entries(warnings).filter(([k]) => k.endsWith("__over"));
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>自動生成の通知</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
-        {score!=null&&<div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:7,padding:"6px 12px",marginBottom:14,fontSize:11,color:"#92400e"}}>5回試行して最もスコアが高い結果を採用しました（品質スコア: <span style={{fontWeight:800}}>{score}</span>）。残る警告は手動で調整してください。</div>}
-        {underEntries.length>0&&<>
-          <div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:10,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
-          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>{underEntries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#f3fffe",border:`1px solid ${s.border||"#2a5a57"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#6ab5b2"}}>{shiftKey}</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#b8deda",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#3a8a87",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div>
-        </>}
-        {overEntries.length>0&&<>
-          <div style={{background:"#fff8e1",border:"1px solid #f59e0b",borderRadius:8,padding:"10px 14px",marginBottom:10,fontSize:12,color:"#92400e",lineHeight:1.7}}>連休・公休の上限を守るため、上限人数を超えて配置した日があります。手動で調整してください。</div>
-          <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>{overEntries.map(([k,info])=>{const s=SHIFTS[info.shiftKey]||{};return(<div key={k} style={{background:"#fffbeb",border:`1px solid ${s.border||"#f59e0b"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={info.shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#b45309"}}>{info.shiftKey}</div><div style={{fontSize:11,color:"#92400e",marginTop:2}}>超過日数：<span style={{color:"#f59e0b",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f59e0b",fontWeight:700}}>+{info.maxOver}名</span></div></div></div>);})}</div>
-        </>}
+      <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>人員不足の警告</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
+        {score!=null&&<div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:7,padding:"6px 12px",marginBottom:14,fontSize:11,color:"#92400e"}}>5回試行して最もスコアが低い結果を採用しました（違反スコア: <span style={{fontWeight:800}}>{score}</span>）。残る警告は手動で調整してください。</div>}
+        <div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:18,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:22}}>{entries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#f3fffe",border:`1px solid ${s.border||"#2a5a57"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#6ab5b2"}}>{shiftKey}</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#b8deda",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#3a8a87",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div>
         <button onClick={onClose} style={{width:"100%",background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>確認しました</button>
       </div>
     </div>
