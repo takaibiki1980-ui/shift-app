@@ -780,7 +780,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (lockedDays[s.id].has(d)) continue;
         if (res[s.id][d - 1] === "明け") continue;
         if (res[s.id][d + 1] === "明け") continue;
-        if (consecRest(s.id, d) <= 2) continue;
+        if (consecRest(s.id, d) <= 3) continue; // 3連休まで許容、4連休以上のみ修正
         if ((consecWork(s.id, d - 1) + 1) > maxConsec) continue;
         const fixCnts = {};
         dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
@@ -916,17 +916,30 @@ function scoreShifts(res, ds, dept, days) {
   const WORK = new Set(["早番","日勤","遅番","夜勤"]);
   const maxConsec = dept.maxConsecutive || 5;
   for (const s of ds) {
-    // 連続勤務違反
+    // 連続勤務違反（ペナルティ2倍に強化）
     let consec = 0;
     for (let d = 1; d <= days; d++) {
       const sh = res[s.id]?.[d];
-      if (WORK.has(sh) && sh !== "明け") { consec++; if (consec > maxConsec) score += 50; }
+      if (WORK.has(sh) && sh !== "明け") { consec++; if (consec > maxConsec) score += 100; }
       else consec = 0;
     }
     // 遅番→早番/日勤、日勤→早番 違反
     for (let d = 2; d <= days; d++) {
       const prev = res[s.id]?.[d-1], curr = res[s.id]?.[d];
       if ((prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番")) score += 100;
+    }
+    // 同一シフト連続ペナルティ（遅番・早番・日勤が固まるのを防ぐ）
+    for (const t of ["早番", "遅番", "日勤"]) {
+      let sc = 0;
+      for (let d = 1; d <= days; d++) {
+        if (res[s.id]?.[d] === t) {
+          sc++;
+          if (sc === 4) score += 500;          // 4連続で-500
+          else if (sc > 4) score += 2000;      // 5連続以上は1日ごとに-2000
+        } else {
+          sc = 0;
+        }
+      }
     }
   }
   // minStaff不足
@@ -940,7 +953,7 @@ function scoreShifts(res, ds, dept, days) {
 }
 
 // N回試行して最もスコアが低い（違反が少ない）結果を返す
-function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 5) {
+function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
   const days = new Date(year, month + 1, 0).getDate();
   const ds = staffList.filter(s => s.dept === dept.id);
   let best = null, bestScore = Infinity;
@@ -3288,7 +3301,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
       try {
-        setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings,score}=bestOfN(cs,cd,year,month,cs2,ct,5);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);return{...prevAll,[cd.id]:result};});
+        setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings,score}=bestOfN(cs,cd,year,month,cs2,ct,30);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);return{...prevAll,[cd.id]:result};});
         setSaveStatus("unsaved");
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
