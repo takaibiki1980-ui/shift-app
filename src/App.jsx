@@ -936,17 +936,41 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   };
   for (let pass = 0; pass < 3; pass++) {
     let changed = false;
-    // (A) 連続休み超過を勤務に変換
+    // (A) 連続休み超過を勤務に変換（enforceMaxStaffは呼ばない＝強制適用を維持）
     for (const s of ds) {
       for (let d = 1; d <= days; d++) {
         if (!REST_TYPES.has(res[s.id][d]) || res[s.id][d] === "明け") continue;
         if (lockedDays[s.id].has(d)) continue;
         if (consecRest(s.id, d) <= maxCR) continue;
-        if (forceWork(s, d)) { changed = true; }
+        // チェーン内の変更可能な日を後ろから探す
+        let fixed = false;
+        for (let dd = d; dd > d - maxCR - 2 && dd >= 1; dd--) {
+          if (REST_TYPES.has(res[s.id][dd]) && res[s.id][dd] !== "明け" && !lockedDays[s.id].has(dd) && res[s.id][dd - 1] !== "明け") {
+            if (forceWork(s, dd)) { fixed = true; changed = true; break; }
+          }
+        }
+        if (!fixed) {
+          // maxStaffを無視して最低限の勤務を割り当てる
+          if (res[s.id][d - 1] !== "明け" && !lockedDays[s.id].has(d)) {
+            const p = res[s.id][d - 1], nx = res[s.id][d + 1];
+            const av = getAllowedTypes(s).filter(k => {
+              if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
+              if (p === "日勤" && k === "早番") return false;
+              if (nx === "早番" && (k === "遅番" || k === "日勤")) return false;
+              if (nx === "日勤" && k === "遅番") return false;
+              return true;
+            });
+            if (av.length > 0 && (consecWork(s.id, d - 1) + 1) <= maxConsec) {
+              const cntNow = {};
+              dayTypes.forEach(k => { cntNow[k] = ds.filter(sx => res[sx.id][d] === k).length; });
+              res[s.id][d] = av.sort((a, b) => (cntNow[a]||0) - (cntNow[b]||0))[0];
+              changed = true;
+            }
+          }
+        }
       }
     }
-    enforceMaxStaff();
-    // (B) 公休上限を超えている場合、非ロック休みを勤務に変換
+    // (B) 公休上限超過分を勤務に変換（enforceMaxStaffは呼ばない）
     for (const s of ds) {
       const tgt = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
       const allRest = Object.entries(res[s.id])
@@ -956,11 +980,25 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       for (const d of allRest) {
         if (excess <= 0) break;
         if (lockedDays[s.id].has(d)) continue;
-        if (res[s.id][d - 1] === "明け") continue; // 夜明け後は変更不可
-        if (forceWork(s, d)) { excess--; changed = true; }
+        if (res[s.id][d - 1] === "明け") continue;
+        if (forceWork(s, d)) { excess--; changed = true; continue; }
+        // forceWorkが失敗した場合もmaxStaff無視で割り当て
+        const p = res[s.id][d - 1], nx = res[s.id][d + 1];
+        const av = getAllowedTypes(s).filter(k => {
+          if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
+          if (p === "日勤" && k === "早番") return false;
+          if (nx === "早番" && (k === "遅番" || k === "日勤")) return false;
+          if (nx === "日勤" && k === "遅番") return false;
+          return true;
+        });
+        if (av.length > 0 && (consecWork(s.id, d - 1) + 1) <= maxConsec) {
+          const cntNow = {};
+          dayTypes.forEach(k => { cntNow[k] = ds.filter(sx => res[sx.id][d] === k).length; });
+          res[s.id][d] = av.sort((a, b) => (cntNow[a]||0) - (cntNow[b]||0))[0];
+          excess--; changed = true;
+        }
       }
     }
-    enforceMaxStaff();
     if (!changed) break;
   }
 
