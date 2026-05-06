@@ -942,6 +942,43 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   enforceMaxStaff(); // 3回目: 補充後の超過確認
 
+  // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
+  // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
+  {
+    const REST_KYU = new Set(["休み","希望休","有休"]);
+    for (const s of ds) {
+      const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const actualKyuko = Object.values(res[s.id]).filter(v => REST_KYU.has(v)).length;
+      let shortage = targetKyuko - actualKyuko;
+      if (shortage <= 0) continue;
+      // 対象: ロック外の日勤日 → 日勤配置人数 降順で並べる
+      const nikkinDays = Object.entries(res[s.id])
+        .filter(([d, v]) => v === "日勤" && !lockedDays[s.id].has(+d))
+        .map(([d]) => +d)
+        .filter(d => {
+          // minStaff['日勤'] を割らないか確認
+          const minN = dept.minStaff?.["日勤"] ?? 0;
+          const cur = ds.filter(sx => res[sx.id][d] === "日勤").length;
+          if (cur - 1 < minN) return false;
+          // 連続休み上限（3日まで許容）
+          if (res[s.id][d - 1] === "明け") return false;
+          const pr = consecRest(s.id, d - 1);
+          const nx = consecRestFwd(s.id, d);
+          return pr + 1 + nx <= 3;
+        })
+        .sort((a, b) => {
+          const ca = ds.filter(sx => res[sx.id][a] === "日勤").length;
+          const cb = ds.filter(sx => res[sx.id][b] === "日勤").length;
+          return cb - ca; // 日勤が多い日を優先して間引く
+        });
+      for (const d of nikkinDays) {
+        if (shortage <= 0) break;
+        res[s.id][d] = "休み";
+        shortage--;
+      }
+    }
+  }
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
@@ -964,10 +1001,10 @@ function scoreShifts(res, ds, dept, days, year, month) {
   const maxConsec = dept.maxConsecutive || 5;
   const mk = monthKey(year, month);
   for (const s of ds) {
-    // kyukoDays 逸脱ペナルティ（ハード制約: 1日ズレごとに-100,000点）
+    // kyukoDays 逸脱ペナルティ（最優先ハード制約: 1日ズレごとに1,000,000点）
     const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
     const actualKyuko = Object.values(res[s.id] || {}).filter(v => REST.has(v)).length;
-    score += Math.abs(actualKyuko - targetKyuko) * 100000;
+    score += Math.abs(actualKyuko - targetKyuko) * 1000000;
 
     // 連続勤務違反
     let consec = 0;
@@ -1007,11 +1044,23 @@ function scoreShifts(res, ds, dept, days, year, month) {
 
 // N回試行して最もスコアが低い（違反が少ない）結果を返す
 function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
-  const days = new Date(year, month + 1, 0).getDate();
+  const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
   let best = null, bestScore = Infinity;
+  // 日勤の上限が明示設定されている場合、試行ごとに上限を変えて多様な解を探索
+  const nikkinMin = dept.minStaff?.["日勤"] ?? 1;
+  const nikkinMax = dept.maxStaff?.["日勤"];
+  const useVariation = nikkinMax != null && nikkinMax < 99 && nikkinMax > nikkinMin;
+  const range = useVariation ? nikkinMax - nikkinMin : 0;
   for (let i = 0; i < n; i++) {
-    const { shifts, warnings } = autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend);
+    let deptVariant = dept;
+    if (useVariation) {
+      // 試行ごとに日勤の上限を min〜max の範囲でサイクル
+      const cap = nikkinMin + (i % (range + 1));
+      deptVariant = { ...dept, maxStaff: { ...dept.maxStaff, "日勤": cap } };
+    }
+    const { shifts, warnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend);
+    // スコアリングは常に元のdeptで評価（公平な比較）
     const score = scoreShifts(shifts, ds, dept, days, year, month);
     if (score < bestScore) { bestScore = score; best = { shifts, warnings, score }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
