@@ -712,13 +712,81 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   if (dayTypes.length === 0) {
     ds.forEach(s => { for (let d = 1; d <= days; d++) { if (!res[s.id][d]) res[s.id][d] = "休み"; } });
   } else {
+    // ── 比率ベースのシフト目標数を事前計算 ──────────────────────────────
+    const getShiftRatioOf = (s) => s.shiftRatioByMonth?.[mk] || s.shiftRatio || null;
+    const targetShiftCounts = {};  // targetShiftCounts[id][shift] = 目標日数
+    const assignedShiftCounts = {}; // 割り当て済み日数追跡
+
+    ds.forEach(s => {
+      assignedShiftCounts[s.id] = {};
+      dayTypes.forEach(k => { assignedShiftCounts[s.id][k] = 0; });
+      const ratio = getShiftRatioOf(s);
+      // 現時点で未割り当ての日数 = step4 で工数を割り当てる日
+      const workDays = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]).length;
+      targetShiftCounts[s.id] = {};
+      if (ratio) {
+        const dayShiftTypes = dayTypes.filter(k => k !== "夜勤");
+        const ratioTotal = dayShiftTypes.reduce((sum, k) => sum + (ratio[k] || 0), 0);
+        if (ratioTotal > 0) {
+          let alloc = 0;
+          dayShiftTypes.filter(k => k !== "日勤").forEach(k => {
+            const t = Math.round(workDays * (ratio[k] || 0) / ratioTotal);
+            targetShiftCounts[s.id][k] = t; alloc += t;
+          });
+          targetShiftCounts[s.id]["日勤"] = Math.max(0, workDays - alloc);
+        } else {
+          dayTypes.forEach(k => { targetShiftCounts[s.id][k] = 0; });
+        }
+      } else {
+        dayTypes.forEach(k => { targetShiftCounts[s.id][k] = 0; }); // 比率未設定 = 既存ロジックに任せる
+      }
+    });
+
+    // 比率負債（debt）を使ったシフト選択関数
+    const pickWithRatioDebt = (s, available, cnts) => {
+      const trend = getTrend(s);
+      const hasRatio = !!getShiftRatioOf(s);
+      return [...available].sort((a, b) => {
+        // 1. 比率設定あり: 残債（目標-割当済）が大きいシフトを優先
+        if (hasRatio) {
+          const debtA = (targetShiftCounts[s.id]?.[a] ?? 0) - (assignedShiftCounts[s.id]?.[a] ?? 0);
+          const debtB = (targetShiftCounts[s.id]?.[b] ?? 0) - (assignedShiftCounts[s.id]?.[b] ?? 0);
+          if (debtA !== debtB) return debtB - debtA;
+        }
+        // 2. minStaff 不足補充（共通）
+        const dA = Math.max(0, (dept.minStaff[a]||0) - cnts[a]);
+        const dB = Math.max(0, (dept.minStaff[b]||0) - cnts[b]);
+        if (dA !== dB) return dB - dA;
+        // 3. シフト優先度（早番・遅番 > 日勤）
+        const pA = PRIORITY[a]??3, pB = PRIORITY[b]??3;
+        if (pA !== pB) return pA - pB;
+        // 4. 配置バランス
+        if (cnts[a] !== cnts[b]) return cnts[a] - cnts[b];
+        // 5. 学習データ
+        const tA = trend ? (trend[a] || 0) : 0;
+        const tB = trend ? (trend[b] || 0) : 0;
+        if (Math.abs(tA - tB) > 0.05) return tB - tA;
+        return Math.random() - 0.5;
+      })[0];
+    };
+
+    // ── 日ごとの割り当て（貴重な枠=早番・遅番から高比率スタッフを優先配置）──
     for (let d = 1; d <= days; d++) {
       const cnts = {};
       dayTypes.forEach(k => { cnts[k] = ds.filter(s => res[s.id][d] === k).length; });
+      // freeStaff を「希少シフト（非日勤）への残債が大きい順」で並べることで
+      // 早番・遅番の枠を比率の高いスタッフから先に埋める
       const freeStaff = ds.filter(s => !res[s.id][d]).sort((a, b) => {
+        const getMaxScarceDebt = (s) => {
+          if (!getShiftRatioOf(s)) return 0;
+          return dayTypes.filter(k => k !== "日勤" && cnts[k] < (maxStaff[k] ?? 99))
+            .reduce((max, k) => Math.max(max, (targetShiftCounts[s.id]?.[k] ?? 0) - (assignedShiftCounts[s.id]?.[k] ?? 0)), 0);
+        };
+        const ua = getMaxScarceDebt(a), ub = getMaxScarceDebt(b);
+        if (ua !== ub) return ub - ua; // 希少シフト残債が大きい人を先に
         const ca = consecWork(a.id, d - 1), cb = consecWork(b.id, d - 1);
         if (ca !== cb) return ca - cb;
-        return Math.random() - 0.5; // 同じ連続勤務数ならランダムに並べて多様性確保
+        return Math.random() - 0.5;
       });
       for (const s of freeStaff) {
         if (res[s.id][d-1] === "夜勤") { res[s.id][d] = "明け"; continue; }
@@ -730,8 +798,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (res[s.id][d + 1] === "早番") available = available.filter(k => k !== "遅番" && k !== "日勤");
         if (res[s.id][d + 1] === "日勤") available = available.filter(k => k !== "遅番");
         if (available.length === 0) { res[s.id][d] = "休み"; continue; }
-        const pick = pickWithTrend(s, available, cnts);
+        const pick = pickWithRatioDebt(s, available, cnts);
         res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1;
+        assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
       }
       ds.forEach(s => { if (!res[s.id][d]) res[s.id][d] = "休み"; });
     }
@@ -1388,6 +1457,16 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const setKyukoThisMonth = (v) => set("kyukoDaysByMonth",{...(form.kyukoDaysByMonth||{}),[mk]:+v});
   const yukyuSelected = form.yukyuByMonth?.[mk] || [];
   const setYukyu = (days) => set("yukyuByMonth",{...(form.yukyuByMonth||{}),[mk]:days});
+  const deptObj = depts.find(d => d.id === deptId);
+  const deptDayShiftTypes = (deptObj?.shiftTypes || ["早番","日勤","遅番"]).filter(k => k !== "夜勤" && k !== "明け");
+  const ratioThisMonth = form.shiftRatioByMonth?.[mk] ?? form.shiftRatio ?? null;
+  const getRatioPct = (k) => ratioThisMonth ? Math.round((ratioThisMonth[k] ?? 0) * 100) : "";
+  const setRatioPct = (k, v) => {
+    const base = { ...(ratioThisMonth || {}) };
+    if (v === "" || isNaN(+v)) { delete base[k]; } else { base[k] = Math.min(100, Math.max(0, +v)) / 100; }
+    set("shiftRatioByMonth", { ...(form.shiftRatioByMonth || {}), [mk]: base });
+  };
+  const ratioSum = deptDayShiftTypes.reduce((s, k) => s + (ratioThisMonth?.[k] ?? 0) * 100, 0);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
@@ -1407,6 +1486,20 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             {form.nightOk&&<div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div><input type="number" value={form.nightMax} min={0} max={15} onChange={e=>set("nightMax",+e.target.value)} style={{...INPUT_STYLE,width:80}}/></div>}
           </div>
         )}
+        <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
+        <div style={{background:"#fff8e6",border:"1px solid #f0c040",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>設定すると比率に合わせてシフトを分散配置。合計が100%になるよう入力してください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+            {deptDayShiftTypes.map(k=>(
+              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
+                <input type="number" min={0} max={100} step={5} value={getRatioPct(k)} onChange={e=>setRatioPct(k,e.target.value)} placeholder="－" style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0}}/>
+                <span style={{fontSize:11,color:"#92400e"}}>%</span>
+              </div>
+            ))}
+            {ratioThisMonth&&<button onClick={()=>set("shiftRatioByMonth",{...(form.shiftRatioByMonth||{}),[mk]:null})} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
+          </div>
+        </div>
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
           <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId} kiboCountByDay={kiboCountByDay} kiboLimit={kiboLimit}/>
