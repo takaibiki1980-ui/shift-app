@@ -715,7 +715,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     for (let d = 1; d <= days; d++) {
       const cnts = {};
       dayTypes.forEach(k => { cnts[k] = ds.filter(s => res[s.id][d] === k).length; });
-      const freeStaff = ds.filter(s => !res[s.id][d]).sort((a, b) => consecWork(a.id, d - 1) - consecWork(b.id, d - 1));
+      const freeStaff = ds.filter(s => !res[s.id][d]).sort((a, b) => {
+        const ca = consecWork(a.id, d - 1), cb = consecWork(b.id, d - 1);
+        if (ca !== cb) return ca - cb;
+        return Math.random() - 0.5; // 同じ連続勤務数ならランダムに並べて多様性確保
+      });
       for (const s of freeStaff) {
         if (res[s.id][d-1] === "夜勤") { res[s.id][d] = "明け"; continue; }
         if ((consecWork(s.id, d - 1) + 1) > maxConsec) { res[s.id][d] = "休み"; continue; }
@@ -858,14 +862,52 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   enforceMaxStaff(); // 2回目: 違反修正後に新たな超過が生じた場合も除去
 
-  // 最低配置保証フェーズ: minStaff未満の日に休み→勤務を補充
+  // 最低配置保証フェーズ: minStaff未満の日にスタッフを補充
+  // 優先①: 他シフト勤務中のスタッフをスライド（振替）→ 休み数は変わらない
+  // 優先②: 休み→勤務は公休数が目標より多い余剰スタッフのみ対象（kyukoDays死守）
   for (let pass = 0; pass < 3; pass++) {
     let anyFixed = false;
     for (let d = 1; d <= days; d++) {
       for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
-        const actual = ds.filter(s => res[s.id][d] === shiftKey).length;
+        let actual = ds.filter(s => res[s.id][d] === shiftKey).length;
         if (actual >= minCount) continue;
-        const cands = ds.filter(s => {
+
+        // ── 優先①: 他シフト勤務中のスタッフをスライド ──
+        const slideCands = ds.filter(s => {
+          const cur = res[s.id][d];
+          if (!cur || cur === shiftKey) return false;
+          if (WORK_TYPES.has(cur) === false) return false; // 勤務中のみ
+          if (lockedDays[s.id].has(d)) return false;
+          if (!getAllowedTypes(s).includes(shiftKey)) return false;
+          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          if (prev === "遅番" && (shiftKey === "早番" || shiftKey === "日勤")) return false;
+          if (prev === "日勤" && shiftKey === "早番") return false;
+          if (next === "早番" && (shiftKey === "遅番" || shiftKey === "日勤")) return false;
+          if (next === "日勤" && shiftKey === "遅番") return false;
+          // スライド元シフトのminStaffを割らないか確認
+          const fromMin = dept.minStaff?.[cur] ?? 0;
+          const fromActual = ds.filter(sx => res[sx.id][d] === cur).length;
+          if (fromActual - 1 < fromMin) return false;
+          return true;
+        }).sort((a, b) => {
+          // maxStaffに余裕があるシフトのスタッフを優先してスライド
+          const cntA = ds.filter(s => res[s.id][d] === res[a.id][d]).length;
+          const cntB = ds.filter(s => res[s.id][d] === res[b.id][d]).length;
+          const maxA = maxStaff[res[a.id][d]] ?? 99;
+          const maxB = maxStaff[res[b.id][d]] ?? 99;
+          return (maxA - cntA) - (maxB - cntB); // 余裕が少ない方を先に
+        });
+        let need = minCount - actual;
+        for (const s of slideCands) {
+          if (need <= 0) break;
+          res[s.id][d] = shiftKey; need--; anyFixed = true;
+          actual++;
+        }
+
+        if (need <= 0) continue;
+
+        // ── 優先②: 休み→勤務（公休数が目標より多い余剰スタッフのみ） ──
+        const restCands = ds.filter(s => {
           if (res[s.id][d] !== "休み") return false;
           if (lockedDays[s.id].has(d)) return false;
           if (!getAllowedTypes(s).includes(shiftKey)) return false;
@@ -878,14 +920,18 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
           const curCount = ds.filter(sx => res[sx.id][d] === shiftKey).length;
           if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
-          return true;
+          // 公休数が目標より多い場合のみ許可（kyukoDays死守）
+          const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+          const actualKyuko = Object.values(res[s.id]).filter(v => v === "休み" || v === "希望休" || v === "有休").length;
+          return actualKyuko > targetKyuko;
         }).sort((a, b) => {
-          const rA = Object.values(res[a.id]).filter(v => v === "休み").length;
-          const rB = Object.values(res[b.id]).filter(v => v === "休み").length;
-          return rB - rA; // 休みが多い人から振り分け
+          const targetA = a.kyukoDaysByMonth?.[mk] ?? a.kyukoDays ?? 8;
+          const targetB = b.kyukoDaysByMonth?.[mk] ?? b.kyukoDays ?? 8;
+          const surplusA = Object.values(res[a.id]).filter(v => v === "休み" || v === "希望休" || v === "有休").length - targetA;
+          const surplusB = Object.values(res[b.id]).filter(v => v === "休み" || v === "希望休" || v === "有休").length - targetB;
+          return surplusB - surplusA; // 余剰が多い人から優先
         });
-        let need = minCount - actual;
-        for (const s of cands) {
+        for (const s of restCands) {
           if (need <= 0) break;
           res[s.id][d] = shiftKey; need--; anyFixed = true;
         }
@@ -911,12 +957,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 }
 
 // 生成結果のペナルティスコアを計算（低いほど良い）
-function scoreShifts(res, ds, dept, days) {
+function scoreShifts(res, ds, dept, days, year, month) {
   let score = 0;
   const WORK = new Set(["早番","日勤","遅番","夜勤"]);
+  const REST = new Set(["休み","希望休","有休"]);
   const maxConsec = dept.maxConsecutive || 5;
+  const mk = monthKey(year, month);
   for (const s of ds) {
-    // 連続勤務違反（ペナルティ2倍に強化）
+    // kyukoDays 逸脱ペナルティ（ハード制約: 1日ズレごとに-100,000点）
+    const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+    const actualKyuko = Object.values(res[s.id] || {}).filter(v => REST.has(v)).length;
+    score += Math.abs(actualKyuko - targetKyuko) * 100000;
+
+    // 連続勤務違反
     let consec = 0;
     for (let d = 1; d <= days; d++) {
       const sh = res[s.id]?.[d];
@@ -928,14 +981,14 @@ function scoreShifts(res, ds, dept, days) {
       const prev = res[s.id]?.[d-1], curr = res[s.id]?.[d];
       if ((prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番")) score += 100;
     }
-    // 同一シフト連続ペナルティ（遅番・早番・日勤が固まるのを防ぐ）
+    // 同一シフト連続ペナルティ（×3強化: 4連=1500, 5連以上=6000/日）
     for (const t of ["早番", "遅番", "日勤"]) {
       let sc = 0;
       for (let d = 1; d <= days; d++) {
         if (res[s.id]?.[d] === t) {
           sc++;
-          if (sc === 4) score += 500;          // 4連続で-500
-          else if (sc > 4) score += 2000;      // 5連続以上は1日ごとに-2000
+          if (sc === 4) score += 1500;
+          else if (sc > 4) score += 6000;
         } else {
           sc = 0;
         }
@@ -959,7 +1012,7 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
   let best = null, bestScore = Infinity;
   for (let i = 0; i < n; i++) {
     const { shifts, warnings } = autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend);
-    const score = scoreShifts(shifts, ds, dept, days);
+    const score = scoreShifts(shifts, ds, dept, days, year, month);
     if (score < bestScore) { bestScore = score; best = { shifts, warnings, score }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
   }
