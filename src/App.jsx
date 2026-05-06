@@ -713,7 +713,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     ds.forEach(s => { for (let d = 1; d <= days; d++) { if (!res[s.id][d]) res[s.id][d] = "休み"; } });
   } else {
     // ── 比率ベースのシフト目標数を事前計算 ──────────────────────────────
-    const getShiftRatioOf = (s) => s.shiftRatioByMonth?.[mk] || s.shiftRatio || null;
+    const getShiftRatioOf = (s) => s.shiftRatio || s.shiftRatioByMonth?.[mk] || null;
     const targetShiftCounts = {};  // targetShiftCounts[id][shift] = 目標日数
     const assignedShiftCounts = {}; // 割り当て済み日数追跡
 
@@ -1459,14 +1459,14 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const setYukyu = (days) => set("yukyuByMonth",{...(form.yukyuByMonth||{}),[mk]:days});
   const deptObj = depts.find(d => d.id === deptId);
   const deptDayShiftTypes = (deptObj?.shiftTypes || ["早番","日勤","遅番"]).filter(k => k !== "夜勤" && k !== "明け");
-  const ratioThisMonth = form.shiftRatioByMonth?.[mk] ?? form.shiftRatio ?? null;
-  const getRatioPct = (k) => ratioThisMonth ? Math.round((ratioThisMonth[k] ?? 0) * 100) : "";
+  const currentRatio = form.shiftRatio ?? null;
+  const getRatioPct = (k) => currentRatio ? Math.round((currentRatio[k] ?? 0) * 100) : "";
   const setRatioPct = (k, v) => {
-    const base = { ...(ratioThisMonth || {}) };
+    const base = { ...(currentRatio || {}) };
     if (v === "" || isNaN(+v)) { delete base[k]; } else { base[k] = Math.min(100, Math.max(0, +v)) / 100; }
-    set("shiftRatioByMonth", { ...(form.shiftRatioByMonth || {}), [mk]: base });
+    set("shiftRatio", Object.keys(base).length > 0 ? base : null);
   };
-  const ratioSum = deptDayShiftTypes.reduce((s, k) => s + (ratioThisMonth?.[k] ?? 0) * 100, 0);
+  const ratioSum = deptDayShiftTypes.reduce((s, k) => s + (currentRatio?.[k] ?? 0) * 100, 0);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
@@ -1488,16 +1488,16 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
         )}
         <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
         <div style={{background:"#fff8e6",border:"1px solid #f0c040",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
-          <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>設定すると比率に合わせてシフトを分散配置。合計が100%になるよう入力してください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
+          <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
           <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
             {deptDayShiftTypes.map(k=>(
               <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
                 <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
-                <input type="number" min={0} max={100} step={5} value={getRatioPct(k)} onChange={e=>setRatioPct(k,e.target.value)} placeholder="－" style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0}}/>
+                <input type="number" min={0} max={100} step={5} value={getRatioPct(k)} onChange={e=>setRatioPct(k,e.target.value)} placeholder="0" style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0}}/>
                 <span style={{fontSize:11,color:"#92400e"}}>%</span>
               </div>
             ))}
-            {ratioThisMonth&&<button onClick={()=>set("shiftRatioByMonth",{...(form.shiftRatioByMonth||{}),[mk]:null})} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
+            {currentRatio&&<button onClick={()=>set("shiftRatio",null)} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
           </div>
         </div>
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
