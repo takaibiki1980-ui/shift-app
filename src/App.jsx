@@ -979,8 +979,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
-  // ★公休数超過バリデーション: 目標を1日でも超えている休みを日勤へ強制変換
-  // maxStaff・maxConsec 制約より「公休数の正確さ」を最優先とする
+  // ★公休数超過バリデーション: 他ルールを破らない範囲で超過した休みを日勤へ変換
+  // 変換できない場合は10日のまま受け入れる（無理強いしない）
   {
     const REST_OVER = new Set(["休み","希望休"]);
     for (const s of ds) {
@@ -988,31 +988,43 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       const actualKyuko = Object.values(res[s.id]).filter(v => REST_OVER.has(v)).length;
       let excess = actualKyuko - targetKyuko;
       if (excess <= 0) continue;
+      const allowedForS = getAllowedTypes(s);
       // ロック外の「休み」のみ対象（希望休・有休は固定）
-      // 日勤人数が最少の日から順に変換（配置をなるべく自然に）
       const excessRestDays = Object.entries(res[s.id])
         .filter(([d, v]) => v === "休み" && !lockedDays[s.id].has(+d))
         .map(([d]) => +d)
         .filter(d => {
-          // 夜勤・明けの翌日だけはハード除外（労働安全上の絶対制約）
-          if (res[s.id][+d - 1] === "明け") return false;
-          if (res[s.id][+d - 1] === "夜勤") return false;
+          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          // 優先1: 夜勤・明け翌日は絶対NG
+          if (prev === "明け" || prev === "夜勤") return false;
+          // 連続勤務上限チェック
+          if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
+          // シフト連続性チェック（日勤を仮ターゲットとして違反確認）
+          const tgt = allowedForS.includes("日勤") ? "日勤" : (allowedForS[0] || "日勤");
+          if (prev === "遅番" && (tgt === "早番" || tgt === "日勤")) return false;
+          if (prev === "日勤" && tgt === "早番") return false;
+          if (next === "早番" && (tgt === "遅番" || tgt === "日勤")) return false;
+          if (next === "日勤" && tgt === "遅番") return false;
+          // 優先3: maxStaff チェック（日勤上限を守る）
+          const curCount = ds.filter(sx => res[sx.id][d] === tgt).length;
+          if (curCount >= (maxStaff[tgt] ?? 99)) return false;
           return true;
         })
         .sort((a, b) => {
-          // 日勤が少ない日を優先して「6人目」の影響を最小化
-          const ca = ds.filter(sx => res[sx.id][a] === "日勤").length;
-          const cb = ds.filter(sx => res[sx.id][b] === "日勤").length;
+          // 日勤が少ない日を優先
+          const tgt = allowedForS.includes("日勤") ? "日勤" : (allowedForS[0] || "日勤");
+          const ca = ds.filter(sx => res[sx.id][a] === tgt).length;
+          const cb = ds.filter(sx => res[sx.id][b] === tgt).length;
           return ca - cb;
         });
-      // 役職が日勤可能なら日勤、不可なら許可シフトの先頭を使う
-      const fallbackShift = getAllowedTypes(s)[0] || "日勤";
       for (const d of excessRestDays) {
         if (excess <= 0) break;
-        const canNikkin = getAllowedTypes(s).includes("日勤");
-        res[s.id][d] = canNikkin ? "日勤" : fallbackShift;
+        const tgt = allowedForS.includes("日勤") ? "日勤" : (allowedForS[0] || "日勤");
+        res[s.id][d] = tgt;
         excess--;
+        // 変換した後、残り excess を再チェック（変換で actualKyuko が変わるため）
       }
+      // 変換できる枠がなければ「惜しい状態」のまま終了（スコアで後評価）
     }
   }
 
@@ -1038,10 +1050,10 @@ function scoreShifts(res, ds, dept, days, year, month) {
   const maxConsec = dept.maxConsecutive || 5;
   const mk = monthKey(year, month);
   for (const s of ds) {
-    // kyukoDays 逸脱ペナルティ（最優先ハード制約: 1日ズレごとに1,000,000点）
+    // kyukoDays 逸脱ペナルティ（ルール内で解決できない場合を許容: 1日ズレごとに10,000点）
     const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
     const actualKyuko = Object.values(res[s.id] || {}).filter(v => REST.has(v)).length;
-    score += Math.abs(actualKyuko - targetKyuko) * 1000000;
+    score += Math.abs(actualKyuko - targetKyuko) * 10000;
 
     // 連続勤務違反
     let consec = 0;
