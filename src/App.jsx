@@ -979,6 +979,43 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
+  // ★公休数超過バリデーション: 目標を1日でも超えている休みを日勤へ強制変換
+  // maxStaff・maxConsec 制約より「公休数の正確さ」を最優先とする
+  {
+    const REST_OVER = new Set(["休み","希望休"]);
+    for (const s of ds) {
+      const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const actualKyuko = Object.values(res[s.id]).filter(v => REST_OVER.has(v)).length;
+      let excess = actualKyuko - targetKyuko;
+      if (excess <= 0) continue;
+      // ロック外の「休み」のみ対象（希望休・有休は固定）
+      // 日勤人数が最少の日から順に変換（配置をなるべく自然に）
+      const excessRestDays = Object.entries(res[s.id])
+        .filter(([d, v]) => v === "休み" && !lockedDays[s.id].has(+d))
+        .map(([d]) => +d)
+        .filter(d => {
+          // 夜勤・明けの翌日だけはハード除外（労働安全上の絶対制約）
+          if (res[s.id][+d - 1] === "明け") return false;
+          if (res[s.id][+d - 1] === "夜勤") return false;
+          return true;
+        })
+        .sort((a, b) => {
+          // 日勤が少ない日を優先して「6人目」の影響を最小化
+          const ca = ds.filter(sx => res[sx.id][a] === "日勤").length;
+          const cb = ds.filter(sx => res[sx.id][b] === "日勤").length;
+          return ca - cb;
+        });
+      // 役職が日勤可能なら日勤、不可なら許可シフトの先頭を使う
+      const fallbackShift = getAllowedTypes(s)[0] || "日勤";
+      for (const d of excessRestDays) {
+        if (excess <= 0) break;
+        const canNikkin = getAllowedTypes(s).includes("日勤");
+        res[s.id][d] = canNikkin ? "日勤" : fallbackShift;
+        excess--;
+      }
+    }
+  }
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
