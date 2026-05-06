@@ -662,7 +662,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   ds.forEach(s => {
     const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-    const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休" || v === "有休").length;
+    const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休").length;
     const restTarget = Math.max(0, totalTarget - kiboCount);
     for (let d = 1; d <= days; d++) {
       if (res[s.id][d]) continue;
@@ -737,7 +737,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
     ds.forEach(s => {
       const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-      const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休" || v === "有休").length;
+      const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休").length;
       const target = Math.max(0, totalTarget - kiboCount);
       {
         const restDays = Object.entries(res[s.id]).filter(([, v]) => v === "休み").map(([d]) => +d).sort((a, b) => a - b);
@@ -922,13 +922,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
           // 公休数が目標より多い場合のみ許可（kyukoDays死守）
           const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-          const actualKyuko = Object.values(res[s.id]).filter(v => v === "休み" || v === "希望休" || v === "有休").length;
+          const actualKyuko = Object.values(res[s.id]).filter(v => v === "休み" || v === "希望休").length;
           return actualKyuko > targetKyuko;
         }).sort((a, b) => {
           const targetA = a.kyukoDaysByMonth?.[mk] ?? a.kyukoDays ?? 8;
           const targetB = b.kyukoDaysByMonth?.[mk] ?? b.kyukoDays ?? 8;
-          const surplusA = Object.values(res[a.id]).filter(v => v === "休み" || v === "希望休" || v === "有休").length - targetA;
-          const surplusB = Object.values(res[b.id]).filter(v => v === "休み" || v === "希望休" || v === "有休").length - targetB;
+          const surplusA = Object.values(res[a.id]).filter(v => v === "休み" || v === "希望休").length - targetA;
+          const surplusB = Object.values(res[b.id]).filter(v => v === "休み" || v === "希望休").length - targetB;
           return surplusB - surplusA; // 余剰が多い人から優先
         });
         for (const s of restCands) {
@@ -945,7 +945,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
   // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
   {
-    const REST_KYU = new Set(["休み","希望休","有休"]);
+    const REST_KYU = new Set(["休み","希望休"]);
     for (const s of ds) {
       const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
       const actualKyuko = Object.values(res[s.id]).filter(v => REST_KYU.has(v)).length;
@@ -997,7 +997,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 function scoreShifts(res, ds, dept, days, year, month) {
   let score = 0;
   const WORK = new Set(["早番","日勤","遅番","夜勤"]);
-  const REST = new Set(["休み","希望休","有休"]);
+  const REST = new Set(["休み","希望休"]); // 有休は賃金支払い対象のため休日カウントから除外
   const maxConsec = dept.maxConsecutive || 5;
   const mk = monthKey(year, month);
   for (const s of ds) {
@@ -1081,7 +1081,7 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
       const yukyudays = s.yukyuByMonth?.[mk] || [];
       const cells = [dept.label, s.name, s.role];
       let workCnt=0, nightCnt=0, restCnt=0;
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const out=v||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); if(WORK_TYPES.has(v)) workCnt++; if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け") restCnt+=HALF_REST_TYPES.has(v)?0.5:1; }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const out=v||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); if(WORK_TYPES.has(v)) workCnt++; if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") restCnt+=HALF_REST_TYPES.has(v)?0.5:1; }
       cells.push(workCnt, nightCnt, restCnt);
       rows.push(cells.map(c=>`"${c}"`).join(","));
     });
@@ -1111,7 +1111,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け") r+=HALF_REST_TYPES.has(v)?0.5:1; html += TAG('td')+(isKibo?'<span style="color:#c44b4b">希</span>':isYukyu2?'<span style="color:#9b4db5">有</span>':(SHIFTS[v]?.short||"－"))+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; html += TAG('td')+(isKibo?'<span style="color:#c44b4b">希</span>':isYukyu2?'<span style="color:#9b4db5">有</span>':(SHIFTS[v]?.short||"－"))+CTAG('td'); }
       html += TAG('td')+w+CTAG('td')+TAG('td')+(n||"－")+CTAG('td')+TAG('td')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
@@ -2044,7 +2044,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             const sShifts=shifts[s.id]||{}, kibodays=s.kiboByMonth?.[mk]||[], yukyudays=s.yukyuByMonth?.[mk]||[];
             const workCnt=Object.values(sShifts).filter(v=>WORK_TYPES.has(v)).length;
             const nightCnt=Object.values(sShifts).filter(v=>v==="夜勤").length;
-            const restCnt=Object.values(sShifts).reduce((acc,v)=>REST_TYPES.has(v)&&v!=="明け"?acc+(HALF_REST_TYPES.has(v)?0.5:1):acc,0);
+            const restCnt=Object.values(sShifts).reduce((acc,v)=>REST_TYPES.has(v)&&v!=="明け"&&v!=="有休"?acc+(HALF_REST_TYPES.has(v)?0.5:1):acc,0);
             const nightOver=s.nightOk&&nightCnt>(s.nightMax||5);
             return (
               <tr key={s.id} style={{background:si%2===0?"#ffffff":"#fafeff"}}>
