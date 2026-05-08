@@ -1530,6 +1530,51 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
 
 const INPUT_STYLE = { width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:7, color:"#1a3635", padding:"8px 10px", fontSize:13, fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
 
+// テンキーポップアップ（勤務比率入力用）
+function NumericKeypad({ value, onConfirm, onClose, anchorRect }) {
+  const [buf, setBuf] = useState(value !== "" && value !== null && value !== undefined ? String(value) : "");
+  const press = (key) => {
+    if (key === "CL") { setBuf(""); return; }
+    if (key === "BS") { setBuf(p => p.slice(0, -1)); return; }
+    if (key === "Enter") {
+      const n = parseInt(buf, 10);
+      onConfirm(buf === "" ? "" : String(Math.min(100, Math.max(0, isNaN(n) ? 0 : n))));
+      return;
+    }
+    setBuf(p => {
+      const next = p + key;
+      const n = parseInt(next, 10);
+      return (!isNaN(n) && n <= 100) ? next : p;
+    });
+  };
+  // アンカー位置に合わせてポップアップ配置
+  const left = anchorRect ? Math.max(8, Math.min(anchorRect.left, window.innerWidth - 220)) : 100;
+  const top  = anchorRect ? Math.min(anchorRect.bottom + 6, window.innerHeight - 260) : 120;
+  const B = (label, onClick, extra={}) => (
+    <button onClick={onClick} style={{width:46,height:42,fontSize:16,fontWeight:700,borderRadius:7,border:"1px solid #90b0d0",background:"#edf3fb",cursor:"pointer",fontFamily:"'Noto Sans JP',sans-serif",...extra}}>{label}</button>
+  );
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:8000}} onMouseDown={e=>{ if(e.target===e.currentTarget)onClose(); }}>
+      <div style={{position:"fixed",top,left,background:"#d8e8f8",border:"2px solid #6080b8",borderRadius:12,padding:10,boxShadow:"0 8px 32px #0006",zIndex:8001}}>
+        <div style={{display:"flex",justifyContent:"flex-end",marginBottom:6}}>
+          <button onClick={onClose} style={{background:"#fff",border:"1px solid #aaa",borderRadius:5,padding:"1px 10px",cursor:"pointer",fontSize:14,fontWeight:700}}>×</button>
+        </div>
+        <div style={{background:"#fff",border:"1px solid #90b0d0",borderRadius:6,padding:"5px 10px",textAlign:"right",fontSize:22,fontWeight:800,marginBottom:8,minWidth:90,color:"#1a3060"}}>
+          {buf||"0"}<span style={{fontSize:13,color:"#888",marginLeft:3}}>%</span>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,46px)",gap:5}}>
+          {B("7",()=>press("7"))} {B("8",()=>press("8"))} {B("9",()=>press("9"))} {B("CL",()=>press("CL"),{color:"#c00",fontWeight:900,background:"#fef0f0"})}
+          {B("4",()=>press("4"))} {B("5",()=>press("5"))} {B("6",()=>press("6"))} {B("←",()=>press("BS"),{color:"#c60",fontSize:18})}
+          {B("1",()=>press("1"))} {B("2",()=>press("2"))} {B("3",()=>press("3"))}
+          <div/>
+          <button onClick={()=>press("0")} style={{gridColumn:"span 2",height:42,fontSize:16,fontWeight:700,borderRadius:7,border:"1px solid #90b0d0",background:"#edf3fb",cursor:"pointer"}}>0</button>
+          <button onClick={()=>press("Enter")} style={{gridColumn:"span 2",height:42,fontSize:14,fontWeight:800,borderRadius:7,border:"1px solid #3a6aaa",background:"#3a6aaa",color:"#fff",cursor:"pointer"}}>Enter</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCountByDay, kiboLimit }) {
   const isNew = !data;
   const mk = monthKey(year, month);
@@ -1554,6 +1599,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const deptDayShiftTypes = (deptObj?.shiftTypes || ["早番","日勤","遅番"]).filter(k => k !== "夜勤" && k !== "明け");
   const currentRatio = form.shiftRatio ?? null;
   const getRatioPct = (k) => currentRatio ? Math.round((currentRatio[k] ?? 0) * 100) : "";
+  const [numpad, setNumpad] = useState(null); // { key, rect }
   const setRatioPct = (k, v) => {
     const base = { ...(currentRatio || {}) };
     if (v === "" || isNaN(+v)) { delete base[k]; } else { base[k] = Math.min(100, Math.max(0, +v)) / 100; }
@@ -1586,12 +1632,16 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             {deptDayShiftTypes.map(k=>(
               <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
                 <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
-                <input type="number" min={0} max={100} step={5} value={getRatioPct(k)} onChange={e=>setRatioPct(k,e.target.value)} placeholder="0" style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0}}/>
+                <div
+                  onClick={e=>setNumpad({key:k,rect:e.currentTarget.getBoundingClientRect()})}
+                  style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",background:numpad?.key===k?"#e0f7f7":"#fff",fontWeight:700,fontSize:14,color:"#1a3635"}}
+                >{getRatioPct(k)||"0"}</div>
                 <span style={{fontSize:11,color:"#92400e"}}>%</span>
               </div>
             ))}
             {currentRatio&&<button onClick={()=>set("shiftRatio",null)} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
           </div>
+          {numpad&&<NumericKeypad value={getRatioPct(numpad.key)} anchorRect={numpad.rect} onConfirm={v=>{setRatioPct(numpad.key,v);setNumpad(null);}} onClose={()=>setNumpad(null)}/>}
         </div>
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
