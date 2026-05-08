@@ -452,8 +452,10 @@ function filterExpiredExceptions(list) {
 function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
   const counts = {}, totals = {}, monthSets = {};
+  const transitions = {}, transitionTotals = {}; // 遷移確率集計: [staffId][prev][curr]
   const now = new Date();
   const nowYM = now.getFullYear() * 12 + now.getMonth();
+  const TRANS_KEYS = new Set(['早番','日勤','遅番','夜勤','明け','休み','希望休']);
   for (const [key, shifts] of Object.entries(allDBData)) {
     if (!key.startsWith('shifts_') || !shifts || typeof shifts !== 'object') continue;
     // キー形式: shifts_YYYY_M_deptId
@@ -467,14 +469,24 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
     // 直近ほど重く: 今月=4, 1ヶ月前=3, 2ヶ月前=2, 3ヶ月以前=1
     const monthsAgo = Math.max(0, nowYM - (keyYear * 12 + keyMonth));
     const weight = Math.max(1, 4 - monthsAgo);
+    const daysInMonth = new Date(keyYear, keyMonthRaw, 0).getDate();
     for (const [staffId, staffShifts] of Object.entries(shifts)) {
       if (!staffShifts || typeof staffShifts !== 'object') continue;
       if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; monthSets[staffId] = new Set(); }
+      if (!transitions[staffId]) { transitions[staffId] = {}; transitionTotals[staffId] = {}; }
       monthSets[staffId].add(`${keyYear}-${keyMonth}`);
       for (const shift of Object.values(staffShifts)) {
         if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
         counts[staffId][shift] = (counts[staffId][shift] || 0) + weight;
         totals[staffId] += weight;
+      }
+      // 日別遷移を集計（前日→当日の遷移確率学習）
+      for (let d = 2; d <= daysInMonth; d++) {
+        const prev = staffShifts[d-1], curr = staffShifts[d];
+        if (!prev || !curr || !TRANS_KEYS.has(prev) || !TRANS_KEYS.has(curr) || curr === '有休') continue;
+        if (!transitions[staffId][prev]) transitions[staffId][prev] = {};
+        transitions[staffId][prev][curr] = (transitions[staffId][prev][curr] || 0) + weight;
+        transitionTotals[staffId][prev] = (transitionTotals[staffId][prev] || 0) + weight;
       }
     }
   }
@@ -483,7 +495,14 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
     if (!counts[staff.id] || totals[staff.id] < 10) continue;
     const freq = {};
     for (const [shift, cnt] of Object.entries(counts[staff.id])) freq[shift] = cnt / totals[staff.id];
-    result[staff.name] = freq;
+    // 遷移確率を正規化して付与
+    const transitionRate = {};
+    for (const [prev, toCounts] of Object.entries(transitions[staff.id] || {})) {
+      const tot = transitionTotals[staff.id][prev] || 1;
+      transitionRate[prev] = {};
+      for (const [curr, cnt] of Object.entries(toCounts)) transitionRate[prev][curr] = cnt / tot;
+    }
+    result[staff.name] = { ...freq, transitionRate };
     monthCounts[staff.name] = monthSets[staff.id].size;
   }
   result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
@@ -511,12 +530,46 @@ function mergeShiftTrends(excelTrend, learnedTrend) {
       const lw = Math.min(0.95, n / (n + 2));
       const merged = {};
       for (const k of new Set([...Object.keys(ex), ...Object.keys(le)])) {
+        // transitionRate(object)・dowRestRate(array)・_workTotal は数値ブレンド対象外
+        if (k === 'transitionRate' || k === 'dowRestRate' || k === '_workTotal') continue;
+        if (typeof (ex[k] ?? le[k]) !== 'number') continue;
         merged[k] = (ex[k] || 0) * (1 - lw) + (le[k] || 0) * lw;
       }
+      // 遷移確率はDB学習データのみ（Excelには含まれない）
+      if (le.transitionRate) merged.transitionRate = le.transitionRate;
+      // dowRestRateはExcel側を優先
+      if (ex.dowRestRate) merged.dowRestRate = ex.dowRestRate;
+      else if (le.dowRestRate) merged.dowRestRate = le.dowRestRate;
       result[name] = merged;
     } else {
       result[name] = ex || le;
     }
+  }
+  return result;
+}
+
+// スワップ成功パターン: 自動生成結果 vs 保存済みシフトのdiffを検出
+function detectSwapChanges(baseline, current, deptStaff, year, month) {
+  const changes = {};
+  for (const s of deptStaff) {
+    const base = baseline[s.id] || {}, curr = current[s.id] || {};
+    const days = getDays(year, month);
+    for (let d = 1; d <= days; d++) {
+      if (base[d] !== undefined && curr[d] !== undefined && base[d] !== curr[d] && curr[d]) {
+        const weekday = new Date(year, month, d).getDay();
+        if (!changes[s.id]) changes[s.id] = {};
+        if (!changes[s.id][weekday]) changes[s.id][weekday] = {};
+        changes[s.id][weekday][curr[d]] = (changes[s.id][weekday][curr[d]] || 0) + 1;
+      }
+    }
+  }
+  return changes;
+}
+function mergeSwapLearning(existing, newChanges) {
+  const result = { ...existing };
+  for (const [wd, shiftCounts] of Object.entries(newChanges)) {
+    if (!result[wd]) result[wd] = {};
+    for (const [shift, cnt] of Object.entries(shiftCounts)) result[wd][shift] = (result[wd][shift] || 0) + cnt;
   }
   return result;
 }
@@ -728,9 +781,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const dayShiftTypes = dayTypes.filter(k => k !== "夜勤");
         const ratioTotal = dayShiftTypes.reduce((sum, k) => sum + (ratio[k] || 0), 0);
         if (ratioTotal > 0) {
+          // 前回達成度フィードバック適用（過不足を50%補正）
+          const corr = s.shiftRatioCorrection || {};
+          const adj = {};
+          dayShiftTypes.forEach(k => { adj[k] = Math.max(0, (ratio[k] || 0) - (corr[k] || 0) * 0.5); });
+          const adjTotal = dayShiftTypes.reduce((sum, k) => sum + adj[k], 0) || ratioTotal;
           let alloc = 0;
           dayShiftTypes.filter(k => k !== "日勤").forEach(k => {
-            const t = Math.round(workDays * (ratio[k] || 0) / ratioTotal);
+            const t = Math.round(workDays * adj[k] / adjTotal);
             targetShiftCounts[s.id][k] = t; alloc += t;
           });
           targetShiftCounts[s.id]["日勤"] = Math.max(0, workDays - alloc);
@@ -743,7 +801,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
 
     // 比率負債（debt）を使ったシフト選択関数
-    const pickWithRatioDebt = (s, available, cnts) => {
+    const pickWithRatioDebt = (s, available, cnts, d) => {
       const trend = getTrend(s);
       const hasRatio = !!getShiftRatioOf(s);
       return [...available].sort((a, b) => {
@@ -762,10 +820,26 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (pA !== pB) return pA - pB;
         // 4. 配置バランス
         if (cnts[a] !== cnts[b]) return cnts[a] - cnts[b];
-        // 5. 学習データ
+        // 5. 遷移確率（前日シフトとの自然なつながりを優先）
+        if (trend?.transitionRate && d >= 2) {
+          const prevShift = res[s.id][d - 1];
+          if (prevShift) {
+            const trA = trend.transitionRate[prevShift]?.[a] ?? 0;
+            const trB = trend.transitionRate[prevShift]?.[b] ?? 0;
+            if (Math.abs(trA - trB) > 0.05) return trB - trA;
+          }
+        }
+        // 6. シフト頻度（学習データ）
         const tA = trend ? (trend[a] || 0) : 0;
         const tB = trend ? (trend[b] || 0) : 0;
         if (Math.abs(tA - tB) > 0.05) return tB - tA;
+        // 7. スワップ学習（過去の手動修正パターン: 多く選ばれたシフトを優先）
+        if (s.swapLearning && d) {
+          const weekday = new Date(year, month, d).getDay();
+          const swA = s.swapLearning[weekday]?.[a] ?? 0;
+          const swB = s.swapLearning[weekday]?.[b] ?? 0;
+          if (swA !== swB) return swB - swA;
+        }
         return Math.random() - 0.5;
       })[0];
     };
@@ -798,7 +872,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (res[s.id][d + 1] === "早番") available = available.filter(k => k !== "遅番" && k !== "日勤");
         if (res[s.id][d + 1] === "日勤") available = available.filter(k => k !== "遅番");
         if (available.length === 0) { res[s.id][d] = "休み"; continue; }
-        const pick = pickWithRatioDebt(s, available, cnts);
+        const pick = pickWithRatioDebt(s, available, cnts, d);
         res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1;
         assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
       }
@@ -1183,6 +1257,25 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
     if (score < bestScore) { bestScore = score; best = { shifts, warnings, score }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
   }
+  // 比率達成フィードバック: 実際の勤務比率 vs 目標比率の乖離を記録（次回補正用）
+  const mk2 = monthKey(year, month);
+  const ratioFeedback = {};
+  const dayShiftTypesForFb = dept.shiftTypes.filter(k => k !== '夜勤');
+  for (const s of ds) {
+    const ratio = s.shiftRatio || s.shiftRatioByMonth?.[mk2] || null;
+    if (!ratio || !best?.shifts[s.id]) continue;
+    const staffShifts = best.shifts[s.id];
+    const workDays = Object.values(staffShifts).filter(v => WORK_TYPES.has(v) && v !== '明け').length;
+    if (workDays === 0) continue;
+    const correction = {};
+    for (const k of dayShiftTypesForFb) {
+      const targetRate = ratio[k] ?? 0;
+      if (targetRate === 0) continue;
+      correction[k] = (Object.values(staffShifts).filter(v => v === k).length / workDays) - targetRate;
+    }
+    if (Object.keys(correction).length > 0) ratioFeedback[s.id] = correction;
+  }
+  if (best) best.ratioFeedback = ratioFeedback;
   return best;
 }
 
@@ -3088,6 +3181,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [allShifts, setAllShifts] = useState(() => {
     try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
   });
+  allShiftsRef.current = allShifts; // 常に最新状態を参照（生成ハンドラ・保存ハンドラ用）
+  staffListRef.current = staffList;
   const [allEvents, setAllEvents] = useState({});
   const [eventEditDay, setEventEditDay] = useState(null);
 
@@ -3099,6 +3194,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const activeDeptIdRef = useRef(activeDeptId);
   useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
   const userEditSeq = useRef(0); // ユーザー編集のたびにインクリメント（Realtime競合検出用）
+  const allShiftsRef = useRef(allShifts); // 常に最新のallShiftsを参照（生成ハンドラ内で利用）
+  const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
+  const lastAutoGenRef = useRef({}); // 最後の自動生成結果（スワップパターン検出用）
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -3354,6 +3452,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         saveFailCountRef.current = 0;
         setSaveStatus("saved");
         console.log("[save] Supabase保存OK:", key);
+        // スワップ成功パターン: 生成後に手動で変更されたシフトを学習
+        const genRef = lastAutoGenRef.current[currentDeptId];
+        if (genRef) {
+          const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
+          const changes = detectSwapChanges(genRef, deptData, deptStaff, year, month);
+          if (Object.keys(changes).length > 0) {
+            setStaffList(prev => prev.map(s => {
+              if (!changes[s.id]) return s;
+              return {...s, swapLearning: mergeSwapLearning(s.swapLearning || {}, changes[s.id])};
+            }));
+          }
+          lastAutoGenRef.current[currentDeptId] = {...deptData}; // 次回比較の基準を更新
+        }
       } catch(e) {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current += 1;
@@ -3545,7 +3656,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
       try {
-        setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings,score}=bestOfN(cs,cd,year,month,cs2,ct,30);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);return{...prevAll,[cd.id]:result};});
+        const cs2 = allShiftsRef.current[cd.id] || {};
+        const {shifts:result, warnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
+        if (Object.keys(warnings).length > 0) setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);
+        lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
+        setAllShifts(prev => ({...prev, [cd.id]: result}));
+        // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
+        if (ratioFeedback && Object.keys(ratioFeedback).length > 0) {
+          setStaffList(prev => prev.map(s => {
+            const fb = ratioFeedback[s.id];
+            if (!fb) return s;
+            return {...s, shiftRatioCorrection: fb};
+          }));
+        }
         setSaveStatus("unsaved");
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
