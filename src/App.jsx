@@ -3546,6 +3546,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
   const isMobile = (window.innerWidth || document.documentElement.clientWidth) < 900;
   const [tableZoom, setTableZoom] = useState(() => { try { return Number(localStorage.getItem("shiftTableZoom")) || 100; } catch { return 100; } });
+  const [zoomNumpadRect, setZoomNumpadRect] = useState(null); // テンキーポップアップ用
   const handleZoomChange = useCallback((v) => { const min=isMobile?30:40; const c=Math.min(100,Math.max(min,Math.round(v/5)*5)); setTableZoom(c); try{localStorage.setItem("shiftTableZoom",c);}catch{} }, [isMobile]);
   const autoFitZoom = useCallback((staffCount, days) => { const vw=window.innerWidth-(isMobile?8:24); const tableEstWidth=148+30*days+116; const min=isMobile?30:40; return Math.min(100,Math.max(min,Math.round(Math.floor(vw/tableEstWidth*100)/5)*5)); }, [isMobile]);
   const autoFitApplied = useRef(false);
@@ -3895,10 +3896,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
           {innerTab==="shift"&&(
             <div style={{display:"flex",alignItems:"center",gap:4}}>
-              <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#ffffff",color:tableZoom<=30?"#8ecece":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-              <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{width:72,accentColor:"#2BBFBA",cursor:"pointer"}}/>
-              <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#ffffff",color:tableZoom>=100?"#8ecece":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
-              <span style={{fontSize:11,fontWeight:700,color:"#2BBFBA",minWidth:34,textAlign:"right"}}>{tableZoom}%</span>
+              <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:26,height:26,borderRadius:"50%",border:"2px solid #90cbc8",background:"#ffffff",color:tableZoom<=30?"#c0e4e2":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:16,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>−</button>
+              <div onClick={e=>setZoomNumpadRect(e.currentTarget.getBoundingClientRect())} style={{minWidth:52,height:26,border:"1px solid #90cbc8",borderRadius:6,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",gap:2,fontWeight:800,fontSize:13,color:"#1a6a67",userSelect:"none"}}>
+                {tableZoom}<span style={{fontSize:10,color:"#6ab5b2",fontWeight:600}}>%</span>
+              </div>
+              <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:26,height:26,borderRadius:"50%",border:"2px solid #90cbc8",background:"#ffffff",color:tableZoom>=100?"#c0e4e2":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:16,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>＋</button>
               <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#ffffff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
               <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#ffffff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
             </div>
@@ -3909,10 +3911,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* スマホ用ズームコントロール行 */}
       {isMobile&&innerTab==="shift"&&(
         <div style={{background:"#eaf8f6",borderBottom:"2px solid #2BBFBA",display:"flex",alignItems:"center",gap:4,padding:"4px 8px"}}>
-          <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:24,height:24,borderRadius:4,border:"1px solid #90cbc8",background:"#fff",color:tableZoom<=30?"#8ecece":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-          <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{flex:1,accentColor:"#2BBFBA",cursor:"pointer"}}/>
-          <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:24,height:24,borderRadius:4,border:"1px solid #90cbc8",background:"#fff",color:tableZoom>=100?"#8ecece":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
-          <span style={{fontSize:11,fontWeight:700,color:"#2BBFBA",minWidth:34,textAlign:"right"}}>{tableZoom}%</span>
+          <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:30,height:30,borderRadius:"50%",border:"2px solid #90cbc8",background:"#fff",color:tableZoom<=30?"#c0e4e2":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:18,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>−</button>
+          <div onClick={e=>setZoomNumpadRect(e.currentTarget.getBoundingClientRect())} style={{flex:1,maxWidth:72,height:30,border:"1px solid #90cbc8",borderRadius:6,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",gap:2,fontWeight:800,fontSize:15,color:"#1a6a67",userSelect:"none"}}>
+            {tableZoom}<span style={{fontSize:10,color:"#6ab5b2",fontWeight:600}}>%</span>
+          </div>
+          <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:30,height:30,borderRadius:"50%",border:"2px solid #90cbc8",background:"#fff",color:tableZoom>=100?"#c0e4e2":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:18,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>＋</button>
           <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
           <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#fff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
           {profile?.plan==='full'
@@ -3921,6 +3924,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         </div>
       )}
+
+      {/* ズームテンキーポップアップ */}
+      {zoomNumpadRect&&<NumericKeypad value={tableZoom} anchorRect={zoomNumpadRect} onConfirm={v=>{handleZoomChange(+v);setZoomNumpadRect(null);}} onClose={()=>setZoomNumpadRect(null)}/>}
 
       {/* CONTENT */}
       <div style={{padding:"10px 8px",minHeight:"calc(100vh - 180px)"}}>
