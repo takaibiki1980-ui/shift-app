@@ -1530,7 +1530,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
 
 const INPUT_STYLE = { width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:7, color:"#1a3635", padding:"8px 10px", fontSize:13, fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
 
-// テンキーポップアップ（勤務比率入力用）
+// テンキーポップアップ（写真参考: 上向き三角矢印で入力欄と接続するポップオーバー型）
 function NumericKeypad({ value, onConfirm, onClose, anchorRect }) {
   const [buf, setBuf] = useState(value !== "" && value !== null && value !== undefined ? String(value) : "");
   const press = (key) => {
@@ -1547,28 +1547,78 @@ function NumericKeypad({ value, onConfirm, onClose, anchorRect }) {
       return (!isNaN(n) && n <= 100) ? next : p;
     });
   };
-  // アンカー位置に合わせてポップアップ配置
-  const left = anchorRect ? Math.max(8, Math.min(anchorRect.left, window.innerWidth - 220)) : 100;
-  const top  = anchorRect ? Math.min(anchorRect.bottom + 6, window.innerHeight - 260) : 120;
-  const B = (label, onClick, extra={}) => (
-    <button onClick={onClick} style={{width:46,height:42,fontSize:16,fontWeight:700,borderRadius:7,border:"1px solid #90b0d0",background:"#edf3fb",cursor:"pointer",fontFamily:"'Noto Sans JP',sans-serif",...extra}}>{label}</button>
+  // ポップアップ位置: アンカー要素の直下に中央揃え
+  const PW = 216;
+  const anchorCx = anchorRect ? anchorRect.left + anchorRect.width / 2 : window.innerWidth / 2;
+  let left = Math.max(8, Math.min(anchorCx - PW / 2, window.innerWidth - PW - 8));
+  const topBelow = anchorRect ? anchorRect.bottom + 10 : 120;
+  const top = Math.min(topBelow, window.innerHeight - 290);
+  // 三角矢印の水平位置（ポップアップ左端からの距離）
+  const arrowX = Math.max(16, Math.min(anchorCx - left, PW - 16));
+  // ボタン共通スタイル
+  const B = (label, onClick, ex = {}) => (
+    <button onClick={onClick} style={{
+      height: 50, fontSize: 19, fontWeight: 700, borderRadius: 8,
+      border: "1px solid #b8cce0", background: "rgba(255,255,255,0.92)",
+      cursor: "pointer", fontFamily: "'Noto Sans JP',sans-serif",
+      boxShadow: "0 2px 4px rgba(0,0,0,0.12)", display: "flex",
+      alignItems: "center", justifyContent: "center",
+      ...ex
+    }}>{label}</button>
   );
   return (
-    <div style={{position:"fixed",inset:0,zIndex:8000}} onMouseDown={e=>{ if(e.target===e.currentTarget)onClose(); }}>
-      <div style={{position:"fixed",top,left,background:"#d8e8f8",border:"2px solid #6080b8",borderRadius:12,padding:10,boxShadow:"0 8px 32px #0006",zIndex:8001}}>
-        <div style={{display:"flex",justifyContent:"flex-end",marginBottom:6}}>
-          <button onClick={onClose} style={{background:"#fff",border:"1px solid #aaa",borderRadius:5,padding:"1px 10px",cursor:"pointer",fontSize:14,fontWeight:700}}>×</button>
+    <div style={{position:"fixed",inset:0,zIndex:8000}}
+      onMouseDown={e=>{ if(e.target===e.currentTarget)onClose(); }}
+      onTouchStart={e=>{ if(e.target===e.currentTarget)onClose(); }}>
+      <div style={{position:"fixed", top, left, width: PW, zIndex:8001,
+        background: "rgba(200,218,240,0.97)", border: "1.5px solid #6888b8",
+        borderRadius: 12, padding: "8px 10px 12px",
+        boxShadow: "0 8px 28px rgba(0,0,0,0.28)"}}>
+        {/* 上向き三角矢印（入力欄へのポインタ） */}
+        <div style={{position:"absolute", top:-11, left: arrowX-10,
+          width:0, height:0, borderLeft:"10px solid transparent",
+          borderRight:"10px solid transparent", borderBottom:"11px solid #6888b8"}}/>
+        <div style={{position:"absolute", top:-9, left: arrowX-9,
+          width:0, height:0, borderLeft:"9px solid transparent",
+          borderRight:"9px solid transparent", borderBottom:"10px solid rgba(200,218,240,0.97)"}}/>
+        {/* ヘッダー */}
+        <div style={{display:"flex", justifyContent:"flex-end", marginBottom:7}}>
+          <button onClick={onClose} style={{
+            background:"rgba(255,255,255,0.8)", border:"1px solid #aabbd0",
+            borderRadius:6, padding:"2px 12px", cursor:"pointer",
+            fontSize:14, fontWeight:700, color:"#334"
+          }}>×</button>
         </div>
-        <div style={{background:"#fff",border:"1px solid #90b0d0",borderRadius:6,padding:"5px 10px",textAlign:"right",fontSize:22,fontWeight:800,marginBottom:8,minWidth:90,color:"#1a3060"}}>
-          {buf||"0"}<span style={{fontSize:13,color:"#888",marginLeft:3}}>%</span>
+        {/* 数値表示欄 */}
+        <div style={{
+          background:"#fff", border:"1.5px solid #88aad0",
+          borderRadius:7, padding:"5px 12px", textAlign:"right",
+          fontSize:22, fontWeight:800, marginBottom:8,
+          color:"#1a3060", letterSpacing:1
+        }}>
+          {buf||"0"}<span style={{fontSize:12,color:"#88a",marginLeft:4,fontWeight:400}}>%</span>
         </div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,46px)",gap:5}}>
-          {B("7",()=>press("7"))} {B("8",()=>press("8"))} {B("9",()=>press("9"))} {B("CL",()=>press("CL"),{color:"#c00",fontWeight:900,background:"#fef0f0"})}
-          {B("4",()=>press("4"))} {B("5",()=>press("5"))} {B("6",()=>press("6"))} {B("←",()=>press("BS"),{color:"#c60",fontSize:18})}
+        {/* キーパッド: 4列 */}
+        <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:5}}>
+          {B("7",()=>press("7"))} {B("8",()=>press("8"))} {B("9",()=>press("9"))}
+          {B("CL",()=>press("CL"),{color:"#cc0000",fontWeight:900,background:"rgba(255,235,235,0.95)"})}
+          {B("4",()=>press("4"))} {B("5",()=>press("5"))} {B("6",()=>press("6"))}
+          {B("←",()=>press("BS"),{fontSize:22,color:"#cc5500"})}
           {B("1",()=>press("1"))} {B("2",()=>press("2"))} {B("3",()=>press("3"))}
-          <div/>
-          <button onClick={()=>press("0")} style={{gridColumn:"span 2",height:42,fontSize:16,fontWeight:700,borderRadius:7,border:"1px solid #90b0d0",background:"#edf3fb",cursor:"pointer"}}>0</button>
-          <button onClick={()=>press("Enter")} style={{gridColumn:"span 2",height:42,fontSize:14,fontWeight:800,borderRadius:7,border:"1px solid #3a6aaa",background:"#3a6aaa",color:"#fff",cursor:"pointer"}}>Enter</button>
+          {B("－",()=>{},{color:"#bbb",cursor:"default",boxShadow:"none",background:"rgba(240,244,248,0.7)"})}
+          <button onClick={()=>press("0")} style={{
+            gridColumn:"span 1", height:50, fontSize:19, fontWeight:700,
+            borderRadius:8, border:"1px solid #b8cce0",
+            background:"rgba(255,255,255,0.92)", cursor:"pointer",
+            boxShadow:"0 2px 4px rgba(0,0,0,0.12)"
+          }}>0</button>
+          {B("・",()=>{},{color:"#bbb",cursor:"default",boxShadow:"none",background:"rgba(240,244,248,0.7)"})}
+          <button onClick={()=>press("Enter")} style={{
+            gridColumn:"span 2", height:50, fontSize:15, fontWeight:800,
+            borderRadius:8, border:"1px solid #3a6aaa",
+            background:"linear-gradient(135deg,#4a7cc8,#2a5aaa)", color:"#fff",
+            cursor:"pointer", boxShadow:"0 2px 6px rgba(42,90,170,0.4)"
+          }}>Enter</button>
         </div>
       </div>
     </div>
