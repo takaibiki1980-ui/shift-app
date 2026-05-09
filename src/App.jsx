@@ -1531,20 +1531,20 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
 const INPUT_STYLE = { width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:7, color:"#1a3635", padding:"8px 10px", fontSize:13, fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
 
 // テンキーポップアップ（写真参考: 上向き三角矢印で入力欄と接続するポップオーバー型）
-function NumericKeypad({ value, onConfirm, onClose, anchorRect }) {
+function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 100, unit = "%" }) {
   const [buf, setBuf] = useState(value !== "" && value !== null && value !== undefined ? String(value) : "");
   const press = (key) => {
     if (key === "CL") { setBuf(""); return; }
     if (key === "BS") { setBuf(p => p.slice(0, -1)); return; }
     if (key === "Enter") {
       const n = parseInt(buf, 10);
-      onConfirm(buf === "" ? "" : String(Math.min(100, Math.max(0, isNaN(n) ? 0 : n))));
+      onConfirm(buf === "" ? "" : String(Math.min(max, Math.max(min, isNaN(n) ? min : n))));
       return;
     }
     setBuf(p => {
       const next = p + key;
       const n = parseInt(next, 10);
-      return (!isNaN(n) && n <= 100) ? next : p;
+      return (!isNaN(n) && n <= max) ? next : p;
     });
   };
   // ポップアップ位置: アンカー要素の直下に中央揃え
@@ -1596,7 +1596,7 @@ function NumericKeypad({ value, onConfirm, onClose, anchorRect }) {
           fontSize:22, fontWeight:800, marginBottom:8,
           color:"#1a3060", letterSpacing:1
         }}>
-          {buf||"0"}<span style={{fontSize:12,color:"#88a",marginLeft:4,fontWeight:400}}>%</span>
+          {buf||"0"}{unit&&<span style={{fontSize:12,color:"#88a",marginLeft:4,fontWeight:400}}>{unit}</span>}
         </div>
         {/* キーパッド: 4列 */}
         <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:5}}>
@@ -1650,6 +1650,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const currentRatio = form.shiftRatio ?? null;
   const getRatioPct = (k) => currentRatio ? Math.round((currentRatio[k] ?? 0) * 100) : "";
   const [numpad, setNumpad] = useState(null); // { key, rect }
+  const [kp, setKp] = useState(null);
   const setRatioPct = (k, v) => {
     const base = { ...(currentRatio || {}) };
     if (v === "" || isNaN(+v)) { delete base[k]; } else { base[k] = Math.min(100, Math.max(0, +v)) / 100; }
@@ -1666,13 +1667,13 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
         <div style={{marginBottom:12}}><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>氏名</div><input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={INPUT_STYLE} placeholder="例：田中 花子"/></div>
         <div style={{marginBottom:12}}><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>役職</div><select value={form.role} onChange={e=>set("role",e.target.value)} style={INPUT_STYLE}>{deptRoles.map(r=><option key={r}>{r}</option>)}</select></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-          <div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>目標勤務日数</div><input type="number" value={form.targetWork} min={1} max={31} onChange={e=>set("targetWork",+e.target.value)} style={INPUT_STYLE}/></div>
-          <div><div style={{color:"#2BBFBA",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><input type="number" value={kyukoThisMonth} min={0} max={20} onChange={e=>setKyukoThisMonth(e.target.value)} style={{...INPUT_STYLE,color:"#2BBFBA",fontWeight:800}}/></div>
+          <div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>目標勤務日数</div><div onClick={e=>setKp({value:form.targetWork,min:1,max:31,unit:"日",onConfirm:v=>set("targetWork",v===""?1:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.targetWork}</div></div>
+          <div><div style={{color:"#2BBFBA",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#2BBFBA",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>
         </div>
         {["kaigo1","kaigo2"].includes(deptId)&&(
           <div style={{marginBottom:14}}>
             <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:10}}><input type="checkbox" checked={!!form.nightOk} onChange={e=>set("nightOk",e.target.checked)} style={{width:15,height:15,accentColor:"#2BBFBA"}}/><span style={{color:"#6ab5b2",fontSize:13}}>夜勤対応可</span></label>
-            {form.nightOk&&<div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div><input type="number" value={form.nightMax} min={0} max={15} onChange={e=>set("nightMax",+e.target.value)} style={{...INPUT_STYLE,width:80}}/></div>}
+            {form.nightOk&&<div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div><div onClick={e=>setKp({value:form.nightMax,min:0,max:15,unit:"回",onConfirm:v=>set("nightMax",v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:80,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.nightMax}</div></div>}
           </div>
         )}
         <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
@@ -1692,6 +1693,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             {currentRatio&&<button onClick={()=>set("shiftRatio",null)} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
           </div>
           {numpad&&<NumericKeypad value={getRatioPct(numpad.key)} anchorRect={numpad.rect} onConfirm={v=>{setRatioPct(numpad.key,v);setNumpad(null);}} onClose={()=>setNumpad(null)}/>}
+          {kp&&<NumericKeypad value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
         </div>
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
@@ -1718,6 +1720,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); return next; }); };
   const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types&&types.length>0&&types.length<shiftTypes.length)cleanRST[role]=types;}); onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined}); };
   const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
+  const [kp, setKp] = useState(null);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
@@ -1728,12 +1731,12 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         <input style={{...INPUT_STYLE,marginBottom:14}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="例：介護部 3階"/>
         <label style={LS}>シフト種別</label>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>{SHIFT_TYPE_OPTIONS.map(k=>{const s=SHIFTS[k],checked=shiftTypes.includes(k);return <button key={k} onClick={()=>toggleShiftType(k)} style={{background:checked?s.bg:"#d5edeb",border:`1px solid ${checked?s.border:"#b8deda"}`,borderRadius:8,padding:"7px 14px",cursor:"pointer",color:checked?s.color:"#2a5a57",fontSize:13,fontWeight:checked?700:400,display:"flex",alignItems:"center",gap:6}}><span>{checked?"✅":"○"}</span>{k}</button>;})}</div>
-        {shiftTypes.length>0&&<div style={{background:"#d5edeb",border:"1px solid #0e3a38",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#3a8a87",marginBottom:8}}>最低配置人数 <span style={{fontSize:10,color:"#5a9e9b",fontWeight:400}}>（この人数を下回ると警告）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700}}>{k}</span><input type="number" min={0} max={20} value={minStaff[k]||0} onChange={e=>setMinStaff(p=>({...p,[k]:+e.target.value}))} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:11,color:"#2a5a57"}}>名</span></div>)}</div></div>}
-        {shiftTypes.length>0&&<div style={{background:"#fff3e0",border:"1px solid #e0a000",borderRadius:8,padding:"10px 12px",marginBottom:14}}><div style={{fontSize:11,color:"#b45309",marginBottom:8}}>最大配置人数 <span style={{fontSize:10,color:"#a06010",fontWeight:400}}>（自動生成でこの人数を超えない・99=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700}}>{k}</span><input type="number" min={1} max={99} value={maxStaff[k]!=null?maxStaff[k]:(k==="日勤"?99:1)} onChange={e=>setMaxStaff(p=>({...p,[k]:+e.target.value}))} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:11,color:"#92400e"}}>名</span></div>)}</div></div>}
+        {shiftTypes.length>0&&<div style={{background:"#d5edeb",border:"1px solid #0e3a38",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#3a8a87",marginBottom:8}}>最低配置人数 <span style={{fontSize:10,color:"#5a9e9b",fontWeight:400}}>（この人数を下回ると警告）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:minStaff[k]||0,min:0,max:20,unit:"名",onConfirm:v=>setMinStaff(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{minStaff[k]||0}</div><span style={{fontSize:11,color:"#2a5a57"}}>名</span></div>)}</div></div>}
+        {shiftTypes.length>0&&<div style={{background:"#fff3e0",border:"1px solid #e0a000",borderRadius:8,padding:"10px 12px",marginBottom:14}}><div style={{fontSize:11,color:"#b45309",marginBottom:8}}>最大配置人数 <span style={{fontSize:10,color:"#a06010",fontWeight:400}}>（自動生成でこの人数を超えない・99=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:maxStaff[k]!=null?maxStaff[k]:(k==="日勤"?99:1),min:1,max:99,unit:"名",onConfirm:v=>setMaxStaff(p=>({...p,[k]:v===""?1:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{maxStaff[k]!=null?maxStaff[k]:(k==="日勤"?99:1)}</div><span style={{fontSize:11,color:"#92400e"}}>名</span></div>)}</div></div>}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-          <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={3} max={7} value={maxConsec} onChange={e=>setMaxConsec(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
-          <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={4} max={15} value={defKyuko} onChange={e=>setDefKyuko(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
-          <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><input type="number" min={1} max={10} value={kiboLimit} onChange={e=>setKiboLimit(+e.target.value)} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0}}/><span style={{fontSize:12,color:"#2a5a57"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
+          <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:maxConsec,min:3,max:7,unit:"日",onConfirm:v=>setMaxConsec(v===""?5:Math.max(3,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{maxConsec}</div><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
+          <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:defKyuko,min:4,max:15,unit:"日",onConfirm:v=>setDefKyuko(v===""?8:Math.max(4,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{defKyuko}</div><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
+          <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:kiboLimit,min:1,max:10,unit:"名",onConfirm:v=>setKiboLimit(v===""?3:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{kiboLimit}</div><span style={{fontSize:12,color:"#2a5a57"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
         </div>
         <label style={LS}>役職一覧（1行に1つ）</label>
         <textarea value={rolesText} onChange={e=>setRolesText(e.target.value)} rows={4} placeholder={"介護福祉士\n介護職員\n介護補助"} style={{...INPUT_STYLE,resize:"vertical",lineHeight:1.7,marginBottom:14}}/>
@@ -1794,6 +1797,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           <button onClick={onClose} style={{background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:9,padding:"12px 16px",cursor:"pointer",fontSize:13}}>キャンセル</button>
         </div>
       </div>
+      {kp&&<NumericKeypad value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
     </div>
   );
 }
@@ -1960,6 +1964,7 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   const initDays = () => { const first = staffList[0]; return first ? (first.kyukoDaysByMonth?.[mk] ?? first.kyukoDays ?? 8) : 8; };
   const [days, setDays] = useState(initDays);
   const setVal = (v) => setDays(Math.max(0, Math.min(20, +v || 0)));
+  const [kp, setKp] = useState(null);
   const totalStaff = staffList.length;
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
@@ -1969,13 +1974,14 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:28,background:"#d5edeb",borderRadius:12,padding:"18px 20px",border:"1px solid #90cbc8"}}>
           <button onClick={()=>setVal(days-1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
           <div style={{textAlign:"center"}}>
-            <input type="number" value={days} min={0} max={20} onChange={e=>setVal(e.target.value)} style={{width:72,background:"#f0fffe",border:"2px solid #2BBFBA",borderRadius:8,color:"#2BBFBA",fontSize:28,fontWeight:900,textAlign:"center",padding:"6px 0",outline:"none"}}/>
+            <div onClick={e=>setKp({value:days,min:0,max:20,unit:"日",onConfirm:v=>setVal(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{width:72,background:"#f0fffe",border:"2px solid #2BBFBA",borderRadius:8,color:"#2BBFBA",fontSize:28,fontWeight:900,textAlign:"center",padding:"6px 0",cursor:"pointer",userSelect:"none",display:"flex",alignItems:"center",justifyContent:"center",minHeight:48}}>{days}</div>
             <div style={{fontSize:12,color:"#2a5a57",marginTop:4,fontWeight:700}}>日 / 月</div>
           </div>
           <button onClick={()=>setVal(days+1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
         </div>
         <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(days,mk)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
       </div>
+      {kp&&<NumericKeypad value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
     </div>
   );
 }
