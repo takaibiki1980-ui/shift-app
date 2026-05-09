@@ -3281,7 +3281,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [allShifts, setAllShifts] = useState(() => {
     try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
   });
-  allShiftsRef.current = allShifts; // 常に最新状態を参照（生成ハンドラ・保存ハンドラ用）
+  // refs を宣言してから即代入（レンダーごとに最新値を反映）
+  const allShiftsRef = useRef(allShifts);
+  const staffListRef = useRef(staffList);
+  allShiftsRef.current = allShifts;
   staffListRef.current = staffList;
   const [allEvents, setAllEvents] = useState({});
   const [eventEditDay, setEventEditDay] = useState(null);
@@ -3294,8 +3297,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const activeDeptIdRef = useRef(activeDeptId);
   useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
   const userEditSeq = useRef(0); // ユーザー編集のたびにインクリメント（Realtime競合検出用）
-  const allShiftsRef = useRef(allShifts); // 常に最新のallShiftsを参照（生成ハンドラ内で利用）
-  const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
   const lastAutoGenRef = useRef({}); // 最後の自動生成結果（スワップパターン検出用）
 
   // ── 初回: Supabase から全データを一括ロード ──
