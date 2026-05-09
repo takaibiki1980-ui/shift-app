@@ -452,8 +452,10 @@ function filterExpiredExceptions(list) {
 function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
   const counts = {}, totals = {}, monthSets = {};
+  const transitions = {}, transitionTotals = {}; // 遷移確率集計: [staffId][prev][curr]
   const now = new Date();
   const nowYM = now.getFullYear() * 12 + now.getMonth();
+  const TRANS_KEYS = new Set(['早番','日勤','遅番','夜勤','明け','休み','希望休']);
   for (const [key, shifts] of Object.entries(allDBData)) {
     if (!key.startsWith('shifts_') || !shifts || typeof shifts !== 'object') continue;
     // キー形式: shifts_YYYY_M_deptId
@@ -467,14 +469,24 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
     // 直近ほど重く: 今月=4, 1ヶ月前=3, 2ヶ月前=2, 3ヶ月以前=1
     const monthsAgo = Math.max(0, nowYM - (keyYear * 12 + keyMonth));
     const weight = Math.max(1, 4 - monthsAgo);
+    const daysInMonth = new Date(keyYear, keyMonthRaw, 0).getDate();
     for (const [staffId, staffShifts] of Object.entries(shifts)) {
       if (!staffShifts || typeof staffShifts !== 'object') continue;
       if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; monthSets[staffId] = new Set(); }
+      if (!transitions[staffId]) { transitions[staffId] = {}; transitionTotals[staffId] = {}; }
       monthSets[staffId].add(`${keyYear}-${keyMonth}`);
       for (const shift of Object.values(staffShifts)) {
         if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
         counts[staffId][shift] = (counts[staffId][shift] || 0) + weight;
         totals[staffId] += weight;
+      }
+      // 日別遷移を集計（前日→当日の遷移確率学習）
+      for (let d = 2; d <= daysInMonth; d++) {
+        const prev = staffShifts[d-1], curr = staffShifts[d];
+        if (!prev || !curr || !TRANS_KEYS.has(prev) || !TRANS_KEYS.has(curr) || curr === '有休') continue;
+        if (!transitions[staffId][prev]) transitions[staffId][prev] = {};
+        transitions[staffId][prev][curr] = (transitions[staffId][prev][curr] || 0) + weight;
+        transitionTotals[staffId][prev] = (transitionTotals[staffId][prev] || 0) + weight;
       }
     }
   }
@@ -483,7 +495,14 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
     if (!counts[staff.id] || totals[staff.id] < 10) continue;
     const freq = {};
     for (const [shift, cnt] of Object.entries(counts[staff.id])) freq[shift] = cnt / totals[staff.id];
-    result[staff.name] = freq;
+    // 遷移確率を正規化して付与
+    const transitionRate = {};
+    for (const [prev, toCounts] of Object.entries(transitions[staff.id] || {})) {
+      const tot = transitionTotals[staff.id][prev] || 1;
+      transitionRate[prev] = {};
+      for (const [curr, cnt] of Object.entries(toCounts)) transitionRate[prev][curr] = cnt / tot;
+    }
+    result[staff.name] = { ...freq, transitionRate };
     monthCounts[staff.name] = monthSets[staff.id].size;
   }
   result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
@@ -511,12 +530,46 @@ function mergeShiftTrends(excelTrend, learnedTrend) {
       const lw = Math.min(0.95, n / (n + 2));
       const merged = {};
       for (const k of new Set([...Object.keys(ex), ...Object.keys(le)])) {
+        // transitionRate(object)・dowRestRate(array)・_workTotal は数値ブレンド対象外
+        if (k === 'transitionRate' || k === 'dowRestRate' || k === '_workTotal') continue;
+        if (typeof (ex[k] ?? le[k]) !== 'number') continue;
         merged[k] = (ex[k] || 0) * (1 - lw) + (le[k] || 0) * lw;
       }
+      // 遷移確率はDB学習データのみ（Excelには含まれない）
+      if (le.transitionRate) merged.transitionRate = le.transitionRate;
+      // dowRestRateはExcel側を優先
+      if (ex.dowRestRate) merged.dowRestRate = ex.dowRestRate;
+      else if (le.dowRestRate) merged.dowRestRate = le.dowRestRate;
       result[name] = merged;
     } else {
       result[name] = ex || le;
     }
+  }
+  return result;
+}
+
+// スワップ成功パターン: 自動生成結果 vs 保存済みシフトのdiffを検出
+function detectSwapChanges(baseline, current, deptStaff, year, month) {
+  const changes = {};
+  for (const s of deptStaff) {
+    const base = baseline[s.id] || {}, curr = current[s.id] || {};
+    const days = getDays(year, month);
+    for (let d = 1; d <= days; d++) {
+      if (base[d] !== undefined && curr[d] !== undefined && base[d] !== curr[d] && curr[d]) {
+        const weekday = new Date(year, month, d).getDay();
+        if (!changes[s.id]) changes[s.id] = {};
+        if (!changes[s.id][weekday]) changes[s.id][weekday] = {};
+        changes[s.id][weekday][curr[d]] = (changes[s.id][weekday][curr[d]] || 0) + 1;
+      }
+    }
+  }
+  return changes;
+}
+function mergeSwapLearning(existing, newChanges) {
+  const result = { ...existing };
+  for (const [wd, shiftCounts] of Object.entries(newChanges)) {
+    if (!result[wd]) result[wd] = {};
+    for (const [shift, cnt] of Object.entries(shiftCounts)) result[wd][shift] = (result[wd][shift] || 0) + cnt;
   }
   return result;
 }
@@ -728,9 +781,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const dayShiftTypes = dayTypes.filter(k => k !== "夜勤");
         const ratioTotal = dayShiftTypes.reduce((sum, k) => sum + (ratio[k] || 0), 0);
         if (ratioTotal > 0) {
+          // 前回達成度フィードバック適用（過不足を50%補正）
+          const corr = s.shiftRatioCorrection || {};
+          const adj = {};
+          dayShiftTypes.forEach(k => { adj[k] = Math.max(0, (ratio[k] || 0) - (corr[k] || 0) * 0.5); });
+          const adjTotal = dayShiftTypes.reduce((sum, k) => sum + adj[k], 0) || ratioTotal;
           let alloc = 0;
           dayShiftTypes.filter(k => k !== "日勤").forEach(k => {
-            const t = Math.round(workDays * (ratio[k] || 0) / ratioTotal);
+            const t = Math.round(workDays * adj[k] / adjTotal);
             targetShiftCounts[s.id][k] = t; alloc += t;
           });
           targetShiftCounts[s.id]["日勤"] = Math.max(0, workDays - alloc);
@@ -743,7 +801,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
 
     // 比率負債（debt）を使ったシフト選択関数
-    const pickWithRatioDebt = (s, available, cnts) => {
+    const pickWithRatioDebt = (s, available, cnts, d) => {
       const trend = getTrend(s);
       const hasRatio = !!getShiftRatioOf(s);
       return [...available].sort((a, b) => {
@@ -762,10 +820,26 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (pA !== pB) return pA - pB;
         // 4. 配置バランス
         if (cnts[a] !== cnts[b]) return cnts[a] - cnts[b];
-        // 5. 学習データ
+        // 5. 遷移確率（前日シフトとの自然なつながりを優先）
+        if (trend?.transitionRate && d >= 2) {
+          const prevShift = res[s.id][d - 1];
+          if (prevShift) {
+            const trA = trend.transitionRate[prevShift]?.[a] ?? 0;
+            const trB = trend.transitionRate[prevShift]?.[b] ?? 0;
+            if (Math.abs(trA - trB) > 0.05) return trB - trA;
+          }
+        }
+        // 6. シフト頻度（学習データ）
         const tA = trend ? (trend[a] || 0) : 0;
         const tB = trend ? (trend[b] || 0) : 0;
         if (Math.abs(tA - tB) > 0.05) return tB - tA;
+        // 7. スワップ学習（過去の手動修正パターン: 多く選ばれたシフトを優先）
+        if (s.swapLearning && d) {
+          const weekday = new Date(year, month, d).getDay();
+          const swA = s.swapLearning[weekday]?.[a] ?? 0;
+          const swB = s.swapLearning[weekday]?.[b] ?? 0;
+          if (swA !== swB) return swB - swA;
+        }
         return Math.random() - 0.5;
       })[0];
     };
@@ -798,7 +872,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (res[s.id][d + 1] === "早番") available = available.filter(k => k !== "遅番" && k !== "日勤");
         if (res[s.id][d + 1] === "日勤") available = available.filter(k => k !== "遅番");
         if (available.length === 0) { res[s.id][d] = "休み"; continue; }
-        const pick = pickWithRatioDebt(s, available, cnts);
+        const pick = pickWithRatioDebt(s, available, cnts, d);
         res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1;
         assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
       }
@@ -1183,6 +1257,25 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
     if (score < bestScore) { bestScore = score; best = { shifts, warnings, score }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
   }
+  // 比率達成フィードバック: 実際の勤務比率 vs 目標比率の乖離を記録（次回補正用）
+  const mk2 = monthKey(year, month);
+  const ratioFeedback = {};
+  const dayShiftTypesForFb = dept.shiftTypes.filter(k => k !== '夜勤');
+  for (const s of ds) {
+    const ratio = s.shiftRatio || s.shiftRatioByMonth?.[mk2] || null;
+    if (!ratio || !best?.shifts[s.id]) continue;
+    const staffShifts = best.shifts[s.id];
+    const workDays = Object.values(staffShifts).filter(v => WORK_TYPES.has(v) && v !== '明け').length;
+    if (workDays === 0) continue;
+    const correction = {};
+    for (const k of dayShiftTypesForFb) {
+      const targetRate = ratio[k] ?? 0;
+      if (targetRate === 0) continue;
+      correction[k] = (Object.values(staffShifts).filter(v => v === k).length / workDays) - targetRate;
+    }
+    if (Object.keys(correction).length > 0) ratioFeedback[s.id] = correction;
+  }
+  if (best) best.ratioFeedback = ratioFeedback;
   return best;
 }
 
@@ -1437,6 +1530,101 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
 
 const INPUT_STYLE = { width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:7, color:"#1a3635", padding:"8px 10px", fontSize:13, fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
 
+// テンキーポップアップ（写真参考: 上向き三角矢印で入力欄と接続するポップオーバー型）
+function NumericKeypad({ value, onConfirm, onClose, anchorRect }) {
+  const [buf, setBuf] = useState(value !== "" && value !== null && value !== undefined ? String(value) : "");
+  const press = (key) => {
+    if (key === "CL") { setBuf(""); return; }
+    if (key === "BS") { setBuf(p => p.slice(0, -1)); return; }
+    if (key === "Enter") {
+      const n = parseInt(buf, 10);
+      onConfirm(buf === "" ? "" : String(Math.min(100, Math.max(0, isNaN(n) ? 0 : n))));
+      return;
+    }
+    setBuf(p => {
+      const next = p + key;
+      const n = parseInt(next, 10);
+      return (!isNaN(n) && n <= 100) ? next : p;
+    });
+  };
+  // ポップアップ位置: アンカー要素の直下に中央揃え
+  const PW = 216;
+  const anchorCx = anchorRect ? anchorRect.left + anchorRect.width / 2 : window.innerWidth / 2;
+  let left = Math.max(8, Math.min(anchorCx - PW / 2, window.innerWidth - PW - 8));
+  const topBelow = anchorRect ? anchorRect.bottom + 10 : 120;
+  const top = Math.min(topBelow, window.innerHeight - 290);
+  // 三角矢印の水平位置（ポップアップ左端からの距離）
+  const arrowX = Math.max(16, Math.min(anchorCx - left, PW - 16));
+  // ボタン共通スタイル
+  const B = (label, onClick, ex = {}) => (
+    <button onClick={onClick} style={{
+      height: 50, fontSize: 19, fontWeight: 700, borderRadius: 8,
+      border: "1px solid #b8cce0", background: "rgba(255,255,255,0.92)",
+      cursor: "pointer", fontFamily: "'Noto Sans JP',sans-serif",
+      boxShadow: "0 2px 4px rgba(0,0,0,0.12)", display: "flex",
+      alignItems: "center", justifyContent: "center",
+      ...ex
+    }}>{label}</button>
+  );
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:8000}}
+      onMouseDown={e=>{ if(e.target===e.currentTarget)onClose(); }}
+      onTouchStart={e=>{ if(e.target===e.currentTarget)onClose(); }}>
+      <div style={{position:"fixed", top, left, width: PW, zIndex:8001,
+        background: "rgba(200,218,240,0.97)", border: "1.5px solid #6888b8",
+        borderRadius: 12, padding: "8px 10px 12px",
+        boxShadow: "0 8px 28px rgba(0,0,0,0.28)"}}>
+        {/* 上向き三角矢印（入力欄へのポインタ） */}
+        <div style={{position:"absolute", top:-11, left: arrowX-10,
+          width:0, height:0, borderLeft:"10px solid transparent",
+          borderRight:"10px solid transparent", borderBottom:"11px solid #6888b8"}}/>
+        <div style={{position:"absolute", top:-9, left: arrowX-9,
+          width:0, height:0, borderLeft:"9px solid transparent",
+          borderRight:"9px solid transparent", borderBottom:"10px solid rgba(200,218,240,0.97)"}}/>
+        {/* ヘッダー */}
+        <div style={{display:"flex", justifyContent:"flex-end", marginBottom:7}}>
+          <button onClick={onClose} style={{
+            background:"rgba(255,255,255,0.8)", border:"1px solid #aabbd0",
+            borderRadius:6, padding:"2px 12px", cursor:"pointer",
+            fontSize:14, fontWeight:700, color:"#334"
+          }}>×</button>
+        </div>
+        {/* 数値表示欄 */}
+        <div style={{
+          background:"#fff", border:"1.5px solid #88aad0",
+          borderRadius:7, padding:"5px 12px", textAlign:"right",
+          fontSize:22, fontWeight:800, marginBottom:8,
+          color:"#1a3060", letterSpacing:1
+        }}>
+          {buf||"0"}<span style={{fontSize:12,color:"#88a",marginLeft:4,fontWeight:400}}>%</span>
+        </div>
+        {/* キーパッド: 4列 */}
+        <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:5}}>
+          {B("7",()=>press("7"))} {B("8",()=>press("8"))} {B("9",()=>press("9"))}
+          {B("CL",()=>press("CL"),{color:"#cc0000",fontWeight:900,background:"rgba(255,235,235,0.95)"})}
+          {B("4",()=>press("4"))} {B("5",()=>press("5"))} {B("6",()=>press("6"))}
+          {B("←",()=>press("BS"),{fontSize:22,color:"#cc5500"})}
+          {B("1",()=>press("1"))} {B("2",()=>press("2"))} {B("3",()=>press("3"))}
+          {B("－",()=>{},{color:"#bbb",cursor:"default",boxShadow:"none",background:"rgba(240,244,248,0.7)"})}
+          <button onClick={()=>press("0")} style={{
+            gridColumn:"span 1", height:50, fontSize:19, fontWeight:700,
+            borderRadius:8, border:"1px solid #b8cce0",
+            background:"rgba(255,255,255,0.92)", cursor:"pointer",
+            boxShadow:"0 2px 4px rgba(0,0,0,0.12)"
+          }}>0</button>
+          {B("・",()=>{},{color:"#bbb",cursor:"default",boxShadow:"none",background:"rgba(240,244,248,0.7)"})}
+          <button onClick={()=>press("Enter")} style={{
+            gridColumn:"span 2", height:50, fontSize:15, fontWeight:800,
+            borderRadius:8, border:"1px solid #3a6aaa",
+            background:"linear-gradient(135deg,#4a7cc8,#2a5aaa)", color:"#fff",
+            cursor:"pointer", boxShadow:"0 2px 6px rgba(42,90,170,0.4)"
+          }}>Enter</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCountByDay, kiboLimit }) {
   const isNew = !data;
   const mk = monthKey(year, month);
@@ -1461,6 +1649,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const deptDayShiftTypes = (deptObj?.shiftTypes || ["早番","日勤","遅番"]).filter(k => k !== "夜勤" && k !== "明け");
   const currentRatio = form.shiftRatio ?? null;
   const getRatioPct = (k) => currentRatio ? Math.round((currentRatio[k] ?? 0) * 100) : "";
+  const [numpad, setNumpad] = useState(null); // { key, rect }
   const setRatioPct = (k, v) => {
     const base = { ...(currentRatio || {}) };
     if (v === "" || isNaN(+v)) { delete base[k]; } else { base[k] = Math.min(100, Math.max(0, +v)) / 100; }
@@ -1493,12 +1682,16 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             {deptDayShiftTypes.map(k=>(
               <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
                 <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
-                <input type="number" min={0} max={100} step={5} value={getRatioPct(k)} onChange={e=>setRatioPct(k,e.target.value)} placeholder="0" style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0}}/>
+                <div
+                  onClick={e=>setNumpad({key:k,rect:e.currentTarget.getBoundingClientRect()})}
+                  style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",background:numpad?.key===k?"#e0f7f7":"#fff",fontWeight:700,fontSize:14,color:"#1a3635"}}
+                >{getRatioPct(k)||"0"}</div>
                 <span style={{fontSize:11,color:"#92400e"}}>%</span>
               </div>
             ))}
             {currentRatio&&<button onClick={()=>set("shiftRatio",null)} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
           </div>
+          {numpad&&<NumericKeypad value={getRatioPct(numpad.key)} anchorRect={numpad.rect} onConfirm={v=>{setRatioPct(numpad.key,v);setNumpad(null);}} onClose={()=>setNumpad(null)}/>}
         </div>
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
@@ -3088,6 +3281,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [allShifts, setAllShifts] = useState(() => {
     try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
   });
+  allShiftsRef.current = allShifts; // 常に最新状態を参照（生成ハンドラ・保存ハンドラ用）
+  staffListRef.current = staffList;
   const [allEvents, setAllEvents] = useState({});
   const [eventEditDay, setEventEditDay] = useState(null);
 
@@ -3099,6 +3294,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const activeDeptIdRef = useRef(activeDeptId);
   useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
   const userEditSeq = useRef(0); // ユーザー編集のたびにインクリメント（Realtime競合検出用）
+  const allShiftsRef = useRef(allShifts); // 常に最新のallShiftsを参照（生成ハンドラ内で利用）
+  const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
+  const lastAutoGenRef = useRef({}); // 最後の自動生成結果（スワップパターン検出用）
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -3354,6 +3552,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         saveFailCountRef.current = 0;
         setSaveStatus("saved");
         console.log("[save] Supabase保存OK:", key);
+        // スワップ成功パターン: 生成後に手動で変更されたシフトを学習
+        const genRef = lastAutoGenRef.current[currentDeptId];
+        if (genRef) {
+          const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
+          const changes = detectSwapChanges(genRef, deptData, deptStaff, year, month);
+          if (Object.keys(changes).length > 0) {
+            setStaffList(prev => prev.map(s => {
+              if (!changes[s.id]) return s;
+              return {...s, swapLearning: mergeSwapLearning(s.swapLearning || {}, changes[s.id])};
+            }));
+          }
+          lastAutoGenRef.current[currentDeptId] = {...deptData}; // 次回比較の基準を更新
+        }
       } catch(e) {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current += 1;
@@ -3385,6 +3596,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
   const isMobile = (window.innerWidth || document.documentElement.clientWidth) < 900;
   const [tableZoom, setTableZoom] = useState(() => { try { return Number(localStorage.getItem("shiftTableZoom")) || 100; } catch { return 100; } });
+  const [zoomNumpadRect, setZoomNumpadRect] = useState(null); // テンキーポップアップ用
   const handleZoomChange = useCallback((v) => { const min=isMobile?30:40; const c=Math.min(100,Math.max(min,Math.round(v/5)*5)); setTableZoom(c); try{localStorage.setItem("shiftTableZoom",c);}catch{} }, [isMobile]);
   const autoFitZoom = useCallback((staffCount, days) => { const vw=window.innerWidth-(isMobile?8:24); const tableEstWidth=148+30*days+116; const min=isMobile?30:40; return Math.min(100,Math.max(min,Math.round(Math.floor(vw/tableEstWidth*100)/5)*5)); }, [isMobile]);
   const autoFitApplied = useRef(false);
@@ -3545,7 +3757,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
       try {
-        setAllShifts(prevAll=>{const cs2=prevAll[cd.id]||{};const{shifts:result,warnings,score}=bestOfN(cs,cd,year,month,cs2,ct,30);if(Object.keys(warnings).length>0)setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);return{...prevAll,[cd.id]:result};});
+        const cs2 = allShiftsRef.current[cd.id] || {};
+        const {shifts:result, warnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
+        if (Object.keys(warnings).length > 0) setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);
+        lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
+        setAllShifts(prev => ({...prev, [cd.id]: result}));
+        // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
+        if (ratioFeedback && Object.keys(ratioFeedback).length > 0) {
+          setStaffList(prev => prev.map(s => {
+            const fb = ratioFeedback[s.id];
+            if (!fb) return s;
+            return {...s, shiftRatioCorrection: fb};
+          }));
+        }
         setSaveStatus("unsaved");
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
@@ -3722,10 +3946,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
           {innerTab==="shift"&&(
             <div style={{display:"flex",alignItems:"center",gap:4}}>
-              <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#ffffff",color:tableZoom<=30?"#8ecece":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-              <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{width:72,accentColor:"#2BBFBA",cursor:"pointer"}}/>
-              <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:22,height:22,borderRadius:4,border:"1px solid #90cbc8",background:"#ffffff",color:tableZoom>=100?"#8ecece":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
-              <span style={{fontSize:11,fontWeight:700,color:"#2BBFBA",minWidth:34,textAlign:"right"}}>{tableZoom}%</span>
+              <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:26,height:26,borderRadius:"50%",border:"2px solid #90cbc8",background:"#ffffff",color:tableZoom<=30?"#c0e4e2":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:16,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>−</button>
+              <div onClick={e=>setZoomNumpadRect(e.currentTarget.getBoundingClientRect())} style={{minWidth:52,height:26,border:"1px solid #90cbc8",borderRadius:6,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",gap:2,fontWeight:800,fontSize:13,color:"#1a6a67",userSelect:"none"}}>
+                {tableZoom}<span style={{fontSize:10,color:"#6ab5b2",fontWeight:600}}>%</span>
+              </div>
+              <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:26,height:26,borderRadius:"50%",border:"2px solid #90cbc8",background:"#ffffff",color:tableZoom>=100?"#c0e4e2":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:16,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>＋</button>
               <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#ffffff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
               <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#ffffff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
             </div>
@@ -3736,10 +3961,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* スマホ用ズームコントロール行 */}
       {isMobile&&innerTab==="shift"&&(
         <div style={{background:"#eaf8f6",borderBottom:"2px solid #2BBFBA",display:"flex",alignItems:"center",gap:4,padding:"4px 8px"}}>
-          <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:24,height:24,borderRadius:4,border:"1px solid #90cbc8",background:"#fff",color:tableZoom<=30?"#8ecece":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
-          <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{flex:1,accentColor:"#2BBFBA",cursor:"pointer"}}/>
-          <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:24,height:24,borderRadius:4,border:"1px solid #90cbc8",background:"#fff",color:tableZoom>=100?"#8ecece":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:14,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
-          <span style={{fontSize:11,fontWeight:700,color:"#2BBFBA",minWidth:34,textAlign:"right"}}>{tableZoom}%</span>
+          <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:30,height:30,borderRadius:"50%",border:"2px solid #90cbc8",background:"#fff",color:tableZoom<=30?"#c0e4e2":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:18,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>−</button>
+          <div onClick={e=>setZoomNumpadRect(e.currentTarget.getBoundingClientRect())} style={{flex:1,maxWidth:72,height:30,border:"1px solid #90cbc8",borderRadius:6,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",gap:2,fontWeight:800,fontSize:15,color:"#1a6a67",userSelect:"none"}}>
+            {tableZoom}<span style={{fontSize:10,color:"#6ab5b2",fontWeight:600}}>%</span>
+          </div>
+          <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:30,height:30,borderRadius:"50%",border:"2px solid #90cbc8",background:"#fff",color:tableZoom>=100?"#c0e4e2":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:18,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>＋</button>
           <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
           <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#fff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
           {profile?.plan==='full'
@@ -3748,6 +3974,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         </div>
       )}
+
+      {/* ズームテンキーポップアップ */}
+      {zoomNumpadRect&&<NumericKeypad value={tableZoom} anchorRect={zoomNumpadRect} onConfirm={v=>{handleZoomChange(+v);setZoomNumpadRect(null);}} onClose={()=>setZoomNumpadRect(null)}/>}
 
       {/* CONTENT */}
       <div style={{padding:"10px 8px",minHeight:"calc(100vh - 180px)"}}>
