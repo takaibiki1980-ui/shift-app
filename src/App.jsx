@@ -3175,7 +3175,7 @@ function buildJissekiCSV(staffList, allJisseki, allShifts, year, month, deptId) 
     }
     rows.push([s.name, `${year}/${String(month+1).padStart(2,"0")} 合計`, "", "", "", "", "", "", fmtH(total), ""]);
   }
-  return rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  return "﻿" + rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
 }
 
 // ─────────────────────────────────────────────
