@@ -3181,8 +3181,8 @@ async function buildJissekiXLSX(staffList, allJisseki, allShifts, year, month, d
   const blueBorder = {style:"medium", color:{rgb:"4472C4"}};
   const greenBorder = {style:"medium", color:{rgb:"70AD47"}};
   const hStyle = { fill:{fgColor:{rgb:"D9E1F2"}}, font:{bold:true,sz:10}, border:{top:grayBorder,bottom:blueBorder,left:grayBorder,right:grayBorder}, alignment:{horizontal:"center"} };
-  const dStyle = { font:{sz:10}, border:{top:grayBorder,bottom:grayBorder,left:grayBorder,right:grayBorder} };
-  const tStyle = { fill:{fgColor:{rgb:"E2EFDA"}}, font:{bold:true,sz:10}, border:{top:grayBorder,bottom:greenBorder,left:grayBorder,right:grayBorder} };
+  const dStyle = { font:{sz:10}, border:{top:grayBorder,bottom:grayBorder,left:grayBorder,right:grayBorder}, alignment:{horizontal:"center"} };
+  const tStyle = { fill:{fgColor:{rgb:"E2EFDA"}}, font:{bold:true,sz:10}, border:{top:grayBorder,bottom:greenBorder,left:grayBorder,right:grayBorder}, alignment:{horizontal:"center"} };
   const range = XLSX.utils.decode_range(ws["!ref"]);
   for (let r = range.s.r; r <= range.e.r; r++) {
     for (let c = range.s.c; c <= range.e.c; c++) {
