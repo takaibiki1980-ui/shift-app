@@ -3154,15 +3154,11 @@ function fmtH(mins) {
   const h = Math.floor(mins / 60), m = mins % 60;
   return `${h}:${String(m).padStart(2, "0")}`;
 }
-function buildJissekiXLS(staffList, allJisseki, allShifts, year, month, deptId) {
+async function buildJissekiXLSX(staffList, allJisseki, allShifts, year, month, deptId) {
+  const XLSX = await import("xlsx");
   const days = getDays(year, month);
   const deptStaff = staffList.filter(s => s.dept === deptId);
-  const esc = v => String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  const HS = "border:1px solid #4472C4;padding:4px 8px;background:#D9E1F2;font-weight:bold;text-align:center;white-space:nowrap;font-size:10pt";
-  const DS = "border:1px solid #BBBBBB;padding:3px 7px;white-space:nowrap;font-size:10pt";
-  const TS = "border:1px solid #70AD47;padding:3px 7px;background:#E2EFDA;font-weight:bold;white-space:nowrap;font-size:10pt";
-  const heads = ["スタッフ名","日付","曜日","予定シフト","実績シフト","出勤時刻","退勤時刻","休憩(分)","実労働時間","備考"];
-  let rows = `<tr>${heads.map(h=>`<th style="${HS}">${esc(h)}</th>`).join("")}</tr>\n`;
+  const aoa = [["スタッフ名","日付","曜日","予定シフト","実績シフト","出勤時刻","退勤時刻","休憩(分)","実労働時間","備考"]];
   for (const s of deptStaff) {
     for (let d = 1; d <= days; d++) {
       const planned = allShifts[deptId]?.[s.id]?.[d] || "";
@@ -3171,19 +3167,18 @@ function buildJissekiXLS(staffList, allJisseki, allShifts, year, month, deptId) 
       const dow = ["日","月","火","水","木","金","土"][new Date(year, month, d).getDay()];
       const dateStr = `${year}/${String(month+1).padStart(2,"0")}/${String(d).padStart(2,"0")}`;
       const mins = rec ? calcWorkMinutes(rec.start, rec.end, rec.breakMin) : 0;
-      const vals = [s.name, dateStr, dow, planned, rec?.actualShift||planned, rec?.start||"", rec?.end||"", String(rec?.breakMin??0), rec?fmtH(mins):"", rec?.note||""];
-      rows += `<tr>${vals.map(v=>`<td style="${DS}">${esc(v)}</td>`).join("")}</tr>\n`;
+      aoa.push([s.name, dateStr, dow, planned, rec?.actualShift||planned, rec?.start||"", rec?.end||"", rec?.breakMin??0, rec?fmtH(mins):"", rec?.note||""]);
     }
     let total = 0;
     for (let d = 1; d <= days; d++) { const r = allJisseki[deptId]?.[s.id]?.[d]; if (r) total += calcWorkMinutes(r.start, r.end, r.breakMin); }
-    const tv = [s.name,`${year}/${String(month+1).padStart(2,"0")} 合計`,"","","","","","",fmtH(total),""];
-    rows += `<tr>${tv.map(v=>`<td style="${TS}">${esc(v)}</td>`).join("")}</tr>\n`;
+    aoa.push([s.name, `${year}/${String(month+1).padStart(2,"0")} 合計`, "", "", "", "", "", "", fmtH(total), ""]);
   }
-  return "﻿" + `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="UTF-8"><!--[if gte mso 9]><xml>
-<x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>実績</x:Name></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook>
-</xml><![endif]--></head>
-<body><table style="border-collapse:collapse;font-family:'Meiryo','MS PGothic',sans-serif">${rows}</table></body></html>`;
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{wch:14},{wch:12},{wch:5},{wch:10},{wch:10},{wch:10},{wch:10},{wch:8},{wch:10},{wch:18}];
+  ws["!freeze"] = {xSplit:0, ySplit:1};
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "実績");
+  return XLSX.write(wb, {bookType:"xlsx", type:"array"});
 }
 
 function buildJissekiCSV(staffList, allJisseki, allShifts, year, month, deptId) {
@@ -4234,7 +4229,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
-        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onXlsExport={()=>{const xls=buildJissekiXLS(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(xls,`実績_${year}年${month+1}月_${dept?.label||''}.xls`,"application/vnd.ms-excel;charset=utf-8");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
+        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
