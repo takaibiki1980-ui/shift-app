@@ -3154,6 +3154,48 @@ function fmtH(mins) {
   const h = Math.floor(mins / 60), m = mins % 60;
   return `${h}:${String(m).padStart(2, "0")}`;
 }
+function buildJissekiXLS(staffList, allJisseki, allShifts, year, month, deptId) {
+  const days = getDays(year, month);
+  const deptStaff = staffList.filter(s => s.dept === deptId);
+  const esc = v => String(v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const C = (v, s) => `<Cell ss:StyleID="${s}"><Data ss:Type="String">${esc(v)}</Data></Cell>`;
+  const N = (v, s) => `<Cell ss:StyleID="${s}"><Data ss:Type="Number">${v}</Data></Cell>`;
+  const dataRows = [];
+  for (const s of deptStaff) {
+    for (let d = 1; d <= days; d++) {
+      const planned = allShifts[deptId]?.[s.id]?.[d] || "";
+      const rec = allJisseki[deptId]?.[s.id]?.[d];
+      if (!planned && !rec) continue;
+      const dow = ["日","月","火","水","木","金","土"][new Date(year, month, d).getDay()];
+      const dateStr = `${year}/${String(month+1).padStart(2,"0")}/${String(d).padStart(2,"0")}`;
+      const mins = rec ? calcWorkMinutes(rec.start, rec.end, rec.breakMin) : 0;
+      dataRows.push(`<Row>${C(s.name,"D")}${C(dateStr,"Dt")}${C(dow,"Dc")}${C(planned,"D")}${C(rec?.actualShift||planned,"D")}${C(rec?.start||"","Dc")}${C(rec?.end||"","Dc")}${N(rec?.breakMin??0,"Dc")}${C(rec?fmtH(mins):"","Dc")}${C(rec?.note||"","D")}</Row>`);
+    }
+    let total = 0;
+    for (let d = 1; d <= days; d++) { const r = allJisseki[deptId]?.[s.id]?.[d]; if (r) total += calcWorkMinutes(r.start, r.end, r.breakMin); }
+    dataRows.push(`<Row>${C(s.name,"T")}${C(`${year}/${String(month+1).padStart(2,"0")} 合計`,"T")}${C("","T")}${C("","T")}${C("","T")}${C("","T")}${C("","T")}${C("","T")}${C(fmtH(total),"T")}${C("","T")}</Row>`);
+  }
+  const border = (w,c) => `<Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="${w}" ss:Color="${c}"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BBBBBB"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BBBBBB"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BBBBBB"/>`;
+  return `﻿<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Styles>
+<Style ss:ID="H"><Alignment ss:Horizontal="Center"/><Font ss:Bold="1" ss:Size="10"/><Interior ss:Color="#D9E1F2" ss:Pattern="Solid"/><Borders>${border(2,"#4472C4")}</Borders></Style>
+<Style ss:ID="D"><Font ss:Size="10"/><Borders>${border(1,"#BBBBBB")}</Borders></Style>
+<Style ss:ID="Dt"><Font ss:Size="10"/><NumberFormat ss:Format="@"/><Borders>${border(1,"#BBBBBB")}</Borders></Style>
+<Style ss:ID="Dc"><Font ss:Size="10"/><Alignment ss:Horizontal="Center"/><NumberFormat ss:Format="@"/><Borders>${border(1,"#BBBBBB")}</Borders></Style>
+<Style ss:ID="T"><Font ss:Bold="1" ss:Size="10"/><Interior ss:Color="#E2EFDA" ss:Pattern="Solid"/><Borders>${border(2,"#70AD47")}</Borders></Style>
+</Styles>
+<Worksheet ss:Name="${esc(`実績_${year}年${month+1}月`)}">
+<Table>
+<Column ss:Width="80"/><Column ss:Width="78"/><Column ss:Width="35"/><Column ss:Width="62"/><Column ss:Width="62"/><Column ss:Width="62"/><Column ss:Width="62"/><Column ss:Width="55"/><Column ss:Width="68"/><Column ss:Width="100"/>
+<Row>${["スタッフ名","日付","曜日","予定シフト","実績シフト","出勤時刻","退勤時刻","休憩(分)","実労働時間","備考"].map(h=>C(h,"H")).join("")}</Row>
+${dataRows.join("\n")}
+</Table>
+</Worksheet>
+</Workbook>`;
+}
+
 function buildJissekiCSV(staffList, allJisseki, allShifts, year, month, deptId) {
   const days = getDays(year, month);
   const deptStaff = staffList.filter(s => s.dept === deptId);
@@ -3167,12 +3209,8 @@ function buildJissekiCSV(staffList, allJisseki, allShifts, year, month, deptId) 
       const mins = rec ? calcWorkMinutes(rec.start, rec.end, rec.breakMin) : 0;
       rows.push([s.name, `${year}/${String(month+1).padStart(2,"0")}/${String(d).padStart(2,"0")}`, dow, planned, rec?.actualShift||planned, rec?.start||"", rec?.end||"", rec?.breakMin??0, rec?fmtH(mins):"", rec?.note||""]);
     }
-    // 月合計行
     let total = 0;
-    for (let d = 1; d <= days; d++) {
-      const rec = allJisseki[deptId]?.[s.id]?.[d];
-      if (rec) total += calcWorkMinutes(rec.start, rec.end, rec.breakMin);
-    }
+    for (let d = 1; d <= days; d++) { const rec = allJisseki[deptId]?.[s.id]?.[d]; if (rec) total += calcWorkMinutes(rec.start, rec.end, rec.breakMin); }
     rows.push([s.name, `${year}/${String(month+1).padStart(2,"0")} 合計`, "", "", "", "", "", "", fmtH(total), ""]);
   }
   return "﻿" + rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
@@ -3246,7 +3284,7 @@ function JissekiInputModal({ staffName, day, year, month, plannedShift, record, 
 // ─────────────────────────────────────────────
 //  勤務実績: 一覧・集計ビュー
 // ─────────────────────────────────────────────
-function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCellClick, onCsvExport }) {
+function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCellClick, onCsvExport, onXlsExport }) {
   const deptId = dept?.id;
   const days = getDays(year, month);
   const deptStaff = staffList.filter(s => s.dept === deptId);
@@ -3266,7 +3304,10 @@ function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCe
           <span style={{fontWeight:700,color:"#1a9e9a"}}>{recordCount}件</span> の実績 ／ 合計
           <span style={{fontWeight:700,color:"#1a9e9a",marginLeft:4}}>{fmtH(grandTotal)}</span>
         </div>
-        <button onClick={onCsvExport} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📥 CSV出力</button>
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={onXlsExport} style={{background:"linear-gradient(135deg,#217346,#2ecc71)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📊 Excel出力</button>
+          <button onClick={onCsvExport} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📥 CSV出力</button>
+        </div>
       </div>
       <div style={{fontSize:11,color:"#5a9e9b",marginBottom:10,background:"#e0f4f2",borderRadius:7,padding:"6px 10px"}}>💡 セルをクリックして実績（出退勤時刻）を入力できます</div>
       <div style={{overflowX:"auto",borderRadius:8,border:"1px solid #b8deda"}}>
@@ -4203,7 +4244,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
-        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
+        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onXlsExport={()=>{const xls=buildJissekiXLS(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(xls,`実績_${year}年${month+1}月_${dept?.label||''}.xls`,"application/vnd.ms-excel;charset=utf-8");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
