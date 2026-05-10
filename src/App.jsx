@@ -3157,10 +3157,12 @@ function fmtH(mins) {
 function buildJissekiXLS(staffList, allJisseki, allShifts, year, month, deptId) {
   const days = getDays(year, month);
   const deptStaff = staffList.filter(s => s.dept === deptId);
-  const esc = v => String(v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  const C = (v, s) => `<Cell ss:StyleID="${s}"><Data ss:Type="String">${esc(v)}</Data></Cell>`;
-  const N = (v, s) => `<Cell ss:StyleID="${s}"><Data ss:Type="Number">${v}</Data></Cell>`;
-  const dataRows = [];
+  const esc = v => String(v==null?"":v).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const HS = "border:1px solid #4472C4;padding:4px 8px;background:#D9E1F2;font-weight:bold;text-align:center;white-space:nowrap;font-size:10pt";
+  const DS = "border:1px solid #BBBBBB;padding:3px 7px;white-space:nowrap;font-size:10pt";
+  const TS = "border:1px solid #70AD47;padding:3px 7px;background:#E2EFDA;font-weight:bold;white-space:nowrap;font-size:10pt";
+  const heads = ["スタッフ名","日付","曜日","予定シフト","実績シフト","出勤時刻","退勤時刻","休憩(分)","実労働時間","備考"];
+  let rows = `<tr>${heads.map(h=>`<th style="${HS}">${esc(h)}</th>`).join("")}</tr>\n`;
   for (const s of deptStaff) {
     for (let d = 1; d <= days; d++) {
       const planned = allShifts[deptId]?.[s.id]?.[d] || "";
@@ -3169,31 +3171,19 @@ function buildJissekiXLS(staffList, allJisseki, allShifts, year, month, deptId) 
       const dow = ["日","月","火","水","木","金","土"][new Date(year, month, d).getDay()];
       const dateStr = `${year}/${String(month+1).padStart(2,"0")}/${String(d).padStart(2,"0")}`;
       const mins = rec ? calcWorkMinutes(rec.start, rec.end, rec.breakMin) : 0;
-      dataRows.push(`<Row>${C(s.name,"D")}${C(dateStr,"Dt")}${C(dow,"Dc")}${C(planned,"D")}${C(rec?.actualShift||planned,"D")}${C(rec?.start||"","Dc")}${C(rec?.end||"","Dc")}${N(rec?.breakMin??0,"Dc")}${C(rec?fmtH(mins):"","Dc")}${C(rec?.note||"","D")}</Row>`);
+      const vals = [s.name, dateStr, dow, planned, rec?.actualShift||planned, rec?.start||"", rec?.end||"", String(rec?.breakMin??0), rec?fmtH(mins):"", rec?.note||""];
+      rows += `<tr>${vals.map(v=>`<td style="${DS}">${esc(v)}</td>`).join("")}</tr>\n`;
     }
     let total = 0;
     for (let d = 1; d <= days; d++) { const r = allJisseki[deptId]?.[s.id]?.[d]; if (r) total += calcWorkMinutes(r.start, r.end, r.breakMin); }
-    dataRows.push(`<Row>${C(s.name,"T")}${C(`${year}/${String(month+1).padStart(2,"0")} 合計`,"T")}${C("","T")}${C("","T")}${C("","T")}${C("","T")}${C("","T")}${C("","T")}${C(fmtH(total),"T")}${C("","T")}</Row>`);
+    const tv = [s.name,`${year}/${String(month+1).padStart(2,"0")} 合計`,"","","","","","",fmtH(total),""];
+    rows += `<tr>${tv.map(v=>`<td style="${TS}">${esc(v)}</td>`).join("")}</tr>\n`;
   }
-  const border = (w,c) => `<Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="${w}" ss:Color="${c}"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BBBBBB"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BBBBBB"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BBBBBB"/>`;
-  return `﻿<?xml version="1.0" encoding="UTF-8"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-<Styles>
-<Style ss:ID="H"><Alignment ss:Horizontal="Center"/><Font ss:Bold="1" ss:Size="10"/><Interior ss:Color="#D9E1F2" ss:Pattern="Solid"/><Borders>${border(2,"#4472C4")}</Borders></Style>
-<Style ss:ID="D"><Font ss:Size="10"/><Borders>${border(1,"#BBBBBB")}</Borders></Style>
-<Style ss:ID="Dt"><Font ss:Size="10"/><NumberFormat ss:Format="@"/><Borders>${border(1,"#BBBBBB")}</Borders></Style>
-<Style ss:ID="Dc"><Font ss:Size="10"/><Alignment ss:Horizontal="Center"/><NumberFormat ss:Format="@"/><Borders>${border(1,"#BBBBBB")}</Borders></Style>
-<Style ss:ID="T"><Font ss:Bold="1" ss:Size="10"/><Interior ss:Color="#E2EFDA" ss:Pattern="Solid"/><Borders>${border(2,"#70AD47")}</Borders></Style>
-</Styles>
-<Worksheet ss:Name="${esc(`実績_${year}年${month+1}月`)}">
-<Table>
-<Column ss:Width="80"/><Column ss:Width="78"/><Column ss:Width="35"/><Column ss:Width="62"/><Column ss:Width="62"/><Column ss:Width="62"/><Column ss:Width="62"/><Column ss:Width="55"/><Column ss:Width="68"/><Column ss:Width="100"/>
-<Row>${["スタッフ名","日付","曜日","予定シフト","実績シフト","出勤時刻","退勤時刻","休憩(分)","実労働時間","備考"].map(h=>C(h,"H")).join("")}</Row>
-${dataRows.join("\n")}
-</Table>
-</Worksheet>
-</Workbook>`;
+  return "﻿" + `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="UTF-8"><!--[if gte mso 9]><xml>
+<x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>実績</x:Name></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook>
+</xml><![endif]--></head>
+<body><table style="border-collapse:collapse;font-family:'Meiryo','MS PGothic',sans-serif">${rows}</table></body></html>`;
 }
 
 function buildJissekiCSV(staffList, allJisseki, allShifts, year, month, deptId) {
