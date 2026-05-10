@@ -3155,10 +3155,11 @@ function fmtH(mins) {
   return `${h}:${String(m).padStart(2, "0")}`;
 }
 async function buildJissekiXLSX(staffList, allJisseki, allShifts, year, month, deptId) {
-  const XLSX = await import("xlsx");
+  const XLSX = await import("xlsx-js-style");
   const days = getDays(year, month);
   const deptStaff = staffList.filter(s => s.dept === deptId);
   const aoa = [["スタッフ名","日付","曜日","予定シフト","実績シフト","出勤時刻","退勤時刻","休憩(分)","実労働時間","備考"]];
+  const totalRowIdxs = [];
   for (const s of deptStaff) {
     for (let d = 1; d <= days; d++) {
       const planned = allShifts[deptId]?.[s.id]?.[d] || "";
@@ -3171,9 +3172,25 @@ async function buildJissekiXLSX(staffList, allJisseki, allShifts, year, month, d
     }
     let total = 0;
     for (let d = 1; d <= days; d++) { const r = allJisseki[deptId]?.[s.id]?.[d]; if (r) total += calcWorkMinutes(r.start, r.end, r.breakMin); }
+    totalRowIdxs.push(aoa.length);
     aoa.push([s.name, `${year}/${String(month+1).padStart(2,"0")} 合計`, "", "", "", "", "", "", fmtH(total), ""]);
   }
   const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // スタイル定義
+  const grayBorder = {style:"thin", color:{rgb:"BBBBBB"}};
+  const blueBorder = {style:"medium", color:{rgb:"4472C4"}};
+  const greenBorder = {style:"medium", color:{rgb:"70AD47"}};
+  const hStyle = { fill:{fgColor:{rgb:"D9E1F2"}}, font:{bold:true,sz:10}, border:{top:grayBorder,bottom:blueBorder,left:grayBorder,right:grayBorder}, alignment:{horizontal:"center"} };
+  const dStyle = { font:{sz:10}, border:{top:grayBorder,bottom:grayBorder,left:grayBorder,right:grayBorder} };
+  const tStyle = { fill:{fgColor:{rgb:"E2EFDA"}}, font:{bold:true,sz:10}, border:{top:grayBorder,bottom:greenBorder,left:grayBorder,right:grayBorder} };
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({r, c});
+      if (!ws[addr]) ws[addr] = {t:"s", v:""};
+      ws[addr].s = r === 0 ? hStyle : totalRowIdxs.includes(r) ? tStyle : dStyle;
+    }
+  }
   ws["!cols"] = [{wch:14},{wch:12},{wch:5},{wch:10},{wch:10},{wch:10},{wch:10},{wch:8},{wch:10},{wch:18}];
   ws["!freeze"] = {xSplit:0, ySplit:1};
   const wb = XLSX.utils.book_new();
