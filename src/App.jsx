@@ -75,6 +75,16 @@ const supabase = createClient(
 );
 
 // ─────────────────────────────────────────────
+//  勤務実績: シフト種別デフォルト時刻
+// ─────────────────────────────────────────────
+const SHIFT_DEFAULT_TIMES = {
+  "早番": { start: "07:00", end: "15:30", breakMin: 45 },
+  "日勤": { start: "09:00", end: "17:30", breakMin: 60 },
+  "遅番": { start: "12:00", end: "20:30", breakMin: 60 },
+  "夜勤": { start: "16:45", end: "09:15", breakMin: 90 },
+};
+
+// ─────────────────────────────────────────────
 //  LOGIN PAGE
 // ─────────────────────────────────────────────
 function LoginPage({ onLogin }) {
@@ -3126,6 +3136,179 @@ class ErrorBoundary extends Component {
   }
 }
 
+// ─────────────────────────────────────────────
+//  勤務実績: ユーティリティ
+// ─────────────────────────────────────────────
+function calcWorkMinutes(start, end, breakMin = 60) {
+  if (!start || !end) return 0;
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  if (isNaN(sh) || isNaN(eh)) return 0;
+  let startMins = sh * 60 + sm;
+  let endMins = eh * 60 + em;
+  if (endMins <= startMins) endMins += 24 * 60;
+  return Math.max(0, endMins - startMins - (breakMin || 0));
+}
+function fmtH(mins) {
+  if (!mins && mins !== 0) return "-";
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return `${h}:${String(m).padStart(2, "0")}`;
+}
+function buildJissekiCSV(staffList, allJisseki, allShifts, year, month, deptId) {
+  const days = getDays(year, month);
+  const deptStaff = staffList.filter(s => s.dept === deptId);
+  const rows = [["スタッフ名","日付","曜日","予定シフト","実績シフト","出勤時刻","退勤時刻","休憩(分)","実労働時間","備考"]];
+  for (const s of deptStaff) {
+    for (let d = 1; d <= days; d++) {
+      const planned = allShifts[deptId]?.[s.id]?.[d] || "";
+      const rec = allJisseki[deptId]?.[s.id]?.[d];
+      if (!planned && !rec) continue;
+      const dow = ["日","月","火","水","木","金","土"][new Date(year, month, d).getDay()];
+      const mins = rec ? calcWorkMinutes(rec.start, rec.end, rec.breakMin) : 0;
+      rows.push([s.name, `${year}/${String(month+1).padStart(2,"0")}/${String(d).padStart(2,"0")}`, dow, planned, rec?.actualShift||planned, rec?.start||"", rec?.end||"", rec?.breakMin??0, rec?fmtH(mins):"", rec?.note||""]);
+    }
+    // 月合計行
+    let total = 0;
+    for (let d = 1; d <= days; d++) {
+      const rec = allJisseki[deptId]?.[s.id]?.[d];
+      if (rec) total += calcWorkMinutes(rec.start, rec.end, rec.breakMin);
+    }
+    rows.push([s.name, `${year}/${String(month+1).padStart(2,"0")} 合計`, "", "", "", "", "", "", fmtH(total), ""]);
+  }
+  return rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+}
+
+// ─────────────────────────────────────────────
+//  勤務実績: 入力モーダル
+// ─────────────────────────────────────────────
+function JissekiInputModal({ staffName, day, year, month, plannedShift, record, deptShiftTypes, onSave, onClear, onClose }) {
+  const defaults = SHIFT_DEFAULT_TIMES[plannedShift] || { start: "", end: "", breakMin: 60 };
+  const [start, setStart] = useState(record?.start ?? defaults.start);
+  const [end, setEnd] = useState(record?.end ?? defaults.end);
+  const [breakMin, setBreakMin] = useState(record?.breakMin ?? defaults.breakMin);
+  const [actualShift, setActualShift] = useState(record?.actualShift || plannedShift || "日勤");
+  const [note, setNote] = useState(record?.note || "");
+  const [kp, setKp] = useState(null);
+  const workMins = calcWorkMinutes(start, end, +breakMin || 0);
+  const dow = ["日","月","火","水","木","金","土"][new Date(year, month, day).getDay()];
+  const TS = { width:"100%", border:"1.5px solid #90cbc8", borderRadius:8, padding:"9px 12px", fontSize:14, fontFamily:"'Noto Sans JP',sans-serif", outline:"none", background:"#fff", boxSizing:"border-box" };
+  const allTypes = [...(deptShiftTypes||["早番","日勤","遅番","夜勤"]), "休み", "有休"];
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:380,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>📋 実績入力</div>
+            <div style={{fontSize:12,color:"#3a8a87",marginTop:2}}>{staffName} — {month+1}月{day}日（{dow}）</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
+        </div>
+        {plannedShift && <div style={{background:"#e0f4f2",borderRadius:8,padding:"6px 12px",marginBottom:14,fontSize:12,color:"#2a6a67"}}>予定シフト：<strong>{plannedShift}</strong></div>}
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>実績シフト</div>
+          <select value={actualShift} onChange={e=>setActualShift(e.target.value)} style={TS}>
+            {allTypes.map(k=><option key={k} value={k}>{k}</option>)}
+          </select>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+          <div>
+            <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>出勤時刻</div>
+            <input type="time" value={start} onChange={e=>setStart(e.target.value)} style={TS}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>退勤時刻</div>
+            <input type="time" value={end} onChange={e=>setEnd(e.target.value)} style={TS}/>
+          </div>
+        </div>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>休憩時間（分）</div>
+          <div onClick={e=>setKp({value:breakMin,min:0,max:180,unit:"分",onConfirm:v=>setBreakMin(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...TS,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{breakMin}分</div>
+        </div>
+        {start&&end&&<div style={{background:"#d5edeb",borderRadius:8,padding:"10px 14px",marginBottom:14,textAlign:"center"}}>
+          <span style={{fontSize:12,color:"#2a6a67"}}>実労働時間 </span>
+          <span style={{fontSize:20,fontWeight:900,color:"#1a9e9a"}}>{fmtH(workMins)}</span>
+        </div>}
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>備考</div>
+          <input type="text" value={note} onChange={e=>setNote(e.target.value)} placeholder="例：残業あり" style={TS}/>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>onSave({start,end,breakMin:+breakMin||0,actualShift,note})} style={{flex:2,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>💾 保存</button>
+          {record&&<button onClick={onClear} style={{flex:1,background:"#fff0f0",border:"1px solid #e07070",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:12,color:"#c44b4b",fontWeight:700}}>🗑 削除</button>}
+          <button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:13}}>戻る</button>
+        </div>
+        {kp&&<NumericKeypad value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+//  勤務実績: 一覧・集計ビュー
+// ─────────────────────────────────────────────
+function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCellClick, onCsvExport }) {
+  const deptId = dept?.id;
+  const days = getDays(year, month);
+  const deptStaff = staffList.filter(s => s.dept === deptId);
+  const firstDow = new Date(year, month, 1).getDay();
+  const DOW_LABEL = ["日","月","火","水","木","金","土"];
+  const DOW_COLOR = d => { const w=new Date(year,month,d).getDay(); return w===0?"#f87171":w===6?"#2BBFBA":"#3a8a87"; };
+  const staffTotal = (sid) => { let t=0; for(let d=1;d<=days;d++){const r=allJisseki[deptId]?.[sid]?.[d];if(r)t+=calcWorkMinutes(r.start,r.end,r.breakMin);} return t; };
+  const grandTotal = deptStaff.reduce((sum,s)=>sum+staffTotal(s.id), 0);
+  const recordCount = deptStaff.reduce((sum,s)=>{let c=0;for(let d=1;d<=days;d++){if(allJisseki[deptId]?.[s.id]?.[d])c++;}return sum+c;},0);
+
+  const TH = { padding:"4px 6px", fontSize:10, fontWeight:700, color:"#3a8a87", background:"#e0f4f2", textAlign:"center", whiteSpace:"nowrap", position:"sticky", top:0 };
+  const TD = (extra={}) => ({ padding:"3px 4px", fontSize:11, textAlign:"center", borderBottom:"1px solid #d5edeb", ...extra });
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:12}}>
+        <div style={{fontSize:12,color:"#3a8a87"}}>
+          <span style={{fontWeight:700,color:"#1a9e9a"}}>{recordCount}件</span> の実績 ／ 合計
+          <span style={{fontWeight:700,color:"#1a9e9a",marginLeft:4}}>{fmtH(grandTotal)}</span>
+        </div>
+        <button onClick={onCsvExport} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📥 CSV出力</button>
+      </div>
+      <div style={{fontSize:11,color:"#5a9e9b",marginBottom:10,background:"#e0f4f2",borderRadius:7,padding:"6px 10px"}}>💡 セルをクリックして実績（出退勤時刻）を入力できます</div>
+      <div style={{overflowX:"auto",borderRadius:8,border:"1px solid #b8deda"}}>
+        <table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:11}}>
+          <thead>
+            <tr>
+              <th style={{...TH,left:0,zIndex:2,minWidth:72,textAlign:"left",paddingLeft:8}}>スタッフ</th>
+              {Array.from({length:days},(_,i)=>i+1).map(d=>{
+                const dow=new Date(year,month,d).getDay();
+                return <th key={d} style={{...TH,color:dow===0?"#f87171":dow===6?"#2BBFBA":"#3a8a87",minWidth:38}}>
+                  <div>{d}</div><div style={{fontSize:9,fontWeight:400}}>{DOW_LABEL[dow]}</div>
+                </th>;
+              })}
+              <th style={{...TH,minWidth:52,background:"#d5edeb"}}>合計</th>
+            </tr>
+          </thead>
+          <tbody>
+            {deptStaff.map((s,si)=>(
+              <tr key={s.id} style={{background:si%2===0?"#fff":"#f7fffe"}}>
+                <td style={{...TD(),fontWeight:700,color:"#1a3635",textAlign:"left",paddingLeft:8,whiteSpace:"nowrap",position:"sticky",left:0,background:si%2===0?"#fff":"#f7fffe"}}>{s.name}</td>
+                {Array.from({length:days},(_,i)=>i+1).map(d=>{
+                  const planned=allShifts[deptId]?.[s.id]?.[d];
+                  const rec=allJisseki[deptId]?.[s.id]?.[d];
+                  const mins=rec?calcWorkMinutes(rec.start,rec.end,rec.breakMin):0;
+                  const hasRec=!!rec;
+                  return (
+                    <td key={d} onClick={()=>onCellClick(s,d,planned)} style={{...TD({cursor:"pointer",background:hasRec?"#d5f0ec":undefined,color:hasRec?"#0a4a47":"#b0c8c8"})}}>
+                      {hasRec ? <span style={{fontWeight:700}}>{fmtH(mins)}</span> : <span style={{fontSize:9}}>{planned||""}</span>}
+                    </td>
+                  );
+                })}
+                <td style={{...TD({background:"#e0f4f2",fontWeight:700,color:"#1a9e9a"})}}>{fmtH(staffTotal(s.id))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {deptStaff.length === 0 && <div style={{textAlign:"center",padding:40,color:"#90cbc8"}}>スタッフが登録されていません</div>}
+    </div>
+  );
+}
+
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const staffUserId = params.get('staff');
@@ -3287,6 +3470,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [allShifts, setAllShifts] = useState(() => {
     try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
   });
+  const [allJisseki, setAllJisseki] = useState({});
+  const [jissekiModal, setJissekiModal] = useState(null); // { staff, day, planned }
   const allShiftsRef = useRef(allShifts); // 常に最新のallShiftsを参照（生成ハンドラ内で利用）
   const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
   allShiftsRef.current = allShifts; // 常に最新状態を参照（生成ハンドラ・保存ハンドラ用）
@@ -3365,6 +3550,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         const yoteiKey = `yotei_${now.getFullYear()}_${now.getMonth()+1}`;
         if (byKey[yoteiKey]) setAllYotei(byKey[yoteiKey]);
+        const jissekiPrefix = `jisseki_${now.getFullYear()}_${now.getMonth()+1}_`;
+        const jissekiEntries = Object.entries(byKey).filter(([k])=>k.startsWith(jissekiPrefix));
+        if (jissekiEntries.length > 0) {
+          const merged = {};
+          for (const [k,v] of jissekiEntries) merged[k.slice(jissekiPrefix.length)] = v;
+          setAllJisseki(merged);
+        }
       } catch(e) { console.error('Supabase初期ロードエラー:', e); }
       finally {
         setDbLoading(false);
@@ -3611,6 +3803,28 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [excelImportModal, setExcelImportModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
+
+  // ── 勤務実績: 保存ハンドラ ──
+  const saveJisseki = useCallback((staffId, day, rec) => {
+    setAllJisseki(prev => {
+      const next = { ...prev, [activeDeptId]: { ...(prev[activeDeptId]||{}), [staffId]: { ...(prev[activeDeptId]?.[staffId]||{}), [day]: rec } } };
+      const key = `jisseki_${year}_${month+1}_${activeDeptId}`;
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:key, data_value:next[activeDeptId], updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
+      return next;
+    });
+  }, [activeDeptId, year, month, session.user.id]);
+  const clearJisseki = useCallback((staffId, day) => {
+    setAllJisseki(prev => {
+      const deptData = { ...(prev[activeDeptId]||{}) };
+      const staffData = { ...(deptData[staffId]||{}) };
+      delete staffData[day];
+      deptData[staffId] = staffData;
+      const next = { ...prev, [activeDeptId]: deptData };
+      const key = `jisseki_${year}_${month+1}_${activeDeptId}`;
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:key, data_value:next[activeDeptId], updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
+      return next;
+    });
+  }, [activeDeptId, year, month, session.user.id]);
   const [adminModal, setAdminModal] = useState(false);
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
@@ -3944,7 +4158,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* INNER TABS */}
       <div style={{background:"#eaf8f6",borderBottom:isMobile&&innerTab==="shift"?"none":"2px solid #2BBFBA",display:"flex",padding:"0 6px",gap:2,alignItems:"center",overflowX:"auto"}}>
-        {[["shift",isMobile?"📅 シフト":"📅 シフト表"],["summary",isMobile?"📊 集計":"📊 集計"],["staff",isMobile?"👥 スタッフ":"👥 スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab===k?800:600,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
+        {[["shift",isMobile?"📅 シフト":"📅 シフト表"],["summary",isMobile?"📊 集計":"📊 集計"],["staff",isMobile?"👥 スタッフ":"👥 スタッフ"],["jisseki","📋 実績"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab===k?800:600,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
         {profile?.plan==='free'
           ? <button onClick={()=>alert("📋 予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:"#9ca3af",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>🔒 予定表</button>
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab==="yotei"?"#1a9e9a":"#2a6a67",borderBottom:innerTab==="yotei"?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab==="yotei"?800:600,whiteSpace:"nowrap",flexShrink:0}}>📋 予定表</button>
@@ -3989,9 +4203,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
+        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
+      {jissekiModal&&<JissekiInputModal staffName={jissekiModal.staff.name} day={jissekiModal.day} year={year} month={month} plannedShift={jissekiModal.planned} record={allJisseki[activeDeptId]?.[jissekiModal.staff.id]?.[jissekiModal.day]} deptShiftTypes={dept?.shiftTypes||["早番","日勤","遅番","夜勤"]} onSave={rec=>{saveJisseki(jissekiModal.staff.id,jissekiModal.day,rec);setJissekiModal(null);}} onClear={()=>{clearJisseki(jissekiModal.staff.id,jissekiModal.day);setJissekiModal(null);}} onClose={()=>setJissekiModal(null)}/>}
       {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)}/>}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
