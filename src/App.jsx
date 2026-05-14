@@ -2324,166 +2324,6 @@ function ZoomWrapper({ zoom, onZoomChange, children }) {
 const TH = ({sticky,w}={}) => ({ position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1, background:"#ffffff", padding:"5px 3px", borderBottom:"2px solid #90cbc8", borderRight:"1px solid #b0e0de", fontSize:11, fontWeight:700, color:"#2a7a77", textAlign:"center", whiteSpace:"nowrap", width:w||"auto", minWidth:w||"auto" });
 const TD = { textAlign:"center", padding:"4px 2px", borderBottom:"1px solid #c8ecea", borderRight:"1px solid #c8ecea" };
 
-// ─────────────────────────────────────────────
-//  改善提案モジュール
-// ─────────────────────────────────────────────
-const SUGGESTION_PENALTY = { UNDERSTAFF:30, KIBO_VIOLATE:50, NIGHT_OVER:40, CONSEC_OVER:20 };
-
-function scoreShiftState(staffList, shifts, year, month, dept) {
-  const days = getDays(year, month);
-  const mk = monthKey(year, month);
-  const ds = staffList.filter(s => s.dept === dept.id);
-  let total = 0;
-  const issues = [];
-
-  for (let d = 1; d <= days; d++) {
-    (dept.shiftTypes || []).forEach(st => {
-      const actual = ds.filter(s => (shifts[s.id]?.[d]||'') === st).length;
-      const min = dept.minStaff?.[st] || 0;
-      if (actual < min) {
-        const p = (min - actual) * SUGGESTION_PENALTY.UNDERSTAFF;
-        total += p;
-        issues.push({ type:'understaff', day:d, shiftType:st, short:min-actual, penalty:p });
-      }
-    });
-  }
-
-  ds.forEach(s => {
-    (s.kiboByMonth?.[mk] || []).forEach(d => {
-      if (WORK_TYPES.has(shifts[s.id]?.[d] || '')) {
-        total += SUGGESTION_PENALTY.KIBO_VIOLATE;
-        issues.push({ type:'kibo', staff:s, day:d, penalty:SUGGESTION_PENALTY.KIBO_VIOLATE });
-      }
-    });
-  });
-
-  ds.forEach(s => {
-    const nightCnt = Object.values(shifts[s.id]||{}).filter(v=>v==='夜勤').length;
-    const max = s.nightMax || 5;
-    if (s.nightOk && nightCnt > max) {
-      const p = (nightCnt - max) * SUGGESTION_PENALTY.NIGHT_OVER;
-      total += p;
-      issues.push({ type:'night_over', staff:s, count:nightCnt, max, penalty:p });
-    }
-  });
-
-  const maxConsec = dept.maxConsecutive || 5;
-  ds.forEach(s => {
-    let streak = 0;
-    for (let d = 1; d <= days; d++) {
-      if (WORK_TYPES.has(shifts[s.id]?.[d]||'')) { streak++; }
-      else streak = 0;
-      if (streak > maxConsec) {
-        total += SUGGESTION_PENALTY.CONSEC_OVER;
-        issues.push({ type:'consec', staff:s, day:d, penalty:SUGGESTION_PENALTY.CONSEC_OVER });
-      }
-    }
-  });
-
-  return { total, issues };
-}
-
-function cloneShiftsDeep(shifts) {
-  const out = {};
-  Object.keys(shifts).forEach(id => { out[id] = { ...shifts[id] }; });
-  return out;
-}
-
-function generateSuggestions(staffList, shifts, year, month, dept) {
-  const mk = monthKey(year, month);
-  const ds = staffList.filter(s => s.dept === dept.id);
-  const base = scoreShiftState(staffList, shifts, year, month, dept);
-  const candidates = [];
-
-  const tryCandidate = (newShifts, description, type) => {
-    const newScore = scoreShiftState(staffList, newShifts, year, month, dept);
-    const improvement = base.total - newScore.total;
-    if (improvement > 0) candidates.push({ improvement, newShifts, description, type, newScore: newScore.total });
-  };
-
-  base.issues.filter(i => i.type === 'understaff').forEach(({ day, shiftType }) => {
-    ds.forEach(s => {
-      const cur = shifts[s.id]?.[day] || '';
-      if (!cur && !(s.kiboByMonth?.[mk]||[]).includes(day)) {
-        const ns = cloneShiftsDeep(shifts);
-        ns[s.id] = { ...(ns[s.id]||{}), [day]: shiftType };
-        tryCandidate(ns, `${s.name}さんを${day}日（${shiftType}）に追加 → 勤務不足が解消されます`, 'add_staff');
-      }
-    });
-  });
-
-  base.issues.filter(i => i.type === 'night_over').forEach(({ staff }) => {
-    Object.entries(shifts[staff.id]||{}).forEach(([dayStr, v]) => {
-      if (v !== '夜勤') return;
-      const ns = cloneShiftsDeep(shifts);
-      ns[staff.id] = { ...(ns[staff.id]||{}), [Number(dayStr)]: '休み' };
-      tryCandidate(ns, `${staff.name}さんの${dayStr}日の夜勤を休みに変更 → 夜勤超過が解消されます`, 'reduce_night');
-    });
-  });
-
-  base.issues.filter(i => i.type === 'kibo').forEach(({ staff, day }) => {
-    const ns = cloneShiftsDeep(shifts);
-    ns[staff.id] = { ...(ns[staff.id]||{}), [day]: '休み' };
-    tryCandidate(ns, `${staff.name}さんの${day}日を希望休（休み）に変更 → 希望休違反が解消されます`, 'fix_kibo');
-  });
-
-  base.issues.filter(i => i.type === 'consec').forEach(({ staff, day }) => {
-    const ns = cloneShiftsDeep(shifts);
-    ns[staff.id] = { ...(ns[staff.id]||{}), [day]: '休み' };
-    tryCandidate(ns, `${staff.name}さんの${day}日を休みに変更 → 連続勤務違反が解消されます`, 'fix_consec');
-  });
-
-  return candidates.sort((a,b) => b.improvement - a.improvement).slice(0, 5);
-}
-
-function SuggestionPanel({ staffList, shifts, year, month, dept, onApply }) {
-  const [suggestions, setSuggestions] = useState([]);
-  const [baseScore, setBaseScore] = useState(null);
-  const [analyzed, setAnalyzed] = useState(false);
-
-  const analyze = () => {
-    const result = scoreShiftState(staffList, shifts, year, month, dept);
-    setBaseScore(result);
-    setSuggestions(generateSuggestions(staffList, shifts, year, month, dept));
-    setAnalyzed(true);
-  };
-
-  const TYPE_ICON = { add_staff:'➕', reduce_night:'🌙', fix_kibo:'💚', fix_consec:'📅' };
-
-  return (
-    <div style={{background:"#f8fffe",border:"1px solid #90cbc8",borderRadius:12,padding:16,marginBottom:14}}>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-        <span style={{fontSize:13,fontWeight:900,color:"#1a3635"}}>🔍 改善提案</span>
-        <button onClick={analyze} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:800}}>分析する</button>
-        {baseScore!==null&&<span style={{fontSize:11,color:baseScore.total===0?"#16a34a":"#c44b4b",fontWeight:700}}>ペナルティ: {baseScore.total}点{baseScore.total===0?" ✅ 問題なし":""}</span>}
-      </div>
-
-      {analyzed && suggestions.length === 0 && baseScore?.total === 0 && (
-        <div style={{fontSize:12,color:"#16a34a",fontWeight:700}}>✅ 現在のシフトに問題は見つかりませんでした。</div>
-      )}
-      {analyzed && suggestions.length === 0 && baseScore?.total > 0 && (
-        <div style={{fontSize:12,color:"#6b7280"}}>自動改善できる案が見つかりませんでした。手動での調整をお試しください。</div>
-      )}
-
-      {suggestions.map((s, i) => (
-        <div key={i} style={{background:"#f0fff4",border:"1px solid #86efac",borderRadius:9,padding:"10px 14px",marginBottom:8}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-            <div>
-              <span style={{fontSize:11,fontWeight:800,color:"#16a34a"}}>{TYPE_ICON[s.type]||"✅"} 改善案 {i+1}</span>
-              <span style={{fontSize:10,color:"#16a34a",marginLeft:8}}>(-{s.improvement}点改善 → {s.newScore}点)</span>
-              <div style={{fontSize:12,color:"#1a3635",marginTop:4}}>{s.description}</div>
-            </div>
-            <button onClick={()=>onApply(s.newShifts)}
-              style={{flexShrink:0,background:"#16a34a",color:"#fff",border:"none",borderRadius:7,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>
-              適用する
-            </button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
@@ -3789,7 +3629,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['exceptionMonths']) setExceptionMonths(latestExceptionMonths);
         const learned = computeLearnedTrend(byKey, latestStaffList, latestExceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
-        if (byKey['aiRules']) setAiRules(byKey['aiRules']);
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         const shiftPrefix = `shifts_${now.getFullYear()}_${now.getMonth()+1}_`;
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
@@ -4179,13 +4018,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [adminModal, setAdminModal] = useState(false);
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
-  const [showSuggestion, setShowSuggestion] = useState(false);
   const [shiftTrend, setShiftTrend] = useState({}); // { deptId: { staffName: { freq } } }
   const [learnedTrend, setLearnedTrend] = useState({});
   const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
   const [excelRawMonths, setExcelRawMonths] = useState({}); // { deptId: { "YYYY-M": { name: {counts} } } }
   const [excelResetDismissed, setExcelResetDismissed] = useState(() => { try{return localStorage.getItem('shiftNavi_excelResetDismissed')==='true';}catch{return false;} });
-  const [aiMode, setAiMode] = useState(false);
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
   const [pinModal, setPinModal] = useState(false);
@@ -4194,20 +4031,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isLocked = !!(depts.find(d=>d.id===activeDeptId)?.pin && unlockedDeptId !== activeDeptId);
   const isLockedRef = useRef(isLocked);
   useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
-  const [aiInstruction, setAiInstruction] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiRules, setAiRules] = useState("");
-  const [showAiRules, setShowAiRules] = useState(false);
-  const aiRulesTimerRef = useRef(null);
   const generateTimerRef = useRef(null);
-  useEffect(() => {
-    if (isInitializing.current) return;
-    if (aiRulesTimerRef.current) clearTimeout(aiRulesTimerRef.current);
-    aiRulesTimerRef.current = setTimeout(() => {
-      supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: 'aiRules', data_value: aiRules, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {}).catch(() => {});
-    }, 1000);
-    return () => { if (aiRulesTimerRef.current) clearTimeout(aiRulesTimerRef.current); };
-  }, [aiRules]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isInitializing.current) {
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
@@ -4288,42 +4112,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleUpdateFloorSettings = useCallback((newSettings) => {
     setAllFloorSettings(prev => ({...prev, [activeDeptId]: newSettings}));
   }, [activeDeptId]);
-
-  const handleAiAdjust = useCallback(async () => {
-    if (!aiInstruction.trim()) return;
-    if (!dept) { alert("部署が選択されていません。"); return; }
-    setAiLoading(true);
-    try {
-      const fnUrl = "/api/ai-shift-adjust";
-      const res = await fetch(fnUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shifts: deptShifts, staffList, dept, instruction: aiInstruction, aiRules: aiRules.trim(), year, month: month + 1 }),
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`HTTP ${res.status}: ${errText}`);
-      }
-      const data = await res.json();
-      if (data?.error) throw new Error(data.error);
-      if (Array.isArray(data.changes) && data.changes.length > 0) {
-        setDeptShifts(prev => {
-          const next = { ...prev };
-          for (const c of data.changes) {
-            if (c?.staffId && c?.day) next[c.staffId] = { ...(next[c.staffId] || {}), [c.day]: c.shift };
-          }
-          return next;
-        });
-        alert(`✨ AI調整完了\n\n${data.explanation}\n\n変更: ${data.changes.length}件`);
-      } else {
-        alert(`✨ AIからの回答\n\n${data.explanation || "変更なし"}`);
-      }
-    } catch (e) {
-      alert("AI調整エラー: " + e.message);
-    } finally {
-      setAiLoading(false);
-    }
-  }, [aiInstruction, aiRules, deptShifts, staffList, dept, year, month, setDeptShifts]);
 
   const handleGenerate = useCallback(() => {
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
@@ -4406,10 +4194,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
           {!isMobile&&(()=>{const deptTrend=shiftTrend[activeDeptId]||{};const excelCnt=Object.keys(deptTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const showSync=syncRate!=null&&hasAny;const syncColor=syncRate>=85?"#16a34a":syncRate>=70?"#ca8a04":"#dc2626";const label=showSync?`🎯 シンクロ率 ${syncRate}%`:learnedCnt>0?`🧠 学習中(${learnedCnt}名)`:excelCnt>0?`📊 傾向ON`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:showSync?"#f0f9ff":hasAny?"#e8f5ee":"#ffffff",color:showSync?syncColor:hasAny?"#5cb87a":"#2a6a67",border:showSync?`1px solid ${syncColor}`:hasAny?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
-          {!isMobile&&(profile?.plan==='full'
-            ? <button onClick={()=>setAiMode(v=>!v)} disabled={isLocked} style={{background:isLocked?"#f3f4f6":aiMode?"#ede9fe":"#ffffff",color:isLocked?"#9ca3af":aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:isLocked?"not-allowed":"pointer",fontSize:12,fontWeight:700}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
-            : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🔒 AI</button>
-          )}
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
           <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
           {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🏢":"🏢 管理"}</button>}
@@ -4441,73 +4225,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         );
       })()}
 
-      {/* AI PANEL */}
-      {aiMode&&(
-        <div style={{background:"#f3f0ff",borderBottom:"1px solid #c4b5fd",padding:"10px 14px",display:"flex",flexDirection:"column",gap:8}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#7c3aed",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-            <span>🤖 AI調整モード</span>
-            <span style={{fontSize:10,fontWeight:400,color:"#a78bfa"}}>自動生成後のシフトを指示で調整できます</span>
-            <button onClick={()=>setShowAiRules(v=>!v)} style={{marginLeft:"auto",background:showAiRules?"#ede9fe":"#fff",border:"1px solid #c4b5fd",borderRadius:6,color:"#7c3aed",fontSize:10,padding:"2px 8px",cursor:"pointer",fontWeight:showAiRules?800:400}}>
-              {aiRules.trim()?"⚙️ ルール設定 ✓":"⚙️ ルール設定"}
-            </button>
-          </div>
-
-          {/* AIルール設定（折りたたみ） */}
-          {showAiRules&&(
-            <div style={{background:"#ede9fe",borderRadius:10,padding:"10px 12px",border:"1px solid #c4b5fd"}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#5b21b6",marginBottom:6}}>施設固有のAIルール（毎回自動で適用されます）</div>
-              <div style={{fontSize:10,color:"#7c3aed",marginBottom:6}}>役職・業務ごとのルールを書いておくと、AI がシフト調整時に自動で従います。</div>
-              {/* プリセットボタン */}
-              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
-                {[
-                  "介護補助は夜勤禁止",
-                  "パート職員は日勤か早番のみ",
-                  "主任は月に夜勤2回まで",
-                  "新人（研修中）は日勤のみ",
-                  "夜勤担当者は最低2名以上",
-                  "同じ役職の職員を夜勤に偏らせない",
-                  "連続夜勤は禁止",
-                  "リーダーが夜勤の日は経験者を早番に"
-                ].map(preset=>(
-                  <button key={preset} onClick={()=>setAiRules(r=>r?r+"\n"+preset:preset)}
-                    style={{background:"#fff",border:"1px solid #c4b5fd",borderRadius:12,padding:"2px 8px",fontSize:10,color:"#6d28d9",cursor:"pointer"}}>
-                    ＋{preset}
-                  </button>
-                ))}
-              </div>
-              <textarea
-                value={aiRules}
-                onChange={e=>setAiRules(e.target.value)}
-                placeholder={"例）介護補助は夜勤禁止\n例）パート職員は日勤か早番のみ\n例）○○さんは土日優先で休みにする\n例）新しく追加した役職名はここにルールを書いてください"}
-                style={{width:"100%",minHeight:90,borderRadius:8,border:"1px solid #c4b5fd",padding:"8px 10px",fontSize:11,color:"#4c1d95",background:"#faf5ff",resize:"vertical",boxSizing:"border-box",outline:"none",fontFamily:"inherit"}}
-              />
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}>
-                <div style={{fontSize:10,color:"#a78bfa"}}>{aiRules.trim()?`${aiRules.trim().split("\n").filter(Boolean).length}件のルール設定中`:"ルール未設定（任意）"}</div>
-                {aiRules.trim()&&<button onClick={()=>{if(confirm("ルールをクリアしますか？"))setAiRules("");}} style={{background:"none",border:"none",color:"#ef4444",fontSize:10,cursor:"pointer"}}>🗑 クリア</button>}
-              </div>
-            </div>
-          )}
-
-          {/* 今回の指示 */}
-          <textarea
-            value={aiInstruction}
-            onChange={e=>setAiInstruction(e.target.value)}
-            placeholder={"例）田中さんと山田さんは夜勤を一緒にしないで\n例）鈴木さんは水曜を早番にしてほしい\n例）夜勤が連続している人を確認して調整して"}
-            style={{width:"100%",minHeight:72,borderRadius:8,border:"1px solid #c4b5fd",padding:"8px 10px",fontSize:12,color:"#4c1d95",background:"#faf5ff",resize:"vertical",boxSizing:"border-box",outline:"none",fontFamily:"inherit"}}
-          />
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <button
-              onClick={handleAiAdjust}
-              disabled={!aiInstruction.trim()||aiLoading}
-              style={{background:(!aiInstruction.trim()||aiLoading)?"#e9d5ff":"linear-gradient(135deg,#7c3aed,#a855f7)",color:(!aiInstruction.trim()||aiLoading)?"#a78bfa":"#fff",border:"none",borderRadius:8,padding:"7px 16px",cursor:(!aiInstruction.trim()||aiLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:800}}
-            >
-              {aiLoading?"⏳ 調整中…":"✨ AIに調整を依頼"}
-            </button>
-            <span style={{fontSize:10,color:"#a78bfa"}}>※ 自動生成後に使うと精度UP</span>
-          </div>
-        </div>
-      )}
-
       {/* DEPT TABS */}
       <div style={{background:"#e0f4f2",borderBottom:"1px solid #90cbc8",display:"flex",overflowX:"auto",padding:"0 6px",alignItems:"center"}}>
         {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"9px 10px",background:"transparent",border:"none",color:act?"#2BBFBA":"#2a5a57",borderBottom:act?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?800:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><span>{d.icon}</span><span>{d.label}</span><span style={{background:act?"#8ecece":"#d5edeb",color:act?"#2BBFBA":"#2a5a57",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"#2BBFBA",border:"none",borderRadius:6,color:"#fff",cursor:"pointer",fontSize:11,padding:"3px 8px",marginLeft:2,fontWeight:700,whiteSpace:"nowrap"}}>⚙️ 設定</button>}</div>);})}
@@ -4530,7 +4247,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               </div>
               <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:26,height:26,borderRadius:"50%",border:"2px solid #90cbc8",background:"#ffffff",color:tableZoom>=100?"#c0e4e2":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:16,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>＋</button>
               <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#ffffff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
-              <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#ffffff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
             </div>
           )}
           <div style={{fontSize:10,color:"#8ecece",padding:"0 4px",whiteSpace:"nowrap"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>
@@ -4545,11 +4261,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
           <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:30,height:30,borderRadius:"50%",border:"2px solid #90cbc8",background:"#fff",color:tableZoom>=100?"#c0e4e2":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:18,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>＋</button>
           <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
-          <button onClick={()=>setShowSuggestion(v=>!v)} style={{background:showSuggestion?"#f0fdf4":"#fff",border:showSuggestion?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:4,color:showSuggestion?"#16a34a":"#2a5a57",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:showSuggestion?800:400}}>🔍 改善提案</button>
-          {profile?.plan==='full'
-            ? <button onClick={()=>setAiMode(v=>!v)} style={{background:aiMode?"#ede9fe":"#fff",color:aiMode?"#7c3aed":"#2a6a67",border:aiMode?"1px solid #7c3aed":"1px solid #90cbc8",borderRadius:4,fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:aiMode?800:400}}>{aiMode?"🤖 AI ON":"🤖 AI"}</button>
-            : <button onClick={()=>alert("🤖 AI機能はフルプランでご利用いただけます。")} style={{background:"#f5f5f5",color:"#9ca3af",border:"1px solid #d1d5db",borderRadius:4,fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>🔒 AI</button>
-          }
         </div>
       )}
 
@@ -4558,7 +4269,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* CONTENT */}
       <div style={{padding:"10px 8px",minHeight:"calc(100vh - 180px)"}}>
-        {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
+        {innerTab==="shift"&&(<><Legend/><ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
         {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onBulkCopy={bulkCopyPlanned} onClearZero={bulkClearZeroRec} onClearAll={async()=>{if(!window.confirm("この月の全実績を削除します。よろしいですか？"))return;await clearDeptJisseki();}} defaultTimes={jissekiDefaults[activeDeptId]||{}} onDefaultsChange={defs=>saveJissekiDefaultsForDept(activeDeptId,defs)} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
