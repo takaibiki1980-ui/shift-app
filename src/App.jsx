@@ -380,6 +380,11 @@ const getWD    = (y,m,d) => ["日","月","火","水","木","金","土"][new Date
 const isWE     = (y,m,d) => { const w=new Date(y,m,d).getDay(); return w===0||w===6; };
 const monthKey = (y,m) => `${y}-${m+1}`;
 
+// 名前正規化：スペース(半角・全角)・中点(・･)・ピリオドを除去して小文字化
+// 「田中 花子」「田中　花子」「田中花子」「ジョン・スミス」「ジョン スミス」を統一比較
+const normName = (s) => String(s||'').replace(/[\s　・･．.]/g, '').toLowerCase();
+const nameMatch = (a, b) => { const na=normName(a), nb=normName(b); return na===nb||na.includes(nb)||nb.includes(na); };
+
 // UUID ↔ 22文字base64url変換（URLを40%短縮）
 const uuidToShort = (uuid) => {
   const hex = uuid.replace(/-/g, '');
@@ -609,7 +614,7 @@ function computeSyncRate(shifts, staffList, dept, year, month, mergedTrend) {
   const WORK_SET = new Set(WORK_KEYS);
   let totalWork = 0, syncWork = 0;
   for (const s of ds) {
-    const tKey = Object.keys(mergedTrend).find(k => k === s.name || k.includes(s.name) || s.name.includes(k));
+    const tKey = Object.keys(mergedTrend).find(k => k !== '_months' && k !== '_monthCounts' && nameMatch(k, s.name));
     const trend = tKey ? mergedTrend[tKey] : null;
     if (!trend) continue;
     // 全体頻度データ（dowShiftRateがない旧データでも使える）
@@ -668,8 +673,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   const getTrend = (s) => {
     if (!shiftTrend || Object.keys(shiftTrend).length === 0) return null;
-    if (shiftTrend[s.name] && s.name !== '_months') return shiftTrend[s.name];
-    const key = Object.keys(shiftTrend).filter(k => k !== '_months').find(k => k.includes(s.name) || s.name.includes(k));
+    const key = Object.keys(shiftTrend).filter(k => k !== '_months').find(k => nameMatch(k, s.name));
     return key ? shiftTrend[key] : null;
   };
 
@@ -2003,7 +2007,7 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><div><div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>📊 過去シフトから傾向を学習</div><div style={{fontSize:11,color:"#3a8a87",marginTop:3}}>過去のExcelシフト表を読み込んで自動生成に反映</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button></div>
         {currentTrend&&Object.keys(currentTrend).filter(k=>k!=='_months').length>0&&(()=>{
           const trendNames = Object.keys(currentTrend).filter(k=>k!=='_months');
-          const matchedStaff = staffList.filter(s => trendNames.some(tn => tn===s.name||tn.includes(s.name)||s.name.includes(tn)));
+          const matchedStaff = staffList.filter(s => trendNames.some(tn => nameMatch(tn, s.name)));
           return(
           <div style={{background:"#e8f5ee",border:"1px solid #14532d",borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:11}}>
             <div style={{color:"#5cb87a",fontWeight:700,marginBottom:6}}>✅ 現在 {trendNames.length} 名分の傾向データを保持中</div>
@@ -2011,7 +2015,7 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
               {onAutoSetRatios&&matchedStaff.length>0&&<button onClick={()=>{
                 const ratioMap={};
                 for(const s of matchedStaff){
-                  const tn=trendNames.find(k=>k===s.name||k.includes(s.name)||s.name.includes(k));
+                  const tn=trendNames.find(k=>nameMatch(k, s.name));
                   if(!tn)continue;
                   const td=currentTrend[tn];
                   const r={};
