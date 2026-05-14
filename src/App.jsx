@@ -3937,6 +3937,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => {
     if (isInitializing.current) return;
     isLoadingMonth.current = true;
+    setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
     const prefix = `shifts_${year}_${month+1}_`;
     supabase.from('shift_data').select('data_key,data_value')
       .eq('user_id', session.user.id)
