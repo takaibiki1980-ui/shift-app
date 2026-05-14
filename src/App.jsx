@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, Component } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 
@@ -4253,6 +4253,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const dept = depts.find(d=>d.id===activeDeptId) || depts[0];
   const deptShifts = allShifts[activeDeptId]||{};
+  // 現在のシフト表から常時シンクロ率を計算（自動生成後だけでなく常に反映）
+  const syncRate = useMemo(() => {
+    if (!dept) return null;
+    const mergedTrend = mergeShiftTrends(shiftTrend[activeDeptId]||{}, learnedTrend);
+    return computeSyncRate(deptShifts, staffList, dept, year, month, mergedTrend);
+  }, [deptShifts, staffList, dept, year, month, shiftTrend, learnedTrend, activeDeptId]);
   const setDeptShifts = useCallback(updater => {
     // ユーザー操作はRealtimeより常に優先: 編集前にシーケンス番号を上げてRealtimeをキャンセル
     userEditSeq.current++;
