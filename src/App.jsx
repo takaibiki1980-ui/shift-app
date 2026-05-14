@@ -4058,7 +4058,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => { if(autoFitApplied.current)return; try{const s=localStorage.getItem("shiftTableZoom");if(s&&!isMobile){autoFitApplied.current=true;return;}}catch{} setTableZoom(autoFitZoom(staffList.filter(s=>s.dept===activeDeptId).length,getDays(now.getFullYear(),now.getMonth()))); autoFitApplied.current=true; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [excelImportModal, setExcelImportModal] = useState(false);
-  const [syncRate, setSyncRate] = useState(null); // 自動生成後のシンクロ率 (0-100 or null)
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
 
@@ -4344,9 +4343,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             return {...s, shiftRatioCorrection: fb};
           }));
         }
-        // シンクロ率を計算
-        const rate = computeSyncRate(result, cs, cd, year, month, ct);
-        setSyncRate(rate);
         setSaveStatus("unsaved");
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
