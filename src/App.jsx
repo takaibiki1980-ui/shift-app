@@ -82,6 +82,7 @@ const SHIFT_DEFAULT_TIMES = {
   "日勤": { start: "09:00", end: "17:30", breakMin: 60 },
   "遅番": { start: "12:00", end: "20:30", breakMin: 60 },
   "夜勤": { start: "16:45", end: "09:15", breakMin: 90 },
+  "明け": { start: "00:00", end: "09:15", breakMin: 0 },
 };
 
 // ─────────────────────────────────────────────
@@ -3234,7 +3235,7 @@ function JissekiInputModal({ staffName, day, year, month, plannedShift, record, 
   const overtimeMins = (start && end && plannedMins > 0) ? Math.max(0, workMins - plannedMins) : 0;
   const dow = ["日","月","火","水","木","金","土"][new Date(year, month, day).getDay()];
   const TS = { width:"100%", border:"1.5px solid #90cbc8", borderRadius:8, padding:"9px 12px", fontSize:14, fontFamily:"'Noto Sans JP',sans-serif", outline:"none", background:"#fff", boxSizing:"border-box" };
-  const allTypes = [...(deptShiftTypes||["早番","日勤","遅番","夜勤"]), "休み", "有休"];
+  const allTypes = [...(deptShiftTypes||["早番","日勤","遅番","夜勤"]), "明け", "休み", "有休"].filter((v,i,a)=>a.indexOf(v)===i);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:380,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
@@ -3290,7 +3291,7 @@ function JissekiInputModal({ staffName, day, year, month, plannedShift, record, 
 //  勤務実績: デフォルト時刻編集モーダル
 // ─────────────────────────────────────────────
 function JissekiDefaultsModal({ dept, defaults, onSave, onClose }) {
-  const shiftTypes = dept?.shiftTypes || ["早番","日勤","遅番","夜勤"];
+  const shiftTypes = [...(dept?.shiftTypes || ["早番","日勤","遅番","夜勤"]), "明け"].filter((v,i,a)=>a.indexOf(v)===i);
   const [form, setForm] = useState(() => {
     const f = {};
     for (const st of shiftTypes) {
