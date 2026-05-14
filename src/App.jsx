@@ -1831,8 +1831,8 @@ function ClearModal({ deptLabel, onClearDept, onClose }) {
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #450a0a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
         <div style={{fontSize:15,fontWeight:900,color:"#f87171",marginBottom:6}}>🗑 シフトのクリア</div>
-        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:20}}>「{deptLabel}」のシフトを削除します。この操作は元に戻せません。</div>
-        <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🗑</span><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトをクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトをすべて削除します</div></div></button>
+        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:20}}>「{deptLabel}」のシフトと実績を削除します。この操作は元に戻せません。</div>
+        <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🗑</span><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトと実績をクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトと実績をすべて削除します</div></div></button>
         <button onClick={onClose} style={{width:"100%",background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
       </div>
     </div>
@@ -3332,7 +3332,7 @@ function JissekiDefaultsModal({ dept, defaults, onSave, onClose }) {
 // ─────────────────────────────────────────────
 //  勤務実績: 一覧・集計ビュー
 // ─────────────────────────────────────────────
-function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCellClick, onCsvExport, onXlsExport, onBulkCopy, onClearZero, defaultTimes, onDefaultsChange }) {
+function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCellClick, onCsvExport, onXlsExport, onBulkCopy, onClearZero, onClearAll, defaultTimes, onDefaultsChange }) {
   const deptId = dept?.id;
   const days = getDays(year, month);
   const deptStaff = staffList.filter(s => s.dept === deptId);
@@ -3387,7 +3387,8 @@ function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCe
         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
           <button onClick={()=>setShowDefModal(true)} style={{background:"#f0fbfa",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>⚙️ デフォルト時刻</button>
           <button onClick={()=>onBulkCopy(null)} style={{background:"linear-gradient(135deg,#f59e0b,#f97316)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📋 全予定を一括コピー</button>
-          <button onClick={onClearZero} style={{background:"#fff0f0",color:"#c44b4b",border:"1px solid #e07070",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>🗑 0:00レコードを一括削除</button>
+          <button onClick={onClearZero} style={{background:"#fff0f0",color:"#c44b4b",border:"1px solid #e07070",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>🗑 0:00レコードを削除</button>
+          <button onClick={onClearAll} style={{background:"#7f1d1d",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 全実績クリア</button>
           <button onClick={onXlsExport} style={{background:"linear-gradient(135deg,#217346,#2ecc71)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📊 Excel出力</button>
           <button onClick={onCsvExport} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📥 CSV出力</button>
         </div>
@@ -3976,7 +3977,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       return next;
     });
   }, []);
-  const bulkCopyPlanned = useCallback((staffId) => {
+  const bulkCopyPlanned = useCallback(async (staffId) => {
     const days = getDays(year, month);
     const deptId = activeDeptId;
     const targetStaff = staffId
@@ -3986,6 +3987,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       ? `${targetStaff[0]?.name || ""}の予定を実績にコピーします（既存の記録は上書きしません）。よろしいですか？`
       : `全スタッフの予定を実績にコピーします（既存の記録は上書きしません）。よろしいですか？`;
     if (!window.confirm(msg)) return;
+    let nextDeptData = null;
     setAllJisseki(prev => {
       const deptData = {...(prev[deptId] || {})};
       let changed = false;
@@ -4002,16 +4004,23 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         deptData[s.id] = staffData;
       }
       if (!changed) return prev;
-      const next = {...prev, [deptId]: deptData};
-      const key = `jisseki_${year}_${month+1}_${deptId}`;
-      supabase.from('shift_data').upsert({user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});
-      return next;
+      nextDeptData = deptData;
+      return {...prev, [deptId]: deptData};
     });
+    if (nextDeptData) {
+      const key = `jisseki_${year}_${month+1}_${deptId}`;
+      try {
+        await supabase.from('shift_data').upsert({user_id:session.user.id, data_key:key, data_value:nextDeptData, updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'});
+      } catch (e) {
+        console.error('[bulkCopyPlanned] 保存失敗:', e);
+      }
+    }
   }, [activeDeptId, staffList, allShifts, year, month, jissekiDefaults, session.user.id]);
-  const bulkClearZeroRec = useCallback(() => {
+  const bulkClearZeroRec = useCallback(async () => {
     const deptId = activeDeptId;
     const days = getDays(year, month);
     if (!window.confirm("実労働時間が0:00のレコードをすべて削除します。よろしいですか？")) return;
+    let nextDeptData = null;
     setAllJisseki(prev => {
       const deptData = {...(prev[deptId] || {})};
       let changed = false;
@@ -4026,12 +4035,28 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         deptData[s.id] = staffData;
       }
       if (!changed) return prev;
-      const next = {...prev, [deptId]: deptData};
-      const key = `jisseki_${year}_${month+1}_${deptId}`;
-      supabase.from('shift_data').upsert({user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});
-      return next;
+      nextDeptData = deptData;
+      return {...prev, [deptId]: deptData};
     });
+    if (nextDeptData) {
+      const key = `jisseki_${year}_${month+1}_${deptId}`;
+      try {
+        await supabase.from('shift_data').upsert({user_id:session.user.id, data_key:key, data_value:nextDeptData, updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'});
+      } catch (e) {
+        console.error('[bulkClearZeroRec] 保存失敗:', e);
+      }
+    }
   }, [activeDeptId, staffList, year, month, session.user.id]);
+  const clearDeptJisseki = useCallback(async () => {
+    const deptId = activeDeptId;
+    const key = `jisseki_${year}_${month+1}_${deptId}`;
+    setAllJisseki(prev => ({ ...prev, [deptId]: {} }));
+    try {
+      await supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: key, data_value: {}, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' });
+    } catch (e) {
+      console.error('[clearDeptJisseki] 保存失敗:', e);
+    }
+  }, [activeDeptId, year, month, session.user.id]);
   const [adminModal, setAdminModal] = useState(false);
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
@@ -4410,7 +4435,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
-        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onBulkCopy={bulkCopyPlanned} onClearZero={bulkClearZeroRec} defaultTimes={jissekiDefaults[activeDeptId]||{}} onDefaultsChange={defs=>saveJissekiDefaultsForDept(activeDeptId,defs)} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
+        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onBulkCopy={bulkCopyPlanned} onClearZero={bulkClearZeroRec} onClearAll={async()=>{if(!window.confirm("この月の全実績を削除します。よろしいですか？"))return;await clearDeptJisseki();}} defaultTimes={jissekiDefaults[activeDeptId]||{}} onDefaultsChange={defs=>saveJissekiDefaultsForDept(activeDeptId,defs)} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
@@ -4418,7 +4443,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)}/>}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
-      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{setExcelRawMonths(prev=>{const next={...prev};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;return next;});const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};setExcelRawMonths(prev=>{const deptRaw={...(prev[activeDeptId]||{}),...newRaw};const next={...prev,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));return next;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
