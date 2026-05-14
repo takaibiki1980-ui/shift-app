@@ -605,20 +605,27 @@ function mergeShiftTrends(excelTrend, learnedTrend) {
 // 自動生成結果と学習データのシンクロ率を計算（0-100 or null）
 function computeSyncRate(shifts, staffList, dept, year, month, mergedTrend) {
   const ds = staffList.filter(s => s.dept === dept.id);
-  const WORK_KEYS = new Set(['早番','日勤','遅番','夜勤']);
+  const WORK_KEYS = ['早番','日勤','遅番','夜勤'];
+  const WORK_SET = new Set(WORK_KEYS);
   let totalWork = 0, syncWork = 0;
   for (const s of ds) {
     const tKey = Object.keys(mergedTrend).find(k => k === s.name || k.includes(s.name) || s.name.includes(k));
     const trend = tKey ? mergedTrend[tKey] : null;
-    if (!trend?.dowShiftRate) continue;
+    if (!trend) continue;
+    // 全体頻度データ（dowShiftRateがない旧データでも使える）
+    const freqRate = WORK_KEYS.some(k => (trend[k] || 0) > 0.01)
+      ? Object.fromEntries(WORK_KEYS.filter(k => (trend[k]||0) > 0.01).map(k => [k, trend[k]]))
+      : null;
+    if (!freqRate) continue;
     for (let d = 1; d <= getDays(year, month); d++) {
       const shift = shifts[s.id]?.[d];
-      if (!shift || !WORK_KEYS.has(shift)) continue;
+      if (!shift || !WORK_SET.has(shift)) continue;
       const dow = new Date(year, month, d).getDay();
-      const dowRate = trend.dowShiftRate[dow];
-      if (!dowRate) continue;
+      // dowShiftRateがあれば曜日別を優先、なければ全体頻度で代替
+      const useRate = trend.dowShiftRate?.[dow] || freqRate;
+      if (!useRate) continue;
       totalWork++;
-      const predicted = Object.entries(dowRate).sort((a,b)=>b[1]-a[1])[0]?.[0];
+      const predicted = Object.entries(useRate).sort((a,b)=>b[1]-a[1])[0]?.[0];
       if (predicted === shift) syncWork++;
     }
   }
@@ -4051,7 +4058,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => { if(autoFitApplied.current)return; try{const s=localStorage.getItem("shiftTableZoom");if(s&&!isMobile){autoFitApplied.current=true;return;}}catch{} setTableZoom(autoFitZoom(staffList.filter(s=>s.dept===activeDeptId).length,getDays(now.getFullYear(),now.getMonth()))); autoFitApplied.current=true; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [excelImportModal, setExcelImportModal] = useState(false);
-  const [syncRate, setSyncRate] = useState(null); // 自動生成後のシンクロ率 (0-100 or null)
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
 
@@ -4337,9 +4343,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             return {...s, shiftRatioCorrection: fb};
           }));
         }
-        // シンクロ率を計算
-        const rate = computeSyncRate(result, cs, cd, year, month, ct);
-        setSyncRate(rate);
         setSaveStatus("unsaved");
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
