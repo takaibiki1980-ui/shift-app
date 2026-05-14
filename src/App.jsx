@@ -1831,8 +1831,8 @@ function ClearModal({ deptLabel, onClearDept, onClose }) {
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#f3fffe",border:"1px solid #450a0a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
         <div style={{fontSize:15,fontWeight:900,color:"#f87171",marginBottom:6}}>🗑 シフトのクリア</div>
-        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:20}}>「{deptLabel}」のシフトを削除します。この操作は元に戻せません。</div>
-        <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🗑</span><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトをクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトをすべて削除します</div></div></button>
+        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:20}}>「{deptLabel}」のシフトと実績を削除します。この操作は元に戻せません。</div>
+        <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🗑</span><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトと実績をクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトと実績をすべて削除します</div></div></button>
         <button onClick={onClose} style={{width:"100%",background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
       </div>
     </div>
@@ -3154,6 +3154,50 @@ function fmtH(mins) {
   const h = Math.floor(mins / 60), m = mins % 60;
   return `${h}:${String(m).padStart(2, "0")}`;
 }
+async function buildJissekiXLSX(staffList, allJisseki, allShifts, year, month, deptId) {
+  const XLSX = await import("xlsx-js-style");
+  const days = getDays(year, month);
+  const deptStaff = staffList.filter(s => s.dept === deptId);
+  const aoa = [["スタッフ名","日付","曜日","予定シフト","実績シフト","出勤時刻","退勤時刻","休憩(分)","実労働時間","備考"]];
+  const totalRowIdxs = [];
+  for (const s of deptStaff) {
+    for (let d = 1; d <= days; d++) {
+      const planned = allShifts[deptId]?.[s.id]?.[d] || "";
+      const rec = allJisseki[deptId]?.[s.id]?.[d];
+      if (!planned && !rec) continue;
+      const dow = ["日","月","火","水","木","金","土"][new Date(year, month, d).getDay()];
+      const dateStr = `${year}/${String(month+1).padStart(2,"0")}/${String(d).padStart(2,"0")}`;
+      const mins = rec ? calcWorkMinutes(rec.start, rec.end, rec.breakMin) : 0;
+      aoa.push([s.name, dateStr, dow, planned, rec?.actualShift||planned, rec?.start||"", rec?.end||"", rec?.breakMin??0, rec?fmtH(mins):"", rec?.note||""]);
+    }
+    let total = 0;
+    for (let d = 1; d <= days; d++) { const r = allJisseki[deptId]?.[s.id]?.[d]; if (r) total += calcWorkMinutes(r.start, r.end, r.breakMin); }
+    totalRowIdxs.push(aoa.length);
+    aoa.push([s.name, `${year}/${String(month+1).padStart(2,"0")} 合計`, "", "", "", "", "", "", fmtH(total), ""]);
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // スタイル定義
+  const grayBorder = {style:"thin", color:{rgb:"BBBBBB"}};
+  const blueBorder = {style:"medium", color:{rgb:"4472C4"}};
+  const greenBorder = {style:"medium", color:{rgb:"70AD47"}};
+  const hStyle = { fill:{fgColor:{rgb:"D9E1F2"}}, font:{bold:true,sz:10}, border:{top:grayBorder,bottom:blueBorder,left:grayBorder,right:grayBorder}, alignment:{horizontal:"center"} };
+  const dStyle = { font:{sz:10}, border:{top:grayBorder,bottom:grayBorder,left:grayBorder,right:grayBorder}, alignment:{horizontal:"center"} };
+  const tStyle = { fill:{fgColor:{rgb:"E2EFDA"}}, font:{bold:true,sz:10}, border:{top:grayBorder,bottom:greenBorder,left:grayBorder,right:grayBorder}, alignment:{horizontal:"center"} };
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({r, c});
+      if (!ws[addr]) ws[addr] = {t:"s", v:""};
+      ws[addr].s = r === 0 ? hStyle : totalRowIdxs.includes(r) ? tStyle : dStyle;
+    }
+  }
+  ws["!cols"] = [{wch:14},{wch:12},{wch:5},{wch:10},{wch:10},{wch:10},{wch:10},{wch:8},{wch:10},{wch:18}];
+  ws["!freeze"] = {xSplit:0, ySplit:1};
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "実績");
+  return XLSX.write(wb, {bookType:"xlsx", type:"array"});
+}
+
 function buildJissekiCSV(staffList, allJisseki, allShifts, year, month, deptId) {
   const days = getDays(year, month);
   const deptStaff = staffList.filter(s => s.dept === deptId);
@@ -3167,12 +3211,8 @@ function buildJissekiCSV(staffList, allJisseki, allShifts, year, month, deptId) 
       const mins = rec ? calcWorkMinutes(rec.start, rec.end, rec.breakMin) : 0;
       rows.push([s.name, `${year}/${String(month+1).padStart(2,"0")}/${String(d).padStart(2,"0")}`, dow, planned, rec?.actualShift||planned, rec?.start||"", rec?.end||"", rec?.breakMin??0, rec?fmtH(mins):"", rec?.note||""]);
     }
-    // 月合計行
     let total = 0;
-    for (let d = 1; d <= days; d++) {
-      const rec = allJisseki[deptId]?.[s.id]?.[d];
-      if (rec) total += calcWorkMinutes(rec.start, rec.end, rec.breakMin);
-    }
+    for (let d = 1; d <= days; d++) { const rec = allJisseki[deptId]?.[s.id]?.[d]; if (rec) total += calcWorkMinutes(rec.start, rec.end, rec.breakMin); }
     rows.push([s.name, `${year}/${String(month+1).padStart(2,"0")} 合計`, "", "", "", "", "", "", fmtH(total), ""]);
   }
   return "﻿" + rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
@@ -3190,6 +3230,8 @@ function JissekiInputModal({ staffName, day, year, month, plannedShift, record, 
   const [note, setNote] = useState(record?.note || "");
   const [kp, setKp] = useState(null);
   const workMins = calcWorkMinutes(start, end, +breakMin || 0);
+  const plannedMins = calcWorkMinutes(defaults.start, defaults.end, defaults.breakMin ?? 60);
+  const overtimeMins = (start && end && plannedMins > 0) ? Math.max(0, workMins - plannedMins) : 0;
   const dow = ["日","月","火","水","木","金","土"][new Date(year, month, day).getDay()];
   const TS = { width:"100%", border:"1.5px solid #90cbc8", borderRadius:8, padding:"9px 12px", fontSize:14, fontFamily:"'Noto Sans JP',sans-serif", outline:"none", background:"#fff", boxSizing:"border-box" };
   const allTypes = [...(deptShiftTypes||["早番","日勤","遅番","夜勤"]), "休み", "有休"];
@@ -3227,6 +3269,7 @@ function JissekiInputModal({ staffName, day, year, month, plannedShift, record, 
         {start&&end&&<div style={{background:"#d5edeb",borderRadius:8,padding:"10px 14px",marginBottom:14,textAlign:"center"}}>
           <span style={{fontSize:12,color:"#2a6a67"}}>実労働時間 </span>
           <span style={{fontSize:20,fontWeight:900,color:"#1a9e9a"}}>{fmtH(workMins)}</span>
+          {overtimeMins>0&&<span style={{fontSize:12,color:"#c2410c",marginLeft:8,fontWeight:700}}>（うち残業 {fmtH(overtimeMins)}）</span>}
         </div>}
         <div style={{marginBottom:16}}>
           <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>備考</div>
@@ -3244,36 +3287,123 @@ function JissekiInputModal({ staffName, day, year, month, plannedShift, record, 
 }
 
 // ─────────────────────────────────────────────
+//  勤務実績: デフォルト時刻編集モーダル
+// ─────────────────────────────────────────────
+function JissekiDefaultsModal({ dept, defaults, onSave, onClose }) {
+  const shiftTypes = dept?.shiftTypes || ["早番","日勤","遅番","夜勤"];
+  const [form, setForm] = useState(() => {
+    const f = {};
+    for (const st of shiftTypes) {
+      const base = SHIFT_DEFAULT_TIMES[st] || {start:"",end:"",breakMin:60};
+      f[st] = {...base, ...(defaults?.[st]||{})};
+    }
+    return f;
+  });
+  const upd = (st, field, val) => setForm(p => ({...p, [st]:{...p[st],[field]:val}}));
+  const TS = {border:"1.5px solid #90cbc8",borderRadius:6,padding:"5px 8px",fontSize:13,fontFamily:"inherit",outline:"none",background:"#fff",width:"100%",boxSizing:"border-box"};
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+      <div style={{background:"#fff",borderRadius:16,padding:24,width:440,maxWidth:"95vw",maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontWeight:800,fontSize:16,color:"#1a3635",marginBottom:6}}>⏰ シフト別デフォルト時刻</div>
+        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:16}}>「全予定を一括コピー」時に使うデフォルトの出退勤時刻を設定します。</div>
+        {shiftTypes.map(st=>(
+          <div key={st} style={{marginBottom:12,background:"#f0fbfa",borderRadius:8,padding:"10px 14px"}}>
+            <div style={{fontWeight:700,color:"#1a3635",marginBottom:8,fontSize:13}}>{st}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+              {[["出勤","start","time"],["退勤","end","time"],["休憩(分)","breakMin","number"]].map(([label,field,type])=>(
+                <div key={field}>
+                  <div style={{fontSize:11,color:"#5a9e9b",marginBottom:3}}>{label}</div>
+                  <input type={type} value={form[st]?.[field]??""} min={type==="number"?0:undefined} max={type==="number"?240:undefined}
+                    onChange={e=>upd(st,field,type==="number"?+e.target.value:e.target.value)} style={TS}/>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div style={{display:"flex",gap:8,marginTop:8}}>
+          <button onClick={()=>onSave(form)} style={{flex:2,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontWeight:700,fontSize:14}}>💾 保存</button>
+          <button onClick={onClose} style={{flex:1,background:"#f0f0f0",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 //  勤務実績: 一覧・集計ビュー
 // ─────────────────────────────────────────────
-function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCellClick, onCsvExport }) {
+function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCellClick, onCsvExport, onXlsExport, onBulkCopy, onClearZero, defaultTimes, onDefaultsChange }) {
   const deptId = dept?.id;
   const days = getDays(year, month);
   const deptStaff = staffList.filter(s => s.dept === deptId);
-  const firstDow = new Date(year, month, 1).getDay();
   const DOW_LABEL = ["日","月","火","水","木","金","土"];
-  const DOW_COLOR = d => { const w=new Date(year,month,d).getDay(); return w===0?"#f87171":w===6?"#2BBFBA":"#3a8a87"; };
   const staffTotal = (sid) => { let t=0; for(let d=1;d<=days;d++){const r=allJisseki[deptId]?.[sid]?.[d];if(r)t+=calcWorkMinutes(r.start,r.end,r.breakMin);} return t; };
   const grandTotal = deptStaff.reduce((sum,s)=>sum+staffTotal(s.id), 0);
   const recordCount = deptStaff.reduce((sum,s)=>{let c=0;for(let d=1;d<=days;d++){if(allJisseki[deptId]?.[s.id]?.[d])c++;}return sum+c;},0);
+  const [showDefModal, setShowDefModal] = useState(false);
+
+  const getDefault = (shiftName) => defaultTimes?.[shiftName] || SHIFT_DEFAULT_TIMES[shiftName] || {};
+  const isModified = (planned, rec) => {
+    if (!rec) return false;
+    if (rec.actualShift !== planned) return true;
+    const d = getDefault(planned);
+    if (!d.start) return false;
+    return rec.start !== d.start || rec.end !== d.end || +rec.breakMin !== +d.breakMin;
+  };
+  const cellStatus = (planned, rec) => {
+    if (!rec) return "empty";
+    const actual = rec.actualShift || planned;
+    if (WORK_TYPES.has(planned) && REST_TYPES.has(actual)) return "absence";
+    if (rec.start && rec.end) {
+      const d = getDefault(planned);
+      if (d.start && d.end) {
+        const planMins = calcWorkMinutes(d.start, d.end, d.breakMin ?? 60);
+        const actMins = calcWorkMinutes(rec.start, rec.end, rec.breakMin ?? 0);
+        if (actMins > planMins + 4) return "overtime";
+        if (actMins < planMins - 14) return "early";
+      }
+    }
+    if (isModified(planned, rec)) return "modified";
+    return "normal";
+  };
+  const STATUS_STYLE = {
+    absence:  { background:"#f1f3f4", color:"#6b7280", fontStyle:"italic" },
+    overtime: { background:"#fff3e0", color:"#c2410c" },
+    early:    { background:"#f1f3f4", color:"#6b7280", fontStyle:"italic" },
+    modified: { background:"#fff3b0", color:"#0a4a47" },
+    normal:   { background:"#d5f0ec", color:"#0a4a47" },
+    empty:    { color:"#b0c8c8" },
+  };
 
   const TH = { padding:"4px 6px", fontSize:10, fontWeight:700, color:"#3a8a87", background:"#e0f4f2", textAlign:"center", whiteSpace:"nowrap", position:"sticky", top:0 };
   const TD = (extra={}) => ({ padding:"3px 4px", fontSize:11, textAlign:"center", borderBottom:"1px solid #d5edeb", ...extra });
   return (
     <div>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:8}}>
         <div style={{fontSize:12,color:"#3a8a87"}}>
           <span style={{fontWeight:700,color:"#1a9e9a"}}>{recordCount}件</span> の実績 ／ 合計
           <span style={{fontWeight:700,color:"#1a9e9a",marginLeft:4}}>{fmtH(grandTotal)}</span>
         </div>
-        <button onClick={onCsvExport} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📥 CSV出力</button>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          <button onClick={()=>setShowDefModal(true)} style={{background:"#f0fbfa",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>⚙️ デフォルト時刻</button>
+          <button onClick={()=>onBulkCopy(null)} style={{background:"linear-gradient(135deg,#f59e0b,#f97316)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📋 全予定を一括コピー</button>
+          <button onClick={onClearZero} style={{background:"#fff0f0",color:"#c44b4b",border:"1px solid #e07070",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>🗑 0:00レコードを一括削除</button>
+          <button onClick={onXlsExport} style={{background:"linear-gradient(135deg,#217346,#2ecc71)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📊 Excel出力</button>
+          <button onClick={onCsvExport} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📥 CSV出力</button>
+        </div>
       </div>
-      <div style={{fontSize:11,color:"#5a9e9b",marginBottom:10,background:"#e0f4f2",borderRadius:7,padding:"6px 10px"}}>💡 セルをクリックして実績（出退勤時刻）を入力できます</div>
+      <div style={{fontSize:11,color:"#5a9e9b",marginBottom:10,background:"#e0f4f2",borderRadius:7,padding:"6px 10px",display:"flex",flexWrap:"wrap",gap:"6px 12px",alignItems:"center"}}>
+        <span>💡 セルクリックで個別修正。📋で一括コピー。</span>
+        <span><span style={{background:"#fff3e0",color:"#c2410c",padding:"0 4px",borderRadius:3,fontWeight:700}}>橙</span>＝残業</span>
+        <span><span style={{background:"#f1f3f4",color:"#6b7280",padding:"0 4px",borderRadius:3,fontStyle:"italic"}}>灰</span>＝早退/欠勤</span>
+        <span><span style={{background:"#fff3b0",padding:"0 4px",borderRadius:3}}>黄</span>＝時刻変更</span>
+        <span>📝＝備考あり</span>
+      </div>
       <div style={{overflowX:"auto",borderRadius:8,border:"1px solid #b8deda"}}>
         <table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:11}}>
           <thead>
             <tr>
-              <th style={{...TH,left:0,zIndex:2,minWidth:72,textAlign:"left",paddingLeft:8}}>スタッフ</th>
+              <th style={{...TH,left:0,zIndex:2,minWidth:90,textAlign:"left",paddingLeft:8}}>スタッフ</th>
               {Array.from({length:days},(_,i)=>i+1).map(d=>{
                 const dow=new Date(year,month,d).getDay();
                 return <th key={d} style={{...TH,color:dow===0?"#f87171":dow===6?"#2BBFBA":"#3a8a87",minWidth:38}}>
@@ -3286,15 +3416,25 @@ function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCe
           <tbody>
             {deptStaff.map((s,si)=>(
               <tr key={s.id} style={{background:si%2===0?"#fff":"#f7fffe"}}>
-                <td style={{...TD(),fontWeight:700,color:"#1a3635",textAlign:"left",paddingLeft:8,whiteSpace:"nowrap",position:"sticky",left:0,background:si%2===0?"#fff":"#f7fffe"}}>{s.name}</td>
+                <td style={{...TD(),fontWeight:700,color:"#1a3635",textAlign:"left",paddingLeft:8,whiteSpace:"nowrap",position:"sticky",left:0,background:si%2===0?"#fff":"#f7fffe"}}>
+                  {s.name}
+                  <span title={`${s.name}の予定を一括コピー`} onClick={e=>{e.stopPropagation();onBulkCopy(s.id);}} style={{marginLeft:5,cursor:"pointer",fontSize:11,opacity:0.55,userSelect:"none"}} onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.55"}>📋</span>
+                </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const planned=allShifts[deptId]?.[s.id]?.[d];
                   const rec=allJisseki[deptId]?.[s.id]?.[d];
                   const mins=rec?calcWorkMinutes(rec.start,rec.end,rec.breakMin):0;
                   const hasRec=!!rec;
+                  const status=cellStatus(planned,rec);
+                  const ss=STATUS_STYLE[status]||{};
                   return (
-                    <td key={d} onClick={()=>onCellClick(s,d,planned)} style={{...TD({cursor:"pointer",background:hasRec?"#d5f0ec":undefined,color:hasRec?"#0a4a47":"#b0c8c8"})}}>
-                      {hasRec ? <span style={{fontWeight:700}}>{fmtH(mins)}</span> : <span style={{fontSize:9}}>{planned||""}</span>}
+                    <td key={d} onClick={()=>onCellClick(s,d,planned)} style={{...TD({cursor:"pointer",...ss})}}>
+                      {hasRec ? (
+                        <div style={{position:"relative",display:"inline-block"}}>
+                          <span style={{fontWeight:status==="overtime"?800:700}}>{fmtH(mins)}</span>
+                          {rec.note&&<span style={{position:"absolute",top:-4,right:-6,fontSize:8,lineHeight:1,pointerEvents:"none"}}>📝</span>}
+                        </div>
+                      ) : <span style={{fontSize:9}}>{planned||""}</span>}
                     </td>
                   );
                 })}
@@ -3305,6 +3445,7 @@ function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCe
         </table>
       </div>
       {deptStaff.length === 0 && <div style={{textAlign:"center",padding:40,color:"#90cbc8"}}>スタッフが登録されていません</div>}
+      {showDefModal && <JissekiDefaultsModal dept={dept} defaults={defaultTimes||{}} onSave={defs=>{onDefaultsChange(defs);setShowDefModal(false);}} onClose={()=>setShowDefModal(false)}/>}
     </div>
   );
 }
@@ -3825,6 +3966,81 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       return next;
     });
   }, [activeDeptId, year, month, session.user.id]);
+  const [jissekiDefaults, setJissekiDefaults] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('jissekiDefaults') || '{}'); } catch { return {}; }
+  });
+  const saveJissekiDefaultsForDept = useCallback((deptId, defaults) => {
+    setJissekiDefaults(prev => {
+      const next = {...prev, [deptId]: defaults};
+      try { localStorage.setItem('jissekiDefaults', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+  const bulkCopyPlanned = useCallback((staffId) => {
+    const days = getDays(year, month);
+    const deptId = activeDeptId;
+    const targetStaff = staffId
+      ? staffList.filter(s => s.id === staffId && s.dept === deptId)
+      : staffList.filter(s => s.dept === deptId);
+    const msg = staffId
+      ? `${targetStaff[0]?.name || ""}の予定を実績にコピーします（既存の記録は上書きしません）。よろしいですか？`
+      : `全スタッフの予定を実績にコピーします（既存の記録は上書きしません）。よろしいですか？`;
+    if (!window.confirm(msg)) return;
+    setAllJisseki(prev => {
+      const deptData = {...(prev[deptId] || {})};
+      let changed = false;
+      for (const s of targetStaff) {
+        const staffData = {...(deptData[s.id] || {})};
+        for (let d = 1; d <= days; d++) {
+          if (staffData[d]) continue;
+          const planned = allShifts[deptId]?.[s.id]?.[d];
+          if (!planned || (!WORK_TYPES.has(planned) && planned !== "明け")) continue;
+          const defs = jissekiDefaults[deptId]?.[planned] || SHIFT_DEFAULT_TIMES[planned] || {start:"",end:"",breakMin:60};
+          staffData[d] = {actualShift:planned, start:defs.start||"", end:defs.end||"", breakMin:defs.breakMin??60, note:""};
+          changed = true;
+        }
+        deptData[s.id] = staffData;
+      }
+      if (!changed) return prev;
+      const next = {...prev, [deptId]: deptData};
+      const key = `jisseki_${year}_${month+1}_${deptId}`;
+      supabase.from('shift_data').upsert({user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});
+      return next;
+    });
+  }, [activeDeptId, staffList, allShifts, year, month, jissekiDefaults, session.user.id]);
+  const bulkClearZeroRec = useCallback(() => {
+    const deptId = activeDeptId;
+    const days = getDays(year, month);
+    if (!window.confirm("実労働時間が0:00のレコードをすべて削除します。よろしいですか？")) return;
+    setAllJisseki(prev => {
+      const deptData = {...(prev[deptId] || {})};
+      let changed = false;
+      for (const s of staffList.filter(x => x.dept === deptId)) {
+        const staffData = {...(deptData[s.id] || {})};
+        for (let d = 1; d <= days; d++) {
+          const r = staffData[d];
+          if (!r) continue;
+          const mins = calcWorkMinutes(r.start, r.end, r.breakMin ?? 0);
+          if (mins === 0) { delete staffData[d]; changed = true; }
+        }
+        deptData[s.id] = staffData;
+      }
+      if (!changed) return prev;
+      const next = {...prev, [deptId]: deptData};
+      const key = `jisseki_${year}_${month+1}_${deptId}`;
+      supabase.from('shift_data').upsert({user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});
+      return next;
+    });
+  }, [activeDeptId, staffList, year, month, session.user.id]);
+  const clearDeptJisseki = useCallback(() => {
+    const deptId = activeDeptId;
+    setAllJisseki(prev => {
+      const next = { ...prev, [deptId]: {} };
+      const key = `jisseki_${year}_${month+1}_${deptId}`;
+      supabase.from('shift_data').upsert({ user_id: session.user.id, data_key: key, data_value: {}, updated_at: new Date().toISOString() }, { onConflict: 'user_id,data_key' }).then(() => {});
+      return next;
+    });
+  }, [activeDeptId, year, month, session.user.id]);
   const [adminModal, setAdminModal] = useState(false);
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
@@ -4203,7 +4419,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="shift"&&(<><Legend/>{showSuggestion&&<SuggestionPanel staffList={staffList} shifts={deptShifts} year={year} month={month} dept={dept} onApply={newShifts=>{setDeptShifts(newShifts);setShowSuggestion(false);}}/>}<ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
-        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
+        {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onBulkCopy={bulkCopyPlanned} onClearZero={bulkClearZeroRec} defaultTimes={jissekiDefaults[activeDeptId]||{}} onDefaultsChange={defs=>saveJissekiDefaultsForDept(activeDeptId,defs)} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
@@ -4211,7 +4427,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)}/>}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
-      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{setExcelRawMonths(prev=>{const next={...prev};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;return next;});const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};setExcelRawMonths(prev=>{const deptRaw={...(prev[activeDeptId]||{}),...newRaw};const next={...prev,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));return next;});setExcelImportModal(false);}} onReset={()=>{setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
