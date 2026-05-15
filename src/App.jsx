@@ -3525,6 +3525,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isInitializing = useRef(true);
   const isMergingKibo = useRef(false); // kiboChannel同期中フラグ（現在はmergeStaffKiboで使用）
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
+  const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（未保存ローカル変更の検出用）
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
@@ -3546,11 +3547,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
     if (!isInitializing.current) {
       staffUpsertInProgress.current = true;
+      const snapshot = staffList;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
         .then(({ error }) => {
           staffUpsertInProgress.current = false;
-          if (error) console.error('[sync] staffList upsert失敗:', error); else console.log('[sync] staffList 保存OK');
+          if (error) console.error('[sync] staffList upsert失敗:', error);
+          else { lastSavedStaffListRef.current = snapshot; console.log('[sync] staffList 保存OK'); }
         });
+    } else {
+      // 初期化中（Supabaseからのロード時）は保存済みとして扱う
+      lastSavedStaffListRef.current = staffList;
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3694,9 +3700,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (userEditSeq.current !== seqAtStart) return;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts'])      setDepts(byKey['depts']);
-        // staffList保存中はRealtimeの旧データで上書きしない。内容が同じなら無駄な更新もしない
+        // staffList保存中、または未保存のローカル変更がある場合はRealtimeの旧データで上書きしない
         if (byKey['staffList'] && !staffUpsertInProgress.current) {
-          if (JSON.stringify(byKey['staffList']) !== JSON.stringify(staffListRef.current)) {
+          const lastSaved = lastSavedStaffListRef.current;
+          const hasLocalChanges = lastSaved !== null &&
+            JSON.stringify(staffListRef.current) !== JSON.stringify(lastSaved);
+          if (!hasLocalChanges && JSON.stringify(byKey['staffList']) !== JSON.stringify(staffListRef.current)) {
             setStaffList(byKey['staffList']);
           }
         }
