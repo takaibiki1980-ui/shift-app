@@ -767,6 +767,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (lockedDays[s.id].has(d)) return false; // その日がロック済み
         if (["夜勤","明け"].includes(res[s.id][d - 1])) return false;
         if (d + 1 <= days && lockedDays[s.id].has(d + 1) && res[s.id][d+1] !== "明け") return false; // 翌日がロック済み（明けを入れられない）
+        if (d + 2 <= days && lockedDays[s.id].has(d + 2) && WORK_TYPES.has(res[s.id][d + 2]) && res[s.id][d + 2] !== "夜勤") return false; // 夜勤→明け→固定勤務になるのを防ぐ
         return true;
       };
       let cands = nightPool.filter(s => {
