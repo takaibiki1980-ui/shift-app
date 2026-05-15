@@ -3525,6 +3525,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isInitializing = useRef(true);
   const isMergingKibo = useRef(false); // kiboChannel同期中フラグ（現在はmergeStaffKiboで使用）
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
+  const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（未保存ローカル変更の検出用）
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
@@ -3546,11 +3547,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
     if (!isInitializing.current) {
       staffUpsertInProgress.current = true;
+      const snapshot = staffList;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
         .then(({ error }) => {
           staffUpsertInProgress.current = false;
-          if (error) console.error('[sync] staffList upsert失敗:', error); else console.log('[sync] staffList 保存OK');
+          if (error) console.error('[sync] staffList upsert失敗:', error);
+          else { lastSavedStaffListRef.current = snapshot; console.log('[sync] staffList 保存OK'); }
         });
+    } else {
+      // 初期化中（Supabaseからのロード時）は保存済みとして扱う
+      lastSavedStaffListRef.current = staffList;
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3694,9 +3700,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (userEditSeq.current !== seqAtStart) return;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts'])      setDepts(byKey['depts']);
-        // staffList保存中はRealtimeの旧データで上書きしない。内容が同じなら無駄な更新もしない
+        // staffList保存中、または未保存のローカル変更がある場合はRealtimeの旧データで上書きしない
         if (byKey['staffList'] && !staffUpsertInProgress.current) {
-          if (JSON.stringify(byKey['staffList']) !== JSON.stringify(staffListRef.current)) {
+          const lastSaved = lastSavedStaffListRef.current;
+          const hasLocalChanges = lastSaved !== null &&
+            JSON.stringify(staffListRef.current) !== JSON.stringify(lastSaved);
+          if (!hasLocalChanges && JSON.stringify(byKey['staffList']) !== JSON.stringify(staffListRef.current)) {
             setStaffList(byKey['staffList']);
           }
         }
@@ -3801,6 +3810,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (isInitializing.current) return;
     isLoadingMonth.current = true;
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
+    undoStackRef.current = {}; // 月切替でアンドゥ履歴をリセット
+    setUndoCount(0);
     const prefix = `shifts_${year}_${month+1}_`;
     supabase.from('shift_data').select('data_key,data_value')
       .eq('user_id', session.user.id)
@@ -3905,6 +3916,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [generateWarnings, setGenerateWarnings] = useState(null);
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
+  const undoStackRef = useRef({}); // { [deptId]: deptShifts[] } — アンドゥ履歴（最大30ステップ）
+  const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
   const isMobile = (window.innerWidth || document.documentElement.clientWidth) < 900;
   const [tableZoom, setTableZoom] = useState(() => { try { return Number(localStorage.getItem("shiftTableZoom")) || 100; } catch { return 100; } });
   const [zoomNumpadRect, setZoomNumpadRect] = useState(null); // テンキーポップアップ用
@@ -4037,6 +4050,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [pinModal, setPinModal] = useState(false);
   // タブ切替で自動ロック
   useEffect(() => { setUnlockedDeptId(null); }, [activeDeptId]);
+  // 部署切替時にアンドゥ可能数を現在部署のスタック長に合わせる
+  useEffect(() => { setUndoCount((undoStackRef.current[activeDeptId] || []).length); }, [activeDeptId]);
   const isLocked = !!(depts.find(d=>d.id===activeDeptId)?.pin && unlockedDeptId !== activeDeptId);
   const isLockedRef = useRef(isLocked);
   useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
@@ -4105,6 +4120,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     return computeSyncRate(deptShifts, staffList, dept, year, month, mergedTrend);
   }, [deptShifts, staffList, dept, year, month, shiftTrend, learnedTrend, activeDeptId]);
   const setDeptShifts = useCallback(updater => {
+    // アンドゥ用に変更前の状態を積む
+    const snapshot = allShiftsRef.current[activeDeptId] || {};
+    const stack = undoStackRef.current[activeDeptId] || [];
+    undoStackRef.current[activeDeptId] = [...stack, snapshot].slice(-30);
+    setUndoCount(undoStackRef.current[activeDeptId].length);
     // ユーザー操作はRealtimeより常に優先: 編集前にシーケンス番号を上げてRealtimeをキャンセル
     userEditSeq.current++;
     saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
@@ -4132,6 +4152,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
       try {
+        // 自動生成前の状態をアンドゥスタックに積む
+        const genSnapshot = allShiftsRef.current[cd.id] || {};
+        const genStack = undoStackRef.current[cd.id] || [];
+        undoStackRef.current[cd.id] = [...genStack, genSnapshot].slice(-30);
+        setUndoCount(undoStackRef.current[cd.id].length);
         const cs2 = allShiftsRef.current[cd.id] || {};
         const {shifts:result, warnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
         if (Object.keys(warnings).length > 0) setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);
@@ -4151,6 +4176,30 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       finally{setGenerating(false);}
     },700);
   }, [staffList,dept,year,month,shiftTrend,learnedTrend]);
+
+  const handleUndo = useCallback(() => {
+    if (isLockedRef.current) return;
+    const stack = undoStackRef.current[activeDeptId] || [];
+    if (stack.length === 0) return;
+    const previous = stack[stack.length - 1];
+    undoStackRef.current[activeDeptId] = stack.slice(0, -1);
+    setUndoCount(undoStackRef.current[activeDeptId].length);
+    userEditSeq.current++;
+    saveStatusRef.current = "unsaved";
+    setAllShifts(prev => ({...prev, [activeDeptId]: previous}));
+  }, [activeDeptId]);
+
+  // Ctrl+Z / ⌘+Z でアンドゥ
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleUndo]);
 
   const handleLeftClick = useCallback((staffId, day) => {
     if (isLockedRef.current) return;
@@ -4203,6 +4252,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
           {!isMobile&&(()=>{const deptTrend=shiftTrend[activeDeptId]||{};const excelCnt=Object.keys(deptTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const showSync=syncRate!=null&&hasAny;const syncColor=syncRate>=85?"#16a34a":syncRate>=70?"#ca8a04":"#dc2626";const label=showSync?`🎯 シンクロ率 ${syncRate}%`:learnedCnt>0?`🧠 学習中(${learnedCnt}名)`:excelCnt>0?`📊 傾向ON`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:showSync?"#f0f9ff":hasAny?"#e8f5ee":"#ffffff",color:showSync?syncColor:hasAny?"#5cb87a":"#2a6a67",border:showSync?`1px solid ${syncColor}`:hasAny?"1px solid #16a34a":"1px solid #90cbc8",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          {!isLocked && undoCount > 0 && <button onClick={handleUndo} title={`元に戻す (Ctrl+Z) — ${undoCount}ステップ`} style={{background:"#f8faff",color:"#3b82f6",border:"1px solid #93c5fd",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>↩{!isMobile&&<span>元に戻す</span>}{!isMobile&&<span style={{fontSize:10,color:"#93c5fd",fontWeight:600}}>×{undoCount}</span>}</button>}
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
           <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
           {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🏢":"🏢 管理"}</button>}
