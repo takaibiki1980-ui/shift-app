@@ -3522,7 +3522,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [month, setMonth] = useState(now.getMonth());
 
   const isInitializing = useRef(true);
-  const isMergingKibo = useRef(false); // mergeStaffKibo中にstaffListが再保存されるのを防ぐ
+  const isMergingKibo = useRef(false); // kiboChannel同期中フラグ（現在はmergeStaffKiboで使用）
+  const skipNextStaffSave = useRef(false); // mergeStaffKiboのsetStaffList呼び出しで次回useEffect保存をスキップ
+  const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
@@ -3542,9 +3544,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
-    if (!isInitializing.current && !isMergingKibo.current) {
+    if (!isInitializing.current) {
+      // mergeStaffKibo由来のsetStaffListはスキップ（直接保存済み）
+      if (skipNextStaffSave.current) { skipNextStaffSave.current = false; return; }
+      staffUpsertInProgress.current = true;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-        .then(({ error }) => { if (error) console.error('[sync] staffList upsert失敗:', error); else console.log('[sync] staffList 保存OK'); });
+        .then(({ error }) => {
+          staffUpsertInProgress.current = false;
+          if (error) console.error('[sync] staffList upsert失敗:', error); else console.log('[sync] staffList 保存OK');
+        });
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3688,7 +3696,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (userEditSeq.current !== seqAtStart) return;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts'])      setDepts(byKey['depts']);
-        if (byKey['staffList'])  setStaffList(byKey['staffList']);
+        // staffList保存中はRealtimeの旧データで上書きしない。内容が同じなら無駄な更新もしない
+        if (byKey['staffList'] && !staffUpsertInProgress.current) {
+          if (JSON.stringify(byKey['staffList']) !== JSON.stringify(staffListRef.current)) {
+            setStaffList(byKey['staffList']);
+          }
+        }
         const latestExcRT = filterExpiredExceptions(byKey['exceptionMonths'] || exceptionMonths);
         if (byKey['excelRawMonths']) {
           const actualDepts2 = byKey['depts'] || depts;
@@ -3756,6 +3769,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: kibo.yukyu_days || [] }
         };
       });
+      skipNextStaffSave.current = true; // useEffectでの再保存をスキップ（直接保存する）
       setStaffList(merged);
       // マージ後のデータを即座にSupabaseへ保存（reloadFromRemoteで古いデータに上書きされるのを防ぐ）
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:merged, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
