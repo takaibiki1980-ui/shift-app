@@ -3571,11 +3571,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
   });
   const [allJisseki, setAllJisseki] = useState({});
+  const allJissekiRef = useRef({});
   const [jissekiModal, setJissekiModal] = useState(null); // { staff, day, planned }
   const allShiftsRef = useRef(allShifts); // 常に最新のallShiftsを参照（生成ハンドラ内で利用）
   const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
   allShiftsRef.current = allShifts; // 常に最新状態を参照（生成ハンドラ・保存ハンドラ用）
   staffListRef.current = staffList;
+  allJissekiRef.current = allJisseki;
   const [allEvents, setAllEvents] = useState({});
   const [eventEditDay, setEventEditDay] = useState(null);
 
@@ -3741,23 +3743,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // Supabase Realtime: 他デバイスが保存した瞬間に同期
     const mergeStaffKibo = async () => {
       const mk = monthKey(year, month);
-      const { data } = await supabase.from('staff_kibo').select('*').eq('admin_user_id', session.user.id).eq('month_key', mk);
+      const { data, error } = await supabase.from('staff_kibo').select('*').eq('admin_user_id', session.user.id).eq('month_key', mk);
+      if (error) { console.error('[mergeStaffKibo]', error); return; }
       isMergingKibo.current = true;
-      setStaffList(prev => {
-        const merged = prev.map(s => {
-          if (!data || data.length === 0) return s;
-          const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
-          if (!kibo) return s;
-          return {
-            ...s,
-            kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days || [] },
-            yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: kibo.yukyu_days || [] }
-          };
-        });
-        // マージ後のデータを即座にSupabaseへ保存（reloadFromRemoteで古いデータに上書きされるのを防ぐ）
-        supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:merged, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
-        return merged;
+      const merged = staffListRef.current.map(s => {
+        if (!data || data.length === 0) return s;
+        const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
+        if (!kibo) return s;
+        return {
+          ...s,
+          kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days || [] },
+          yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: kibo.yukyu_days || [] }
+        };
       });
+      setStaffList(merged);
+      // マージ後のデータを即座にSupabaseへ保存（reloadFromRemoteで古いデータに上書きされるのを防ぐ）
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:merged, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
       setTimeout(() => { isMergingKibo.current = false; }, 200);
     };
     mergeStaffKibo();
@@ -3906,24 +3907,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   // ── 勤務実績: 保存ハンドラ ──
   const saveJisseki = useCallback((staffId, day, rec) => {
-    setAllJisseki(prev => {
-      const next = { ...prev, [activeDeptId]: { ...(prev[activeDeptId]||{}), [staffId]: { ...(prev[activeDeptId]?.[staffId]||{}), [day]: rec } } };
-      const key = `jisseki_${year}_${month+1}_${activeDeptId}`;
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:key, data_value:next[activeDeptId], updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
-      return next;
-    });
+    const prevDept = allJissekiRef.current[activeDeptId] || {};
+    const nextDept = { ...prevDept, [staffId]: { ...(prevDept[staffId]||{}), [day]: rec } };
+    setAllJisseki(prev => ({ ...prev, [activeDeptId]: nextDept }));
+    const key = `jisseki_${year}_${month+1}_${activeDeptId}`;
+    supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:key, data_value:nextDept, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{ if(error) console.error('[saveJisseki]',error); });
   }, [activeDeptId, year, month, session.user.id]);
   const clearJisseki = useCallback((staffId, day) => {
-    setAllJisseki(prev => {
-      const deptData = { ...(prev[activeDeptId]||{}) };
-      const staffData = { ...(deptData[staffId]||{}) };
-      delete staffData[day];
-      deptData[staffId] = staffData;
-      const next = { ...prev, [activeDeptId]: deptData };
-      const key = `jisseki_${year}_${month+1}_${activeDeptId}`;
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:key, data_value:next[activeDeptId], updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
-      return next;
-    });
+    const prevDept = { ...(allJissekiRef.current[activeDeptId]||{}) };
+    const staffData = { ...(prevDept[staffId]||{}) };
+    delete staffData[day];
+    const nextDept = { ...prevDept, [staffId]: staffData };
+    setAllJisseki(prev => ({ ...prev, [activeDeptId]: nextDept }));
+    const key = `jisseki_${year}_${month+1}_${activeDeptId}`;
+    supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:key, data_value:nextDept, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{ if(error) console.error('[clearJisseki]',error); });
   }, [activeDeptId, year, month, session.user.id]);
   const [jissekiDefaults, setJissekiDefaults] = useState(() => {
     try { return JSON.parse(localStorage.getItem('jissekiDefaults') || '{}'); } catch { return {}; }
@@ -4034,7 +4031,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const generateTimerRef = useRef(null);
   useEffect(() => {
     if (!isInitializing.current) {
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{ if(error) console.error('[shiftTrend save]',error); });
     }
   }, [shiftTrend]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
