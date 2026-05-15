@@ -3524,7 +3524,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const isInitializing = useRef(true);
   const isMergingKibo = useRef(false); // kiboChannel同期中フラグ（現在はmergeStaffKiboで使用）
-  const skipNextStaffSave = useRef(false); // mergeStaffKiboのsetStaffList呼び出しで次回useEffect保存をスキップ
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
@@ -3546,8 +3545,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
     if (!isInitializing.current) {
-      // mergeStaffKibo由来のsetStaffListはスキップ（直接保存済み）
-      if (skipNextStaffSave.current) { skipNextStaffSave.current = false; return; }
       staffUpsertInProgress.current = true;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
         .then(({ error }) => {
@@ -3759,22 +3756,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       const mk = monthKey(year, month);
       const { data, error } = await supabase.from('staff_kibo').select('*').eq('admin_user_id', session.user.id).eq('month_key', mk);
       if (error) { console.error('[mergeStaffKibo]', error); return; }
-      isMergingKibo.current = true;
-      const merged = staffListRef.current.map(s => {
-        if (!data || data.length === 0) return s;
-        const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
-        if (!kibo) return s;
-        return {
-          ...s,
-          kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days || [] },
-          yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: kibo.yukyu_days || [] }
-        };
+      if (!data || data.length === 0) return; // 変更なし：setStaffListを呼ばない
+      // functional updaterで「現時点の最新state」にマージを適用（ユーザーの保存と競合しない）
+      setStaffList(prev => {
+        const next = prev.map(s => {
+          const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
+          if (!kibo) return s;
+          return {
+            ...s,
+            kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo.days || [] },
+            yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: kibo.yukyu_days || [] }
+          };
+        });
+        // 実際に変化があった場合のみ新しい配列を返す（変化なしならprevを返しuseEffectを起動しない）
+        const changed = next.some((s, i) => s !== prev[i]);
+        return changed ? next : prev;
       });
-      skipNextStaffSave.current = true; // useEffectでの再保存をスキップ（直接保存する）
-      setStaffList(merged);
-      // マージ後のデータを即座にSupabaseへ保存（reloadFromRemoteで古いデータに上書きされるのを防ぐ）
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:merged, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
-      setTimeout(() => { isMergingKibo.current = false; }, 200);
     };
     mergeStaffKibo();
 
