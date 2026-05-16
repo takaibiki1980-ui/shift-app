@@ -456,7 +456,7 @@ const monthKey = (y,m) => `${y}-${m+1}`;
 
 // 名前正規化：スペース(半角・全角)・中点(・･)・ピリオドを除去して小文字化
 // 「田中 花子」「田中　花子」「田中花子」「ジョン・スミス」「ジョン スミス」を統一比較
-const normName = (s) => String(s||'').replace(/[\s　・･．.]/g, '').toLowerCase();
+const normName = (s) => String(s||'').replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[\s　・･．.\-ー－]/g,'').toLowerCase();
 const nameMatch = (a, b) => { const na=normName(a), nb=normName(b); return na===nb||na.includes(nb)||nb.includes(na); };
 
 // UUID ↔ 22文字base64url変換（URLを40%短縮）
@@ -481,12 +481,19 @@ function calcConsecutive(sShifts, d) {
 // Excel月別生データから除外月を除いてshiftTrendを再計算
 function computeShiftTrendFromRaw(rawByMonth, exceptionMonths = []) {
   const exceptions = new Set(exceptionMonths);
-  const COUNT_KEYS = ['早番','日勤','遅番','夜勤'];
+  const autoKeys = new Set(['早番','日勤','遅番','夜勤']);
+  for (const staffData of Object.values(rawByMonth || {})) {
+    for (const d of Object.values(staffData || {})) {
+      if (!d || typeof d !== 'object') continue;
+      Object.keys(d).forEach(k => { if (!['total','dowRest','dowTotal','dowShift'].includes(k)) autoKeys.add(k); });
+    }
+  }
+  const COUNT_KEYS = [...autoKeys];
   const trendMap = {};
   for (const [month, staffData] of Object.entries(rawByMonth || {})) {
     if (exceptions.has(month)) continue;
     for (const [name, d] of Object.entries(staffData)) {
-      if (!trendMap[name]) trendMap[name] = { 早番:0, 日勤:0, 遅番:0, 夜勤:0, total:0, dowRest:[0,0,0,0,0,0,0], dowTotal:[0,0,0,0,0,0,0], dowShift:[{},{},{},{},{},{},{}] };
+      if (!trendMap[name]) { const c={}; COUNT_KEYS.forEach(k=>c[k]=0); trendMap[name]={...c,total:0,dowRest:[0,0,0,0,0,0,0],dowTotal:[0,0,0,0,0,0,0],dowShift:[{},{},{},{},{},{},{}]}; }
       COUNT_KEYS.forEach(k => { trendMap[name][k] += (d[k]||0); });
       trendMap[name].total += (d.total||0);
       if (d.dowRest) for (let i=0;i<7;i++) { trendMap[name].dowRest[i]+=(d.dowRest[i]||0); trendMap[name].dowTotal[i]+=(d.dowTotal[i]||0); }
@@ -555,8 +562,16 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const dowShifts = {}; // 曜日別シフト集計: [staffId][dow][shiftType]
   const now = new Date();
   const nowYM = now.getFullYear() * 12 + now.getMonth();
-  const TRANS_KEYS = new Set(['早番','日勤','遅番','夜勤','明け','休み','希望休']);
-  const WORK_SHIFT_KEYS = ['早番','日勤','遅番','夜勤'];
+  const WORK_SHIFT_SET = new Set(['早番','日勤','遅番','夜勤']);
+  for (const [key2, shifts2] of Object.entries(allDBData)) {
+    if (!key2.startsWith('shifts_') || !shifts2 || typeof shifts2 !== 'object') continue;
+    for (const ss of Object.values(shifts2)) {
+      if (!ss || typeof ss !== 'object') continue;
+      for (const sh of Object.values(ss)) { if (sh && typeof sh === 'string' && !['希望休','有休','明け','休み',''].includes(sh)) WORK_SHIFT_SET.add(sh); }
+    }
+  }
+  const WORK_SHIFT_KEYS = [...WORK_SHIFT_SET];
+  const TRANS_KEYS = new Set([...WORK_SHIFT_KEYS, '明け','休み','希望休']);
   for (const [key, shifts] of Object.entries(allDBData)) {
     if (!key.startsWith('shifts_') || !shifts || typeof shifts !== 'object') continue;
     // キー形式: shifts_YYYY_M_deptId
@@ -582,7 +597,7 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
         counts[staffId][shift] = (counts[staffId][shift] || 0) + weight;
         totals[staffId] += weight;
         // 曜日別シフト集計
-        if (WORK_SHIFT_KEYS.includes(shift)) {
+        if (WORK_SHIFT_SET.has(shift)) {
           const d = parseInt(dayStr);
           if (!isNaN(d)) {
             const dow = new Date(keyYear, keyMonth, d).getDay();
@@ -684,7 +699,8 @@ function mergeShiftTrends(excelTrend, learnedTrend) {
 // 自動生成結果と学習データのシンクロ率を計算（0-100 or null）
 function computeSyncRate(shifts, staffList, dept, year, month, mergedTrend) {
   const ds = staffList.filter(s => s.dept === dept.id);
-  const WORK_KEYS = ['早番','日勤','遅番','夜勤'];
+  const customSyncKeys = (dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean);
+  const WORK_KEYS = ['早番','日勤','遅番','夜勤', ...customSyncKeys];
   const WORK_SET = new Set(WORK_KEYS);
   let totalWork = 0, syncWork = 0;
   for (const s of ds) {
