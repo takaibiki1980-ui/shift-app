@@ -663,6 +663,26 @@ function mergeSwapLearning(existing, newChanges) {
   return result;
 }
 
+// 希望休の前々日に夜勤を手動配置したパターンを検出（アンカー学習用）
+// baseline:自動生成直後, current:手動修正後。戻り値: { staffId: 新規パターン数 }
+function detectKiboNightPatterns(baseline, current, deptStaff, year, month) {
+  const mk = monthKey(year, month);
+  const result = {};
+  for (const s of deptStaff) {
+    if (!s.nightOk) continue;
+    const kibodays = (s.kiboByMonth?.[mk] || []).map(Number);
+    let newPat = 0;
+    for (const D of kibodays) {
+      const nd = D - 2;
+      if (nd < 1) continue;
+      // 手動後に 夜勤→明け→希望休 パターンが成立し、かつ自動生成時は夜勤でなかった場合
+      if (current[s.id]?.[nd] === "夜勤" && current[s.id]?.[nd + 1] === "明け" && baseline[s.id]?.[nd] !== "夜勤") newPat++;
+    }
+    if (newPat > 0) result[s.id] = newPat;
+  }
+  return result;
+}
+
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}) {
   const days = getDays(year, month);
   const mk = monthKey(year, month);
@@ -754,6 +774,32 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     }
   });
+
+  // ★ステップ1.5: 希望休アンカー配置
+  // 希望休D がある夜勤対応スタッフに対し、D-2=夜勤・D-1=明け を先行仮置きする。
+  // これにより「希望休はパズルのノイズ」でなく「配置を確定させるヒント」として機能する。
+  if (dept.shiftTypes.includes("夜勤")) {
+    const anchorPool = ds.filter(s => s.nightOk);
+    const anchorAutoMax = Math.ceil(days / Math.max(anchorPool.length, 1));
+    // kiboNightPreference が高いスタッフほど先にアンカー権を得る（学習データ反映）
+    const sortedAnchorPool = [...anchorPool].sort((a, b) => (b.kiboNightPreference || 0) - (a.kiboNightPreference || 0));
+    for (const s of sortedAnchorPool) {
+      const kibodays = (s.kiboByMonth?.[mk] || []).map(Number).sort((a, b) => a - b);
+      for (const D of kibodays) {
+        const nightDay = D - 2, meakeDay = D - 1;
+        if (nightDay < 1) continue; // 月頭すぎて前々日がない
+        if (lockedDays[s.id].has(nightDay) || lockedDays[s.id].has(meakeDay)) continue; // どちらかが既にロック済み
+        if (["夜勤", "明け"].includes(res[s.id][nightDay - 1])) continue; // 夜勤の前日が夜勤/明けは不可
+        const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
+        if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue; // 夜勤上限超過
+        // アンカー成立: 夜勤→明け を仮置き（D の希望休は既にセット済み）
+        res[s.id][nightDay] = "夜勤";
+        res[s.id][meakeDay] = "明け";
+        lockedDays[s.id].add(nightDay);
+        lockedDays[s.id].add(meakeDay);
+      }
+    }
+  }
 
   // ★ステップ2: 夜勤配置（ロック済みの日・翌日がロックの人は候補から除外）
   if (dept.shiftTypes.includes("夜勤")) {
@@ -3894,10 +3940,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (genRef) {
           const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
           const changes = detectSwapChanges(genRef, deptData, deptStaff, year, month);
-          if (Object.keys(changes).length > 0) {
+          const kiboPatterns = detectKiboNightPatterns(genRef, deptData, deptStaff, year, month);
+          if (Object.keys(changes).length > 0 || Object.keys(kiboPatterns).length > 0) {
             setStaffList(prev => prev.map(s => {
-              if (!changes[s.id]) return s;
-              return {...s, swapLearning: mergeSwapLearning(s.swapLearning || {}, changes[s.id])};
+              const hasSwap = !!changes[s.id], hasKibo = !!kiboPatterns[s.id];
+              if (!hasSwap && !hasKibo) return s;
+              return {
+                ...s,
+                ...(hasSwap ? {swapLearning: mergeSwapLearning(s.swapLearning || {}, changes[s.id])} : {}),
+                ...(hasKibo ? {kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id])} : {}),
+              };
             }));
           }
           lastAutoGenRef.current[currentDeptId] = {...deptData}; // 次回比較の基準を更新
