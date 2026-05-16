@@ -1611,27 +1611,33 @@ function triggerDownload(content, filename, type) {
   }
 }
 
-function parseShiftExcel(workbook) {
+function parseShiftExcel(workbook, customShiftKeys = []) {
   const SHIFT_MAP = {"早":"早番","早番":"早番","日":"日勤","日勤":"日勤","遅":"遅番","遅番":"遅番","夜":"夜勤","夜勤":"夜勤","明":"明け","明け":"明け","休":"休み","休み":"休み","公":"休み","公休":"休み","有":"有休","有休":"有休","有給":"有休","希":"希望休","希望休":"希望休","E":"早番","D":"日勤","L":"遅番","N":"夜勤"};
   const REST_SET = new Set(["休み","有休","希望休"]);
-  const SHIFT_SET = new Set(Object.keys(SHIFT_MAP));
-  const COUNT_KEYS = ["早番","日勤","遅番","夜勤"];
+  const validCustomKeys = customShiftKeys.filter(Boolean);
+  const normShiftMap = {};
+  Object.entries(SHIFT_MAP).forEach(([k, v]) => { normShiftMap[normName(k)] = v; });
+  validCustomKeys.forEach(k => { normShiftMap[normName(k)] = k; });
+  const COUNT_KEYS = ["早番","日勤","遅番","夜勤", ...validCustomKeys];
+  const NORM_SHIFT_SET = new Set(Object.keys(normShiftMap));
+  const isShiftCell = (c) => NORM_SHIFT_SET.has(normName(String(c ?? "").trim()));
+  const initData = () => { const c = {}; COUNT_KEYS.forEach(k => c[k]=0); return {...c, total:0, dowRest:[0,0,0,0,0,0,0], dowTotal:[0,0,0,0,0,0,0], dowShift:[{},{},{},{},{},{},{}]}; };
   const trendMap = {};
   const processedYearMonths = new Set();
-  const monthlyData = {}; // { "YYYY-M": { name: { 早番, 日勤, 遅番, 夜勤, total, dowRest, dowTotal } } }
+  const monthlyData = {}; // { "YYYY-M": { name: { 早番, 日勤, 遅番, 夜勤, ...custom, total, dowRest, dowTotal } } }
   workbook.SheetNames.forEach(sheetName => {
     if (/祝日|holidays|calendar|カレンダー/i.test(sheetName)) return;
     const wsDates = workbook.Sheets[sheetName];
     const dataCellDates = window.XLSX.utils.sheet_to_json(wsDates, { header: 1, defval: "", cellDates: true, raw: false });
     const dataRaw = window.XLSX.utils.sheet_to_json(wsDates, { header: 1, defval: "", raw: true });
     if (!dataRaw || dataRaw.length < 3) return;
-    const sampleDataRows = dataRaw.filter(row => row && row.filter(c => SHIFT_SET.has(String(c ?? "").trim())).length >= 5);
+    const sampleDataRows = dataRaw.filter(row => row && row.filter(c => isShiftCell(c)).length >= 5);
     if (sampleDataRows.length === 0) return;
     let detectedShiftStart = -1;
-    sampleDataRows.forEach(row => { row.forEach((cell, ci) => { if (SHIFT_SET.has(String(cell ?? "").trim()) && (detectedShiftStart === -1 || ci < detectedShiftStart)) detectedShiftStart = ci; }); });
+    sampleDataRows.forEach(row => { row.forEach((cell, ci) => { if (isShiftCell(cell) && (detectedShiftStart === -1 || ci < detectedShiftStart)) detectedShiftStart = ci; }); });
     if (detectedShiftStart < 0) return;
     const nameColVotes = {};
-    sampleDataRows.slice(0, 10).forEach(row => { for (let ci = 0; ci < detectedShiftStart; ci++) { const val = String(row[ci] ?? "").trim(); if (val.length >= 2 && !/^\d/.test(val) && !SHIFT_SET.has(val)) nameColVotes[ci] = (nameColVotes[ci] || 0) + 1; } });
+    sampleDataRows.slice(0, 10).forEach(row => { for (let ci = 0; ci < detectedShiftStart; ci++) { const val = String(row[ci] ?? "").trim(); if (val.length >= 2 && !/^\d/.test(val) && !isShiftCell(val)) nameColVotes[ci] = (nameColVotes[ci] || 0) + 1; } });
     const votedNameCol = Object.entries(nameColVotes).sort((a,b) => b[1]-a[1])[0];
     if (!votedNameCol) return;
     const detectedNameCol = +votedNameCol[0];
@@ -1662,13 +1668,13 @@ function parseShiftExcel(workbook) {
       if (["職員","名前","氏名","スタッフ","役職","担当"].includes(nameCell)) return;
       if (!isNaN(Number(nameCell))) return;
       if (/^\d{1,2}[/月日]/.test(nameCell)) return;
-      const counts = { 早番:0, 日勤:0, 遅番:0, 夜勤:0 };
+      const counts = initData();
       const dowRest = [0,0,0,0,0,0,0], dowTotal = [0,0,0,0,0,0,0];
       const dowShift = [{},{},{},{},{},{},{}];
       let total = 0;
       for (let c = detectedShiftStart; c < Math.min(row.length, detectedShiftStart + 35); c++) {
         const cell = String(row[c] ?? "").trim(); if (!cell) continue;
-        const normalized = SHIFT_MAP[cell]; if (!normalized) continue;
+        const normalized = normShiftMap[normName(cell)]; if (!normalized) continue;
         const dow = colToDow[c]; if (dow !== undefined) { dowTotal[dow]++; if (REST_SET.has(normalized)) dowRest[dow]++; }
         if (COUNT_KEYS.includes(normalized)) {
           counts[normalized]++; total++;
@@ -1676,13 +1682,13 @@ function parseShiftExcel(workbook) {
         }
       }
       if (total < 3) return;
-      if (!trendMap[nameCell]) trendMap[nameCell] = { 早番:0, 日勤:0, 遅番:0, 夜勤:0, total:0, dowRest:[0,0,0,0,0,0,0], dowTotal:[0,0,0,0,0,0,0], dowShift:[{},{},{},{},{},{},{}] };
+      if (!trendMap[nameCell]) trendMap[nameCell] = initData();
       COUNT_KEYS.forEach(k => { trendMap[nameCell][k] += counts[k]; });
       trendMap[nameCell].total += total;
       for (let i = 0; i < 7; i++) { trendMap[nameCell].dowRest[i] += dowRest[i]; trendMap[nameCell].dowTotal[i] += dowTotal[i]; COUNT_KEYS.forEach(k => { trendMap[nameCell].dowShift[i][k]=(trendMap[nameCell].dowShift[i][k]||0)+(dowShift[i][k]||0); }); }
       // 月別生データを保存
       if (!monthlyData[sheetYearMonth]) monthlyData[sheetYearMonth] = {};
-      if (!monthlyData[sheetYearMonth][nameCell]) monthlyData[sheetYearMonth][nameCell] = { 早番:0, 日勤:0, 遅番:0, 夜勤:0, total:0, dowRest:[0,0,0,0,0,0,0], dowTotal:[0,0,0,0,0,0,0], dowShift:[{},{},{},{},{},{},{}] };
+      if (!monthlyData[sheetYearMonth][nameCell]) monthlyData[sheetYearMonth][nameCell] = initData();
       COUNT_KEYS.forEach(k => { monthlyData[sheetYearMonth][nameCell][k] += counts[k]; });
       monthlyData[sheetYearMonth][nameCell].total += total;
       for (let i = 0; i < 7; i++) { monthlyData[sheetYearMonth][nameCell].dowRest[i] += dowRest[i]; monthlyData[sheetYearMonth][nameCell].dowTotal[i] += dowTotal[i]; COUNT_KEYS.forEach(k => { monthlyData[sheetYearMonth][nameCell].dowShift[i][k]=(monthlyData[sheetYearMonth][nameCell].dowShift[i][k]||0)+(dowShift[i][k]||0); }); }
@@ -2207,7 +2213,7 @@ function PinModal({ deptLabel, onVerify, onClose }) {
   );
 }
 
-function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm, exceptionMonths = [], onExceptionMonthsChange, excelRawMonths = {}, onExcelRawMonthsChange, onAutoSetRatios, staffList = [] }) {
+function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm, exceptionMonths = [], onExceptionMonthsChange, excelRawMonths = {}, onExcelRawMonthsChange, onAutoSetRatios, staffList = [], customShiftKeys = [] }) {
   const [status, setStatus] = useState("idle"), [preview, setPreview] = useState(null), [errorMsg, setErrorMsg] = useState("");
   const [exInput, setExInput] = useState(""); // "YYYY-M" 入力用
   const fileRef = useRef(null);
@@ -2215,7 +2221,7 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
     const file = e.target.files?.[0]; if (!file) return;
     if (!window.XLSX) { setErrorMsg("ライブラリ読み込み中…"); setStatus("error"); return; }
     setStatus("parsing"); setErrorMsg("");
-    try { const buf=await file.arrayBuffer(); const wb=window.XLSX.read(buf,{type:"array"}); const trend=parseShiftExcel(wb); if(Object.keys(trend).length===0){setErrorMsg("シフトデータを読み取れませんでした。");setStatus("error");if(fileRef.current)fileRef.current.value="";return;} setPreview(trend); setStatus("done"); }
+    try { const buf=await file.arrayBuffer(); const wb=window.XLSX.read(buf,{type:"array"}); const trend=parseShiftExcel(wb, customShiftKeys); if(Object.keys(trend).length===0){setErrorMsg("シフトデータを読み取れませんでした。");setStatus("error");if(fileRef.current)fileRef.current.value="";return;} setPreview(trend); setStatus("done"); }
     catch(err) { setErrorMsg("読み込み失敗: "+err.message); setStatus("error"); }
     finally { if(fileRef.current)fileRef.current.value=""; }
   };
@@ -4622,7 +4628,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
-      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'excelRawMonths',data_value:next,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(({error})=>{if(error)console.error('[Excel import save]',error);});setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
+      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'excelRawMonths',data_value:next,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(({error})=>{if(error)console.error('[Excel import save]',error);});setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} onClose={()=>setGenerateWarnings(null)}/>}
