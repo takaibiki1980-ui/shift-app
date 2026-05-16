@@ -366,6 +366,32 @@ function buildDeptRestTypes(customDefs) {
   (customDefs || []).filter(d => REST_TYPES.has(d.baseType)).forEach(d => s.add(d.key));
   return s;
 }
+// ── 必須運営時間モード（カスタム時間部署）向けヘルパー ────────────────────
+function isCustomTimeDept(dept) { return !!(dept?.requiredStart && dept?.requiredEnd); }
+function timeToMins(t) { if (!t) return null; const [h,m]=t.split(":").map(Number); return h*60+m; }
+function minsToTimeStr(m) { const h=Math.floor(m/60)%24,mn=m%60; return `${String(h).padStart(2,"0")}:${String(mn).padStart(2,"0")}`; }
+function buildDayIntervals(shiftKeys, dept) {
+  const iv=[];
+  for (const sk of (shiftKeys||[])) {
+    if(!sk)continue;
+    const ss=getShiftStartTime(sk,dept),es=getShiftEndTime(sk,dept);
+    if(!ss||!es)continue;
+    const s0=timeToMins(ss),e0=timeToMins(es);
+    iv.push({start:s0,end:e0<=s0?e0+1440:e0});
+  }
+  return iv;
+}
+function coverageGaps(intervals,reqStart,reqEnd,minStaff=1,step=15) {
+  const gaps=[];let gs=null;
+  for(let m=reqStart;m<=reqEnd;m+=step){
+    const cnt=intervals.filter(iv=>m>=iv.start&&m<iv.end).length;
+    if(cnt<minStaff){if(gs==null)gs=m;}
+    else if(gs!=null){gaps.push({start:gs,end:m});gs=null;}
+  }
+  if(gs!=null)gaps.push({start:gs,end:reqEnd});
+  return gaps;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 const DEFAULT_SHIFT_TIMES = {
   "早番": { start: "07:00", end: "16:00" },
   "日勤": { start: "09:00", end: "18:00" },
@@ -892,6 +918,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   }
 
   const dayTypes = [...new Set(dept.shiftTypes.filter(s => s !== "夜勤"))];
+  const isCtd = isCustomTimeDept(dept);
   const getAllowedTypes = (s) => {
     const allowed = dept.roleShiftTypes?.[s.role];
     return allowed ? dayTypes.filter(k => allowed.includes(k)) : dayTypes;
@@ -1041,6 +1068,28 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         return Math.random() - 0.5;
       })[0];
     };
+    const pickCustomTimeShift = (s, available, d) => {
+      const trend = getTrend(s);
+      const weekday = d >= 1 ? new Date(year, month, d).getDay() : -1;
+      const dowRate = weekday >= 0 ? trend?.dowShiftRate?.[weekday] : null;
+      const reqS = timeToMins(dept.requiredStart), reqE = timeToMins(dept.requiredEnd);
+      return [...available].sort((a, b) => {
+        if (dowRate) { const rA=dowRate[a]??0,rB=dowRate[b]??0; if(Math.abs(rA-rB)>0.02)return rB-rA; }
+        if (reqS!=null && reqE!=null) {
+          const curKeys=ds.filter(sx=>sx.id!==s.id&&deptWork.has(res[sx.id]?.[d])&&res[sx.id][d]!=="明け").map(sx=>res[sx.id][d]);
+          const ivA=buildDayIntervals([...curKeys,a],dept),ivB=buildDayIntervals([...curKeys,b],dept);
+          const gA=coverageGaps(ivA,reqS,reqE).reduce((t,g)=>t+(g.end-g.start),0);
+          const gB=coverageGaps(ivB,reqS,reqE).reduce((t,g)=>t+(g.end-g.start),0);
+          if(gA!==gB)return gA-gB;
+        }
+        const tA=trend?(trend[a]||0):0,tB=trend?(trend[b]||0):0;
+        if(Math.abs(tA-tB)>0.02)return tB-tA;
+        const cnts2={}; dayTypes.forEach(k=>{cnts2[k]=ds.filter(sx=>res[sx.id]?.[d]===k).length;});
+        const dA=Math.max(0,(dept.minStaff[a]||0)-(cnts2[a]||0)),dB=Math.max(0,(dept.minStaff[b]||0)-(cnts2[b]||0));
+        if(dA!==dB)return dB-dA;
+        return Math.random()-0.5;
+      })[0];
+    };
 
     // ── 日ごとの割り当て（貴重な枠=早番・遅番から高比率スタッフを優先配置）──
     for (let d = 1; d <= days; d++) {
@@ -1067,7 +1116,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         available = available.filter(k => getAllowedTypes(s).includes(k));
         { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) available=available.filter(k=>!isBadTransition(p,k)); if(nx) available=available.filter(k=>!isBadTransition(k,nx)); }
         if (available.length === 0) { res[s.id][d] = "休み"; continue; }
-        const pick = pickWithRatioDebt(s, available, cnts, d);
+        const pick = isCtd ? pickCustomTimeShift(s, available, d) : pickWithRatioDebt(s, available, cnts, d);
         res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1;
         assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
       }
@@ -1360,7 +1409,18 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     }
   }
-  return { shifts: res, warnings };
+  const timelineWarnings = [];
+  if (isCtd) {
+    const reqS = timeToMins(dept.requiredStart), reqE = timeToMins(dept.requiredEnd);
+    if (reqS != null && reqE != null) {
+      for (let d = 1; d <= days; d++) {
+        const dayKeys = ds.filter(s => deptWork.has(res[s.id][d]) && res[s.id][d] !== "明け").map(s => res[s.id][d]);
+        const gaps = coverageGaps(buildDayIntervals(dayKeys, dept), reqS, reqE);
+        if (gaps.length > 0) timelineWarnings.push({ day: d, gaps });
+      }
+    }
+  }
+  return { shifts: res, warnings, timelineWarnings };
 }
 
 // 生成結果のペナルティスコアを計算（低いほど良い）
@@ -1430,10 +1490,10 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
       const cap = nikkinMin + (i % (range + 1));
       deptVariant = { ...dept, maxStaff: { ...dept.maxStaff, "日勤": cap } };
     }
-    const { shifts, warnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend);
+    const { shifts, warnings, timelineWarnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend);
     // スコアリングは常に元のdeptで評価（公平な比較）
     const score = scoreShifts(shifts, ds, dept, days, year, month);
-    if (score < bestScore) { bestScore = score; best = { shifts, warnings, score }; }
+    if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
   }
   // 比率達成フィードバック: 実際の勤務比率 vs 目標比率の乖離を記録（次回補正用）
@@ -1949,8 +2009,10 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [customShiftDefs, setCustomShiftDefs] = useState(dept?.customShiftDefs || []);
   const [shiftTimes, setShiftTimes] = useState(dept?.shiftTimes || {});
   const [intervalThreshold, setIntervalThreshold] = useState(dept?.intervalThreshold ?? "");
+  const [requiredStart, setRequiredStart] = useState(dept?.requiredStart || "");
+  const [requiredEnd, setRequiredEnd] = useState(dept?.requiredEnd || "");
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length<shiftTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalThreshold:intervalThreshold!==""?Number(intervalThreshold):undefined}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length<shiftTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalThreshold:intervalThreshold!==""?Number(intervalThreshold):undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined}); };
   const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -1972,6 +2034,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           <div style={{fontSize:10,color:"#5a9e9b",marginBottom:8}}>未入力の場合は介護標準の時間帯ルールを適用します。</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>{shiftTypes.filter(k=>k!=="明け").map(k=>{const def=DEFAULT_SHIFT_TIMES[k]||{};const sd=getShiftDef(k,customShiftDefs);const mkp=(field,cur,placeholder)=>e=>setKp({mode:"time",value:cur||"",unit:"",onConfirm:v=>setShiftTimes(p=>({...p,[k]:{...(p[k]||{}),[field]:v||undefined}})),anchorRect:e.currentTarget.getBoundingClientRect()});return(<div key={k} style={{display:"flex",alignItems:"center",gap:4,background:"#ffffff",border:"1px solid #b8deda",borderRadius:6,padding:"4px 8px"}}><span style={{fontSize:11,color:sd?.color,fontWeight:700,minWidth:36}}>{k}</span><div onClick={mkp("start",shiftTimes[k]?.start,def.start)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.start?"#1a3635":"#90b0ae"}}>{shiftTimes[k]?.start||def.start||"--:--"}</div><span style={{fontSize:10,color:"#90cbc8"}}>〜</span><div onClick={mkp("end",shiftTimes[k]?.end,def.end)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.end?"#1a3635":"#90b0ae"}}>{shiftTimes[k]?.end||def.end||"--:--"}</div></div>);})}</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>インターバル閾値</span><div onClick={e=>setKp({mode:"decimal",value:intervalThreshold||"",unit:"h",onConfirm:v=>setIntervalThreshold(v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700}}>{intervalThreshold||"--"}</div><span style={{fontSize:10,color:"#5a9e9b"}}>時間未満を禁止（例：11）</span></div>
+          <div style={{marginTop:8,display:"flex",alignItems:"center",flexWrap:"wrap",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>必須運営時間</span><div onClick={e=>setKp({mode:"time",value:requiredStart||"",unit:"",onConfirm:v=>setRequiredStart(v||""),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:70,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:requiredStart?"#1a3635":"#90b0ae"}}>{requiredStart||"--:--"}</div><span style={{fontSize:10,color:"#90cbc8"}}>〜</span><div onClick={e=>setKp({mode:"time",value:requiredEnd||"",unit:"",onConfirm:v=>setRequiredEnd(v||""),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:70,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:requiredEnd?"#1a3635":"#90b0ae"}}>{requiredEnd||"--:--"}</div>{(requiredStart||requiredEnd)&&<button onClick={()=>{setRequiredStart("");setRequiredEnd("");}} style={{fontSize:10,color:"#dc2626",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}<span style={{fontSize:10,color:"#5a9e9b"}}>（設定時：時間軸ベースの自動生成に切替）</span></div>
         </div>
         {/* カスタムシフト種別 */}
         <div style={{background:"#f0fff4",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
@@ -2414,16 +2477,19 @@ function EventEditModal({ day, month, year, currentText, onSave, onClose }) {
   );
 }
 
-function GenerateWarningModal({ warnings, deptLabel, year, month, score, onClose }) {
+function GenerateWarningModal({ warnings, deptLabel, year, month, score, timelineWarnings, onClose }) {
   const entries = Object.entries(warnings);
   const days = new Date(year, month + 1, 0).getDate();
+  const hasTimeline = timelineWarnings && timelineWarnings.length > 0;
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>人員不足の警告</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
+      <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>自動生成の警告</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
         {score!=null&&<div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:7,padding:"6px 12px",marginBottom:14,fontSize:11,color:"#92400e"}}>30回試行して最もスコアが低い結果を採用しました（違反スコア: <span style={{fontWeight:800}}>{score}</span>）。残る警告は手動で調整してください。</div>}
-        <div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:18,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
-        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:22}}>{entries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#f3fffe",border:`1px solid ${s.border||"#2a5a57"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#6ab5b2"}}>{shiftKey}</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#b8deda",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#3a8a87",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div>
+        {entries.length>0&&<><div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:10,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>{entries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#f3fffe",border:`1px solid ${s.border||"#2a5a57"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#6ab5b2"}}>{shiftKey}</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#b8deda",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#3a8a87",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div></>}
+        {hasTimeline&&<><div style={{background:"#fff8e1",border:"1px solid #f59e0b",borderRadius:8,padding:"10px 14px",marginBottom:10,fontSize:12,color:"#92400e",lineHeight:1.7}}>必須運営時間帯にカバーされていない時間帯があります（手動調整推奨）。</div>
+        <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:14}}>{timelineWarnings.map(({day,gaps})=><div key={day} style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:7,padding:"6px 10px",fontSize:11,color:"#78350f"}}><span style={{fontWeight:700}}>{month+1}/{day}</span>　未カバー：{gaps.map(g=>`${minsToTimeStr(g.start)}〜${minsToTimeStr(g.end)}`).join("、")}</div>)}</div></>}
         <button onClick={onClose} style={{width:"100%",background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>確認しました</button>
       </div>
     </div>
@@ -4354,8 +4420,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         undoStackRef.current[cd.id] = [...genStack, genSnapshot].slice(-30);
         setUndoCount(undoStackRef.current[cd.id].length);
         const cs2 = allShiftsRef.current[cd.id] || {};
-        const {shifts:result, warnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
-        if (Object.keys(warnings).length > 0) setTimeout(()=>setGenerateWarnings({warnings,deptLabel:cd.label,score}),0);
+        const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
+        if (Object.keys(warnings).length > 0 || (timelineWarnings&&timelineWarnings.length>0)) setTimeout(()=>setGenerateWarnings({warnings,timelineWarnings,deptLabel:cd.label,score}),0);
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
@@ -4541,7 +4607,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'excelRawMonths',data_value:next,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(({error})=>{if(error)console.error('[Excel import save]',error);});setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
-      {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} onClose={()=>setGenerateWarnings(null)}/>}
+      {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#8ecece",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#2BBFBA",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
