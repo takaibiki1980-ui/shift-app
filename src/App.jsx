@@ -1639,14 +1639,18 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes }) {
 }
 
 const SHIFT_REQ_TYPES = ["早番","日勤","遅番","夜勤","明け","休み","有休"];
-function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftRequests, deptId, kiboCountByDay, kiboLimit }) {
+function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftRequests, deptId, depts, kiboCountByDay, kiboLimit }) {
   const days = getDays(year, month);
   const firstDow = new Date(year, month, 1).getDay();
   const cells = [];
   for (let i=0; i<firstDow; i++) cells.push(null);
   for (let d=1; d<=days; d++) cells.push(d);
-  const dept = DEFAULT_DEPTS.find(d=>d.id===deptId);
-  const availableReqTypes = SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||k==="明け"||dept?.shiftTypes.includes(k));
+  const dept = (depts||DEFAULT_DEPTS).find(d=>d.id===deptId);
+  const customDefs = dept?.customShiftDefs || [];
+  const availableReqTypes = [
+    ...SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||k==="明け"||(dept?.shiftTypes||[]).includes(k)),
+    ...(dept?.shiftTypes||[]).filter(k => !SHIFT_REQ_TYPES.includes(k) && customDefs.some(cd=>cd.key===k)),
+  ];
   const [selectedDay, setSelectedDay] = useState(null);
 
   const toggleKibo = (d) => {
@@ -1694,7 +1698,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
           <div style={{fontSize:11,color:"#3a8a87",marginBottom:6,fontWeight:700}}>{selectedDay}日の設定</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
             <button onClick={()=>{ onChange(selected.includes(selectedDay)?selected:[...selected,selectedDay]); const nr={...shiftRequests};delete nr[selectedDay];onShiftRequests(nr);setSelectedDay(null); }} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#c44b4b"}}>希 希望休</button>
-            {availableReqTypes.map(k=>{const s=SHIFTS[k];return<button key={k} onClick={()=>setShiftReq(selectedDay,k)} style={{background:shiftRequests[selectedDay]===k?"#8ecece":s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:s.color}}>{s.short} {k}</button>;})}
+            {availableReqTypes.map(k=>{const s=getShiftDef(k,customDefs);return<button key={k} onClick={()=>setShiftReq(selectedDay,k)} style={{background:shiftRequests[selectedDay]===k?"#8ecece":s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:s.color}}>{s.short} {k}</button>;})}
             {(selected.includes(selectedDay)||shiftRequests[selectedDay])&&<button onClick={()=>clearDay(selectedDay)} style={{background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,color:"#3a8a87"}}>クリア</button>}
           </div>
         </div>
@@ -1878,7 +1882,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
         </div>
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
-          <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId} kiboCountByDay={kiboCountByDay} kiboLimit={kiboLimit}/>
+          <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId} depts={depts} kiboCountByDay={kiboCountByDay} kiboLimit={kiboLimit}/>
         </div>
         <div style={{fontSize:11,color:"#9b4db5",fontWeight:700,marginBottom:10,marginTop:16}}>▍ {year}年{month+1}月 有休{yukyuSelected.length>0&&<span style={{marginLeft:8,background:"#f3e5f5",border:"1px solid #c07ad5",borderRadius:10,padding:"1px 8px",fontSize:10}}>{yukyuSelected.length}日</span>}</div>
         <div style={{background:"#faf0ff",borderRadius:8,padding:12,border:"1px solid #c07ad5"}}>
