@@ -1730,22 +1730,50 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
 const INPUT_STYLE = { width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:7, color:"#1a3635", padding:"8px 10px", fontSize:13, fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
 
 // テンキーポップアップ（写真参考: 上向き三角矢印で入力欄と接続するポップオーバー型）
-function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 100, unit = "%" }) {
-  const [buf, setBuf] = useState(value !== "" && value !== null && value !== undefined ? String(value) : "");
+function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 100, unit = "%", mode }) {
+  const initBuf = () => {
+    if (value === "" || value === null || value === undefined) return "";
+    if (mode === "time") return String(value).replace(":", "");
+    return String(value);
+  };
+  const [buf, setBuf] = useState(initBuf);
   const press = (key) => {
     if (key === "CL") { setBuf(""); return; }
     if (key === "BS") { setBuf(p => p.slice(0, -1)); return; }
     if (key === "Enter") {
+      if (mode === "time") {
+        if (buf.length === 0) { onConfirm(""); return; }
+        if (buf.length === 4) { onConfirm(buf.slice(0,2)+":"+buf.slice(2)); }
+        return;
+      }
+      if (mode === "decimal") { onConfirm(buf === "" ? "" : buf); return; }
       const n = parseInt(buf, 10);
       onConfirm(buf === "" ? "" : String(Math.min(max, Math.max(min, isNaN(n) ? min : n))));
       return;
     }
+    if (key === ".") {
+      if (mode !== "decimal") return;
+      setBuf(p => p.includes(".") ? p : (p || "0") + ".");
+      return;
+    }
     setBuf(p => {
+      if (mode === "time") {
+        if (p.length >= 4) return p;
+        const next = p + key;
+        if (next.length === 1 && parseInt(key) > 2) return p;
+        if (next.length === 2 && parseInt(next) > 23) return p;
+        if (next.length === 3 && parseInt(key) > 5) return p;
+        return next;
+      }
+      if (mode === "decimal") { return p + key; }
       const next = p + key;
       const n = parseInt(next, 10);
       return (!isNaN(n) && n <= max) ? next : p;
     });
   };
+  const displayVal = mode === "time"
+    ? (buf.length === 0 ? "--:--" : buf.length <= 2 ? buf.padEnd(2,"_")+":__" : buf.slice(0,2)+":"+buf.slice(2).padEnd(2,"_"))
+    : (buf || "0");
   // ポップアップ位置: アンカー要素の直下に中央揃え
   const PW = 216;
   const anchorCx = anchorRect ? anchorRect.left + anchorRect.width / 2 : window.innerWidth / 2;
@@ -1795,7 +1823,7 @@ function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 1
           fontSize:22, fontWeight:800, marginBottom:8,
           color:"#1a3060", letterSpacing:1
         }}>
-          {buf||"0"}{unit&&<span style={{fontSize:12,color:"#88a",marginLeft:4,fontWeight:400}}>{unit}</span>}
+          {displayVal}{unit&&<span style={{fontSize:12,color:"#88a",marginLeft:4,fontWeight:400}}>{unit}</span>}
         </div>
         {/* キーパッド: 4列 */}
         <div style={{display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:5}}>
@@ -1811,7 +1839,7 @@ function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 1
             background:"rgba(255,255,255,0.92)", cursor:"pointer",
             boxShadow:"0 2px 4px rgba(0,0,0,0.12)"
           }}>0</button>
-          {B("・",()=>{},{color:"#bbb",cursor:"default",boxShadow:"none",background:"rgba(240,244,248,0.7)"})}
+          {mode==="decimal"?B(".",()=>press("."),{color:"#334",fontWeight:900}):B("・",()=>{},{color:"#bbb",cursor:"default",boxShadow:"none",background:"rgba(240,244,248,0.7)"})}
           <button onClick={()=>press("Enter")} style={{
             gridColumn:"span 2", height:50, fontSize:15, fontWeight:800,
             borderRadius:8, border:"1px solid #3a6aaa",
@@ -1892,7 +1920,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             {currentRatio&&<button onClick={()=>set("shiftRatio",null)} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
           </div>
           {numpad&&<NumericKeypad value={getRatioPct(numpad.key)} anchorRect={numpad.rect} onConfirm={v=>{setRatioPct(numpad.key,v);setNumpad(null);}} onClose={()=>setNumpad(null)}/>}
-          {kp&&<NumericKeypad value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
+          {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
         </div>
         <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
@@ -1941,8 +1969,8 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         <div style={{background:"#f0f8ff",border:"1px solid #90c4e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:11,color:"#1a5a87",fontWeight:700,marginBottom:4}}>勤務時間設定 <span style={{fontSize:10,fontWeight:400,color:"#5a9e9b"}}>（遅番→早番の可否をインターバルで自動判定）</span></div>
           <div style={{fontSize:10,color:"#5a9e9b",marginBottom:8}}>未入力の場合は介護標準の時間帯ルールを適用します。</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>{shiftTypes.filter(k=>k!=="明け").map(k=>{const def=DEFAULT_SHIFT_TIMES[k]||{};const sd=getShiftDef(k,customShiftDefs);return(<div key={k} style={{display:"flex",alignItems:"center",gap:4,background:"#ffffff",border:"1px solid #b8deda",borderRadius:6,padding:"4px 8px"}}><span style={{fontSize:11,color:sd?.color,fontWeight:700,minWidth:36}}>{k}</span><input type="time" value={shiftTimes[k]?.start||""} placeholder={def.start||""} onChange={e=>{const v=e.target.value;setShiftTimes(p=>v?{...p,[k]:{...p[k],start:v}}:{...p,[k]:{...p[k]||{},start:undefined}});}} style={{...INPUT_STYLE,width:88,padding:"2px 4px",marginBottom:0,fontSize:11}}/><span style={{fontSize:10,color:"#90cbc8"}}>〜</span><input type="time" value={shiftTimes[k]?.end||""} placeholder={def.end||""} onChange={e=>{const v=e.target.value;setShiftTimes(p=>v?{...p,[k]:{...p[k],end:v}}:{...p,[k]:{...p[k]||{},end:undefined}});}} style={{...INPUT_STYLE,width:88,padding:"2px 4px",marginBottom:0,fontSize:11}}/></div>);})}</div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>インターバル閾値</span><input type="number" min="8" max="16" step="0.5" value={intervalThreshold} onChange={e=>setIntervalThreshold(e.target.value)} placeholder="空欄=介護標準ルール" style={{...INPUT_STYLE,width:120,padding:"3px 6px",marginBottom:0,fontSize:11}}/><span style={{fontSize:10,color:"#5a9e9b"}}>時間未満を禁止（例：11）</span></div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>{shiftTypes.filter(k=>k!=="明け").map(k=>{const def=DEFAULT_SHIFT_TIMES[k]||{};const sd=getShiftDef(k,customShiftDefs);const mkp=(field,cur,placeholder)=>e=>setKp({mode:"time",value:cur||"",unit:"",onConfirm:v=>setShiftTimes(p=>({...p,[k]:{...(p[k]||{}),[field]:v||undefined}})),anchorRect:e.currentTarget.getBoundingClientRect()});return(<div key={k} style={{display:"flex",alignItems:"center",gap:4,background:"#ffffff",border:"1px solid #b8deda",borderRadius:6,padding:"4px 8px"}}><span style={{fontSize:11,color:sd?.color,fontWeight:700,minWidth:36}}>{k}</span><div onClick={mkp("start",shiftTimes[k]?.start,def.start)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.start?"#1a3635":"#90b0ae"}}>{shiftTimes[k]?.start||def.start||"--:--"}</div><span style={{fontSize:10,color:"#90cbc8"}}>〜</span><div onClick={mkp("end",shiftTimes[k]?.end,def.end)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.end?"#1a3635":"#90b0ae"}}>{shiftTimes[k]?.end||def.end||"--:--"}</div></div>);})}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>インターバル閾値</span><div onClick={e=>setKp({mode:"decimal",value:intervalThreshold||"",unit:"h",onConfirm:v=>setIntervalThreshold(v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700}}>{intervalThreshold||"--"}</div><span style={{fontSize:10,color:"#5a9e9b"}}>時間未満を禁止（例：11）</span></div>
         </div>
         {/* カスタムシフト種別 */}
         <div style={{background:"#f0fff4",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
@@ -1950,9 +1978,9 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           {customShiftDefs.map((cd,idx)=>(
             <div key={idx} style={{display:"flex",gap:6,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
               <input value={cd.key} onChange={e=>{const n=[...customShiftDefs];const oldKey=n[idx].key;const newKey=e.target.value;n[idx]={...n[idx],key:newKey};setCustomShiftDefs(n);if(oldKey&&shiftTypes.includes(oldKey)){setShiftTypes(p=>p.map(k=>k===oldKey?newKey:k));setMinStaff(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});setMaxStaff(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});setShiftMaxByType(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});}}} onBlur={e=>{const key=e.target.value.trim();if(key&&!shiftTypes.includes(key)){setShiftTypes(p=>[...p,key]);setMinStaff(p=>({...p,[key]:1}));setMaxStaff(p=>({...p,[key]:1}));setShiftMaxByType(p=>({...p,[key]:0}));}}} placeholder="シフト名 例:日勤A" style={{...INPUT_STYLE,width:80,padding:"3px 6px",marginBottom:0}}/>
-              <input type="time" value={cd.startTime||""} onChange={e=>{const n=[...customShiftDefs];n[idx]={...n[idx],startTime:e.target.value};setCustomShiftDefs(n);}} style={{...INPUT_STYLE,width:90,padding:"3px 6px",marginBottom:0}}/>
+              <div onClick={e=>setKp({mode:"time",value:cd.startTime||"",unit:"",onConfirm:v=>{const n=[...customShiftDefs];n[idx]={...n[idx],startTime:v||""};setCustomShiftDefs(n);},anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:68,padding:"3px 4px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,fontSize:12,color:cd.startTime?"#1a3635":"#90b0ae"}}>{cd.startTime||"--:--"}</div>
               <span style={{fontSize:11,color:"#4ade80"}}>〜</span>
-              <input type="time" value={cd.endTime||""} onChange={e=>{const n=[...customShiftDefs];n[idx]={...n[idx],endTime:e.target.value};setCustomShiftDefs(n);}} style={{...INPUT_STYLE,width:90,padding:"3px 6px",marginBottom:0}}/>
+              <div onClick={e=>setKp({mode:"time",value:cd.endTime||"",unit:"",onConfirm:v=>{const n=[...customShiftDefs];n[idx]={...n[idx],endTime:v||""};setCustomShiftDefs(n);},anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:68,padding:"3px 4px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,fontSize:12,color:cd.endTime?"#1a3635":"#90b0ae"}}>{cd.endTime||"--:--"}</div>
               <select value={cd.baseType||"日勤"} onChange={e=>{const n=[...customShiftDefs];n[idx]={...n[idx],baseType:e.target.value};setCustomShiftDefs(n);}} style={{...INPUT_STYLE,width:68,padding:"3px 4px",marginBottom:0,fontSize:11}}>
                 {["早番","日勤","遅番","夜勤","休み"].map(k=><option key={k} value={k}>{k}</option>)}
               </select>
@@ -2025,7 +2053,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           <button onClick={onClose} style={{background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:9,padding:"12px 16px",cursor:"pointer",fontSize:13}}>キャンセル</button>
         </div>
       </div>
-      {kp&&<NumericKeypad value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
+      {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
     </div>
   );
 }
@@ -2231,7 +2259,7 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
         </div>
         <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(days,mk)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
       </div>
-      {kp&&<NumericKeypad value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
+      {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
     </div>
   );
 }
@@ -3375,7 +3403,7 @@ function JissekiInputModal({ staffName, day, year, month, plannedShift, record, 
           {record&&<button onClick={onClear} style={{flex:1,background:"#fff0f0",border:"1px solid #e07070",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:12,color:"#c44b4b",fontWeight:700}}>🗑 削除</button>}
           <button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:13}}>戻る</button>
         </div>
-        {kp&&<NumericKeypad value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
+        {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
       </div>
     </div>
   );
