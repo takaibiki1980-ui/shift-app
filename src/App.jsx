@@ -2390,7 +2390,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
           {dept.shiftTypes.map(shKey=>(
             <tr key={shKey} style={{background:"#f0fffe"}}>
               <td style={{position:"sticky",left:0,zIndex:2,background:"#f0fffe",padding:"3px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda"}}><ShiftBadge type={shKey}/></td>
-              {Array.from({length:days},(_,i)=>i+1).map(d=>{const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length,min=dept.minStaff?.[shKey]||0;return<td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:cnt===0?"#ef4444":cnt>=min?"#5cb87a":"#f59e0b",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda"}}>{cnt||"0"}</td>;})}
+              {Array.from({length:days},(_,i)=>i+1).map(d=>{const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length,min=dept.minStaff?.[shKey]||0,max=dept.maxStaff?.[shKey]??99;const overMax=max<99&&cnt>max;return<td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:overMax?"#ef4444":cnt===0?"#ef4444":cnt>=min?"#5cb87a":"#f59e0b",background:overMax?"#ffe4e4":undefined,borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda"}}>{cnt||"0"}</td>;})}
               <td colSpan={rightColCount}/>
             </tr>
           ))}
