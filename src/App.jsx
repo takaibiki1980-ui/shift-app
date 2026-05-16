@@ -1369,8 +1369,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           const prev = res[s.id][d - 1], next = res[s.id][d + 1];
           // 優先1: 夜勤・明け翌日は絶対NG
           if (prev === "明け" || prev === "夜勤") return false;
-          // 連続勤務上限チェック
-          if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
+          // 連続勤務上限チェック（前後合計）
+          const backW = consecWork(s.id, d - 1);
+          let fwdW = 0; for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) fwdW++; else break; }
+          if ((backW + 1 + fwdW) > maxConsec) return false;
           // シフト連続性チェック（日勤を仮ターゲットとして違反確認）
           const tgt = allowedForS.includes("日勤") ? "日勤" : (allowedForS[0] || "日勤");
           if (isBadTransition(prev, tgt)) return false;
