@@ -1783,6 +1783,20 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             {form.nightOk&&<div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div><div onClick={e=>setKp({value:form.nightMax,min:0,max:15,unit:"回",onConfirm:v=>set("nightMax",v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:80,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.nightMax}</div></div>}
           </div>
         )}
+        {deptDayShiftTypes.length>0&&(
+          <div style={{marginBottom:14}}>
+            <div style={{color:"#3a8a87",fontSize:11,marginBottom:6}}>勤務種別 月間上限（0=制限なし）</div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap",alignItems:"center"}}>
+              {deptDayShiftTypes.map(k=>(
+                <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                  <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
+                  <div onClick={e=>setKp({value:form.shiftMaxByType?.[k]||0,min:0,max:31,unit:"回",onConfirm:v=>set("shiftMaxByType",{...(form.shiftMaxByType||{}),[k]:v===""?0:+v}),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{form.shiftMaxByType?.[k]||0}</div>
+                  <span style={{fontSize:11,color:"#2a5a57"}}>回</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
         <div style={{background:"#fff8e6",border:"1px solid #f0c040",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
@@ -2332,6 +2346,9 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   const maxConsec = dept.maxConsecutive || 5;
   const isAlert = (d) => { for(const [sh,min] of Object.entries(dept.minStaff||{})){const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===sh).length;if(cnt<min)return true;} return false; };
   const isConsecViolation = (sShifts, d) => { if(!WORK_TYPES.has(sShifts[d]))return false; return calcConsecutive(sShifts,d)>maxConsec; };
+  const hasNight = dept.shiftTypes.includes("夜勤");
+  const rightCols = [...dept.shiftTypes, ...(hasNight?["明け"]:[]), "計", "休", "希"];
+  const rightColCount = rightCols.length;
   return (
     <div style={{overflowX:"auto",overflowY:"visible"}}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
@@ -2339,14 +2356,12 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
           <tr>
             <th style={TH({sticky:true,w:148})}><span style={{color:"#2a5a57",fontSize:10}}>氏名</span></th>
             {Array.from({length:days},(_,i)=>i+1).map(d=>{const wd=getWD(year,month,d),we=isWE(year,month,d),alert=isAlert(d);return(<th key={d} style={{...TH({}),background:we?"#edf8f7":"#f8fffe",minWidth:30,width:30,padding:"3px 1px"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}><span style={{fontSize:10,fontWeight:700,color:we?"#f472b6":"#5a9e9b"}}>{d}</span><span style={{fontSize:9,color:we?"#f472b6":"#2a5a57"}}>{wd}</span><span style={{fontSize:8}}>{alert?"⚠️":"　"}</span></div></th>);})}
-            <th style={TH({w:44})}><span style={{fontSize:10,color:"#2a5a57"}}>勤務</span></th>
-            <th style={TH({w:36})}><span style={{fontSize:10,color:"#2a5a57"}}>夜勤</span></th>
-            <th style={TH({w:36})}><span style={{fontSize:10,color:"#2a5a57"}}>休日</span></th>
+            {rightCols.map(col=><th key={col} style={TH({w:28})}><span style={{fontSize:9,color:"#2a5a57"}}>{col}</span></th>)}
           </tr>
           {onEventEdit&&<tr>
             <th style={{...TH({sticky:true,w:148}),background:"#fffbea",borderBottom:"2px solid #fde68a"}}><span style={{fontSize:10,color:"#92400e",fontWeight:700}}>行事</span></th>
             {Array.from({length:days},(_,i)=>i+1).map(d=>{const ev=(events||{})[d]||"";return(<th key={d} onClick={()=>onEventEdit(d)} title={ev||"クリックして行事を入力"} style={{...TH({}),background:ev?"#fef3c7":"#fffdf0",borderBottom:"2px solid #fde68a",padding:"3px 1px",cursor:"pointer",minWidth:30,width:30,verticalAlign:"top"}}><div style={{writingMode:"vertical-rl",textOrientation:"mixed",fontSize:10,color:"#92400e",fontWeight:700,lineHeight:1.2,margin:"0 auto",minHeight:ev?undefined:16}}>{ev}</div></th>);})}
-            <th colSpan={3} style={{background:"#fffbea",borderBottom:"2px solid #fde68a"}}/>
+            <th colSpan={rightColCount} style={{background:"#fffbea",borderBottom:"2px solid #fde68a"}}/>
           </tr>}
         </thead>
         <tbody>
@@ -2356,6 +2371,10 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             const nightCnt=Object.values(sShifts).filter(v=>v==="夜勤").length;
             const restCnt=Object.values(sShifts).reduce((acc,v)=>REST_TYPES.has(v)&&v!=="明け"&&v!=="有休"?acc+(HALF_REST_TYPES.has(v)?0.5:1):acc,0);
             const nightOver=s.nightOk&&nightCnt>(s.nightMax||5);
+            const typeCnts={};
+            dept.shiftTypes.forEach(t=>{typeCnts[t]=Object.values(sShifts).filter(v=>v===t).length;});
+            if(hasNight)typeCnts["明け"]=Object.values(sShifts).filter(v=>v==="明け").length;
+            typeCnts["計"]=workCnt; typeCnts["休"]=restCnt; typeCnts["希"]=kibodays.length;
             return (
               <tr key={s.id} style={{background:si%2===0?"#ffffff":"#fafeff"}}>
                 <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#ffffff":"#fafeff",padding:"4px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda",minWidth:148}}>
@@ -2366,9 +2385,17 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:consecViol?"1px solid #e0707060":undefined}} onClick={(e)=>onLeftClick(s.id,d,e)} onContextMenu={(e)=>{e.preventDefault();onRightClick(s.id,d,e);}}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
-                <td style={TD}><span style={{color:workCnt<(s.targetWork-2)?"#f59e0b":workCnt>(s.targetWork+2)?"#ef4444":"#2BBFBA",fontWeight:800,fontSize:12}}>{workCnt}</span></td>
-                <td style={TD}><span style={{color:nightOver?"#ef4444":"#1a9e9a",fontWeight:700,fontSize:12}}>{nightCnt||"－"}</span></td>
-                <td style={TD}><span style={{color:"#5cb87a",fontWeight:700,fontSize:12}}>{restCnt}</span></td>
+                {rightCols.map(col=>{
+                  const cnt=typeCnts[col]??0;
+                  let color,val;
+                  if(col==="計"){val=cnt;color=cnt<(s.targetWork-2)?"#f59e0b":cnt>(s.targetWork+2)?"#ef4444":"#2BBFBA";}
+                  else if(col==="夜勤"){val=cnt||"－";color=nightOver?"#ef4444":"#1a9e9a";}
+                  else if(col==="明け"){val=cnt||"－";color="#9e8d80";}
+                  else if(col==="休"){val=cnt;color="#5cb87a";}
+                  else if(col==="希"){val=cnt||"－";color="#c44b4b";}
+                  else{const mx=s.shiftMaxByType?.[col]||0;const over=mx>0&&cnt>mx;val=cnt||"－";color=over?"#ef4444":(SHIFTS[col]?.color||"#2a7a77");}
+                  return <td key={col} style={TD}><span style={{color,fontWeight:700,fontSize:11}}>{val}</span></td>;
+                })}
               </tr>
             );
           })}
@@ -2376,7 +2403,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             <tr key={shKey} style={{background:"#f0fffe"}}>
               <td style={{position:"sticky",left:0,zIndex:2,background:"#f0fffe",padding:"3px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda"}}><ShiftBadge type={shKey}/></td>
               {Array.from({length:days},(_,i)=>i+1).map(d=>{const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length,min=dept.minStaff?.[shKey]||0;return<td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:cnt===0?"#ef4444":cnt>=min?"#5cb87a":"#f59e0b",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda"}}>{cnt||"0"}</td>;})}
-              <td colSpan={3}/>
+              <td colSpan={rightColCount}/>
             </tr>
           ))}
           <tr style={{background:"#fff5f5"}}>
@@ -2387,7 +2414,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
               const over=cnt>=limit, warn=cnt===limit-1;
               return <td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:over?"#ef4444":warn?"#f59e0b":cnt>0?"#c44b4b":"#d5edeb",background:over?"#ffe4e4":warn?"#fffbeb":undefined,borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda"}}>{over?"⚠":cnt>0?cnt:""}</td>;
             })}
-            <td colSpan={3} style={{borderBottom:"1px solid #b8deda"}}/>
+            <td colSpan={rightColCount} style={{borderBottom:"1px solid #b8deda"}}/>
           </tr>
         </tbody>
       </table>
@@ -4291,7 +4318,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* INNER TABS */}
       <div style={{background:"#eaf8f6",borderBottom:isMobile&&innerTab==="shift"?"none":"2px solid #2BBFBA",display:"flex",padding:"0 6px",gap:2,alignItems:"center",overflowX:"auto"}}>
-        {[["shift",isMobile?"📅 シフト":"📅 シフト表"],["summary",isMobile?"📊 集計":"📊 集計"],["staff",isMobile?"👥 スタッフ":"👥 スタッフ"],["jisseki","📋 実績"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab===k?800:600,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
+        {[["shift",isMobile?"📅 シフト":"📅 シフト表"],["staff",isMobile?"👥 スタッフ":"👥 スタッフ"],["jisseki","📋 実績"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab===k?800:600,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
         {profile?.plan==='free'
           ? <button onClick={()=>alert("📋 予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:"#9ca3af",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>🔒 予定表</button>
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab==="yotei"?"#1a9e9a":"#2a6a67",borderBottom:innerTab==="yotei"?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab==="yotei"?800:600,whiteSpace:"nowrap",flexShrink:0}}>📋 予定表</button>
