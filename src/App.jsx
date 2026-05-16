@@ -3587,6 +3587,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isMergingKibo = useRef(false); // kiboChannel同期中フラグ（現在はmergeStaffKiboで使用）
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（未保存ローカル変更の検出用）
+  const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
@@ -3606,7 +3607,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
-    if (!isInitializing.current) {
+    if (staffListSkipSave.current) {
+      // Supabase/Realtimeから来た変更 → 保存不要・保存済みとしてマーク
+      staffListSkipSave.current = false;
+      lastSavedStaffListRef.current = staffList;
+    } else {
+      // ユーザー操作による変更 → isInitializingに関係なくSupabaseに保存
       staffUpsertInProgress.current = true;
       const snapshot = staffList;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
@@ -3615,9 +3621,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           if (error) console.error('[sync] staffList upsert失敗:', error);
           else { lastSavedStaffListRef.current = snapshot; console.log('[sync] staffList 保存OK'); }
         });
-    } else {
-      // 初期化中（Supabaseからのロード時）は保存済みとして扱う
-      lastSavedStaffListRef.current = staffList;
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3680,6 +3683,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
         }
         if (byKey['staffList']) {
+          staffListSkipSave.current = true;
           setStaffList(byKey['staffList']);
         } else {
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
@@ -3767,6 +3771,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const hasLocalChanges = lastSaved !== null &&
             JSON.stringify(staffListRef.current) !== JSON.stringify(lastSaved);
           if (!hasLocalChanges && JSON.stringify(byKey['staffList']) !== JSON.stringify(staffListRef.current)) {
+            staffListSkipSave.current = true;
             setStaffList(byKey['staffList']);
           }
         }
