@@ -366,6 +366,34 @@ function buildDeptRestTypes(customDefs) {
   (customDefs || []).filter(d => REST_TYPES.has(d.baseType)).forEach(d => s.add(d.key));
   return s;
 }
+const DEFAULT_SHIFT_TIMES = {
+  "早番": { start: "07:00", end: "16:00" },
+  "日勤": { start: "09:00", end: "18:00" },
+  "遅番": { start: "11:30", end: "20:30" },
+  "夜勤": { start: "16:30", end: "09:30" },
+};
+function getShiftEndTime(key, dept) {
+  const st = dept?.shiftTimes?.[key];
+  if (st?.end) return st.end;
+  const cd = (dept?.customShiftDefs||[]).find(d=>d.key===key);
+  if (cd?.endTime) return cd.endTime;
+  return DEFAULT_SHIFT_TIMES[key]?.end || null;
+}
+function getShiftStartTime(key, dept) {
+  const st = dept?.shiftTimes?.[key];
+  if (st?.start) return st.start;
+  const cd = (dept?.customShiftDefs||[]).find(d=>d.key===key);
+  if (cd?.startTime) return cd.startTime;
+  return DEFAULT_SHIFT_TIMES[key]?.start || null;
+}
+function shiftIntervalHours(prevKey, nextKey, dept) {
+  const endStr = getShiftEndTime(prevKey, dept);
+  const startStr = getShiftStartTime(nextKey, dept);
+  if (!endStr || !startStr) return 24;
+  const [eh, em] = endStr.split(":").map(Number);
+  const [sh, sm] = startStr.split(":").map(Number);
+  return (sh * 60 + sm + 1440 - (eh * 60 + em)) / 60;
+}
 
 const DEFAULT_DEPTS = [
   { id:"kaigo1", label:"介護部 1階", icon:"🏠", shiftTypes:["早番","日勤","遅番","夜勤"], minStaff:{ 早番:1, 日勤:1, 遅番:1, 夜勤:1 }, maxStaff:{ 早番:1, 日勤:99, 遅番:1, 夜勤:1 }, defaultKyukoDays:8, maxConsecutive:5, roles:["介護福祉士","介護職員","介護補助","介護助手","特定技能"], roleShiftTypes:{ "介護補助":["日勤"], "介護助手":["日勤"] } },
@@ -747,6 +775,12 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const consecWork = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptWork.has(res[id][i])) c++; else break; } return c; };
   const consecRest = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   const consecRestFwd = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
+  const intervalThreshold = dept.intervalThreshold ?? null;
+  const isBadTransition = (prev, curr) => {
+    if (!prev || !curr) return false;
+    if (intervalThreshold != null) return shiftIntervalHours(prev, curr, dept) < intervalThreshold;
+    return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
+  };
   const canRest = (id, d) => {
     if (res[id][d - 1] === "明け") return false;
     return (consecRest(id, d - 1) + 1 + consecRestFwd(id, d)) <= 2;
@@ -1031,10 +1065,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if ((consecWork(s.id, d - 1) + 1) > maxConsec) { res[s.id][d] = "休み"; continue; }
         let available = dayTypes.filter(k => cnts[k] < (maxStaff[k] ?? 99));
         available = available.filter(k => getAllowedTypes(s).includes(k));
-        if (res[s.id][d - 1] === "遅番") available = available.filter(k => k !== "早番" && k !== "日勤");
-        if (res[s.id][d - 1] === "日勤") available = available.filter(k => k !== "早番");
-        if (res[s.id][d + 1] === "早番") available = available.filter(k => k !== "遅番" && k !== "日勤");
-        if (res[s.id][d + 1] === "日勤") available = available.filter(k => k !== "遅番");
+        { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) available=available.filter(k=>!isBadTransition(p,k)); if(nx) available=available.filter(k=>!isBadTransition(k,nx)); }
         if (available.length === 0) { res[s.id][d] = "休み"; continue; }
         const pick = pickWithRatioDebt(s, available, cnts, d);
         res[s.id][d] = pick; cnts[pick] = (cnts[pick]||0) + 1;
@@ -1062,14 +1093,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
           av = av.filter(k => getAllowedTypes(s).includes(k));
-          if (res[s.id][d - 1] === "遅番") av = av.filter(k => k !== "早番" && k !== "日勤");
-          if (res[s.id][d - 1] === "日勤") av = av.filter(k => k !== "早番");
-          if (res[s.id][d + 1] === "早番") av = av.filter(k => k !== "遅番" && k !== "日勤");
-          if (res[s.id][d + 1] === "日勤") av = av.filter(k => k !== "遅番");
+          { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
           if (!av.length) {
             const prevShift = res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
             const roleAllowed = getAllowedTypes(s);
-            const forceShift = roleAllowed.length < dayTypes.length ? roleAllowed[0] : dayTypes.find(k => { if (prevShift === "遅番" && (k === "早番" || k === "日勤")) return false; if (prevShift === "日勤" && k === "早番") return false; if (nextShift === "早番" && (k === "遅番" || k === "日勤")) return false; if (nextShift === "日勤" && k === "遅番") return false; return true; }) || "遅番";
+            const forceShift = roleAllowed.length < dayTypes.length ? roleAllowed[0] : dayTypes.find(k => { if (isBadTransition(prevShift, k)) return false; if (isBadTransition(k, nextShift)) return false; return true; }) || "遅番";
             res[s.id][d] = forceShift; excess--; continue;
           }
           const pick = [...av].sort((a, b) => { const dA = Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]); const dB = Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if (dA!==dB) return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
@@ -1097,10 +1125,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
         let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
         av = av.filter(k => getAllowedTypes(s).includes(k));
-        if (res[s.id][d - 1] === "遅番") av = av.filter(k => k !== "早番" && k !== "日勤");
-        if (res[s.id][d - 1] === "日勤") av = av.filter(k => k !== "早番");
-        if (res[s.id][d + 1] === "早番") av = av.filter(k => k !== "遅番" && k !== "日勤");
-        if (res[s.id][d + 1] === "日勤") av = av.filter(k => k !== "遅番");
+        { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
         if (!av.length) continue;
         res[s.id][d] = [...av].sort((a, b) => fixCnts[a] - fixCnts[b])[0];
       }
@@ -1126,10 +1151,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           const altShift = dayTypes.find(k => {
             if (k === shiftKey) return false;
             if (!getAllowedTypes(s).includes(k)) return false;
-            if (prev === "遅番" && (k === "早番" || k === "日勤")) return false;
-            if (prev === "日勤" && k === "早番") return false;
-            if (next === "早番" && (k === "遅番" || k === "日勤")) return false;
-            if (next === "日勤" && k === "遅番") return false;
+            if (isBadTransition(prev, k)) return false;
+            if (isBadTransition(k, next)) return false;
             const cnt = ds.filter(sx => res[sx.id][d] === k).length;
             return cnt < (maxStaff[k] ?? 99);
           });
@@ -1142,8 +1165,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
 
   // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
-  const isViolation = (prev, curr) =>
-    (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
+  const isViolation = (prev, curr) => isBadTransition(prev, curr);
   for (const s of ds) {
     for (let d = 2; d <= days; d++) {
       if (!isViolation(res[s.id][d - 1], res[s.id][d])) continue;
@@ -1154,10 +1176,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const cnts = {};
         dayTypes.forEach(k => { cnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][target] === k).length; });
         const alt = dayTypes.find(k => {
-          if (p === "遅番" && (k === "早番" || k === "日勤")) return false;
-          if (p === "日勤" && k === "早番") return false;
-          if (n === "早番" && (k === "遅番" || k === "日勤")) return false;
-          if (n === "日勤" && k === "遅番") return false;
+          if (isBadTransition(p, k)) return false;
+          if (isBadTransition(k, n)) return false;
           return cnts[k] < (maxStaff[k] ?? 99);
         }) || "休み";
         res[s.id][target] = alt;
@@ -1187,10 +1207,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (lockedDays[s.id].has(d)) return false;
           if (!getAllowedTypes(s).includes(shiftKey)) return false;
           const prev = res[s.id][d - 1], next = res[s.id][d + 1];
-          if (prev === "遅番" && (shiftKey === "早番" || shiftKey === "日勤")) return false;
-          if (prev === "日勤" && shiftKey === "早番") return false;
-          if (next === "早番" && (shiftKey === "遅番" || shiftKey === "日勤")) return false;
-          if (next === "日勤" && shiftKey === "遅番") return false;
+          if (isBadTransition(prev, shiftKey)) return false;
+          if (isBadTransition(shiftKey, next)) return false;
           // スライド元シフトのminStaffを割らないか確認
           const fromMin = dept.minStaff?.[cur] ?? 0;
           const fromActual = ds.filter(sx => res[sx.id][d] === cur).length;
@@ -1220,10 +1238,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (!getAllowedTypes(s).includes(shiftKey)) return false;
           const prev = res[s.id][d - 1], next = res[s.id][d + 1];
           if (prev === "夜勤" || prev === "明け") return false;
-          if (prev === "遅番" && (shiftKey === "早番" || shiftKey === "日勤")) return false;
-          if (prev === "日勤" && shiftKey === "早番") return false;
-          if (next === "早番" && (shiftKey === "遅番" || shiftKey === "日勤")) return false;
-          if (next === "日勤" && shiftKey === "遅番") return false;
+          if (isBadTransition(prev, shiftKey)) return false;
+          if (isBadTransition(shiftKey, next)) return false;
           if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
           const curCount = ds.filter(sx => res[sx.id][d] === shiftKey).length;
           if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
@@ -1308,10 +1324,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
           // シフト連続性チェック（日勤を仮ターゲットとして違反確認）
           const tgt = allowedForS.includes("日勤") ? "日勤" : (allowedForS[0] || "日勤");
-          if (prev === "遅番" && (tgt === "早番" || tgt === "日勤")) return false;
-          if (prev === "日勤" && tgt === "早番") return false;
-          if (next === "早番" && (tgt === "遅番" || tgt === "日勤")) return false;
-          if (next === "日勤" && tgt === "遅番") return false;
+          if (isBadTransition(prev, tgt)) return false;
+          if (isBadTransition(tgt, next)) return false;
           // 優先3: maxStaff チェック（日勤上限を守る）
           const curCount = ds.filter(sx => res[sx.id][d] === tgt).length;
           if (curCount >= (maxStaff[tgt] ?? 99)) return false;
@@ -1373,7 +1387,7 @@ function scoreShifts(res, ds, dept, days, year, month) {
     // 遅番→早番/日勤、日勤→早番 違反
     for (let d = 2; d <= days; d++) {
       const prev = res[s.id]?.[d-1], curr = res[s.id]?.[d];
-      if ((prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番")) score += 100;
+      { const th=dept.intervalThreshold??null; const bad=th!=null?shiftIntervalHours(prev,curr,dept)<th:((prev==="遅番"&&(curr==="早番"||curr==="日勤"))||(prev==="日勤"&&curr==="早番")); if(bad) score+=100; }
     }
     // 同一シフト連続ペナルティ（×3強化: 4連=1500, 5連以上=6000/日）
     for (const t of workShiftTypes) {
@@ -1904,8 +1918,10 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(dept?.shiftTypes||["日勤"]), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(dept?.shiftTypes,dept?.maxStaff)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
   const [shiftMaxByType,setShiftMaxByType]=useState(()=>{const d={};(dept?.shiftTypes||["日勤"]).filter(k=>k!=="夜勤").forEach(k=>{d[k]=dept?.shiftMaxByType?.[k]||0;});return d;});
   const [customShiftDefs, setCustomShiftDefs] = useState(dept?.customShiftDefs || []);
+  const [shiftTimes, setShiftTimes] = useState(dept?.shiftTimes || {});
+  const [intervalThreshold, setIntervalThreshold] = useState(dept?.intervalThreshold ?? "");
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length<shiftTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim())}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length<shiftTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalThreshold:intervalThreshold!==""?Number(intervalThreshold):undefined}); };
   const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -1921,6 +1937,13 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         {shiftTypes.length>0&&<div style={{background:"#d5edeb",border:"1px solid #0e3a38",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#3a8a87",marginBottom:8}}>最低配置人数 <span style={{fontSize:10,color:"#5a9e9b",fontWeight:400}}>（この人数を下回ると警告）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:minStaff[k]||0,min:0,max:20,unit:"名",onConfirm:v=>setMinStaff(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{minStaff[k]||0}</div><span style={{fontSize:11,color:"#2a5a57"}}>名</span></div>)}</div></div>}
         {shiftTypes.length>0&&<div style={{background:"#fff3e0",border:"1px solid #e0a000",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#b45309",marginBottom:8}}>最大配置人数 <span style={{fontSize:10,color:"#a06010",fontWeight:400}}>（自動生成でこの人数を超えない・99=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:maxStaff[k]!=null?maxStaff[k]:(k==="日勤"?99:1),min:1,max:99,unit:"名",onConfirm:v=>setMaxStaff(p=>({...p,[k]:v===""?1:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{maxStaff[k]!=null?maxStaff[k]:(k==="日勤"?99:1)}</div><span style={{fontSize:11,color:"#92400e"}}>名</span></div>)}</div></div>}
         {shiftTypes.filter(k=>k!=="夜勤").length>0&&<div style={{background:"#f0f0ff",border:"1px solid #a0a0e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}><div style={{fontSize:11,color:"#5050b0",marginBottom:8}}>職員の月間上限回数 <span style={{fontSize:10,color:"#7070a0",fontWeight:400}}>（超過すると集計欄が赤表示・0=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.filter(k=>k!=="夜勤").map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:shiftMaxByType[k]||0,min:0,max:31,unit:"回",onConfirm:v=>setShiftMaxByType(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{shiftMaxByType[k]||0}</div><span style={{fontSize:11,color:"#5050b0"}}>回</span></div>)}</div></div>}
+        {/* 勤務時間・インターバル設定 */}
+        <div style={{background:"#f0f8ff",border:"1px solid #90c4e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:11,color:"#1a5a87",fontWeight:700,marginBottom:4}}>勤務時間設定 <span style={{fontSize:10,fontWeight:400,color:"#5a9e9b"}}>（遅番→早番の可否をインターバルで自動判定）</span></div>
+          <div style={{fontSize:10,color:"#5a9e9b",marginBottom:8}}>未入力の場合は介護標準の時間帯ルールを適用します。</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>{shiftTypes.filter(k=>k!=="明け").map(k=>{const def=DEFAULT_SHIFT_TIMES[k]||{};const sd=getShiftDef(k,customShiftDefs);return(<div key={k} style={{display:"flex",alignItems:"center",gap:4,background:"#ffffff",border:"1px solid #b8deda",borderRadius:6,padding:"4px 8px"}}><span style={{fontSize:11,color:sd?.color,fontWeight:700,minWidth:36}}>{k}</span><input type="time" value={shiftTimes[k]?.start||""} placeholder={def.start||""} onChange={e=>{const v=e.target.value;setShiftTimes(p=>v?{...p,[k]:{...p[k],start:v}}:{...p,[k]:{...p[k]||{},start:undefined}});}} style={{...INPUT_STYLE,width:88,padding:"2px 4px",marginBottom:0,fontSize:11}}/><span style={{fontSize:10,color:"#90cbc8"}}>〜</span><input type="time" value={shiftTimes[k]?.end||""} placeholder={def.end||""} onChange={e=>{const v=e.target.value;setShiftTimes(p=>v?{...p,[k]:{...p[k],end:v}}:{...p,[k]:{...p[k]||{},end:undefined}});}} style={{...INPUT_STYLE,width:88,padding:"2px 4px",marginBottom:0,fontSize:11}}/></div>);})}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>インターバル閾値</span><input type="number" min="8" max="16" step="0.5" value={intervalThreshold} onChange={e=>setIntervalThreshold(e.target.value)} placeholder="空欄=介護標準ルール" style={{...INPUT_STYLE,width:120,padding:"3px 6px",marginBottom:0,fontSize:11}}/><span style={{fontSize:10,color:"#5a9e9b"}}>時間未満を禁止（例：11）</span></div>
+        </div>
         {/* カスタムシフト種別 */}
         <div style={{background:"#f0fff4",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:11,color:"#166534",fontWeight:700,marginBottom:6}}>カスタムシフト種別 <span style={{fontSize:10,fontWeight:400,color:"#4ade80"}}>（栄養科・リハビリ科など独自の勤務形態）</span></div>
