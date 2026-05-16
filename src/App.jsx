@@ -738,7 +738,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
   const maxStaff = {};
-  dept.shiftTypes.forEach(k => { const cd=(dept.customShiftDefs||[]).find(d=>d.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=dept.maxStaff?.[k];maxStaff[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def; });
+  [...new Set(dept.shiftTypes)].forEach(k => { const cd=(dept.customShiftDefs||[]).find(d=>d.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=dept.maxStaff?.[k];maxStaff[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def; });
   const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
 
   const getTrend = (s) => {
@@ -891,7 +891,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
-  const dayTypes = dept.shiftTypes.filter(s => s !== "夜勤");
+  const dayTypes = [...new Set(dept.shiftTypes.filter(s => s !== "夜勤"))];
   const getAllowedTypes = (s) => {
     const allowed = dept.roleShiftTypes?.[s.role];
     return allowed ? dayTypes.filter(k => allowed.includes(k)) : dayTypes;
@@ -1943,7 +1943,7 @@ const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
 const DEPT_ICONS = ["🏠","🏢","🏥","💉","📋","🍱","🌸","⭐","🔵","🟢","🟡","🟠","🔴","💜"];
 function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
   const buildInitMaxStaff = (types, existing, customDefs) => { const d={}; (types||["日勤"]).forEach(k=>{const cd=(customDefs||[]).find(c=>c.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=existing?.[k];d[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def;}); return d; };
-  const initShiftTypes = () => { const base=dept?.shiftTypes||["日勤"]; const ckeys=(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean); const missing=ckeys.filter(k=>!base.includes(k)); return missing.length>0?[...base,...missing]:base; };
+  const initShiftTypes = () => { const base=dept?.shiftTypes||["日勤"]; const ckeys=(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean); const missing=ckeys.filter(k=>!base.includes(k)); const all=missing.length>0?[...base,...missing]:base; return all.filter((k,i)=>all.indexOf(k)===i); };
   const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(initShiftTypes), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(initShiftTypes(),dept?.maxStaff,dept?.customShiftDefs)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
   const [shiftMaxByType,setShiftMaxByType]=useState(()=>{const d={};initShiftTypes().filter(k=>k!=="夜勤").forEach(k=>{d[k]=dept?.shiftMaxByType?.[k]||0;});return d;});
   const [customShiftDefs, setCustomShiftDefs] = useState(dept?.customShiftDefs || []);
@@ -1978,7 +1978,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           <div style={{fontSize:11,color:"#166534",fontWeight:700,marginBottom:6}}>カスタムシフト種別 <span style={{fontSize:10,fontWeight:400,color:"#4ade80"}}>（栄養科・リハビリ科など独自の勤務形態）</span></div>
           {customShiftDefs.map((cd,idx)=>(
             <div key={idx} style={{display:"flex",gap:6,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
-              <input value={cd.key} onChange={e=>{const n=[...customShiftDefs];const oldKey=n[idx].key;const newKey=e.target.value;n[idx]={...n[idx],key:newKey};setCustomShiftDefs(n);const otherOwns=customShiftDefs.some((c,i)=>i!==idx&&c.key===oldKey);if(oldKey&&!otherOwns&&shiftTypes.includes(oldKey)){setShiftTypes(p=>p.map(k=>k===oldKey?newKey:k));setMinStaff(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});setMaxStaff(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});setShiftMaxByType(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});}}} onBlur={e=>{const key=e.target.value.trim();if(key&&!shiftTypes.includes(key)){setShiftTypes(p=>[...p,key]);setMinStaff(p=>({...p,[key]:1}));setMaxStaff(p=>({...p,[key]:1}));setShiftMaxByType(p=>({...p,[key]:0}));}}} placeholder="シフト名 例:日勤A" style={{...INPUT_STYLE,width:80,padding:"3px 6px",marginBottom:0}}/>
+              <input value={cd.key} onChange={e=>{const n=[...customShiftDefs];const oldKey=n[idx].key;const newKey=e.target.value;n[idx]={...n[idx],key:newKey};setCustomShiftDefs(n);const otherOwns=customShiftDefs.some((c,i)=>i!==idx&&c.key===oldKey);if(oldKey&&!otherOwns&&shiftTypes.includes(oldKey)){setShiftTypes(p=>{const q=p.map(k=>k===oldKey?newKey:k);return q.filter((k,i)=>q.indexOf(k)===i);});setMinStaff(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});setMaxStaff(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});setShiftMaxByType(p=>{const q={...p};if(oldKey in q){q[newKey]=q[oldKey];delete q[oldKey];}return q;});}}} onBlur={e=>{const key=e.target.value.trim();if(key&&!shiftTypes.includes(key)){setShiftTypes(p=>[...p,key]);setMinStaff(p=>({...p,[key]:1}));setMaxStaff(p=>({...p,[key]:1}));setShiftMaxByType(p=>({...p,[key]:0}));}}} placeholder="シフト名 例:日勤A" style={{...INPUT_STYLE,width:80,padding:"3px 6px",marginBottom:0}}/>
               <select value={cd.baseType||"日勤"} onChange={e=>{const n=[...customShiftDefs];n[idx]={...n[idx],baseType:e.target.value};setCustomShiftDefs(n);}} style={{...INPUT_STYLE,width:68,padding:"3px 4px",marginBottom:0,fontSize:11}}>
                 {["早番","日勤","遅番","夜勤","休み"].map(k=><option key={k} value={k}>{k}</option>)}
               </select>
