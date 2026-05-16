@@ -1464,7 +1464,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; html += TAG('td')+(isKibo?'<span style="color:#c44b4b">希</span>':isYukyu2?'<span style="color:#9b4db5">有</span>':(SHIFTS[v]?.short||"－"))+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const cellText=isKibo||v==="希望休"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(SHIFTS[v]?.short||"－"); html += TAG('td')+cellText+CTAG('td'); }
       html += TAG('td')+w+CTAG('td')+TAG('td')+(n||"－")+CTAG('td')+TAG('td')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
