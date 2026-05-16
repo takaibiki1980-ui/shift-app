@@ -3637,15 +3637,27 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（未保存ローカル変更の検出用）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
+  const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
+  const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値
+  const deptsUpsertInProgress = useRef(false); // depts保存中フラグ
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
   const [depts, setDepts] = useState(() => { try { const s=localStorage.getItem("shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
   useEffect(() => {
     try { localStorage.setItem("shiftNavi_depts",JSON.stringify(depts)); } catch {}
-    if (!isInitializing.current) {
+    if (deptsSkipSave.current) {
+      deptsSkipSave.current = false;
+      lastSavedDeptsRef.current = depts;
+    } else {
+      deptsUpsertInProgress.current = true;
+      const snapshot = depts;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-        .then(({ error }) => { if (error) console.error('[sync] depts upsert失敗:', error); else console.log('[sync] depts 保存OK'); });
+        .then(({ error }) => {
+          deptsUpsertInProgress.current = false;
+          if (error) console.error('[sync] depts upsert失敗:', error);
+          else { lastSavedDeptsRef.current = snapshot; console.log('[sync] depts 保存OK'); }
+        });
     }
   }, [depts]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3700,8 +3712,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [jissekiModal, setJissekiModal] = useState(null); // { staff, day, planned }
   const allShiftsRef = useRef(allShifts); // 常に最新のallShiftsを参照（生成ハンドラ内で利用）
   const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
+  const deptsRef = useRef(depts); // 常に最新のdeptsを参照
   allShiftsRef.current = allShifts; // 常に最新状態を参照（生成ハンドラ・保存ハンドラ用）
   staffListRef.current = staffList;
+  deptsRef.current = depts;
   allJissekiRef.current = allJisseki;
   const [allEvents, setAllEvents] = useState({});
   const [eventEditDay, setEventEditDay] = useState(null);
@@ -3727,6 +3741,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (error) throw error;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts']) {
+          deptsSkipSave.current = true;
           setDepts(byKey['depts']);
         } else {
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
@@ -3813,7 +3828,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // fetch中にユーザーが編集していたらシフト更新をキャンセル
         if (userEditSeq.current !== seqAtStart) return;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
-        if (byKey['depts'])      setDepts(byKey['depts']);
+        if (byKey['depts'] && !deptsUpsertInProgress.current) {
+          const lastSavedDepts = lastSavedDeptsRef.current;
+          const hasLocalDeptChanges = lastSavedDepts !== null &&
+            JSON.stringify(deptsRef.current) !== JSON.stringify(lastSavedDepts);
+          if (!hasLocalDeptChanges && JSON.stringify(byKey['depts']) !== JSON.stringify(deptsRef.current)) {
+            deptsSkipSave.current = true;
+            setDepts(byKey['depts']);
+          }
+        }
         // staffList保存中、または未保存のローカル変更がある場合はRealtimeの旧データで上書きしない
         if (byKey['staffList'] && !staffUpsertInProgress.current) {
           const lastSaved = lastSavedStaffListRef.current;
