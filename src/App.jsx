@@ -782,6 +782,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const maxStaff = {};
   [...new Set(dept.shiftTypes)].forEach(k => { const cd=(dept.customShiftDefs||[]).find(d=>d.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=dept.maxStaff?.[k];maxStaff[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def; });
   const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
+  (dept.customShiftDefs||[]).forEach(cd => { if (cd.key && PRIORITY[cd.key]==null) PRIORITY[cd.key] = PRIORITY[cd.baseType]??2; });
 
   const getTrend = (s) => {
     if (!shiftTrend || Object.keys(shiftTrend).length === 0) return null;
@@ -1488,6 +1489,33 @@ function scoreShifts(res, ds, dept, days, year, month) {
       if (actual < minC) score += actual === 0 ? (minC - actual) * 30 : (minC - actual) * 10;
     }
   }
+  // 公平性ペナルティ: 夜勤回数・土日出勤回数の分散（スタッフ間の不均衡を抑制）
+  if (ds.length > 1) {
+    const hasNight = dept.shiftTypes.includes('夜勤');
+    const REST_F = new Set(['休み', '希望休', '有休', '公休', '休', '明け']);
+    let totalNight = 0, totalWeekend = 0;
+    const nc = {}, wc = {};
+    for (const s of ds) {
+      let n = 0, w = 0;
+      for (let d = 1; d <= days; d++) {
+        const t = res[s.id]?.[d] || '';
+        if (hasNight && t === '夜勤') n++;
+        const dow = new Date(year, month, d).getDay();
+        if ((dow === 0 || dow === 6) && t && !REST_F.has(t)) w++;
+      }
+      nc[s.id] = n; wc[s.id] = w;
+      totalNight += n; totalWeekend += w;
+    }
+    const avgN = totalNight / ds.length, avgW = totalWeekend / ds.length;
+    let varN = 0, varW = 0;
+    for (const s of ds) {
+      varN += (nc[s.id] - avgN) ** 2;
+      varW += (wc[s.id] - avgW) ** 2;
+    }
+    // 夜勤分散×500、土日分散×200（コア制約に次ぐ優先度）
+    if (hasNight) score += (varN / ds.length) * 500;
+    score += (varW / ds.length) * 200;
+  }
   return score;
 }
 
@@ -1719,14 +1747,16 @@ function ShiftBadge({ type, defs }) {
   return <span style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:3,padding:"1px 4px",fontSize:10,fontWeight:800,display:"inline-block",minWidth:22,textAlign:"center",lineHeight:"18px"}}>{s.short}</span>;
 }
 
-function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes }) {
+function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount }) {
   const ref = useRef();
   useEffect(() => { const h = (e) => { if(ref.current && !ref.current.contains(e.target)) onClose(); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [onClose]);
   const [pos, setPos] = useState({x,y});
   useEffect(() => { setPos({ x: Math.min(x, window.innerWidth-200), y: Math.min(y, window.innerHeight-320) }); }, [x,y]);
   const customWorkKeys = (customDefs||[]).filter(cd=>cd.key&&deptShiftTypes?.includes(cd.key));
+  const isBulk = selectionCount > 1;
   return (
     <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#ffffff",border:"1px solid #90cbc8",borderRadius:10,padding:6,boxShadow:"0 12px 40px #000a",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170}}>
+      {isBulk&&<div style={{gridColumn:"1/-1",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:6,padding:"4px 8px",marginBottom:2,fontSize:11,color:"#1d4ed8",fontWeight:700,textAlign:"center"}}>📋 {selectionCount}セルに一括適用</div>}
       {customWorkKeys.length>0&&<>
         {customWorkKeys.map(cd => { const s=getShiftDef(cd.key,customDefs); return <button key={cd.key} onClick={()=>onSelect(cd.key)} style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:s.bg,borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#6ab5b2"}}>{cd.key}</span></button>; })}
         <div style={{gridColumn:"1/-1",borderTop:"1px solid #b8deda",margin:"2px 0"}}/>
@@ -2562,6 +2592,81 @@ function ZoomWrapper({ zoom, onZoomChange, children }) {
 const TH = ({sticky,w}={}) => ({ position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1, background:"#ffffff", padding:"5px 3px", borderBottom:"2px solid #90cbc8", borderRight:"1px solid #b0e0de", fontSize:11, fontWeight:700, color:"#2a7a77", textAlign:"center", whiteSpace:"nowrap", width:w||"auto", minWidth:w||"auto" });
 const TD = { textAlign:"center", padding:"4px 2px", borderBottom:"1px solid #c8ecea", borderRight:"1px solid #c8ecea" };
 
+// ── 変更履歴から復元モーダル ──────────────────────────────────
+function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, onRestore }) {
+  const [histories, setHistories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [restoring, setRestoring] = useState(null);
+  const shiftKey = `shifts_${year}_${month+1}_${deptId}`;
+
+  useEffect(() => {
+    supabase.from('shift_data_history')
+      .select('id, archived_at, original_updated_at')
+      .eq('user_id', session.user.id)
+      .eq('data_key', shiftKey)
+      .order('archived_at', { ascending: false })
+      .limit(15)
+      .then(({ data, error }) => {
+        setLoading(false);
+        if (!error && data) setHistories(data);
+        else if (error) console.error('[history]', error);
+      });
+  }, [shiftKey, session.user.id]);
+
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+  };
+
+  const handleRestore = async (histId, archivedAt) => {
+    if (!window.confirm(`${fmt(archivedAt)} 時点の状態に復元しますか？\n現在のシフトは上書きされます（現在の状態も履歴に残ります）。`)) return;
+    setRestoring(histId);
+    const { data: hd, error: he } = await supabase.from('shift_data_history').select('data_value').eq('id', histId).single();
+    if (he || !hd) { alert('取得失敗: ' + (he?.message || '不明')); setRestoring(null); return; }
+    const { error: ue } = await supabase.from('shift_data').upsert(
+      { user_id:session.user.id, data_key:shiftKey, data_value:hd.data_value, updated_at:new Date().toISOString() },
+      { onConflict:'user_id,data_key' }
+    );
+    if (ue) { alert('復元失敗: ' + ue.message); setRestoring(null); return; }
+    onRestore(hd.data_value);
+    onClose();
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:420,maxHeight:"85vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,0.25)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontWeight:800,fontSize:16,color:"#1a3635"}}>🕐 変更履歴から復元</div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#888",lineHeight:1}}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:"#6ab5b2",marginBottom:16,fontWeight:600}}>{deptLabel} — {year}年{month+1}月シフト</div>
+        {loading && <div style={{textAlign:"center",color:"#aaa",padding:32}}>読み込み中…</div>}
+        {!loading && histories.length === 0 && (
+          <div style={{textAlign:"center",padding:32}}>
+            <div style={{fontSize:32,marginBottom:8}}>📭</div>
+            <div style={{color:"#999",fontSize:13}}>まだ履歴がありません</div>
+            <div style={{color:"#bbb",fontSize:11,marginTop:6}}>今後の保存から自動的に記録されます</div>
+          </div>
+        )}
+        {histories.map((h) => (
+          <div key={h.id} style={{border:"1px solid #e5e7eb",borderRadius:10,padding:"12px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fafafa"}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:13,color:"#1a3635"}}>{fmt(h.archived_at)} に上書き保存</div>
+              <div style={{fontSize:11,color:"#9ca3af",marginTop:2}}>この時点の直前の状態に戻せます</div>
+            </div>
+            <button
+              disabled={!!restoring}
+              onClick={() => handleRestore(h.id, h.archived_at)}
+              style={{background:restoring===h.id?"#d1fae5":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:restoring?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap",minWidth:80}}
+            >{restoring===h.id?"復元中…":"この状態\nに戻す"}</button>
+          </div>
+        ))}
+        <div style={{fontSize:10,color:"#d1d5db",textAlign:"center",marginTop:12}}>最大15世代まで遡れます</div>
+      </div>
+    </div>
+  );
+}
+
 function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
@@ -2574,8 +2679,148 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   const hasNight = dept.shiftTypes.includes("夜勤");
   const rightCols = [...dept.shiftTypes, ...(hasNight?["明け"]:[]), "計", "休", "希"];
   const rightColCount = rightCols.length;
+
+  // Drag-to-select state
+  const dragAnchorRef = useRef(null);
+  const isDraggingRef = useRef(false);
+  const mouseStartRef = useRef(null);
+  const [selAnchor, setSelAnchor] = useState(null);
+  const [selCur, setSelCur] = useState(null);
+
+  const selectedCells = useMemo(() => {
+    if (!selAnchor || !selCur) return new Set();
+    const r1 = Math.min(selAnchor.si, selCur.si), r2 = Math.max(selAnchor.si, selCur.si);
+    const d1 = Math.min(selAnchor.d, selCur.d), d2 = Math.max(selAnchor.d, selCur.d);
+    const cells = new Set();
+    for (let ri = r1; ri <= r2; ri++) {
+      if (ds[ri]) for (let di = d1; di <= d2; di++) cells.add(`${ds[ri].id}|${di}`);
+    }
+    return cells;
+  }, [selAnchor, selCur, ds]);
+
+  const handleCellMouseDown = (si, d, e) => {
+    mouseStartRef.current = {x: e.clientX, y: e.clientY};
+    dragAnchorRef.current = {si, d};
+    isDraggingRef.current = false;
+  };
+
+  const handleCellMouseEnter = (si, d) => {
+    if (isDraggingRef.current) setSelCur({si, d});
+  };
+
+  // Touch long-press → context menu
+  const longPressTimerRef = useRef(null);
+  const touchInfoRef = useRef(null);
+  const handleCellTouchStart = (si, d, e) => {
+    const touch = e.touches[0];
+    touchInfoRef.current = {si, d, x: touch.clientX, y: touch.clientY};
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      const ti = touchInfoRef.current;
+      if (!ti) return;
+      touchInfoRef.current = null;
+      const staff = ds[ti.si];
+      if (!staff) return;
+      const cellKey = `${staff.id}|${ti.d}`;
+      const selCells = selectedCells.has(cellKey) && selectedCells.size > 1 ? selectedCells : null;
+      onRightClick(staff.id, ti.d, {clientX: ti.x, clientY: Math.max(80, ti.y - 80)}, selCells);
+    }, 500);
+  };
+  const handleCellTouchEnd = (si, d, e) => {
+    e.preventDefault(); // prevent synthesized mouse events from double-firing
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+      if (touchInfoRef.current) {
+        const staff = ds[si];
+        if (staff) onLeftClick(staff.id, d, {button: 0});
+      }
+    }
+    touchInfoRef.current = null;
+  };
+  const handleTouchMove = (e) => {
+    if (!touchInfoRef.current) return;
+    const touch = e.touches[0];
+    if (Math.abs(touch.clientX - touchInfoRef.current.x) > 8 || Math.abs(touch.clientY - touchInfoRef.current.y) > 8) {
+      if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+      touchInfoRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!mouseStartRef.current || isDraggingRef.current) return;
+      if (Math.abs(e.clientX - mouseStartRef.current.x) > 5 || Math.abs(e.clientY - mouseStartRef.current.y) > 5) {
+        isDraggingRef.current = true;
+        const anchor = dragAnchorRef.current;
+        if (anchor) { setSelAnchor({...anchor}); setSelCur({...anchor}); }
+      }
+    };
+    const onUp = (e) => {
+      if (!mouseStartRef.current) {
+        if (!isDraggingRef.current) { setSelAnchor(null); setSelCur(null); }
+        return;
+      }
+      const wasDragging = isDraggingRef.current;
+      isDraggingRef.current = false;
+      mouseStartRef.current = null;
+      const anchor = dragAnchorRef.current;
+      dragAnchorRef.current = null;
+      if (!wasDragging && anchor) {
+        const staff = ds[anchor.si];
+        if (staff) onLeftClick(staff.id, anchor.d, e);
+        setSelAnchor(null); setSelCur(null);
+      }
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { setSelAnchor(null); setSelCur(null); } };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [ds, onLeftClick]);
+
+  // ── 公平性ゲージ: 夜勤・土日出勤の偏差を計算 ──
+  const fairnessData = useMemo(() => {
+    if (ds.length === 0) return {};
+    const days2 = getDays(year, month);
+    const nightTypes = new Set(dept.shiftTypes.includes('夜勤') ? ['夜勤'] : []);
+    const restTypes = new Set(['休み', '休', '明け', '有休', '希望休', '公休']);
+    let totalNight = 0, totalWeekend = 0;
+    const raw = {};
+    for (const s of ds) {
+      const ss = shifts[s.id] || {};
+      let nc = 0, wc = 0;
+      for (let d = 1; d <= days2; d++) {
+        const t = ss[d] || '';
+        const dow = new Date(year, month, d).getDay();
+        if (nightTypes.has(t)) nc++;
+        if ((dow === 0 || dow === 6) && t && !restTypes.has(t)) wc++;
+      }
+      raw[s.id] = { nc, wc };
+      totalNight += nc; totalWeekend += wc;
+    }
+    const avgN = totalNight / ds.length, avgW = totalWeekend / ds.length;
+    const result = {};
+    for (const s of ds) {
+      const nd = raw[s.id].nc - avgN, wd = raw[s.id].wc - avgW;
+      const dev = Math.abs(nd) + Math.abs(wd);
+      result[s.id] = {
+        nc: raw[s.id].nc, wc: raw[s.id].wc,
+        nd: Math.round(nd * 10) / 10, wd: Math.round(wd * 10) / 10,
+        color: dev < 1 ? '#22c55e' : dev < 2.5 ? '#f59e0b' : '#ef4444',
+        tip: `夜勤 ${raw[s.id].nc}回(平均比${nd>=0?'+':''}${Math.round(nd*10)/10}) / 土日出勤 ${raw[s.id].wc}回(平均比${wd>=0?'+':''}${Math.round(wd*10)/10})`
+      };
+    }
+    return result;
+  }, [shifts, ds, year, month, dept.shiftTypes]);
+
   return (
-    <div style={{overflowX:"auto",overflowY:"visible"}}>
+    <div style={{overflowX:"auto",overflowY:"visible",userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
         <thead>
           <tr>
@@ -2603,12 +2848,19 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             return (
               <tr key={s.id} style={{background:si%2===0?"#ffffff":"#fafeff"}}>
                 <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#ffffff":"#fafeff",padding:"4px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda",minWidth:148}}>
-                  <div style={{fontWeight:700,fontSize:12,color:"#1a3635",whiteSpace:"nowrap"}}>{s.name}</div>
+                  <div style={{fontWeight:700,fontSize:12,color:"#1a3635",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
+                    {s.name}
+                    {fairnessData[s.id]&&<span
+                      style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:fairnessData[s.id].color,flexShrink:0,cursor:"help"}}
+                      title={`【公平性】${fairnessData[s.id].tip}`}
+                    />}
+                  </div>
                   <div style={{fontSize:10,color:"#2a5a57",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#c45c35",fontSize:9}}>🌙{nightCnt}/{s.nightMax}</span>}</div>
                 </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:consecViol?"1px solid #e0707060":undefined}} onClick={(e)=>onLeftClick(s.id,d,e)} onContextMenu={(e)=>{e.preventDefault();onRightClick(s.id,d,e);}}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -3777,11 +4029,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isInitializing = useRef(true);
   const isMergingKibo = useRef(false); // kiboChannel同期中フラグ（現在はmergeStaffKiboで使用）
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
-  const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（未保存ローカル変更の検出用）
+  const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
   const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
-  const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値
+  const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値（null=DB未読込→保存ブロック）
   const deptsUpsertInProgress = useRef(false); // depts保存中フラグ
+  const pendingDeptsRef = useRef(null); // 保存中に届いた新しいdepts（完了後に再保存）
+  const pendingStaffListRef = useRef(null); // 保存中に届いた新しいstaffList
+  const dbInitialized = useRef(false); // 初回DB読込完了フラグ（二重保護）
+  const reloadFromRemoteRef = useRef(null); // reloadFromRemote関数への参照（catch節から呼び出し用）
+  const activeCellRef = useRef(null); // { staffId, day, time } 現在編集中のセル（Realtime上書き保護用）
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
@@ -3791,15 +4048,35 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (deptsSkipSave.current) {
       deptsSkipSave.current = false;
       lastSavedDeptsRef.current = depts;
-    } else {
-      deptsUpsertInProgress.current = true;
-      const snapshot = depts;
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-        .then(({ error }) => {
-          deptsUpsertInProgress.current = false;
-          if (error) console.error('[sync] depts upsert失敗:', error);
-          else { lastSavedDeptsRef.current = snapshot; console.log('[sync] depts 保存OK'); }
-        });
+    } else if (lastSavedDeptsRef.current !== null && dbInitialized.current) {
+      // 二重保護: null = DB未読込 OR dbInitialized=false → デフォルト値でSupabaseを上書きしない
+      if (deptsUpsertInProgress.current) {
+        // 保存中に新しい変更→完了後に再保存するため記録
+        pendingDeptsRef.current = depts;
+        return;
+      }
+      const saveDepts = (deptsToSave) => {
+        deptsUpsertInProgress.current = true;
+        const snapshot = deptsToSave;
+        supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:deptsToSave, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+          .then(({ error }) => {
+            deptsUpsertInProgress.current = false;
+            if (error) {
+              console.error('[sync] depts upsert失敗:', error);
+              setSaveStatus('error');
+            } else {
+              lastSavedDeptsRef.current = snapshot;
+              console.log('[sync] depts 保存OK');
+              // 保存中に届いた変更を再保存
+              if (pendingDeptsRef.current !== null) {
+                const pending = pendingDeptsRef.current;
+                pendingDeptsRef.current = null;
+                saveDepts(pending);
+              }
+            }
+          });
+      };
+      saveDepts(depts);
     }
   }, [depts]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3814,22 +4091,40 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       // Supabase/Realtimeから来た変更 → 保存不要・保存済みとしてマーク
       staffListSkipSave.current = false;
       lastSavedStaffListRef.current = staffList;
-    } else {
-      // ユーザー操作による変更 → isInitializingに関係なくSupabaseに保存
-      staffUpsertInProgress.current = true;
-      const snapshot = staffList;
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-        .then(({ error }) => {
-          staffUpsertInProgress.current = false;
-          if (error) console.error('[sync] staffList upsert失敗:', error);
-          else { lastSavedStaffListRef.current = snapshot; console.log('[sync] staffList 保存OK'); }
-        });
+    } else if (lastSavedStaffListRef.current !== null && dbInitialized.current) {
+      // 二重保護: null = DB未読込 OR dbInitialized=false → デフォルト値でSupabaseを上書きしない
+      if (staffUpsertInProgress.current) {
+        pendingStaffListRef.current = staffList;
+        return;
+      }
+      const saveStaffList = (listToSave) => {
+        staffUpsertInProgress.current = true;
+        const snapshot = listToSave;
+        supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:listToSave, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+          .then(({ error }) => {
+            staffUpsertInProgress.current = false;
+            if (error) {
+              console.error('[sync] staffList upsert失敗:', error);
+              setSaveStatus('error');
+            } else {
+              lastSavedStaffListRef.current = snapshot;
+              console.log('[sync] staffList 保存OK');
+              if (pendingStaffListRef.current !== null) {
+                const pending = pendingStaffListRef.current;
+                pendingStaffListRef.current = null;
+                saveStaffList(pending);
+              }
+            }
+          });
+      };
+      saveStaffList(staffList);
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // スタッフポータル用: 施設設定をSupabaseに公開保存（dbLoading完了後に必ず1回書く）
   useEffect(() => {
     if (dbLoading) return;
+    if (!dbInitialized.current) return; // DB読込完了前は書かない
     if (staffList.length === 0) return; // 空データで上書きしない
     const cfg = {
       facility_name: profile?.facility_name || '',
@@ -3886,13 +4181,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           deptsSkipSave.current = true;
           setDepts(byKey['depts']);
         } else {
-          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
+          // 新規ユーザーのみ: エラーなしでデータが存在しない場合にデフォルトを保存
+          const defaultDepts = deptsRef.current;
+          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:defaultDepts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+            .then(({ error }) => { if (!error) lastSavedDeptsRef.current = deptsRef.current; });
         }
         if (byKey['staffList']) {
           staffListSkipSave.current = true;
           setStaffList(byKey['staffList']);
         } else {
-          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
+          // 新規ユーザーのみ: エラーなしでデータが存在しない場合にデフォルトを保存
+          const defaultStaff = staffListRef.current;
+          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:defaultStaff, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+            .then(({ error }) => { if (!error) lastSavedStaffListRef.current = staffListRef.current; });
         }
         if (byKey['excelRawMonths']) {
           const actualDepts = byKey['depts'] || depts;
@@ -3944,6 +4245,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       } catch(e) { console.error('Supabase初期ロードエラー:', e); }
       finally {
         setDbLoading(false);
+        // DB読込完了後にlastSavedRefを初期化（まだnullなら現在値で初期化 → 以降の変更が保存される）
+        if (lastSavedDeptsRef.current === null) lastSavedDeptsRef.current = deptsRef.current;
+        if (lastSavedStaffListRef.current === null) lastSavedStaffListRef.current = staffListRef.current;
+        dbInitialized.current = true; // 二重保護フラグON（これ以降だけ保存を許可）
         // effects より先に false にすると書き戻しループが発生するため遅延する
         setTimeout(() => { isInitializing.current = false; }, 300);
       }
@@ -3956,8 +4261,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (dbLoading) return;
 
     const reloadFromRemote = async () => {
-      // 編集中（unsaved）はスキップ — saveStatusRefはユーザー操作で即時更新されるため確実
-      if (saveStatusRef.current === 'unsaved') return;
+      // 編集中（unsaved）はスキップ — 保存完了後に次のRealtimeイベントで自動反映される
+      if (saveStatusRef.current === 'unsaved') {
+        setConflictBanner(true); // 「他端末で更新あり」バナーを表示
+        return;
+      }
+      setConflictBanner(false);
       // fetch開始時のシーケンス番号を記録（fetch中にユーザーが編集したら検出するため）
       const seqAtStart = userEditSeq.current;
       isInitializing.current = true;
@@ -4015,8 +4324,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             // updater実行時に再チェック（fetch後に編集があればキャンセル）
             if (userEditSeq.current !== seqAtStart) return prev;
             const result = { ...prev };
+            const ac = activeCellRef.current;
+            const acAge = ac ? Date.now() - ac.time : Infinity;
             for (const [k, v] of deptShiftEntries) {
-              result[k.slice(shiftPrefix.length)] = v;
+              const deptId = k.slice(shiftPrefix.length);
+              // アクティブセル保護: 直近5秒以内に編集したセルはRealtime上書きから守る
+              if (ac && acAge < 5000 && deptId === activeDeptIdRef.current && v[ac.staffId]) {
+                const localVal = prev[deptId]?.[ac.staffId]?.[ac.day];
+                if (localVal !== undefined) {
+                  const patched = { ...v, [ac.staffId]: { ...v[ac.staffId], [ac.day]: localVal } };
+                  result[deptId] = patched;
+                  continue;
+                }
+              }
+              result[deptId] = v;
             }
             return restoreShifts(result);
           });
@@ -4033,8 +4354,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
       } catch(e) { console.warn('リモート同期エラー:', e); }
-      finally { setTimeout(() => { isInitializing.current = false; }, 300); }
+      finally {
+        // DB読込完了後、まだnullなら現在値で初期化 → 以降のユーザー変更がSupabaseに保存される
+        if (lastSavedDeptsRef.current === null) lastSavedDeptsRef.current = deptsRef.current;
+        if (lastSavedStaffListRef.current === null) lastSavedStaffListRef.current = staffListRef.current;
+        setTimeout(() => { isInitializing.current = false; }, 300);
+      }
     };
+
+    reloadFromRemoteRef.current = reloadFromRemote; // catch節からも呼べるように公開
 
     // スマホでアプリを切り替えて戻ったとき同期
     const onVisibility = () => { if (!document.hidden) reloadFromRemote(); };
@@ -4047,6 +4375,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       if (error) { console.error('[mergeStaffKibo]', error); return; }
       if (!data || data.length === 0) return; // 変更なし：setStaffListを呼ばない
       // functional updaterで「現時点の最新state」にマージを適用（ユーザーの保存と競合しない）
+      // kiboByMonth/yukyuByMonthはstaffListとして保存不要（staff_kiboテーブルで管理）のでSkipSave
+      staffListSkipSave.current = true;
       setStaffList(prev => {
         const next = prev.map(s => {
           const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
@@ -4059,6 +4389,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         });
         // 実際に変化があった場合のみ新しい配列を返す（変化なしならprevを返しuseEffectを起動しない）
         const changed = next.some((s, i) => s !== prev[i]);
+        if (!changed) staffListSkipSave.current = false; // 変化なしならフラグを戻す
         return changed ? next : prev;
       });
     };
@@ -4085,9 +4416,47 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     };
   }, [dbLoading, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── allShifts変更時: localStorageへ即時保存（デバウンスなし・タブ閉じ・月切替対策）──
+  useEffect(() => {
+    if (!dbInitialized.current) return;
+    if (isLoadingMonth.current) return;
+    if (Object.keys(allShifts).length === 0) return;
+    try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShifts)); } catch {}
+  }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── タブ/ウィンドウを閉じる直前: 未保存データをlocalStorageに緊急保存 ──
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (saveStatusRef.current === 'unsaved') {
+        try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current)); } catch {}
+        e.preventDefault();
+        e.returnValue = '未保存のシフトがあります。';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── 月切替: Supabase から当月シフトをロード（部署ごとに別キー）──
   useEffect(() => {
     if (isInitializing.current) return;
+    // クリーンアップ（月切替前）: 旧月の未保存データをSupabaseへ緊急保存
+    // closureで旧year/monthを参照 → allShiftsRef.currentも旧月データ
+    const emergencySave = () => {
+      if (saveStatusRef.current !== 'unsaved') return;
+      if (!dbInitialized.current) return;
+      const deptId = activeDeptIdRef.current;
+      const emergencyKey = `shifts_${year}_${month+1}_${deptId}`;
+      const emergencyData = allShiftsRef.current[deptId] || {};
+      try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current)); } catch {}
+      supabase.from('shift_data').upsert(
+        { user_id:session.user.id, data_key:emergencyKey, data_value:emergencyData, updated_at:new Date().toISOString() },
+        { onConflict:'user_id,data_key' }
+      ).then(({ error }) => {
+        if (!error) { setSaveStatus('saved'); console.log('[save] 月切替前緊急保存OK:', emergencyKey); }
+        else { console.error('[save] 月切替前緊急保存失敗:', error); }
+      });
+    };
     isLoadingMonth.current = true;
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
     undoStackRef.current = {}; // 月切替でアンドゥ履歴をリセット
@@ -4117,13 +4486,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         supabase.from('shift_data').select('data_value').eq('user_id',session.user.id).eq('data_key',yKey).maybeSingle()
           .then(({data})=>{ if(data?.data_value)setAllYotei(data.data_value);else{try{const s=localStorage.getItem(`shiftNavi_${yKey}`);setAllYotei(s?JSON.parse(s):{});}catch{setAllYotei({});}} });
       });
+    return () => { emergencySave(); }; // cleanup: 月切替/アンマウント時に旧月を緊急保存
   }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── シフト変更: Supabase へ自動保存（1秒デバウンス）──
   const saveFailCountRef = useRef(0);
   useEffect(() => {
-    // isLoadingMonth中（Supabaseからのロード中）のみスキップ
-    // isInitializingは不要: reloadFromRemoteはisLoadingMonth=trueでsetAllShiftsするため
+    // DB初期化完了前・ロード中は物理的に保存不可
+    if (!dbInitialized.current) return;
     if (isLoadingMonth.current) return;
     saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
@@ -4178,10 +4548,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         saveFailCountRef.current += 1;
         console.error("[save] Supabase保存失敗(" + saveFailCountRef.current + "回目):", e?.message || e);
         setSaveStatus("unsaved");
-        // 3回連続失敗でユーザーに通知
-        if (saveFailCountRef.current >= 3) {
-          alert("クラウド保存が" + saveFailCountRef.current + "回失敗しています。\nネット接続を確認してください。\n（ローカルには保存済み）");
+        if (saveFailCountRef.current >= 5) {
           saveFailCountRef.current = 0;
+          setSaveStatus('error');
+          // 5回連続失敗 → 中途半端な状態のまま編集継続は危険のためロールバックを提案
+          const shouldRollback = window.confirm(
+            "【保存エラー】クラウドへの保存が5回連続で失敗しました。\n\n" +
+            "このまま編集を続けるとデータが正常に保存されない恐れがあります。\n\n" +
+            "「OK」→ 最後に正常保存された状態に安全に巻き戻す（推奨）\n" +
+            "「キャンセル」→ 現在の状態を維持（自己責任）"
+          );
+          if (shouldRollback && reloadFromRemoteRef.current) {
+            setSaveStatus('saved'); // reloadFromRemoteのunsaved skipガードを外す
+            reloadFromRemoteRef.current();
+          }
         }
       }
     }, 1000);
@@ -4191,9 +4571,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const eventsTimer = useRef(null);
   useEffect(() => {
     if (isInitializing.current) return;
+    if (!dbInitialized.current) return; // DB読込前は書かない
     if (eventsTimer.current) clearTimeout(eventsTimer.current);
     eventsTimer.current = setTimeout(() => {
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'events_data', data_value:allEvents, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{ if(error)console.error('[events] 保存失敗:',error); });
+      if (!dbInitialized.current) return;
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'events_data', data_value:allEvents, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{
+        if (error) { console.error('[events] 保存失敗:', error); setSaveStatus('error'); }
+      });
     }, 1200);
     return () => { if (eventsTimer.current) clearTimeout(eventsTimer.current); };
   }, [allEvents]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -4334,6 +4718,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
   const [pinModal, setPinModal] = useState(false);
+  const [historyModal, setHistoryModal] = useState(false); // 変更履歴から復元モーダル
+  const [conflictBanner, setConflictBanner] = useState(false); // 他端末で更新通知バナー
   // タブ切替で自動ロック
   useEffect(() => { setUnlockedDeptId(null); }, [activeDeptId]);
   // 部署切替時にアンドゥ可能数を現在部署のスタック長に合わせる
@@ -4489,14 +4875,33 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const handleLeftClick = useCallback((staffId, day) => {
     if (isLockedRef.current) return;
+    activeCellRef.current = { staffId, day, time: Date.now() }; // アクティブセル記録（Realtime上書き保護）
     setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const idx=SHIFT_KEYS.indexOf(cur);const next=SHIFT_KEYS[(idx+1)%SHIFT_KEYS.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
   }, [setDeptShifts]);
 
-  const handleRightClick = useCallback((staffId, day, e) => {
+  const handleRightClick = useCallback((staffId, day, e, selCells) => {
     if (isLockedRef.current) return;
-    setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4});
+    setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4,selCells:selCells||null});
   }, []);
-  const handleMenuSelect = (shiftKey) => { if(!ctxMenu)return; const{staffId,day}=ctxMenu; setDeptShifts(prev=>({...prev,[staffId]:{...(prev[staffId]||{}),[day]:shiftKey}})); setCtxMenu(null); };
+  const handleMenuSelect = (shiftKey) => {
+    if (!ctxMenu) return;
+    const {staffId, day, selCells} = ctxMenu;
+    if (selCells && selCells.size > 1) {
+      setDeptShifts(prev => {
+        const next = {...prev};
+        for (const cellKey of selCells) {
+          const lastPipe = cellKey.lastIndexOf('|');
+          const sid = cellKey.slice(0, lastPipe);
+          const d = parseInt(cellKey.slice(lastPipe + 1));
+          next[sid] = {...(next[sid] || {}), [d]: shiftKey};
+        }
+        return next;
+      });
+    } else {
+      setDeptShifts(prev=>({...prev,[staffId]:{...(prev[staffId]||{}),[day]:shiftKey}}));
+    }
+    setCtxMenu(null);
+  };
 
   const saveStaff = (form) => { setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
   const deleteStaff = (id) => { const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
@@ -4508,7 +4913,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
   const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
-  if (dbLoading) return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{textAlign:"center"}}><div style={{margin:"0 auto 12px"}}><ShifuponIcon size={48} radius={12}/></div><div style={{color:"#6ab5b2",fontSize:13}}>データを同期中…</div></div></div>;
+  if (dbLoading) return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",userSelect:"none",pointerEvents:"none"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{margin:"0 auto 12px"}}><ShifuponIcon size={56} radius={14}/></div>
+        <div style={{color:"#2BBFBA",fontSize:14,fontWeight:700,marginBottom:6}}>データを読み込み中…</div>
+        <div style={{color:"#6ab5b2",fontSize:11}}>クラウドから最新データを取得しています</div>
+        <div style={{color:"#a0d4d2",fontSize:10,marginTop:4}}>この間はデータの書き込みを一切行いません</div>
+      </div>
+    </div>
+  );
   if (!dept) return <div style={{minHeight:"100vh",background:"#f0fbfa",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#c8b8a8",fontSize:14}}>読み込み中…</div></div>;
 
   return (
@@ -4526,18 +4940,24 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <div style={{fontSize:14,fontWeight:800,color:"#2BBFBA",minWidth:104,textAlign:"center",background:"#ffffff",border:"1px solid #90cbc8",borderRadius:8,padding:"5px 10px"}}>{year}年 {month+1}月</div>
           <button onClick={nextMonth} style={MNAV}>▶</button>
         </div>
+        {conflictBanner&&<div style={{position:"fixed",top:56,left:"50%",transform:"translateX(-50%)",zIndex:200,background:"#fef3c7",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,color:"#92400e",display:"flex",gap:8,alignItems:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.12)"}}>
+          📡 他の端末でデータが更新されました。保存完了後に自動反映されます。
+          <button onClick={()=>setConflictBanner(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#92400e"}}>✕</button>
+        </div>}
         <div style={{display:"flex",gap:isMobile?4:7,alignItems:"center",flexWrap:"wrap"}}>
-          <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
+          <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":saveStatus==="error"?"#ef4444":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
             {saveStatus==="saved"&&<><span>💾</span>{!isMobile&&<span>保存済</span>}</>}
             {saveStatus==="unsaved"&&<><span>⏳</span>{!isMobile&&<span>未保存</span>}</>}
+            {saveStatus==="error"&&<><span>⚠️</span><span>保存失敗</span></>}
           </div>
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"linear-gradient(135deg,#374151,#1f2937)",color:"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>🔒{!isMobile&&" 解錠する"}</button>
-            : <><button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":" 自動生成")}</button></>
+            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved")?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:(generating||saveStatus==="unsaved")?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved")?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:saveStatus==="unsaved"?0.6:1}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":" 自動生成")}</button></>
           }
-          <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
+          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:700,opacity:saveStatus==="unsaved"?0.5:1}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
           {!isMobile&&(()=>{const deptTrend=shiftTrend[activeDeptId]||{};const excelCnt=Object.keys(deptTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const syncColor=syncRate!=null?(syncRate>=85?"#16a34a":syncRate>=70?"#ca8a04":"#dc2626"):"#2a9a96";const label=hasAny?`🎯 シンクロ率 ${syncRate!=null?syncRate+'%':'--%'}`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#f0f9ff":"#ffffff",color:syncColor,border:`1px solid ${hasAny?syncColor:"#90cbc8"}`,borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          <button onClick={()=>setHistoryModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}} title="過去15世代の履歴から復元">{isMobile?"🕐":"🕐 履歴復元"}</button>
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
           <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
           {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🏢":"🏢 管理"}</button>}
@@ -4623,7 +5043,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       </div>
 
       {jissekiModal&&<JissekiInputModal staffName={jissekiModal.staff.name} day={jissekiModal.day} year={year} month={month} plannedShift={jissekiModal.planned} record={allJisseki[activeDeptId]?.[jissekiModal.staff.id]?.[jissekiModal.day]} deptShiftTypes={dept?.shiftTypes||["早番","日勤","遅番","夜勤"]} onSave={rec=>{saveJisseki(jissekiModal.staff.id,jissekiModal.day,rec);setJissekiModal(null);}} onClear={()=>{clearJisseki(jissekiModal.staff.id,jissekiModal.day);setJissekiModal(null);}} onClose={()=>setJissekiModal(null)}/>}
-      {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]}/>}
+      {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1}/>}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
@@ -4636,6 +5056,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
       {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
+      {historyModal&&<ShiftHistoryModal
+        session={session} year={year} month={month}
+        deptId={activeDeptId} deptLabel={dept?.label||activeDeptId}
+        onClose={()=>setHistoryModal(false)}
+        onRestore={(restoredData)=>{
+          setAllShifts(prev=>({...prev,[activeDeptId]:restoredData}));
+          setSaveStatus('saved');
+        }}
+      />}
       {eventEditDay!==null&&<EventEditModal day={eventEditDay} month={month} year={year} currentText={(allEvents[activeDeptId]?.[monthKey(year,month)]||{})[eventEditDay]||""} onSave={(text)=>{const mk2=monthKey(year,month);setAllEvents(prev=>{const prev2={...(prev[activeDeptId]||{})};const prev3={...(prev2[mk2]||{})};if(text)prev3[eventEditDay]=text;else delete prev3[eventEditDay];prev2[mk2]=prev3;return{...prev,[activeDeptId]:prev2};});setEventEditDay(null);}} onClose={()=>setEventEditDay(null)}/>}
       {shareModal&&(
         <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&setShareModal(false)}>
