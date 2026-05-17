@@ -1719,14 +1719,16 @@ function ShiftBadge({ type, defs }) {
   return <span style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:3,padding:"1px 4px",fontSize:10,fontWeight:800,display:"inline-block",minWidth:22,textAlign:"center",lineHeight:"18px"}}>{s.short}</span>;
 }
 
-function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes }) {
+function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount }) {
   const ref = useRef();
   useEffect(() => { const h = (e) => { if(ref.current && !ref.current.contains(e.target)) onClose(); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [onClose]);
   const [pos, setPos] = useState({x,y});
   useEffect(() => { setPos({ x: Math.min(x, window.innerWidth-200), y: Math.min(y, window.innerHeight-320) }); }, [x,y]);
   const customWorkKeys = (customDefs||[]).filter(cd=>cd.key&&deptShiftTypes?.includes(cd.key));
+  const isBulk = selectionCount > 1;
   return (
     <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#ffffff",border:"1px solid #90cbc8",borderRadius:10,padding:6,boxShadow:"0 12px 40px #000a",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170}}>
+      {isBulk&&<div style={{gridColumn:"1/-1",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:6,padding:"4px 8px",marginBottom:2,fontSize:11,color:"#1d4ed8",fontWeight:700,textAlign:"center"}}>📋 {selectionCount}セルに一括適用</div>}
       {customWorkKeys.length>0&&<>
         {customWorkKeys.map(cd => { const s=getShiftDef(cd.key,customDefs); return <button key={cd.key} onClick={()=>onSelect(cd.key)} style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:s.bg,borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#6ab5b2"}}>{cd.key}</span></button>; })}
         <div style={{gridColumn:"1/-1",borderTop:"1px solid #b8deda",margin:"2px 0"}}/>
@@ -2574,8 +2576,73 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   const hasNight = dept.shiftTypes.includes("夜勤");
   const rightCols = [...dept.shiftTypes, ...(hasNight?["明け"]:[]), "計", "休", "希"];
   const rightColCount = rightCols.length;
+
+  // Drag-to-select state
+  const dragAnchorRef = useRef(null);
+  const isDraggingRef = useRef(false);
+  const mouseStartRef = useRef(null);
+  const [selAnchor, setSelAnchor] = useState(null);
+  const [selCur, setSelCur] = useState(null);
+
+  const selectedCells = useMemo(() => {
+    if (!selAnchor || !selCur) return new Set();
+    const r1 = Math.min(selAnchor.si, selCur.si), r2 = Math.max(selAnchor.si, selCur.si);
+    const d1 = Math.min(selAnchor.d, selCur.d), d2 = Math.max(selAnchor.d, selCur.d);
+    const cells = new Set();
+    for (let ri = r1; ri <= r2; ri++) {
+      if (ds[ri]) for (let di = d1; di <= d2; di++) cells.add(`${ds[ri].id}|${di}`);
+    }
+    return cells;
+  }, [selAnchor, selCur, ds]);
+
+  const handleCellMouseDown = (si, d, e) => {
+    mouseStartRef.current = {x: e.clientX, y: e.clientY};
+    dragAnchorRef.current = {si, d};
+    isDraggingRef.current = false;
+  };
+
+  const handleCellMouseEnter = (si, d) => {
+    if (isDraggingRef.current) setSelCur({si, d});
+  };
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!mouseStartRef.current || isDraggingRef.current) return;
+      if (Math.abs(e.clientX - mouseStartRef.current.x) > 5 || Math.abs(e.clientY - mouseStartRef.current.y) > 5) {
+        isDraggingRef.current = true;
+        const anchor = dragAnchorRef.current;
+        if (anchor) { setSelAnchor({...anchor}); setSelCur({...anchor}); }
+      }
+    };
+    const onUp = (e) => {
+      if (!mouseStartRef.current) {
+        if (!isDraggingRef.current) { setSelAnchor(null); setSelCur(null); }
+        return;
+      }
+      const wasDragging = isDraggingRef.current;
+      isDraggingRef.current = false;
+      mouseStartRef.current = null;
+      const anchor = dragAnchorRef.current;
+      dragAnchorRef.current = null;
+      if (!wasDragging && anchor) {
+        const staff = ds[anchor.si];
+        if (staff) onLeftClick(staff.id, anchor.d, e);
+        setSelAnchor(null); setSelCur(null);
+      }
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { setSelAnchor(null); setSelCur(null); } };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [ds, onLeftClick]);
+
   return (
-    <div style={{overflowX:"auto",overflowY:"visible"}}>
+    <div style={{overflowX:"auto",overflowY:"visible",userSelect:"none"}}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
         <thead>
           <tr>
@@ -2608,7 +2675,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                 </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:consecViol?"1px solid #e0707060":undefined}} onClick={(e)=>onLeftClick(s.id,d,e)} onContextMenu={(e)=>{e.preventDefault();onRightClick(s.id,d,e);}}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -4492,11 +4560,29 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const idx=SHIFT_KEYS.indexOf(cur);const next=SHIFT_KEYS[(idx+1)%SHIFT_KEYS.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
   }, [setDeptShifts]);
 
-  const handleRightClick = useCallback((staffId, day, e) => {
+  const handleRightClick = useCallback((staffId, day, e, selCells) => {
     if (isLockedRef.current) return;
-    setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4});
+    setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4,selCells:selCells||null});
   }, []);
-  const handleMenuSelect = (shiftKey) => { if(!ctxMenu)return; const{staffId,day}=ctxMenu; setDeptShifts(prev=>({...prev,[staffId]:{...(prev[staffId]||{}),[day]:shiftKey}})); setCtxMenu(null); };
+  const handleMenuSelect = (shiftKey) => {
+    if (!ctxMenu) return;
+    const {staffId, day, selCells} = ctxMenu;
+    if (selCells && selCells.size > 1) {
+      setDeptShifts(prev => {
+        const next = {...prev};
+        for (const cellKey of selCells) {
+          const lastPipe = cellKey.lastIndexOf('|');
+          const sid = cellKey.slice(0, lastPipe);
+          const d = parseInt(cellKey.slice(lastPipe + 1));
+          next[sid] = {...(next[sid] || {}), [d]: shiftKey};
+        }
+        return next;
+      });
+    } else {
+      setDeptShifts(prev=>({...prev,[staffId]:{...(prev[staffId]||{}),[day]:shiftKey}}));
+    }
+    setCtxMenu(null);
+  };
 
   const saveStaff = (form) => { setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
   const deleteStaff = (id) => { const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
@@ -4623,7 +4709,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       </div>
 
       {jissekiModal&&<JissekiInputModal staffName={jissekiModal.staff.name} day={jissekiModal.day} year={year} month={month} plannedShift={jissekiModal.planned} record={allJisseki[activeDeptId]?.[jissekiModal.staff.id]?.[jissekiModal.day]} deptShiftTypes={dept?.shiftTypes||["早番","日勤","遅番","夜勤"]} onSave={rec=>{saveJisseki(jissekiModal.staff.id,jissekiModal.day,rec);setJissekiModal(null);}} onClear={()=>{clearJisseki(jissekiModal.staff.id,jissekiModal.day);setJissekiModal(null);}} onClose={()=>setJissekiModal(null)}/>}
-      {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]}/>}
+      {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1}/>}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
