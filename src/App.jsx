@@ -2606,6 +2606,46 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
     if (isDraggingRef.current) setSelCur({si, d});
   };
 
+  // Touch long-press → context menu
+  const longPressTimerRef = useRef(null);
+  const touchInfoRef = useRef(null);
+  const handleCellTouchStart = (si, d, e) => {
+    const touch = e.touches[0];
+    touchInfoRef.current = {si, d, x: touch.clientX, y: touch.clientY};
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      const ti = touchInfoRef.current;
+      if (!ti) return;
+      touchInfoRef.current = null;
+      const staff = ds[ti.si];
+      if (!staff) return;
+      const cellKey = `${staff.id}|${ti.d}`;
+      const selCells = selectedCells.has(cellKey) && selectedCells.size > 1 ? selectedCells : null;
+      onRightClick(staff.id, ti.d, {clientX: ti.x, clientY: Math.max(80, ti.y - 80)}, selCells);
+    }, 500);
+  };
+  const handleCellTouchEnd = (si, d, e) => {
+    e.preventDefault(); // prevent synthesized mouse events from double-firing
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+      if (touchInfoRef.current) {
+        const staff = ds[si];
+        if (staff) onLeftClick(staff.id, d, {button: 0});
+      }
+    }
+    touchInfoRef.current = null;
+  };
+  const handleTouchMove = (e) => {
+    if (!touchInfoRef.current) return;
+    const touch = e.touches[0];
+    if (Math.abs(touch.clientX - touchInfoRef.current.x) > 8 || Math.abs(touch.clientY - touchInfoRef.current.y) > 8) {
+      if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+      touchInfoRef.current = null;
+    }
+  };
+
   useEffect(() => {
     const onMove = (e) => {
       if (!mouseStartRef.current || isDraggingRef.current) return;
@@ -2643,7 +2683,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   }, [ds, onLeftClick]);
 
   return (
-    <div style={{overflowX:"auto",overflowY:"visible",userSelect:"none"}}>
+    <div style={{overflowX:"auto",overflowY:"visible",userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
         <thead>
           <tr>
@@ -2677,7 +2717,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
