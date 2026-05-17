@@ -4944,10 +4944,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <div style={{fontSize:14,fontWeight:800,color:"#2BBFBA",minWidth:104,textAlign:"center",background:"#ffffff",border:"1px solid #90cbc8",borderRadius:8,padding:"5px 10px"}}>{year}年 {month+1}月</div>
           <button onClick={nextMonth} style={MNAV}>▶</button>
         </div>
-        {conflictBanner&&<div style={{position:"fixed",top:56,left:"50%",transform:"translateX(-50%)",zIndex:200,background:"#fef3c7",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,color:"#92400e",display:"flex",gap:8,alignItems:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.12)"}}>
-          📡 他の端末でデータが更新されました。保存完了後に自動反映されます。
-          <button onClick={()=>{conflictBannerDismissed.current=true;setConflictBanner(false);}} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#92400e"}}>✕</button>
-        </div>}
+        {conflictBanner&&<span title="他の端末でデータが更新されました。保存完了後に自動反映されます。" style={{fontSize:16,cursor:"default",animation:"pulse 1.2s infinite",lineHeight:1}}>📡</span>}
         <div style={{display:"flex",gap:isMobile?4:7,alignItems:"center",flexWrap:"wrap"}}>
           <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":saveStatus==="error"?"#ef4444":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
             {saveStatus==="saved"&&<><span>💾</span>{!isMobile&&<span>保存済</span>}</>}
