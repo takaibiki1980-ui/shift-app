@@ -2565,6 +2565,81 @@ function ZoomWrapper({ zoom, onZoomChange, children }) {
 const TH = ({sticky,w}={}) => ({ position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1, background:"#ffffff", padding:"5px 3px", borderBottom:"2px solid #90cbc8", borderRight:"1px solid #b0e0de", fontSize:11, fontWeight:700, color:"#2a7a77", textAlign:"center", whiteSpace:"nowrap", width:w||"auto", minWidth:w||"auto" });
 const TD = { textAlign:"center", padding:"4px 2px", borderBottom:"1px solid #c8ecea", borderRight:"1px solid #c8ecea" };
 
+// ── 変更履歴から復元モーダル ──────────────────────────────────
+function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, onRestore }) {
+  const [histories, setHistories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [restoring, setRestoring] = useState(null);
+  const shiftKey = `shifts_${year}_${month+1}_${deptId}`;
+
+  useEffect(() => {
+    supabase.from('shift_data_history')
+      .select('id, archived_at, original_updated_at')
+      .eq('user_id', session.user.id)
+      .eq('data_key', shiftKey)
+      .order('archived_at', { ascending: false })
+      .limit(15)
+      .then(({ data, error }) => {
+        setLoading(false);
+        if (!error && data) setHistories(data);
+        else if (error) console.error('[history]', error);
+      });
+  }, [shiftKey, session.user.id]);
+
+  const fmt = (iso) => {
+    const d = new Date(iso);
+    return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+  };
+
+  const handleRestore = async (histId, archivedAt) => {
+    if (!window.confirm(`${fmt(archivedAt)} 時点の状態に復元しますか？\n現在のシフトは上書きされます（現在の状態も履歴に残ります）。`)) return;
+    setRestoring(histId);
+    const { data: hd, error: he } = await supabase.from('shift_data_history').select('data_value').eq('id', histId).single();
+    if (he || !hd) { alert('取得失敗: ' + (he?.message || '不明')); setRestoring(null); return; }
+    const { error: ue } = await supabase.from('shift_data').upsert(
+      { user_id:session.user.id, data_key:shiftKey, data_value:hd.data_value, updated_at:new Date().toISOString() },
+      { onConflict:'user_id,data_key' }
+    );
+    if (ue) { alert('復元失敗: ' + ue.message); setRestoring(null); return; }
+    onRestore(hd.data_value);
+    onClose();
+  };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:420,maxHeight:"85vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,0.25)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontWeight:800,fontSize:16,color:"#1a3635"}}>🕐 変更履歴から復元</div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#888",lineHeight:1}}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:"#6ab5b2",marginBottom:16,fontWeight:600}}>{deptLabel} — {year}年{month+1}月シフト</div>
+        {loading && <div style={{textAlign:"center",color:"#aaa",padding:32}}>読み込み中…</div>}
+        {!loading && histories.length === 0 && (
+          <div style={{textAlign:"center",padding:32}}>
+            <div style={{fontSize:32,marginBottom:8}}>📭</div>
+            <div style={{color:"#999",fontSize:13}}>まだ履歴がありません</div>
+            <div style={{color:"#bbb",fontSize:11,marginTop:6}}>今後の保存から自動的に記録されます</div>
+          </div>
+        )}
+        {histories.map((h) => (
+          <div key={h.id} style={{border:"1px solid #e5e7eb",borderRadius:10,padding:"12px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fafafa"}}>
+            <div>
+              <div style={{fontWeight:700,fontSize:13,color:"#1a3635"}}>{fmt(h.archived_at)} に上書き保存</div>
+              <div style={{fontSize:11,color:"#9ca3af",marginTop:2}}>この時点の直前の状態に戻せます</div>
+            </div>
+            <button
+              disabled={!!restoring}
+              onClick={() => handleRestore(h.id, h.archived_at)}
+              style={{background:restoring===h.id?"#d1fae5":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:restoring?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap",minWidth:80}}
+            >{restoring===h.id?"復元中…":"この状態\nに戻す"}</button>
+          </div>
+        ))}
+        <div style={{fontSize:10,color:"#d1d5db",textAlign:"center",marginTop:12}}>最大15世代まで遡れます</div>
+      </div>
+    </div>
+  );
+}
+
 function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
@@ -3894,6 +3969,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const pendingDeptsRef = useRef(null); // 保存中に届いた新しいdepts（完了後に再保存）
   const pendingStaffListRef = useRef(null); // 保存中に届いた新しいstaffList
   const dbInitialized = useRef(false); // 初回DB読込完了フラグ（二重保護）
+  const reloadFromRemoteRef = useRef(null); // reloadFromRemote関数への参照（catch節から呼び出し用）
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
@@ -4116,8 +4192,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (dbLoading) return;
 
     const reloadFromRemote = async () => {
-      // 編集中（unsaved）はスキップ — saveStatusRefはユーザー操作で即時更新されるため確実
-      if (saveStatusRef.current === 'unsaved') return;
+      // 編集中（unsaved）はスキップ — 保存完了後に次のRealtimeイベントで自動反映される
+      if (saveStatusRef.current === 'unsaved') {
+        setConflictBanner(true); // 「他端末で更新あり」バナーを表示
+        return;
+      }
+      setConflictBanner(false);
       // fetch開始時のシーケンス番号を記録（fetch中にユーザーが編集したら検出するため）
       const seqAtStart = userEditSeq.current;
       isInitializing.current = true;
@@ -4200,6 +4280,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         setTimeout(() => { isInitializing.current = false; }, 300);
       }
     };
+
+    reloadFromRemoteRef.current = reloadFromRemote; // catch節からも呼べるように公開
 
     // スマホでアプリを切り替えて戻ったとき同期
     const onVisibility = () => { if (!document.hidden) reloadFromRemote(); };
@@ -4385,10 +4467,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         saveFailCountRef.current += 1;
         console.error("[save] Supabase保存失敗(" + saveFailCountRef.current + "回目):", e?.message || e);
         setSaveStatus("unsaved");
-        // 3回連続失敗でユーザーに通知
-        if (saveFailCountRef.current >= 3) {
-          alert("クラウド保存が" + saveFailCountRef.current + "回失敗しています。\nネット接続を確認してください。\n（ローカルには保存済み）");
+        if (saveFailCountRef.current >= 5) {
           saveFailCountRef.current = 0;
+          setSaveStatus('error');
+          // 5回連続失敗 → 中途半端な状態のまま編集継続は危険のためロールバックを提案
+          const shouldRollback = window.confirm(
+            "【保存エラー】クラウドへの保存が5回連続で失敗しました。\n\n" +
+            "このまま編集を続けるとデータが正常に保存されない恐れがあります。\n\n" +
+            "「OK」→ 最後に正常保存された状態に安全に巻き戻す（推奨）\n" +
+            "「キャンセル」→ 現在の状態を維持（自己責任）"
+          );
+          if (shouldRollback && reloadFromRemoteRef.current) {
+            setSaveStatus('saved'); // reloadFromRemoteのunsaved skipガードを外す
+            reloadFromRemoteRef.current();
+          }
         }
       }
     }, 1000);
@@ -4545,6 +4637,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
   const [pinModal, setPinModal] = useState(false);
+  const [historyModal, setHistoryModal] = useState(false); // 変更履歴から復元モーダル
+  const [conflictBanner, setConflictBanner] = useState(false); // 他端末で更新通知バナー
   // タブ切替で自動ロック
   useEffect(() => { setUnlockedDeptId(null); }, [activeDeptId]);
   // 部署切替時にアンドゥ可能数を現在部署のスタック長に合わせる
@@ -4764,6 +4858,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <div style={{fontSize:14,fontWeight:800,color:"#2BBFBA",minWidth:104,textAlign:"center",background:"#ffffff",border:"1px solid #90cbc8",borderRadius:8,padding:"5px 10px"}}>{year}年 {month+1}月</div>
           <button onClick={nextMonth} style={MNAV}>▶</button>
         </div>
+        {conflictBanner&&<div style={{position:"fixed",top:56,left:"50%",transform:"translateX(-50%)",zIndex:200,background:"#fef3c7",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,color:"#92400e",display:"flex",gap:8,alignItems:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.12)"}}>
+          📡 他の端末でデータが更新されました。保存完了後に自動反映されます。
+          <button onClick={()=>setConflictBanner(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#92400e"}}>✕</button>
+        </div>}
         <div style={{display:"flex",gap:isMobile?4:7,alignItems:"center",flexWrap:"wrap"}}>
           <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":saveStatus==="error"?"#ef4444":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
             {saveStatus==="saved"&&<><span>💾</span>{!isMobile&&<span>保存済</span>}</>}
@@ -4772,11 +4870,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"linear-gradient(135deg,#374151,#1f2937)",color:"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>🔒{!isMobile&&" 解錠する"}</button>
-            : <><button onClick={handleGenerate} disabled={generating} style={{background:generating?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:generating?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:generating?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":" 自動生成")}</button></>
+            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved")?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:(generating||saveStatus==="unsaved")?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved")?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:saveStatus==="unsaved"?0.6:1}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":" 自動生成")}</button></>
           }
-          <button onClick={()=>setDownloadModal(true)} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📤":"📤 書き出し"}</button>
+          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:700,opacity:saveStatus==="unsaved"?0.5:1}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
           {!isMobile&&(()=>{const deptTrend=shiftTrend[activeDeptId]||{};const excelCnt=Object.keys(deptTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const syncColor=syncRate!=null?(syncRate>=85?"#16a34a":syncRate>=70?"#ca8a04":"#dc2626"):"#2a9a96";const label=hasAny?`🎯 シンクロ率 ${syncRate!=null?syncRate+'%':'--%'}`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#f0f9ff":"#ffffff",color:syncColor,border:`1px solid ${hasAny?syncColor:"#90cbc8"}`,borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          <button onClick={()=>setHistoryModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}} title="過去15世代の履歴から復元">{isMobile?"🕐":"🕐 履歴復元"}</button>
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
           <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
           {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🏢":"🏢 管理"}</button>}
@@ -4875,6 +4974,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
       {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
+      {historyModal&&<ShiftHistoryModal
+        session={session} year={year} month={month}
+        deptId={activeDeptId} deptLabel={dept?.label||activeDeptId}
+        onClose={()=>setHistoryModal(false)}
+        onRestore={(restoredData)=>{
+          setAllShifts(prev=>({...prev,[activeDeptId]:restoredData}));
+          setSaveStatus('saved');
+        }}
+      />}
       {eventEditDay!==null&&<EventEditModal day={eventEditDay} month={month} year={year} currentText={(allEvents[activeDeptId]?.[monthKey(year,month)]||{})[eventEditDay]||""} onSave={(text)=>{const mk2=monthKey(year,month);setAllEvents(prev=>{const prev2={...(prev[activeDeptId]||{})};const prev3={...(prev2[mk2]||{})};if(text)prev3[eventEditDay]=text;else delete prev3[eventEditDay];prev2[mk2]=prev3;return{...prev,[activeDeptId]:prev2};});setEventEditDay(null);}} onClose={()=>setEventEditDay(null)}/>}
       {shareModal&&(
         <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&setShareModal(false)}>
