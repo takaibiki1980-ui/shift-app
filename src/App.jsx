@@ -4262,8 +4262,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // ── シフト変更: Supabase へ自動保存（1秒デバウンス）──
   const saveFailCountRef = useRef(0);
   useEffect(() => {
-    // isLoadingMonth中（Supabaseからのロード中）のみスキップ
-    // isInitializingは不要: reloadFromRemoteはisLoadingMonth=trueでsetAllShiftsするため
+    // DB初期化完了前・ロード中は物理的に保存不可
+    if (!dbInitialized.current) return;
     if (isLoadingMonth.current) return;
     saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
@@ -4666,7 +4666,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
   const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
-  if (dbLoading) return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}><div style={{textAlign:"center"}}><div style={{margin:"0 auto 12px"}}><ShifuponIcon size={48} radius={12}/></div><div style={{color:"#6ab5b2",fontSize:13}}>データを同期中…</div></div></div>;
+  if (dbLoading) return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",userSelect:"none",pointerEvents:"none"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{margin:"0 auto 12px"}}><ShifuponIcon size={56} radius={14}/></div>
+        <div style={{color:"#2BBFBA",fontSize:14,fontWeight:700,marginBottom:6}}>データを読み込み中…</div>
+        <div style={{color:"#6ab5b2",fontSize:11}}>クラウドから最新データを取得しています</div>
+        <div style={{color:"#a0d4d2",fontSize:10,marginTop:4}}>この間はデータの書き込みを一切行いません</div>
+      </div>
+    </div>
+  );
   if (!dept) return <div style={{minHeight:"100vh",background:"#f0fbfa",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#c8b8a8",fontSize:14}}>読み込み中…</div></div>;
 
   return (
