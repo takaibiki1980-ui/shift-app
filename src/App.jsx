@@ -3891,6 +3891,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
   const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値（null=DB未読込→保存ブロック）
   const deptsUpsertInProgress = useRef(false); // depts保存中フラグ
+  const pendingDeptsRef = useRef(null); // 保存中に届いた新しいdepts（完了後に再保存）
+  const pendingStaffListRef = useRef(null); // 保存中に届いた新しいstaffList
   const dbInitialized = useRef(false); // 初回DB読込完了フラグ（二重保護）
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
@@ -3903,19 +3905,33 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       lastSavedDeptsRef.current = depts;
     } else if (lastSavedDeptsRef.current !== null && dbInitialized.current) {
       // 二重保護: null = DB未読込 OR dbInitialized=false → デフォルト値でSupabaseを上書きしない
-      deptsUpsertInProgress.current = true;
-      const snapshot = depts;
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-        .then(({ error }) => {
-          deptsUpsertInProgress.current = false;
-          if (error) {
-            console.error('[sync] depts upsert失敗:', error);
-            setSaveStatus('error');
-          } else {
-            lastSavedDeptsRef.current = snapshot;
-            console.log('[sync] depts 保存OK');
-          }
-        });
+      if (deptsUpsertInProgress.current) {
+        // 保存中に新しい変更→完了後に再保存するため記録
+        pendingDeptsRef.current = depts;
+        return;
+      }
+      const saveDepts = (deptsToSave) => {
+        deptsUpsertInProgress.current = true;
+        const snapshot = deptsToSave;
+        supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:deptsToSave, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+          .then(({ error }) => {
+            deptsUpsertInProgress.current = false;
+            if (error) {
+              console.error('[sync] depts upsert失敗:', error);
+              setSaveStatus('error');
+            } else {
+              lastSavedDeptsRef.current = snapshot;
+              console.log('[sync] depts 保存OK');
+              // 保存中に届いた変更を再保存
+              if (pendingDeptsRef.current !== null) {
+                const pending = pendingDeptsRef.current;
+                pendingDeptsRef.current = null;
+                saveDepts(pending);
+              }
+            }
+          });
+      };
+      saveDepts(depts);
     }
   }, [depts]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -3932,19 +3948,31 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       lastSavedStaffListRef.current = staffList;
     } else if (lastSavedStaffListRef.current !== null && dbInitialized.current) {
       // 二重保護: null = DB未読込 OR dbInitialized=false → デフォルト値でSupabaseを上書きしない
-      staffUpsertInProgress.current = true;
-      const snapshot = staffList;
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-        .then(({ error }) => {
-          staffUpsertInProgress.current = false;
-          if (error) {
-            console.error('[sync] staffList upsert失敗:', error);
-            setSaveStatus('error');
-          } else {
-            lastSavedStaffListRef.current = snapshot;
-            console.log('[sync] staffList 保存OK');
-          }
-        });
+      if (staffUpsertInProgress.current) {
+        pendingStaffListRef.current = staffList;
+        return;
+      }
+      const saveStaffList = (listToSave) => {
+        staffUpsertInProgress.current = true;
+        const snapshot = listToSave;
+        supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:listToSave, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+          .then(({ error }) => {
+            staffUpsertInProgress.current = false;
+            if (error) {
+              console.error('[sync] staffList upsert失敗:', error);
+              setSaveStatus('error');
+            } else {
+              lastSavedStaffListRef.current = snapshot;
+              console.log('[sync] staffList 保存OK');
+              if (pendingStaffListRef.current !== null) {
+                const pending = pendingStaffListRef.current;
+                pendingStaffListRef.current = null;
+                saveStaffList(pending);
+              }
+            }
+          });
+      };
+      saveStaffList(staffList);
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -4225,9 +4253,47 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     };
   }, [dbLoading, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── allShifts変更時: localStorageへ即時保存（デバウンスなし・タブ閉じ・月切替対策）──
+  useEffect(() => {
+    if (!dbInitialized.current) return;
+    if (isLoadingMonth.current) return;
+    if (Object.keys(allShifts).length === 0) return;
+    try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShifts)); } catch {}
+  }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── タブ/ウィンドウを閉じる直前: 未保存データをlocalStorageに緊急保存 ──
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (saveStatusRef.current === 'unsaved') {
+        try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current)); } catch {}
+        e.preventDefault();
+        e.returnValue = '未保存のシフトがあります。';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── 月切替: Supabase から当月シフトをロード（部署ごとに別キー）──
   useEffect(() => {
     if (isInitializing.current) return;
+    // クリーンアップ（月切替前）: 旧月の未保存データをSupabaseへ緊急保存
+    // closureで旧year/monthを参照 → allShiftsRef.currentも旧月データ
+    const emergencySave = () => {
+      if (saveStatusRef.current !== 'unsaved') return;
+      if (!dbInitialized.current) return;
+      const deptId = activeDeptIdRef.current;
+      const emergencyKey = `shifts_${year}_${month+1}_${deptId}`;
+      const emergencyData = allShiftsRef.current[deptId] || {};
+      try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current)); } catch {}
+      supabase.from('shift_data').upsert(
+        { user_id:session.user.id, data_key:emergencyKey, data_value:emergencyData, updated_at:new Date().toISOString() },
+        { onConflict:'user_id,data_key' }
+      ).then(({ error }) => {
+        if (!error) { setSaveStatus('saved'); console.log('[save] 月切替前緊急保存OK:', emergencyKey); }
+        else { console.error('[save] 月切替前緊急保存失敗:', error); }
+      });
+    };
     isLoadingMonth.current = true;
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
     undoStackRef.current = {}; // 月切替でアンドゥ履歴をリセット
@@ -4257,6 +4323,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         supabase.from('shift_data').select('data_value').eq('user_id',session.user.id).eq('data_key',yKey).maybeSingle()
           .then(({data})=>{ if(data?.data_value)setAllYotei(data.data_value);else{try{const s=localStorage.getItem(`shiftNavi_${yKey}`);setAllYotei(s?JSON.parse(s):{});}catch{setAllYotei({});}} });
       });
+    return () => { emergencySave(); }; // cleanup: 月切替/アンマウント時に旧月を緊急保存
   }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── シフト変更: Supabase へ自動保存（1秒デバウンス）──
@@ -4331,9 +4398,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const eventsTimer = useRef(null);
   useEffect(() => {
     if (isInitializing.current) return;
+    if (!dbInitialized.current) return; // DB読込前は書かない
     if (eventsTimer.current) clearTimeout(eventsTimer.current);
     eventsTimer.current = setTimeout(() => {
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'events_data', data_value:allEvents, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{ if(error)console.error('[events] 保存失敗:',error); });
+      if (!dbInitialized.current) return;
+      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'events_data', data_value:allEvents, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{
+        if (error) { console.error('[events] 保存失敗:', error); setSaveStatus('error'); }
+      });
     }, 1200);
     return () => { if (eventsTimer.current) clearTimeout(eventsTimer.current); };
   }, [allEvents]); // eslint-disable-line react-hooks/exhaustive-deps
