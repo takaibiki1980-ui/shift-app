@@ -4263,9 +4263,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const reloadFromRemote = async () => {
       // 編集中（unsaved）はスキップ — 保存完了後に次のRealtimeイベントで自動反映される
       if (saveStatusRef.current === 'unsaved') {
-        setConflictBanner(true); // 「他端末で更新あり」バナーを表示
+        // ユーザーが×で閉じた場合は同じ未保存セッション中に再表示しない
+        if (!conflictBannerDismissed.current) setConflictBanner(true);
         return;
       }
+      // 保存完了後に実際にロードする際はdismissedフラグをリセット
+      conflictBannerDismissed.current = false;
       setConflictBanner(false);
       // fetch開始時のシーケンス番号を記録（fetch中にユーザーが編集したら検出するため）
       const seqAtStart = userEditSeq.current;
@@ -4720,6 +4723,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [pinModal, setPinModal] = useState(false);
   const [historyModal, setHistoryModal] = useState(false); // 変更履歴から復元モーダル
   const [conflictBanner, setConflictBanner] = useState(false); // 他端末で更新通知バナー
+  const conflictBannerDismissed = useRef(false); // ×で閉じたら次のRealtimeで再表示しない
   // タブ切替で自動ロック
   useEffect(() => { setUnlockedDeptId(null); }, [activeDeptId]);
   // 部署切替時にアンドゥ可能数を現在部署のスタック長に合わせる
@@ -4942,7 +4946,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         </div>
         {conflictBanner&&<div style={{position:"fixed",top:56,left:"50%",transform:"translateX(-50%)",zIndex:200,background:"#fef3c7",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,color:"#92400e",display:"flex",gap:8,alignItems:"center",boxShadow:"0 2px 8px rgba(0,0,0,0.12)"}}>
           📡 他の端末でデータが更新されました。保存完了後に自動反映されます。
-          <button onClick={()=>setConflictBanner(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#92400e"}}>✕</button>
+          <button onClick={()=>{conflictBannerDismissed.current=true;setConflictBanner(false);}} style={{background:"none",border:"none",cursor:"pointer",fontSize:14,color:"#92400e"}}>✕</button>
         </div>}
         <div style={{display:"flex",gap:isMobile?4:7,alignItems:"center",flexWrap:"wrap"}}>
           <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":saveStatus==="error"?"#ef4444":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
