@@ -782,6 +782,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const maxStaff = {};
   [...new Set(dept.shiftTypes)].forEach(k => { const cd=(dept.customShiftDefs||[]).find(d=>d.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=dept.maxStaff?.[k];maxStaff[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def; });
   const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
+  (dept.customShiftDefs||[]).forEach(cd => { if (cd.key && PRIORITY[cd.key]==null) PRIORITY[cd.key] = PRIORITY[cd.baseType]??2; });
 
   const getTrend = (s) => {
     if (!shiftTrend || Object.keys(shiftTrend).length === 0) return null;
