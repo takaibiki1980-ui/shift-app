@@ -1489,6 +1489,33 @@ function scoreShifts(res, ds, dept, days, year, month) {
       if (actual < minC) score += actual === 0 ? (minC - actual) * 30 : (minC - actual) * 10;
     }
   }
+  // 公平性ペナルティ: 夜勤回数・土日出勤回数の分散（スタッフ間の不均衡を抑制）
+  if (ds.length > 1) {
+    const hasNight = dept.shiftTypes.includes('夜勤');
+    const REST_F = new Set(['休み', '希望休', '有休', '公休', '休', '明け']);
+    let totalNight = 0, totalWeekend = 0;
+    const nc = {}, wc = {};
+    for (const s of ds) {
+      let n = 0, w = 0;
+      for (let d = 1; d <= days; d++) {
+        const t = res[s.id]?.[d] || '';
+        if (hasNight && t === '夜勤') n++;
+        const dow = new Date(year, month, d).getDay();
+        if ((dow === 0 || dow === 6) && t && !REST_F.has(t)) w++;
+      }
+      nc[s.id] = n; wc[s.id] = w;
+      totalNight += n; totalWeekend += w;
+    }
+    const avgN = totalNight / ds.length, avgW = totalWeekend / ds.length;
+    let varN = 0, varW = 0;
+    for (const s of ds) {
+      varN += (nc[s.id] - avgN) ** 2;
+      varW += (wc[s.id] - avgW) ** 2;
+    }
+    // 夜勤分散×500、土日分散×200（コア制約に次ぐ優先度）
+    if (hasNight) score += (varN / ds.length) * 500;
+    score += (varW / ds.length) * 200;
+  }
   return score;
 }
 
@@ -2757,6 +2784,41 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
     };
   }, [ds, onLeftClick]);
 
+  // ── 公平性ゲージ: 夜勤・土日出勤の偏差を計算 ──
+  const fairnessData = useMemo(() => {
+    if (ds.length === 0) return {};
+    const days2 = getDays(year, month);
+    const nightTypes = new Set(dept.shiftTypes.includes('夜勤') ? ['夜勤'] : []);
+    const restTypes = new Set(['休み', '休', '明け', '有休', '希望休', '公休']);
+    let totalNight = 0, totalWeekend = 0;
+    const raw = {};
+    for (const s of ds) {
+      const ss = shifts[s.id] || {};
+      let nc = 0, wc = 0;
+      for (let d = 1; d <= days2; d++) {
+        const t = ss[d] || '';
+        const dow = new Date(year, month, d).getDay();
+        if (nightTypes.has(t)) nc++;
+        if ((dow === 0 || dow === 6) && t && !restTypes.has(t)) wc++;
+      }
+      raw[s.id] = { nc, wc };
+      totalNight += nc; totalWeekend += wc;
+    }
+    const avgN = totalNight / ds.length, avgW = totalWeekend / ds.length;
+    const result = {};
+    for (const s of ds) {
+      const nd = raw[s.id].nc - avgN, wd = raw[s.id].wc - avgW;
+      const dev = Math.abs(nd) + Math.abs(wd);
+      result[s.id] = {
+        nc: raw[s.id].nc, wc: raw[s.id].wc,
+        nd: Math.round(nd * 10) / 10, wd: Math.round(wd * 10) / 10,
+        color: dev < 1 ? '#22c55e' : dev < 2.5 ? '#f59e0b' : '#ef4444',
+        tip: `夜勤 ${raw[s.id].nc}回(平均比${nd>=0?'+':''}${Math.round(nd*10)/10}) / 土日出勤 ${raw[s.id].wc}回(平均比${wd>=0?'+':''}${Math.round(wd*10)/10})`
+      };
+    }
+    return result;
+  }, [shifts, ds, year, month, dept.shiftTypes]);
+
   return (
     <div style={{overflowX:"auto",overflowY:"visible",userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
@@ -2786,7 +2848,13 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             return (
               <tr key={s.id} style={{background:si%2===0?"#ffffff":"#fafeff"}}>
                 <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#ffffff":"#fafeff",padding:"4px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda",minWidth:148}}>
-                  <div style={{fontWeight:700,fontSize:12,color:"#1a3635",whiteSpace:"nowrap"}}>{s.name}</div>
+                  <div style={{fontWeight:700,fontSize:12,color:"#1a3635",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
+                    {s.name}
+                    {fairnessData[s.id]&&<span
+                      style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:fairnessData[s.id].color,flexShrink:0,cursor:"help"}}
+                      title={`【公平性】${fairnessData[s.id].tip}`}
+                    />}
+                  </div>
                   <div style={{fontSize:10,color:"#2a5a57",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#c45c35",fontSize:9}}>🌙{nightCnt}/{s.nightMax}</span>}</div>
                 </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
@@ -3970,6 +4038,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const pendingStaffListRef = useRef(null); // 保存中に届いた新しいstaffList
   const dbInitialized = useRef(false); // 初回DB読込完了フラグ（二重保護）
   const reloadFromRemoteRef = useRef(null); // reloadFromRemote関数への参照（catch節から呼び出し用）
+  const activeCellRef = useRef(null); // { staffId, day, time } 現在編集中のセル（Realtime上書き保護用）
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
@@ -4255,8 +4324,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             // updater実行時に再チェック（fetch後に編集があればキャンセル）
             if (userEditSeq.current !== seqAtStart) return prev;
             const result = { ...prev };
+            const ac = activeCellRef.current;
+            const acAge = ac ? Date.now() - ac.time : Infinity;
             for (const [k, v] of deptShiftEntries) {
-              result[k.slice(shiftPrefix.length)] = v;
+              const deptId = k.slice(shiftPrefix.length);
+              // アクティブセル保護: 直近5秒以内に編集したセルはRealtime上書きから守る
+              if (ac && acAge < 5000 && deptId === activeDeptIdRef.current && v[ac.staffId]) {
+                const localVal = prev[deptId]?.[ac.staffId]?.[ac.day];
+                if (localVal !== undefined) {
+                  const patched = { ...v, [ac.staffId]: { ...v[ac.staffId], [ac.day]: localVal } };
+                  result[deptId] = patched;
+                  continue;
+                }
+              }
+              result[deptId] = v;
             }
             return restoreShifts(result);
           });
@@ -4794,6 +4875,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const handleLeftClick = useCallback((staffId, day) => {
     if (isLockedRef.current) return;
+    activeCellRef.current = { staffId, day, time: Date.now() }; // アクティブセル記録（Realtime上書き保護）
     setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const idx=SHIFT_KEYS.indexOf(cur);const next=SHIFT_KEYS[(idx+1)%SHIFT_KEYS.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
   }, [setDeptShifts]);
 
