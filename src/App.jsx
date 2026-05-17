@@ -3886,11 +3886,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isInitializing = useRef(true);
   const isMergingKibo = useRef(false); // kiboChannel同期中フラグ（現在はmergeStaffKiboで使用）
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
-  const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（未保存ローカル変更の検出用）
+  const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
   const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
-  const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値
+  const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値（null=DB未読込→保存ブロック）
   const deptsUpsertInProgress = useRef(false); // depts保存中フラグ
+  const dbInitialized = useRef(false); // 初回DB読込完了フラグ（二重保護）
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
 
@@ -3900,15 +3901,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (deptsSkipSave.current) {
       deptsSkipSave.current = false;
       lastSavedDeptsRef.current = depts;
-    } else if (lastSavedDeptsRef.current !== null) {
-      // lastSavedDeptsRef が null = DB読込前 → デフォルト値でSupabaseを上書きしない
+    } else if (lastSavedDeptsRef.current !== null && dbInitialized.current) {
+      // 二重保護: null = DB未読込 OR dbInitialized=false → デフォルト値でSupabaseを上書きしない
       deptsUpsertInProgress.current = true;
       const snapshot = depts;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
         .then(({ error }) => {
           deptsUpsertInProgress.current = false;
-          if (error) console.error('[sync] depts upsert失敗:', error);
-          else { lastSavedDeptsRef.current = snapshot; console.log('[sync] depts 保存OK'); }
+          if (error) {
+            console.error('[sync] depts upsert失敗:', error);
+            setSaveStatus('error');
+          } else {
+            lastSavedDeptsRef.current = snapshot;
+            console.log('[sync] depts 保存OK');
+          }
         });
     }
   }, [depts]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3924,15 +3930,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       // Supabase/Realtimeから来た変更 → 保存不要・保存済みとしてマーク
       staffListSkipSave.current = false;
       lastSavedStaffListRef.current = staffList;
-    } else if (lastSavedStaffListRef.current !== null) {
-      // lastSavedStaffListRef が null = DB読込前 → デフォルト値でSupabaseを上書きしない
+    } else if (lastSavedStaffListRef.current !== null && dbInitialized.current) {
+      // 二重保護: null = DB未読込 OR dbInitialized=false → デフォルト値でSupabaseを上書きしない
       staffUpsertInProgress.current = true;
       const snapshot = staffList;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
         .then(({ error }) => {
           staffUpsertInProgress.current = false;
-          if (error) console.error('[sync] staffList upsert失敗:', error);
-          else { lastSavedStaffListRef.current = snapshot; console.log('[sync] staffList 保存OK'); }
+          if (error) {
+            console.error('[sync] staffList upsert失敗:', error);
+            setSaveStatus('error');
+          } else {
+            lastSavedStaffListRef.current = snapshot;
+            console.log('[sync] staffList 保存OK');
+          }
         });
     }
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3940,6 +3951,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // スタッフポータル用: 施設設定をSupabaseに公開保存（dbLoading完了後に必ず1回書く）
   useEffect(() => {
     if (dbLoading) return;
+    if (!dbInitialized.current) return; // DB読込完了前は書かない
     if (staffList.length === 0) return; // 空データで上書きしない
     const cfg = {
       facility_name: profile?.facility_name || '',
@@ -3996,13 +4008,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           deptsSkipSave.current = true;
           setDepts(byKey['depts']);
         } else {
-          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
+          // 新規ユーザーのみ: エラーなしでデータが存在しない場合にデフォルトを保存
+          const defaultDepts = deptsRef.current;
+          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:defaultDepts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+            .then(({ error }) => { if (!error) lastSavedDeptsRef.current = deptsRef.current; });
         }
         if (byKey['staffList']) {
           staffListSkipSave.current = true;
           setStaffList(byKey['staffList']);
         } else {
-          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{});
+          // 新規ユーザーのみ: エラーなしでデータが存在しない場合にデフォルトを保存
+          const defaultStaff = staffListRef.current;
+          supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:defaultStaff, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+            .then(({ error }) => { if (!error) lastSavedStaffListRef.current = staffListRef.current; });
         }
         if (byKey['excelRawMonths']) {
           const actualDepts = byKey['depts'] || depts;
@@ -4054,6 +4072,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       } catch(e) { console.error('Supabase初期ロードエラー:', e); }
       finally {
         setDbLoading(false);
+        // DB読込完了後にlastSavedRefを初期化（まだnullなら現在値で初期化 → 以降の変更が保存される）
+        if (lastSavedDeptsRef.current === null) lastSavedDeptsRef.current = deptsRef.current;
+        if (lastSavedStaffListRef.current === null) lastSavedStaffListRef.current = staffListRef.current;
+        dbInitialized.current = true; // 二重保護フラグON（これ以降だけ保存を許可）
         // effects より先に false にすると書き戻しループが発生するため遅延する
         setTimeout(() => { isInitializing.current = false; }, 300);
       }
@@ -4162,6 +4184,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       if (error) { console.error('[mergeStaffKibo]', error); return; }
       if (!data || data.length === 0) return; // 変更なし：setStaffListを呼ばない
       // functional updaterで「現時点の最新state」にマージを適用（ユーザーの保存と競合しない）
+      // kiboByMonth/yukyuByMonthはstaffListとして保存不要（staff_kiboテーブルで管理）のでSkipSave
+      staffListSkipSave.current = true;
       setStaffList(prev => {
         const next = prev.map(s => {
           const kibo = data.find(k => k.dept_id === s.dept && k.staff_id === s.id);
@@ -4174,6 +4198,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         });
         // 実際に変化があった場合のみ新しい配列を返す（変化なしならprevを返しuseEffectを起動しない）
         const changed = next.some((s, i) => s !== prev[i]);
+        if (!changed) staffListSkipSave.current = false; // 変化なしならフラグを戻す
         return changed ? next : prev;
       });
     };
@@ -4660,9 +4685,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <button onClick={nextMonth} style={MNAV}>▶</button>
         </div>
         <div style={{display:"flex",gap:isMobile?4:7,alignItems:"center",flexWrap:"wrap"}}>
-          <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
+          <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":saveStatus==="error"?"#ef4444":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
             {saveStatus==="saved"&&<><span>💾</span>{!isMobile&&<span>保存済</span>}</>}
             {saveStatus==="unsaved"&&<><span>⏳</span>{!isMobile&&<span>未保存</span>}</>}
+            {saveStatus==="error"&&<><span>⚠️</span><span>保存失敗</span></>}
           </div>
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"linear-gradient(135deg,#374151,#1f2937)",color:"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>🔒{!isMobile&&" 解錠する"}</button>
