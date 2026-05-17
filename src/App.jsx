@@ -3900,7 +3900,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (deptsSkipSave.current) {
       deptsSkipSave.current = false;
       lastSavedDeptsRef.current = depts;
-    } else {
+    } else if (lastSavedDeptsRef.current !== null) {
+      // lastSavedDeptsRef が null = DB読込前 → デフォルト値でSupabaseを上書きしない
       deptsUpsertInProgress.current = true;
       const snapshot = depts;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:depts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
@@ -3923,8 +3924,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       // Supabase/Realtimeから来た変更 → 保存不要・保存済みとしてマーク
       staffListSkipSave.current = false;
       lastSavedStaffListRef.current = staffList;
-    } else {
-      // ユーザー操作による変更 → isInitializingに関係なくSupabaseに保存
+    } else if (lastSavedStaffListRef.current !== null) {
+      // lastSavedStaffListRef が null = DB読込前 → デフォルト値でSupabaseを上書きしない
       staffUpsertInProgress.current = true;
       const snapshot = staffList;
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:staffList, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
@@ -4142,7 +4143,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
       } catch(e) { console.warn('リモート同期エラー:', e); }
-      finally { setTimeout(() => { isInitializing.current = false; }, 300); }
+      finally {
+        // DB読込完了後、まだnullなら現在値で初期化 → 以降のユーザー変更がSupabaseに保存される
+        if (lastSavedDeptsRef.current === null) lastSavedDeptsRef.current = deptsRef.current;
+        if (lastSavedStaffListRef.current === null) lastSavedStaffListRef.current = staffListRef.current;
+        setTimeout(() => { isInitializing.current = false; }, 300);
+      }
     };
 
     // スマホでアプリを切り替えて戻ったとき同期
