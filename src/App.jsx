@@ -1519,6 +1519,66 @@ function scoreShifts(res, ds, dept, days, year, month) {
   return score;
 }
 
+// 局所探索（2-opt swap）: 生成済みシフトのスコアをスワップ改善でさらに下げる
+function localSearchImprove(shifts, ds, dept, days, year, month) {
+  if (ds.length < 2) return shifts;
+  const res = {};
+  for (const s of ds) res[s.id] = { ...(shifts[s.id] || {}) };
+
+  // isBadTransition を再実装（autoGenerate 外から使えるよう）
+  const th = dept.intervalThreshold ?? null;
+  const badTrans = (prev, curr) => {
+    if (!prev || !curr) return false;
+    if (th != null) return shiftIntervalHours(prev, curr, dept) < th;
+    return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
+  };
+
+  // 固定タイプ（夜勤・明けは連鎖が複雑なためスワップ対象外）
+  const FIXED = new Set(['希望休', '有休', '夜勤', '明け']);
+  // ロック日（希望休・有休・希望勤務が入っている日）
+  const mk = monthKey(year, month);
+  const locked = {};
+  for (const s of ds) {
+    const lk = new Set();
+    (s.kiboByMonth?.[mk] || []).forEach(d => lk.add(Number(d)));
+    (s.yukyuByMonth?.[mk] || []).forEach(d => lk.add(Number(d)));
+    Object.keys(s.shiftRequestsByMonth?.[mk] || {}).forEach(d => lk.add(Number(d)));
+    locked[s.id] = lk;
+  }
+
+  let curScore = scoreShifts(res, ds, dept, days, year, month);
+
+  for (let pass = 0; pass < 3 && curScore > 0; pass++) {
+    let improved = false;
+    for (let i = 0; i < ds.length - 1; i++) {
+      for (let j = i + 1; j < ds.length; j++) {
+        const s1 = ds[i], s2 = ds[j];
+        for (let d = 1; d <= days; d++) {
+          const v1 = res[s1.id][d] || '', v2 = res[s2.id][d] || '';
+          if (v1 === v2) continue;
+          if (FIXED.has(v1) || FIXED.has(v2)) continue;
+          if (locked[s1.id].has(d) || locked[s2.id].has(d)) continue;
+          // 明け翌日は休みのみ許可（夜勤チェーンを壊さない）
+          const p1 = res[s1.id][d-1] || '', n1 = res[s1.id][d+1] || '';
+          const p2 = res[s2.id][d-1] || '', n2 = res[s2.id][d+1] || '';
+          if (p1 === '明け' && v2 !== '休み') continue;
+          if (p2 === '明け' && v1 !== '休み') continue;
+          // 遷移ルール違反チェック
+          if (badTrans(p1, v2) || badTrans(v2, n1)) continue;
+          if (badTrans(p2, v1) || badTrans(v1, n2)) continue;
+          // スワップ試行
+          res[s1.id][d] = v2; res[s2.id][d] = v1;
+          const newScore = scoreShifts(res, ds, dept, days, year, month);
+          if (newScore < curScore) { curScore = newScore; improved = true; }
+          else { res[s1.id][d] = v1; res[s2.id][d] = v2; } // 戻す
+        }
+      }
+    }
+    if (!improved) break;
+  }
+  return res;
+}
+
 // N回試行して最もスコアが低い（違反が少ない）結果を返す
 function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
   const days = getDays(year, month);
@@ -1541,6 +1601,12 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
     const score = scoreShifts(shifts, ds, dept, days, year, month);
     if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
+  }
+  // 局所探索（swap改善）: 30回試行の最良案をさらにスコア改善
+  if (best && bestScore > 0) {
+    const improved = localSearchImprove(best.shifts, ds, dept, days, year, month);
+    const improvedScore = scoreShifts(improved, ds, dept, days, year, month);
+    if (improvedScore < bestScore) { best.shifts = improved; best.score = improvedScore; }
   }
   // 比率達成フィードバック: 実際の勤務比率 vs 目標比率の乖離を記録（次回補正用）
   const mk2 = monthKey(year, month);
