@@ -965,7 +965,30 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   }
   const maxRestPerDay = Math.max(2, Math.ceil(ds.length * 0.35));
 
-  ds.forEach(s => {
+  // 強い曜日別休みパターン（0.85以上）を持つスタッフを先に処理
+  // 土日負債（直近の土日出勤回数）が多い人を優先して休みを確保（競合時の選別基準）
+  const dsForRest = [...ds].sort((a, b) => {
+    const aTrend = getTrend(a), bTrend = getTrend(b);
+    const maxWeekendRestRate = (trend) => {
+      if (!trend?.dowRestRate) return 0;
+      return Math.max(trend.dowRestRate[5] ?? 0, trend.dowRestRate[6] ?? 0); // 土=5,日=6 (+6%7)
+    };
+    const aMax = maxWeekendRestRate(aTrend), bMax = maxWeekendRestRate(bTrend);
+    const aStrong = aMax >= 0.85, bStrong = bMax >= 0.85;
+    if (aStrong !== bStrong) return aStrong ? -1 : 1;
+    if (!aStrong) return 0;
+    const countWeekendWork = (s) => {
+      let cnt = 0;
+      for (let d = 1; d <= days; d++) {
+        const dow = new Date(year, month, d).getDay();
+        if ((dow === 0 || dow === 6) && deptWork.has(res[s.id][d])) cnt++;
+      }
+      return cnt;
+    };
+    return countWeekendWork(b) - countWeekendWork(a);
+  });
+
+  dsForRest.forEach(s => {
     const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
     const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休").length;
     const restTarget = Math.max(0, totalTarget - kiboCount);
@@ -985,6 +1008,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     const trend = getTrend(s);
     const dowRestRate = trend?.dowRestRate || null;
     const candidates = freeDaysAll.filter(d => canRest(s.id, d)).sort((a, b) => {
+      // 強学習パターン日（0.85以上）を最優先、次いで閾値0.02で学習を反映
+      if (dowRestRate) {
+        const rA = dowRestRate[(new Date(year, month, a).getDay() + 6) % 7] ?? 0;
+        const rB = dowRestRate[(new Date(year, month, b).getDay() + 6) % 7] ?? 0;
+        const strongA = rA >= 0.85, strongB = rB >= 0.85;
+        if (strongA !== strongB) return strongB ? 1 : -1;
+        if (Math.abs(rA - rB) > 0.02) return rB - rA;
+      }
       // 休み集中防止：その日に休んでいる人数が少ない日を優先
       const rdiff = (restByDay[a]||0) - (restByDay[b]||0);
       if (rdiff !== 0) return rdiff;
@@ -992,11 +1023,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       for (let i = a - 1; i >= 1; i--) { if (deptRest.has(res[s.id][i]) && res[s.id][i] !== "明け") break; sa++; }
       for (let i = b - 1; i >= 1; i--) { if (deptRest.has(res[s.id][i]) && res[s.id][i] !== "明け") break; sb++; }
       if (sb !== sa) return sb - sa;
-      if (dowRestRate) {
-        const rA = dowRestRate[(new Date(year, month, a).getDay() + 6) % 7] ?? 0;
-        const rB = dowRestRate[(new Date(year, month, b).getDay() + 6) % 7] ?? 0;
-        if (Math.abs(rA - rB) > 0.05) return rB - rA;
-      }
       return a - b;
     });
     let lastRest = 0;
@@ -1006,10 +1032,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       let streak = 0;
       for (let i = d - 1; i >= 1; i--) { if (deptRest.has(res[s.id][i]) && res[s.id][i] !== "明け") break; streak++; }
       const isUrgent = streak >= maxConsec - 1;
-      // 休み集中ソフトキャップ：緊急でなければ集中日はスキップ
-      if (!isUrgent && (restByDay[d]||0) >= maxRestPerDay) continue;
+      // 強学習パターン（0.85以上）かつminStaff確保可能な場合はキャップ免除
+      const minWorkRequired = Math.max(1, Object.values(dept.minStaff || {}).reduce((sv, v) => sv + (v||0), 0));
+      const strongLearnedRest = dowRestRate
+        ? (dowRestRate[(new Date(year, month, d).getDay() + 6) % 7] ?? 0) >= 0.85
+        : false;
+      const safeToBypassCap = strongLearnedRest && (restByDay[d]||0) < ds.length - minWorkRequired;
+      if (!isUrgent && !safeToBypassCap && (restByDay[d]||0) >= maxRestPerDay) continue;
       const remainCands = candidates.filter(fd => fd > d && !res[s.id][fd] && canRest(s.id, fd) && (isUrgent||(restByDay[fd]||0)<maxRestPerDay)).length;
-      if (!isUrgent && remainCands >= need && (d - lastRest) < interval) continue;
+      if (!isUrgent && !safeToBypassCap && remainCands >= need && (d - lastRest) < interval) continue;
       res[s.id][d] = "休み"; restByDay[d] = (restByDay[d]||0) + 1; lastRest = d; need--;
     }
   });
@@ -1059,41 +1090,41 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       const weekday = d >= 1 ? new Date(year, month, d).getDay() : -1;
       const dowRate = weekday >= 0 ? trend?.dowShiftRate?.[weekday] : null;
       return [...available].sort((a, b) => {
-        // 0. 曜日別学習データ（最強シグナル: いつもの曜日の組み方を最優先で再現）
-        if (dowRate) {
-          const rA = dowRate[a] ?? 0;
-          const rB = dowRate[b] ?? 0;
-          if (Math.abs(rA - rB) > 0.10) return rB - rA;
-        }
+        // 0. minStaff 不足補充（最優先ハード制約）
+        const dA = Math.max(0, (dept.minStaff[a]||0) - cnts[a]);
+        const dB = Math.max(0, (dept.minStaff[b]||0) - cnts[b]);
+        if (dA !== dB) return dB - dA;
         // 1. 比率設定あり: 残債（目標-割当済）が大きいシフトを優先
         if (hasRatio) {
           const debtA = (targetShiftCounts[s.id]?.[a] ?? 0) - (assignedShiftCounts[s.id]?.[a] ?? 0);
           const debtB = (targetShiftCounts[s.id]?.[b] ?? 0) - (assignedShiftCounts[s.id]?.[b] ?? 0);
           if (debtA !== debtB) return debtB - debtA;
         }
-        // 2. minStaff 不足補充（共通）
-        const dA = Math.max(0, (dept.minStaff[a]||0) - cnts[a]);
-        const dB = Math.max(0, (dept.minStaff[b]||0) - cnts[b]);
-        if (dA !== dB) return dB - dA;
-        // 3. シフト優先度（早番・遅番 > 日勤）
+        // 2. シフト優先度（早番・遅番 > 日勤）
         const pA = PRIORITY[a]??3, pB = PRIORITY[b]??3;
         if (pA !== pB) return pA - pB;
-        // 4. 配置バランス
-        if (cnts[a] !== cnts[b]) return cnts[a] - cnts[b];
-        // 5. 遷移確率（前日シフトとの自然なつながりを優先）
+        // 3. 曜日別学習データ（minStaff充足後の残り枠で優先・閾値0.02）
+        if (dowRate) {
+          const rA = dowRate[a] ?? 0;
+          const rB = dowRate[b] ?? 0;
+          if (Math.abs(rA - rB) > 0.02) return rB - rA;
+        }
+        // 4. 遷移確率（前日シフトとの自然なつながりを優先・閾値0.03）
         if (trend?.transitionRate && d >= 2) {
           const prevShift = res[s.id][d - 1];
           if (prevShift) {
             const trA = trend.transitionRate[prevShift]?.[a] ?? 0;
             const trB = trend.transitionRate[prevShift]?.[b] ?? 0;
-            if (Math.abs(trA - trB) > 0.05) return trB - trA;
+            if (Math.abs(trA - trB) > 0.03) return trB - trA;
           }
         }
-        // 6. シフト頻度（学習データ）
+        // 5. シフト頻度（学習データ・閾値0.03）
         const tA = trend ? (trend[a] || 0) : 0;
         const tB = trend ? (trend[b] || 0) : 0;
-        if (Math.abs(tA - tB) > 0.05) return tB - tA;
-        // 7. スワップ学習（過去の手動修正パターン: 多く選ばれたシフトを優先）
+        if (Math.abs(tA - tB) > 0.03) return tB - tA;
+        // 6. 配置バランス
+        if (cnts[a] !== cnts[b]) return cnts[a] - cnts[b];
+        // 7. スワップ学習（過去の手動修正パターン）
         if (s.swapLearning && d) {
           const swA = s.swapLearning[weekday]?.[a] ?? 0;
           const swB = s.swapLearning[weekday]?.[b] ?? 0;
@@ -1460,7 +1491,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 }
 
 // 生成結果のペナルティスコアを計算（低いほど良い）
-function scoreShifts(res, ds, dept, days, year, month) {
+function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
   let score = 0;
   const WORK = buildDeptWorkTypes(dept.customShiftDefs);
   const REST = new Set(["休み","希望休"]); // 有休は賃金支払い対象のため休日カウントから除外
@@ -1533,11 +1564,34 @@ function scoreShifts(res, ds, dept, days, year, month) {
     if (hasNight) score += (varN / ds.length) * 500;
     score += (varW / ds.length) * 200;
   }
+  // 学習適合ペナルティ: ルール違反ゼロ同士の最終判定に学習が機能する
+  // 1人1日あたり最大100点。ルール違反(10000点)より低く、公平性ペナルティと競合できるスケール
+  const LEARN_TYPES = new Set(dept.shiftTypes.filter(k => k !== '夜勤' && k !== '明け'));
+  if (shiftTrend && ds.length > 0) {
+    const trendKeys = Object.keys(shiftTrend).filter(k => k !== '_months' && k !== '_monthCounts');
+    if (trendKeys.length > 0) {
+      for (const s of ds) {
+        const tKey = trendKeys.find(k => nameMatch(k, s.name));
+        const trend = tKey ? shiftTrend[tKey] : null;
+        if (!trend) continue;
+        for (let d = 1; d <= days; d++) {
+          const shift = res[s.id]?.[d];
+          if (!shift || !LEARN_TYPES.has(shift)) continue;
+          const dow = new Date(year, month, d).getDay();
+          const dowRate = trend.dowShiftRate?.[dow] ?? null;
+          const predictedProb = dowRate
+            ? (dowRate[shift] ?? 0)
+            : (typeof trend[shift] === 'number' ? trend[shift] : 0);
+          score += (1 - predictedProb) * 100;
+        }
+      }
+    }
+  }
   return score;
 }
 
 // 局所探索（2-opt swap）: 生成済みシフトのスコアをスワップ改善でさらに下げる
-function localSearchImprove(shifts, ds, dept, days, year, month) {
+function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}) {
   if (ds.length < 2) return shifts;
   const res = {};
   for (const s of ds) res[s.id] = { ...(shifts[s.id] || {}) };
@@ -1563,7 +1617,7 @@ function localSearchImprove(shifts, ds, dept, days, year, month) {
     locked[s.id] = lk;
   }
 
-  let curScore = scoreShifts(res, ds, dept, days, year, month);
+  let curScore = scoreShifts(res, ds, dept, days, year, month, shiftTrend);
 
   for (let pass = 0; pass < 3 && curScore > 0; pass++) {
     let improved = false;
@@ -1585,7 +1639,7 @@ function localSearchImprove(shifts, ds, dept, days, year, month) {
           if (badTrans(p2, v1) || badTrans(v1, n2)) continue;
           // スワップ試行
           res[s1.id][d] = v2; res[s2.id][d] = v1;
-          const newScore = scoreShifts(res, ds, dept, days, year, month);
+          const newScore = scoreShifts(res, ds, dept, days, year, month, shiftTrend);
           if (newScore < curScore) { curScore = newScore; improved = true; }
           else { res[s1.id][d] = v1; res[s2.id][d] = v2; } // 戻す
         }
@@ -1615,14 +1669,14 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
     }
     const { shifts, warnings, timelineWarnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend);
     // スコアリングは常に元のdeptで評価（公平な比較）
-    const score = scoreShifts(shifts, ds, dept, days, year, month);
+    const score = scoreShifts(shifts, ds, dept, days, year, month, shiftTrend);
     if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
   }
   // 局所探索（swap改善）: 30回試行の最良案をさらにスコア改善
   if (best && bestScore > 0) {
-    const improved = localSearchImprove(best.shifts, ds, dept, days, year, month);
-    const improvedScore = scoreShifts(improved, ds, dept, days, year, month);
+    const improved = localSearchImprove(best.shifts, ds, dept, days, year, month, shiftTrend);
+    const improvedScore = scoreShifts(improved, ds, dept, days, year, month, shiftTrend);
     if (improvedScore < bestScore) { best.shifts = improved; best.score = improvedScore; }
   }
   // 比率達成フィードバック: 実際の勤務比率 vs 目標比率の乖離を記録（次回補正用）
