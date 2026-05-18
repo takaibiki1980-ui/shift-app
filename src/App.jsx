@@ -4505,8 +4505,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (!dbInitialized.current) return;
     if (isLoadingMonth.current) return;
     if (Object.keys(allShifts).length === 0) return;
+    // year/monthをdepsから外す: 月切替時はallShiftsより先にこのeffectが走り
+    // 旧月データを新月のlocalStorageキーに書き込むバグを防ぐ。
+    // allShifts変更時のみ実行すれば year/month は常に正しい現在値になる。
     try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShifts)); } catch {}
-  }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allShifts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── タブ/ウィンドウを閉じる直前: 未保存データをlocalStorageに緊急保存 ──
   useEffect(() => {
