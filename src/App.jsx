@@ -4604,11 +4604,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (!dbInitialized.current) return;
     if (isLoadingMonth.current) return;
     // Realtime由来のsetAllShiftsは再保存しない（自己ループ防止）
-    if (allShiftsSkipSave.current) {
+    // ただし saveStatus='unsaved'（生成・編集中）のときは保存を続行する
+    // （古いRealtimeのフラグが残ったまま生成が走るとデータが消えるため）
+    if (allShiftsSkipSave.current && saveStatusRef.current !== 'unsaved') {
       allShiftsSkipSave.current = false;
       setSaveStatus('saved');
       return;
     }
+    allShiftsSkipSave.current = false; // 保存する場合も必ずフラグをクリア
     saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -4958,6 +4961,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       // 自動生成もユーザー操作: シーケンス番号を上げてRealtimeをキャンセル
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
+      allShiftsSkipSave.current = false; // 古いRealtimeフラグが残っていた場合に強制クリア
       try {
         // 自動生成前の状態をアンドゥスタックに積む
         const genSnapshot = allShiftsRef.current[cd.id] || {};
