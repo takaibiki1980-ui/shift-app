@@ -4401,10 +4401,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
-          allShiftsSkipSave.current = true; // Realtime由来のsetAllShiftsは保存エフェクトをスキップ
           setAllShifts(prev => {
             // updater実行時に再チェック（fetch後に編集があればキャンセル）
             if (userEditSeq.current !== seqAtStart) return prev;
+            // 実際に状態が変わるときだけフラグをセット（prevを返すときはセットしない）
+            allShiftsSkipSave.current = true;
             const result = { ...prev };
             const ac = activeCellRef.current;
             const acAge = ac ? Date.now() - ac.time : Infinity;
@@ -4430,6 +4431,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             isLoadingMonth.current = true;
             setAllShifts(prev => {
               if (userEditSeq.current !== seqAtStart) return prev;
+              allShiftsSkipSave.current = true;
               return restoreShifts(byKey[legacyKey]);
             });
             setTimeout(() => { isLoadingMonth.current = false; }, 100);
