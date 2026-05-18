@@ -560,6 +560,9 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const counts = {}, totals = {}, monthSets = {};
   const transitions = {}, transitionTotals = {}; // 遷移確率集計: [staffId][prev][curr]
   const dowShifts = {}; // 曜日別シフト集計: [staffId][dow][shiftType]
+  const dowRests = {};   // 曜日別休み集計: [staffId][dow] 重み付きカウント (+6%7: 月=0,日=6)
+  const dowTotalsR = {}; // 曜日別総日数:   [staffId][dow] 重み付きカウント (+6%7: 月=0,日=6)
+  const REST_DOW_SET = new Set(['休み','希望休','有休']);
   const now = new Date();
   const nowYM = now.getFullYear() * 12 + now.getMonth();
   const WORK_SHIFT_SET = new Set(['早番','日勤','遅番','夜勤']);
@@ -591,8 +594,19 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
       if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; monthSets[staffId] = new Set(); }
       if (!transitions[staffId]) { transitions[staffId] = {}; transitionTotals[staffId] = {}; }
       if (!dowShifts[staffId]) dowShifts[staffId] = [{},{},{},{},{},{},{}];
+      if (!dowTotalsR[staffId]) dowTotalsR[staffId] = [0,0,0,0,0,0,0];
+      if (!dowRests[staffId]) dowRests[staffId] = [0,0,0,0,0,0,0];
       monthSets[staffId].add(`${keyYear}-${keyMonth}`);
       for (const [dayStr, shift] of Object.entries(staffShifts)) {
+        // dowRestRate用: スキップ前に全シフトを曜日別集計
+        if (shift) {
+          const dr = parseInt(dayStr);
+          if (!isNaN(dr)) {
+            const dow2 = (new Date(keyYear, keyMonth, dr).getDay() + 6) % 7;
+            dowTotalsR[staffId][dow2] += weight;
+            if (REST_DOW_SET.has(shift)) dowRests[staffId][dow2] += weight;
+          }
+        }
         if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
         counts[staffId][shift] = (counts[staffId][shift] || 0) + weight;
         totals[staffId] += weight;
@@ -635,7 +649,10 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
       for (const [k, cnt] of Object.entries(shiftCounts)) rate[k] = cnt / workTot;
       return rate;
     });
-    result[staff.name] = { ...freq, transitionRate, dowShiftRate };
+    const dowRestRate = dowTotalsR[staff.id]
+      ? dowTotalsR[staff.id].map((tot, i) => tot > 0 ? (dowRests[staff.id]?.[i] || 0) / tot : null)
+      : [null,null,null,null,null,null,null];
+    result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate };
     monthCounts[staff.name] = monthSets[staff.id].size;
   }
   result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
