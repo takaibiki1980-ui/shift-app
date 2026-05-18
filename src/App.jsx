@@ -4448,7 +4448,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
     // Supabase Realtime: 他デバイスが保存した瞬間に同期
     const mergeStaffKibo = async () => {
-      const mk = monthKey(year, month);
+      const mk = monthKey(yearRef.current, monthRef.current);
       const { data, error } = await supabase.from('staff_kibo').select('*').eq('admin_user_id', session.user.id).eq('month_key', mk);
       if (error) { console.error('[mergeStaffKibo]', error); return; }
       if (!data || data.length === 0) return; // 変更なし：setStaffListを呼ばない
@@ -4930,6 +4930,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     isInitializing.current = false;
     const cs=staffList, cd=dept, ct=mergeShiftTrends(shiftTrend[activeDeptId]||{}, learnedTrend);
     generateTimerRef.current = setTimeout(() => {
+      // 月切り替え中は生成を中断（year/monthクロージャ陳腐化チェック）
+      if (year !== yearRef.current || month !== monthRef.current) {
+        console.warn('[handleGenerate] 年月切替を検出 - 自動生成を中断', {
+          closureYear: year, closureMonth: month + 1,
+          currentYear: yearRef.current, currentMonth: monthRef.current + 1
+        });
+        setGenerating(false);
+        return;
+      }
       // 自動生成もユーザー操作: シーケンス番号を上げてRealtimeをキャンセル
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
@@ -5177,7 +5186,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         deptId={activeDeptId} deptLabel={dept?.label||activeDeptId}
         onClose={()=>setHistoryModal(false)}
         onRestore={(restoredData)=>{
-          setAllShifts(prev=>({...prev,[activeDeptId]:restoredData}));
+          const restoreDeptId = activeDeptIdRef.current;
+          setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
           setSaveStatus('saved');
         }}
       />}
