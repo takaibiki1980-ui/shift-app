@@ -687,9 +687,18 @@ function mergeShiftTrends(excelTrend, learnedTrend) {
       }
       // 遷移確率はDB学習データのみ（Excelには含まれない）
       if (le.transitionRate) merged.transitionRate = le.transitionRate;
-      // dowRestRateはExcel側を優先
-      if (ex.dowRestRate) merged.dowRestRate = ex.dowRestRate;
-      else if (le.dowRestRate) merged.dowRestRate = le.dowRestRate;
+      // dowRestRate: 月数に応じたブレンド（dowShiftRateと同じ時系列加重）
+      if (ex.dowRestRate && le.dowRestRate) {
+        merged.dowRestRate = ex.dowRestRate.map((exRate, i) => {
+          const leRate = le.dowRestRate[i];
+          if (exRate == null && leRate == null) return null;
+          if (exRate == null) return leRate;
+          if (leRate == null) return exRate;
+          return exRate * (1 - lw) + leRate * lw;
+        });
+      } else {
+        merged.dowRestRate = le.dowRestRate || ex.dowRestRate || null;
+      }
       // dowShiftRate: 両方あればブレンド、片方だけならそちらを使用
       if (ex.dowShiftRate && le.dowShiftRate) {
         merged.dowShiftRate = ex.dowShiftRate.map((exDow, i) => {
@@ -4287,6 +4296,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const allShiftsRef = useRef(allShifts); // 常に最新のallShiftsを参照（生成ハンドラ内で利用）
   const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
   const deptsRef = useRef(depts); // 常に最新のdeptsを参照
+  const allDBDataRef = useRef({}); // Supabase全データのキャッシュ（保存後の学習再計算に使用）
+  const exceptionMonthsRef = useRef([]); // exceptionMonthsの最新値（保存後の学習再計算に使用）
   allShiftsRef.current = allShifts; // 常に最新状態を参照（生成ハンドラ・保存ハンドラ用）
   staffListRef.current = staffList;
   deptsRef.current = depts;
@@ -4359,6 +4370,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const latestStaffList = byKey['staffList'] || staffList;
         const latestExceptionMonths = filterExpiredExceptions(byKey['exceptionMonths'] || []);
         if (byKey['exceptionMonths']) setExceptionMonths(latestExceptionMonths);
+        allDBDataRef.current = byKey; // DBキャッシュを初期化
+        exceptionMonthsRef.current = latestExceptionMonths;
         const learned = computeLearnedTrend(byKey, latestStaffList, latestExceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
@@ -4465,6 +4478,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         if (byKey['exceptionMonths']) setExceptionMonths(latestExcRT);
+        allDBDataRef.current = {...allDBDataRef.current, ...byKey}; // DBキャッシュを更新
+        exceptionMonthsRef.current = latestExcRT;
         const latestStaffListRT = byKey['staffList'] || staffList;
         const learnedRT = computeLearnedTrend(byKey, latestStaffListRT, latestExcRT);
         if (Object.keys(learnedRT).length > 0) setLearnedTrend(learnedRT);
@@ -4721,6 +4736,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
         setSaveStatus("saved");
         console.log("[save] Supabase保存OK:", key);
+        // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
+        // → 調整済みシフトが同セッション内の次月生成に即座に反映される
+        allDBDataRef.current[key] = deptData;
+        {
+          const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current);
+          if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
+        }
         // スワップ成功パターン: 生成後に手動で変更されたシフトを学習
         const genRef = lastAutoGenRef.current[currentDeptId];
         if (genRef) {
@@ -4946,6 +4968,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       supabase.from('shift_data').select('data_key,data_value').eq('user_id',session.user.id).then(({data})=>{
         if (!data) return;
         const byKey = Object.fromEntries(data.map(r=>[r.data_key,r.data_value]));
+        allDBDataRef.current = byKey; // DBキャッシュを最新化
+        exceptionMonthsRef.current = exceptionMonths;
         const learned = computeLearnedTrend(byKey, staffList, exceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
       });
