@@ -4097,7 +4097,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
-  const allShiftsSkipSave = useRef(false); // Realtime由来のsetAllShiftsは再保存しない
   const lastSelfSaveTime = useRef(0); // 自分の保存完了時刻（Realtime自己ループ検知用）
   const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
   const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値（null=DB未読込→保存ブロック）
@@ -4239,6 +4238,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const activeDeptIdRef = useRef(activeDeptId);
   useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
   const userEditSeq = useRef(0); // ユーザー編集のたびにインクリメント（Realtime競合検出用）
+  // Realtimeデータ適用時の userEditSeq スナップショット（-1=未ロード）
+  // 保存エフェクトで userEditSeq===seqAtLastRemoteLoad なら「Realtime直後で変更なし」→保存スキップ
+  const seqAtLastRemoteLoad = useRef(-1);
   const lastAutoGenRef = useRef({}); // 最後の自動生成結果（スワップパターン検出用）
 
   // ── 初回: Supabase から全データを一括ロード ──
@@ -4404,8 +4406,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           setAllShifts(prev => {
             // updater実行時に再チェック（fetch後に編集があればキャンセル）
             if (userEditSeq.current !== seqAtStart) return prev;
-            // 実際に状態が変わるときだけフラグをセット（prevを返すときはセットしない）
-            allShiftsSkipSave.current = true;
+            // Realtime適用時の seqを記録 → 保存エフェクトが「変更なし」と判定してスキップする
+            seqAtLastRemoteLoad.current = userEditSeq.current;
             const result = { ...prev };
             const ac = activeCellRef.current;
             const acAge = ac ? Date.now() - ac.time : Infinity;
@@ -4431,7 +4433,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             isLoadingMonth.current = true;
             setAllShifts(prev => {
               if (userEditSeq.current !== seqAtStart) return prev;
-              allShiftsSkipSave.current = true;
+              seqAtLastRemoteLoad.current = userEditSeq.current;
               return restoreShifts(byKey[legacyKey]);
             });
             setTimeout(() => { isLoadingMonth.current = false; }, 100);
@@ -4603,15 +4605,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // DB初期化完了前・ロード中は物理的に保存不可
     if (!dbInitialized.current) return;
     if (isLoadingMonth.current) return;
-    // Realtime由来のsetAllShiftsは再保存しない（自己ループ防止）
-    // ただし saveStatus='unsaved'（生成・編集中）のときは保存を続行する
-    // （古いRealtimeのフラグが残ったまま生成が走るとデータが消えるため）
-    if (allShiftsSkipSave.current && saveStatusRef.current !== 'unsaved') {
-      allShiftsSkipSave.current = false;
+    // Realtime直後で userEditSeq が変化していない = ユーザー/生成の変更なし → 保存不要
+    // userEditSeq > seqAtLastRemoteLoad であれば編集・生成があった → 保存する
+    if (userEditSeq.current === seqAtLastRemoteLoad.current) {
       setSaveStatus('saved');
       return;
     }
-    allShiftsSkipSave.current = false; // 保存する場合も必ずフラグをクリア
     saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -4960,8 +4959,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       }
       // 自動生成もユーザー操作: シーケンス番号を上げてRealtimeをキャンセル
       userEditSeq.current++;
-      saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
-      allShiftsSkipSave.current = false; // 古いRealtimeフラグが残っていた場合に強制クリア
+      saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化
       try {
         // 自動生成前の状態をアンドゥスタックに積む
         const genSnapshot = allShiftsRef.current[cd.id] || {};
