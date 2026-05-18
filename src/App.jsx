@@ -4333,6 +4333,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (dbLoading) return;
 
     const reloadFromRemote = async () => {
+      // 月ロード中はRealtimeの割り込みを拒否（データ混線防止）
+      if (isLoadingMonth.current) return;
       // 編集中（unsaved）はスキップ — 保存完了後に次のRealtimeイベントで自動反映される
       if (saveStatusRef.current === 'unsaved') {
         // ユーザーが×で閉じた場合は同じ未保存セッション中に再表示しない
@@ -4534,6 +4536,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     };
     // ★防衛1: リクエストIDをインクリメント（古いfetchの結果を破棄するため）
     const reqId = ++fetchReqIdRef.current;
+    if (saveTimer.current) clearTimeout(saveTimer.current); // 旧月の保存タイマーを即キャンセル
     isLoadingMonth.current = true;
     setIsMonthLoading(true); // UIロック開始
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
@@ -4593,6 +4596,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    // ★防衛C: 部署IDをクロージャでキャプチャ（タイマー発火時に部署が変わっても正しい部署に保存）
+    const closureDeptId = activeDeptIdRef.current;
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
       // ★防衛3: 保存直前に年月一致検証（クロージャの年月 vs 現在の画面の年月）
@@ -4604,9 +4609,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         setSaveStatus('saved'); // 画面上のステータスは安全側に倒す
         return;
       }
-      // 部署ごとに別キーで保存（同時編集の競合を防ぐ）
-      // activeDeptId は ref 経由で参照（deps に入れると部署切替のたびに余分なDBアクセスが発生するため）
-      const currentDeptId = activeDeptIdRef.current;
+      // 部署IDはクロージャ値を使用（編集時の部署に正確に保存）
+      const currentDeptId = closureDeptId;
       const key = `shifts_${year}_${month+1}_${currentDeptId}`;
       const deptData = allShifts[currentDeptId] || {};
       try {
