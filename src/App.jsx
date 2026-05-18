@@ -4228,6 +4228,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
   const saveTimer = useRef(null);
   const isLoadingMonth = useRef(false);
+  const [isMonthLoading, setIsMonthLoading] = useState(false); // UI表示・操作ブロック用
+  const fetchReqIdRef = useRef(0); // 古いfetchを破棄するモノトニックカウンター
+  const yearRef = useRef(year);    // 保存時の年月一致検証用（常に最新を追跡）
+  const monthRef = useRef(month);
+  useEffect(() => { yearRef.current = year; }, [year]);
+  useEffect(() => { monthRef.current = month; }, [month]);
   const activeDeptIdRef = useRef(activeDeptId);
   useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
   const userEditSeq = useRef(0); // ユーザー編集のたびにインクリメント（Realtime競合検出用）
@@ -4526,34 +4532,54 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         else { console.error('[save] 月切替前緊急保存失敗:', error); }
       });
     };
+    // ★防衛1: リクエストIDをインクリメント（古いfetchの結果を破棄するため）
+    const reqId = ++fetchReqIdRef.current;
     isLoadingMonth.current = true;
+    setIsMonthLoading(true); // UIロック開始
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
     undoStackRef.current = {}; // 月切替でアンドゥ履歴をリセット
     setUndoCount(0);
+    // ロード完了処理（reqId一致時のみ適用）
+    const applyLoaded = (data) => {
+      if (reqId !== fetchReqIdRef.current) {
+        console.warn('[fetch] 古いリクエストを破棄 reqId:', reqId, '最新:', fetchReqIdRef.current);
+        return;
+      }
+      setAllShifts(restoreShifts(data));
+      setTimeout(() => {
+        if (reqId !== fetchReqIdRef.current) return;
+        isLoadingMonth.current = false;
+        setIsMonthLoading(false); // UIロック解除
+      }, 100);
+    };
     const prefix = `shifts_${year}_${month+1}_`;
     supabase.from('shift_data').select('data_key,data_value')
       .eq('user_id', session.user.id)
       .like('data_key', prefix + '%')
       .then(({ data, error }) => {
+        if (reqId !== fetchReqIdRef.current) return; // 古いリクエストは即破棄
         if (!error && data && data.length > 0) {
           const merged = {};
           for (const row of data) { merged[row.data_key.slice(prefix.length)] = row.data_value; }
-          setAllShifts(restoreShifts(merged));
+          applyLoaded(merged);
         } else {
-          // 旧フォーマット fallback
+          // 旧フォーマット fallback（★バグ修正: setTimeout を nested .then() の中に移動）
           const legacyKey = `shifts_${year}_${month+1}`;
           supabase.from('shift_data').select('data_value')
             .eq('user_id', session.user.id).eq('data_key', legacyKey).maybeSingle()
             .then(({ data: ld }) => {
-              if (ld?.data_value) { setAllShifts(restoreShifts(ld.data_value)); }
-              else { try { const saved=localStorage.getItem(SAVE_KEY(year,month)); setAllShifts(saved ? restoreShifts(JSON.parse(saved)) : {}); } catch { setAllShifts({}); } }
+              if (reqId !== fetchReqIdRef.current) return;
+              if (ld?.data_value) { applyLoaded(ld.data_value); }
+              else {
+                try { const saved=localStorage.getItem(SAVE_KEY(year,month)); applyLoaded(saved ? JSON.parse(saved) : {}); }
+                catch { applyLoaded({}); }
+              }
             });
         }
-        setTimeout(() => { isLoadingMonth.current = false; }, 100);
-        // Load yotei for new month
+        // Load yotei for new month（reqId不一致でも上書きは無害なため実行）
         const yKey=`yotei_${year}_${month+1}`;
         supabase.from('shift_data').select('data_value').eq('user_id',session.user.id).eq('data_key',yKey).maybeSingle()
-          .then(({data})=>{ if(data?.data_value)setAllYotei(data.data_value);else{try{const s=localStorage.getItem(`shiftNavi_${yKey}`);setAllYotei(s?JSON.parse(s):{});}catch{setAllYotei({});}} });
+          .then(({data})=>{ if(reqId!==fetchReqIdRef.current)return; if(data?.data_value)setAllYotei(data.data_value);else{try{const s=localStorage.getItem(`shiftNavi_${yKey}`);setAllYotei(s?JSON.parse(s):{});}catch{setAllYotei({});}} });
       });
     return () => { emergencySave(); }; // cleanup: 月切替/アンマウント時に旧月を緊急保存
   }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -4569,6 +4595,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
+      // ★防衛3: 保存直前に年月一致検証（クロージャの年月 vs 現在の画面の年月）
+      if (year !== yearRef.current || month !== monthRef.current) {
+        console.warn('[save] 🚨 年月不一致を検出 - データ破壊を防ぐため保存を中断', {
+          closureYear: year, closureMonth: month + 1,
+          currentYear: yearRef.current, currentMonth: monthRef.current + 1
+        });
+        setSaveStatus('saved'); // 画面上のステータスは安全側に倒す
+        return;
+      }
       // 部署ごとに別キーで保存（同時編集の競合を防ぐ）
       // activeDeptId は ref 経由で参照（deps に入れると部署切替のたびに余分なDBアクセスが発生するため）
       const currentDeptId = activeDeptIdRef.current;
@@ -4945,12 +4980,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const handleLeftClick = useCallback((staffId, day) => {
     if (isLockedRef.current) return;
+    if (isMonthLoading) return; // 月ロード中は操作ブロック
     activeCellRef.current = { staffId, day, time: Date.now() }; // アクティブセル記録（Realtime上書き保護）
     setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const idx=SHIFT_KEYS.indexOf(cur);const next=SHIFT_KEYS[(idx+1)%SHIFT_KEYS.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
   }, [setDeptShifts]);
 
   const handleRightClick = useCallback((staffId, day, e, selCells) => {
     if (isLockedRef.current) return;
+    if (isMonthLoading) return; // 月ロード中は操作ブロック
     setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4,selCells:selCells||null});
   }, []);
   const handleMenuSelect = (shiftKey) => {
@@ -5019,7 +5056,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"linear-gradient(135deg,#374151,#1f2937)",color:"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>🔒{!isMobile&&" 解錠する"}</button>
-            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved")?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:(generating||saveStatus==="unsaved")?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved")?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:saveStatus==="unsaved"?0.6:1}}>{generating?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":" 自動生成")}</button></>
+            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}>{generating?"⏳":isMonthLoading?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button></>
           }
           <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:700,opacity:saveStatus==="unsaved"?0.5:1}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
@@ -5102,7 +5139,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* CONTENT */}
       <div style={{padding:"10px 8px",minHeight:"calc(100vh - 180px)"}}>
-        {innerTab==="shift"&&(<><Legend/><ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper></>)}
+        {innerTab==="shift"&&(<><Legend/><div style={{position:"relative"}}>
+          {isMonthLoading&&<div style={{position:"absolute",inset:0,zIndex:50,background:"rgba(240,251,250,0.85)",display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,backdropFilter:"blur(2px)"}}>
+            <div style={{background:"#fff",border:"1px solid #2BBFBA",borderRadius:12,padding:"18px 32px",fontWeight:800,fontSize:14,color:"#1a9e99",boxShadow:"0 4px 16px rgba(43,191,186,0.2)",display:"flex",alignItems:"center",gap:10}}>
+              <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
+            </div>
+          </div>}
+          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper>
+        </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
         {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onBulkCopy={bulkCopyPlanned} onClearZero={bulkClearZeroRec} onClearAll={async()=>{if(!window.confirm("この月の全実績を削除します。よろしいですか？"))return;await clearDeptJisseki();}} defaultTimes={jissekiDefaults[activeDeptId]||{}} onDefaultsChange={defs=>saveJissekiDefaultsForDept(activeDeptId,defs)} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
