@@ -4097,6 +4097,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
+  const allShiftsSkipSave = useRef(false); // Realtime由来のsetAllShiftsは再保存しない
+  const lastSelfSaveTime = useRef(0); // 自分の保存完了時刻（Realtime自己ループ検知用）
   const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
   const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値（null=DB未読込→保存ブロック）
   const deptsUpsertInProgress = useRef(false); // depts保存中フラグ
@@ -4337,8 +4339,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       if (isLoadingMonth.current) return;
       // 編集中（unsaved）はスキップ — 保存完了後に次のRealtimeイベントで自動反映される
       if (saveStatusRef.current === 'unsaved') {
-        // ユーザーが×で閉じた場合は同じ未保存セッション中に再表示しない
-        if (!conflictBannerDismissed.current) setConflictBanner(true);
+        // 自分の保存から8秒以内は自己ループなので競合バナーを出さない
+        const isSelfTriggered = Date.now() - lastSelfSaveTime.current < 8000;
+        if (!isSelfTriggered && !conflictBannerDismissed.current) setConflictBanner(true);
         return;
       }
       // 保存完了後に実際にロードする際はdismissedフラグをリセット
@@ -4398,6 +4401,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
+          allShiftsSkipSave.current = true; // Realtime由来のsetAllShiftsは保存エフェクトをスキップ
           setAllShifts(prev => {
             // updater実行時に再チェック（fetch後に編集があればキャンセル）
             if (userEditSeq.current !== seqAtStart) return prev;
@@ -4594,6 +4598,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // DB初期化完了前・ロード中は物理的に保存不可
     if (!dbInitialized.current) return;
     if (isLoadingMonth.current) return;
+    // Realtime由来のsetAllShiftsは再保存しない（自己ループ防止）
+    if (allShiftsSkipSave.current) {
+      allShiftsSkipSave.current = false;
+      setSaveStatus('saved');
+      return;
+    }
     saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -4631,6 +4641,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current = 0;
+        lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
         setSaveStatus("saved");
         console.log("[save] Supabase保存OK:", key);
         // スワップ成功パターン: 生成後に手動で変更されたシフトを学習
