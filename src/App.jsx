@@ -4393,7 +4393,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const latestStaffListRT = byKey['staffList'] || staffList;
         const learnedRT = computeLearnedTrend(byKey, latestStaffListRT, latestExcRT);
         if (Object.keys(learnedRT).length > 0) setLearnedTrend(learnedRT);
-        const shiftPrefix = `shifts_${year}_${month+1}_`;
+        // ★重大修正: yearRef/monthRefを使用（closureのyear/monthは起動時に固定されるため必ずrefを参照）
+        const shiftPrefix = `shifts_${yearRef.current}_${monthRef.current+1}_`;
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
@@ -4420,7 +4421,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           });
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
         } else {
-          const legacyKey = `shifts_${year}_${month+1}`;
+          const legacyKey = `shifts_${yearRef.current}_${monthRef.current+1}`;
           if (byKey[legacyKey]) {
             isLoadingMonth.current = true;
             setAllShifts(prev => {
