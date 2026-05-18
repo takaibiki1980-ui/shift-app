@@ -1028,7 +1028,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     let lastRest = 0;
     for (const d of candidates) {
       if (need <= 0) break;
-      if (res[s.id][d] || !canRest(s.id, d)) continue;
+      if (res[s.id][d]) continue;
+      // 強学習パターン（0.85以上）の曜日は連続休み上限を3日に緩和（例：希望休+土+日）
+      const isStrongDay2 = dowRestRate
+        ? (dowRestRate[(new Date(year, month, d).getDay() + 6) % 7] ?? 0) >= 0.85
+        : false;
+      const validRest2 = isStrongDay2
+        ? (res[s.id][d - 1] !== "明け" && (consecRest(s.id, d - 1) + 1 + consecRestFwd(s.id, d)) <= 3)
+        : canRest(s.id, d);
+      if (!validRest2) continue;
       let streak = 0;
       for (let i = d - 1; i >= 1; i--) { if (deptRest.has(res[s.id][i]) && res[s.id][i] !== "明け") break; streak++; }
       const isUrgent = streak >= maxConsec - 1;
