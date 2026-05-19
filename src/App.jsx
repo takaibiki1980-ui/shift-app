@@ -903,8 +903,16 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   // ★ステップ1.5: 希望休アンカー配置
   // 希望休D がある夜勤対応スタッフに対し、D-2=夜勤・D-1=明け を先行仮置きする。
   // これにより「希望休はパズルのノイズ」でなく「配置を確定させるヒント」として機能する。
+  // 役職制限チェック用: dayTypes の先行計算（夜勤配置は getAllowedTypes より前に実行されるため）
+  const _nonNightTypes = dept.shiftTypes.filter(k => k !== '夜勤' && k !== '明け');
+  const _nightAllowed = (s) => {
+    const rst = dept.roleShiftTypes?.[s.role];
+    if (!rst) return true; // 制限なし
+    return rst.length >= _nonNightTypes.length; // 全非夜勤シフトが許可 = 夜勤も可
+  };
+
   if (dept.shiftTypes.includes("夜勤")) {
-    const anchorPool = ds.filter(s => s.nightOk);
+    const anchorPool = ds.filter(s => s.nightOk && _nightAllowed(s));
     const anchorAutoMax = Math.ceil(days / Math.max(anchorPool.length, 1));
     // kiboNightPreference が高いスタッフほど先にアンカー権を得る（学習データ反映）
     const sortedAnchorPool = [...anchorPool].sort((a, b) => (b.kiboNightPreference || 0) - (a.kiboNightPreference || 0));
@@ -928,7 +936,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   // ★ステップ2: 夜勤配置（ロック済みの日・翌日がロックの人は候補から除外）
   if (dept.shiftTypes.includes("夜勤")) {
-    const nightPool = ds.filter(s => s.nightOk);
+    const nightPool = ds.filter(s => s.nightOk && _nightAllowed(s));
     const autoMax = Math.ceil(days / Math.max(nightPool.length, 1));
     for (let d = 1; d <= days; d++) {
       const already = ds.filter(s => res[s.id][d] === "夜勤").length;
