@@ -4556,18 +4556,26 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:defaultStaff, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
             .then(({ error }) => { if (!error) lastSavedStaffListRef.current = staffListRef.current; });
         }
-        if (byKey['excelRawMonths']) {
-          const actualDepts = byKey['depts'] || depts;
-          const migrated = migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts);
-          const filteredRaw = filterExpiredExcelMonths(migrated);
-          setExcelRawMonths(filteredRaw);
-          const excl = filterExpiredExceptions(byKey['exceptionMonths'] || []);
-          const trend = {};
-          for (const [dId, deptRaw] of Object.entries(filteredRaw)) {
-            const recomp = computeShiftTrendFromRaw(deptRaw, excl);
-            if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend[dId] = recomp;
+        {
+          const perDeptKeys = Object.keys(byKey).filter(k => k.startsWith('excelRawMonths_'));
+          const rawMonths = {};
+          if (perDeptKeys.length > 0) {
+            for (const k of perDeptKeys) rawMonths[k.slice('excelRawMonths_'.length)] = byKey[k];
+          } else if (byKey['excelRawMonths']) {
+            const actualDepts = byKey['depts'] || depts;
+            Object.assign(rawMonths, migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts));
           }
-          if (Object.keys(trend).length > 0) setShiftTrend(trend);
+          if (Object.keys(rawMonths).length > 0) {
+            const filteredRaw = filterExpiredExcelMonths(rawMonths);
+            setExcelRawMonths(filteredRaw);
+            const excl = filterExpiredExceptions(byKey['exceptionMonths'] || []);
+            const trend = {};
+            for (const [dId, deptRaw] of Object.entries(filteredRaw)) {
+              const recomp = computeShiftTrendFromRaw(deptRaw, excl);
+              if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend[dId] = recomp;
+            }
+            if (Object.keys(trend).length > 0) setShiftTrend(trend);
+          }
         }
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
         if (byKey['events_data']) setAllEvents(byKey['events_data']);
@@ -4668,17 +4676,25 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         const latestExcRT = filterExpiredExceptions(byKey['exceptionMonths'] || exceptionMonths);
-        if (byKey['excelRawMonths']) {
-          const actualDepts2 = byKey['depts'] || depts;
-          const migrated2 = migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts2);
-          const filteredRaw2 = filterExpiredExcelMonths(migrated2);
-          setExcelRawMonths(filteredRaw2);
-          const trend2 = {};
-          for (const [dId, deptRaw] of Object.entries(filteredRaw2)) {
-            const recomp = computeShiftTrendFromRaw(deptRaw, latestExcRT);
-            if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend2[dId] = recomp;
+        {
+          const perDeptKeys2 = Object.keys(byKey).filter(k => k.startsWith('excelRawMonths_'));
+          const rawMonths2 = {};
+          if (perDeptKeys2.length > 0) {
+            for (const k of perDeptKeys2) rawMonths2[k.slice('excelRawMonths_'.length)] = byKey[k];
+          } else if (byKey['excelRawMonths']) {
+            const actualDepts2 = byKey['depts'] || depts;
+            Object.assign(rawMonths2, migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts2));
           }
-          if (Object.keys(trend2).length > 0) setShiftTrend(trend2);
+          if (Object.keys(rawMonths2).length > 0) {
+            const filteredRaw2 = filterExpiredExcelMonths(rawMonths2);
+            setExcelRawMonths(filteredRaw2);
+            const trend2 = {};
+            for (const [dId, deptRaw] of Object.entries(filteredRaw2)) {
+              const recomp = computeShiftTrendFromRaw(deptRaw, latestExcRT);
+              if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend2[dId] = recomp;
+            }
+            if (Object.keys(trend2).length > 0) setShiftTrend(trend2);
+          }
         }
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         if (byKey['exceptionMonths']) setExceptionMonths(latestExcRT);
@@ -5181,8 +5197,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [exceptionMonths]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isInitializing.current) {
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'excelRawMonths', data_value:excelRawMonths, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-        .then(({error}) => { if(error) console.error('[excelRawMonths save]', error); });
+      for (const [deptId, deptRaw] of Object.entries(excelRawMonths)) {
+        supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:`excelRawMonths_${deptId}`, data_value:deptRaw, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+          .then(({error}) => { if(error) console.error('[excelRawMonths save]', deptId, error); });
+      }
     }
   }, [excelRawMonths]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -5489,7 +5507,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
-      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'excelRawMonths',data_value:next,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(({error})=>{if(error)console.error('[Excel import save]',error);});setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
+      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} onClose={()=>setGenerateWarnings(null)}/>}
