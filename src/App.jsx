@@ -2214,7 +2214,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [requiredStart, setRequiredStart] = useState(dept?.requiredStart || "");
   const [requiredEnd, setRequiredEnd] = useState(dept?.requiredEnd || "");
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length<shiftTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalThreshold:intervalThreshold!==""?Number(intervalThreshold):undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalThreshold:intervalThreshold!==""?Number(intervalThreshold):undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined}); };
   const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -4339,7 +4339,21 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts']) {
           deptsSkipSave.current = true;
-          setDepts(byKey['depts']);
+          // マイグレーション: DBにroleShiftTypesがない場合はDEFAULT_DEPTSから復元
+          const loaded = byKey['depts'];
+          const migrated = loaded.map(d => {
+            if (d.roleShiftTypes) return d;
+            const def = DEFAULT_DEPTS.find(dd => dd.id === d.id);
+            return def?.roleShiftTypes ? { ...d, roleShiftTypes: def.roleShiftTypes } : d;
+          });
+          setDepts(migrated);
+          // 復元があった場合はDBへ書き戻す（次回から正しく機能させる）
+          if (migrated.some((d, i) => d !== loaded[i])) {
+            setTimeout(() => {
+              supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:migrated, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+                .then(({error}) => { if (!error) console.log('[migration] roleShiftTypes をDBへ復元保存しました'); });
+            }, 3000);
+          }
         } else {
           // 新規ユーザーのみ: エラーなしでデータが存在しない場合にデフォルトを保存
           const defaultDepts = deptsRef.current;
