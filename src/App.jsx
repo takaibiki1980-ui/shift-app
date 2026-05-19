@@ -1498,6 +1498,58 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
+  // ★比率修復パス: minStaff保証後の比率乖離を実際のシフト変換で修正する
+  // minStaff slide 等で A1→A に崩れたスタッフのシフトを制約内で書き戻す
+  {
+    for (const s of ds) {
+      const sratio = s.shiftRatio || s.shiftRatioByMonth?.[mk];
+      if (!sratio) continue;
+      const ratioTotal = Object.values(sratio).reduce((sum, v) => sum + (v||0), 0);
+      if (ratioTotal <= 0) continue;
+      const allowed = getAllowedTypes(s);
+      const workDaysArr = Array.from({length:days},(_,i)=>i+1)
+        .filter(d => deptWork.has(res[s.id][d]) && res[s.id][d] !== '明け' && !lockedDays[s.id].has(d));
+      const totalWork = workDaysArr.length;
+      if (totalWork === 0) continue;
+      const targets = {}, actuals = {};
+      for (const [k, v] of Object.entries(sratio)) {
+        if (v > 0 && allowed.includes(k)) {
+          targets[k] = Math.round(totalWork * v / ratioTotal);
+          actuals[k] = workDaysArr.filter(d => res[s.id][d] === k).length;
+        }
+      }
+      console.log('[比率修復]', s.name, '目標:', JSON.stringify(targets), '実績:', JSON.stringify(actuals));
+      // 過多シフト → 過少シフトへの変換（制約チェック付き）
+      const fromShifts = Object.keys(targets).filter(k => (actuals[k]||0) > targets[k])
+        .sort((a,b) => (actuals[b]||0)-targets[b] - ((actuals[a]||0)-targets[a]));
+      for (const fromShift of fromShifts) {
+        const fromDays = workDaysArr.filter(d => res[s.id][d] === fromShift);
+        const toShifts = Object.keys(targets).filter(k => k !== fromShift && targets[k] > (actuals[k]||0))
+          .sort((a,b) => targets[b]-(actuals[b]||0) - (targets[a]-(actuals[a]||0)));
+        for (const toShift of toShifts) {
+          const canConvert = Math.min((actuals[fromShift]||0)-targets[fromShift], targets[toShift]-(actuals[toShift]||0));
+          let converted = 0;
+          for (const d of fromDays) {
+            if (converted >= canConvert) break;
+            if (res[s.id][d] !== fromShift) continue;
+            const prev = res[s.id][d-1], next = res[s.id][d+1];
+            if (isBadTransition(prev, toShift)) continue;
+            if (isBadTransition(toShift, next)) continue;
+            const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
+            if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
+            const toCnt = ds.filter(sx => res[sx.id][d] === toShift).length;
+            if (toCnt >= (maxStaff[toShift] ?? 99)) continue;
+            res[s.id][d] = toShift;
+            actuals[fromShift]--;
+            actuals[toShift] = (actuals[toShift]||0) + 1;
+            converted++;
+          }
+        }
+      }
+      console.log('[比率修復] 完了', s.name, '実績:', JSON.stringify(actuals));
+    }
+  }
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
@@ -1612,9 +1664,9 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
   // ★勤務比率乖離ペナルティ（1%乖離ごとに50点: 役職制限5000点より軽い誘導）
   for (const s of ds) {
     const ratio = s.shiftRatio || s.shiftRatioByMonth?.[mk];
-    if (!ratio) continue;
+    if (!ratio) { continue; }
     const ratioTotal = Object.values(ratio).reduce((sum, v) => sum + (v || 0), 0);
-    if (ratioTotal <= 0) continue;
+    if (ratioTotal <= 0) { continue; }
     const workCounts = {};
     let totalWork = 0;
     for (let d = 1; d <= days; d++) {
@@ -1624,12 +1676,15 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
       totalWork++;
     }
     if (totalWork === 0) continue;
+    let ratioPenalty = 0;
     Object.entries(ratio).forEach(([k, targetRate]) => {
       if (!targetRate || targetRate <= 0) return;
       const targetRatio = targetRate / ratioTotal;
       const actualRatio = (workCounts[k] || 0) / totalWork;
-      score += Math.abs(actualRatio - targetRatio) * 100 * 50;
+      ratioPenalty += Math.abs(actualRatio - targetRatio) * 100 * 50;
     });
+    console.log('[比率スコア]', s.name, 'ratio:', JSON.stringify(ratio), 'workCounts:', JSON.stringify(workCounts), 'penalty:', ratioPenalty);
+    score += ratioPenalty;
   }
   // ④⑤ 学習適合ペナルティ: 勤務日も休日も含む。1人1日あたり最大100点
   // ルール違反(10000点)を逆転しない範囲で公平性ペナルティ(2000点~)を上回るスケール
