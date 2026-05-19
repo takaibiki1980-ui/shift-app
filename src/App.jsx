@@ -1590,6 +1590,18 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
     if (hasNight) score += (varN / ds.length) * 500;
     score += (varW / ds.length) * 200;
   }
+  // 役職制限違反ペナルティ（ルール違反10000点級: 1件=5000点）
+  if (dept.roleShiftTypes) {
+    for (const s of ds) {
+      const ra = dept.roleShiftTypes[s.role];
+      if (!ra) continue;
+      for (let d = 1; d <= days; d++) {
+        const sh = res[s.id]?.[d];
+        if (!sh || !WORK.has(sh) || sh === '明け') continue;
+        if (!ra.includes(sh)) score += 5000;
+      }
+    }
+  }
   // ④⑤ 学習適合ペナルティ: 勤務日も休日も含む。1人1日あたり最大100点
   // ルール違反(10000点)を逆転しない範囲で公平性ペナルティ(2000点~)を上回るスケール
   const LEARN_TYPES = new Set(dept.shiftTypes.filter(k => k !== '夜勤' && k !== '明け'));
@@ -1670,6 +1682,12 @@ function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}
           // 遷移ルール違反チェック
           if (badTrans(p1, v2) || badTrans(v2, n1)) continue;
           if (badTrans(p2, v1) || badTrans(v1, n2)) continue;
+          // 役職制限チェック: スワップ後のシフトが相手役職に許可されているか
+          const ra1 = dept.roleShiftTypes?.[s1.role];
+          const ra2 = dept.roleShiftTypes?.[s2.role];
+          const isRoleWork = (v) => v !== '休み' && v !== '希望休' && v !== '有休' && v !== '明け';
+          if (ra1 && isRoleWork(v2) && !ra1.includes(v2)) continue;
+          if (ra2 && isRoleWork(v1) && !ra2.includes(v1)) continue;
           // スワップ試行
           res[s1.id][d] = v2; res[s2.id][d] = v1;
           const newScore = scoreShifts(res, ds, dept, days, year, month, shiftTrend);
