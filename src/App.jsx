@@ -1612,7 +1612,8 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
               : (typeof trend[shift] === 'number' ? trend[shift] : 0);
             score += (1 - predictedProb) * 100;
           } else if (LEARN_REST.has(shift)) {
-            const restProb = trend.dowRestRate?.[dow] ?? null;
+            const dow6 = (dow + 6) % 7; // dowRestRateは月曜=0インデックスで格納
+            const restProb = trend.dowRestRate?.[dow6] ?? null;
             if (restProb != null) score += (1 - restProb) * 100;
           }
         }
