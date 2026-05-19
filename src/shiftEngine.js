@@ -383,7 +383,12 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         const weekday = new Date(year, month, d).getDay();
         if (trend?.dowShiftRate?.[weekday]?.[k] != null) return Math.max(0.01, trend.dowShiftRate[weekday][k]);
         if (trend && typeof trend[k] === 'number') return Math.max(0.01, trend[k]);
-        // ★役職制限あり+個人Excelデータなし: 許可シフト内で均等（deptAvg偏りに引っ張られない）
+        // ★勤務比率設定あり+個人trendなし: UIで入力した比率を重みとして直接使用
+        if (!trend && ratio) {
+          const ratioTotal = allowed.reduce((sum, j) => sum + (ratio[j] || 0), 0);
+          if (ratioTotal > 0) return Math.max(0.01, (ratio[k] || 0.01) / ratioTotal);
+        }
+        // ★役職制限あり+比率もtrendもなし: 許可シフト内で均等
         if (!trend && dept.roleShiftTypes?.[s.role]) return 1 / allowed.length;
         if (deptAvgRatio?.[k] != null) return Math.max(0.01, deptAvgRatio[k]);
         return 1 / allowed.length;
@@ -829,6 +834,28 @@ export function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
         if (!ra.includes(sh)) score += 5000;
       }
     }
+  }
+  // ★勤務比率乖離ペナルティ（1%乖離ごとに50点: 役職制限5000点より軽い誘導）
+  for (const s of ds) {
+    const ratio = s.shiftRatio || s.shiftRatioByMonth?.[mk];
+    if (!ratio) continue;
+    const ratioTotal = Object.values(ratio).reduce((sum, v) => sum + (v || 0), 0);
+    if (ratioTotal <= 0) continue;
+    const workCounts = {};
+    let totalWork = 0;
+    for (let d = 1; d <= days; d++) {
+      const sh = res[s.id]?.[d];
+      if (!sh || !WORK.has(sh) || sh === '明け') continue;
+      workCounts[sh] = (workCounts[sh] || 0) + 1;
+      totalWork++;
+    }
+    if (totalWork === 0) continue;
+    Object.entries(ratio).forEach(([k, targetRate]) => {
+      if (!targetRate || targetRate <= 0) return;
+      const targetRatio = targetRate / ratioTotal;
+      const actualRatio = (workCounts[k] || 0) / totalWork;
+      score += Math.abs(actualRatio - targetRatio) * 100 * 50;
+    });
   }
   // ④⑤ 学習適合ペナルティ: 勤務日も休日も含む。1人1日あたり最大100点
   // ルール違反(10000点)を逆転しない範囲で公平性ペナルティ(2000点~)を上回るスケール
