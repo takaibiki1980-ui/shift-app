@@ -383,6 +383,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         const weekday = new Date(year, month, d).getDay();
         if (trend?.dowShiftRate?.[weekday]?.[k] != null) return Math.max(0.01, trend.dowShiftRate[weekday][k]);
         if (trend && typeof trend[k] === 'number') return Math.max(0.01, trend[k]);
+        // ★役職制限あり+個人Excelデータなし: 許可シフト内で均等（deptAvg偏りに引っ張られない）
+        if (!trend && dept.roleShiftTypes?.[s.role]) return 1 / allowed.length;
         if (deptAvgRatio?.[k] != null) return Math.max(0.01, deptAvgRatio[k]);
         return 1 / allowed.length;
       };

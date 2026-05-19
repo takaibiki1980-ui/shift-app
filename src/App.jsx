@@ -1157,6 +1157,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const weekday = new Date(year, month, d).getDay();
         if (trend?.dowShiftRate?.[weekday]?.[k] != null) return Math.max(0.01, trend.dowShiftRate[weekday][k]);
         if (trend && typeof trend[k] === 'number') return Math.max(0.01, trend[k]);
+        // ★役職制限あり+個人Excelデータなし: 許可シフト内で均等（deptAvg偏りに引っ張られない）
+        if (!trend && dept.roleShiftTypes?.[s.role]) return 1 / allowed.length;
         if (deptAvgRatio?.[k] != null) return Math.max(0.01, deptAvgRatio[k]);
         return 1 / allowed.length;
       };
@@ -1861,6 +1863,20 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
     let sheetYearMonth = null, sy = null, sm = null;
     const row1Raw = dataRaw[0] || [];
     for (let ci = 0; ci < Math.min(row1Raw.length, 12); ci++) { const v = row1Raw[ci]; if (typeof v === "number" && v >= 2000 && v <= 2100) sy = v; if (typeof v === "number" && v >= 1 && v <= 12 && sy && ci > 0) { sm = v; break; } }
+    // ★シート名から年月を補完（令和/平成元号・YYYY年M月形式に対応）
+    if (!sy || !sm) {
+      const sn = sheetName.trim();
+      if (!sy) {
+        const my = sn.match(/(\d{4})[年\-\/]/);
+        if (my && +my[1] >= 2000 && +my[1] <= 2100) sy = +my[1];
+        if (!sy) { const mr = sn.match(/令和(\d{1,2})/); if (mr) sy = 2018 + +mr[1]; }
+        if (!sy) { const mh = sn.match(/平成(\d{1,2})/); if (mh) sy = 1988 + +mh[1]; }
+      }
+      if (!sm) {
+        const mm = sn.match(/[年\-\/](\d{1,2})[月]?$/) || sn.match(/^(\d{1,2})[月]/);
+        if (mm && +mm[1] >= 1 && +mm[1] <= 12) sm = +mm[1];
+      }
+    }
     let dateRowFound = false;
     for (const row of dataCellDates) {
       if (!row) continue;
@@ -2444,7 +2460,8 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
     setStatus("parsing"); setErrorMsg(""); setUnmatchedNames([]);
     try {
       const buf=await file.arrayBuffer(); const wb=window.XLSX.read(buf,{type:"array"}); const trend=parseShiftExcel(wb, customShiftKeys);
-      if(Object.keys(trend).length===0){setErrorMsg("シフトデータを読み取れませんでした。");setStatus("error");if(fileRef.current)fileRef.current.value="";return;}
+      const trendStaffCount = Object.keys(trend).filter(k=>k!=='_months'&&k!=='_rawByMonth').length;
+      if(trendStaffCount===0){setErrorMsg("シフトデータを読み取れませんでした。シート名に年月（例: 2026年5月・令和8年5月・5月）が含まれているか確認してください。");setStatus("error");if(fileRef.current)fileRef.current.value="";return;}
       // ① Excelの名前とアプリのスタッフ名を照合して不一致を検出
       const excelNames = new Set();
       Object.values(trend._rawByMonth||{}).forEach(monthData => Object.keys(monthData).forEach(n => excelNames.add(n)));
@@ -2498,7 +2515,7 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
         {status==="parsing"&&<div style={{textAlign:"center",color:"#2BBFBA",padding:"16px 0"}}>⏳ 解析中…</div>}
         {status==="error"&&<div style={{background:"#fff0f0",border:"1px solid #dc2626",borderRadius:8,padding:"10px 14px",color:"#f87171",fontSize:12,marginBottom:14}}>{errorMsg}</div>}
         {status==="done"&&preview&&(<div>
-          <div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>✅ {Object.keys(preview).filter(k=>k!=='_months').length} 名分のデータを読み込みました</div>
+          <div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>✅ {Object.keys(preview).filter(k=>k!=='_months'&&k!=='_rawByMonth').length} 名分のデータを読み込みました</div>
           {unmatchedNames.length>0&&(
             <div style={{background:"#fff8e1",border:"2px solid #f59e0b",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
               <div style={{color:"#b45309",fontWeight:800,fontSize:12,marginBottom:6}}>⚠️ アプリに存在しないスタッフ名（{unmatchedNames.length}件）— 学習対象外になります</div>
