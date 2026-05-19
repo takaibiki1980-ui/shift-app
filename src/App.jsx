@@ -1298,6 +1298,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const cnts = {};
         dayTypes.forEach(k => { cnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][target] === k).length; });
         const alt = dayTypes.find(k => {
+          if (!getAllowedTypes(s).includes(k)) return false;
           if (isBadTransition(p, k)) return false;
           if (isBadTransition(k, n)) return false;
           return cnts[k] < (maxStaff[k] ?? 99);
