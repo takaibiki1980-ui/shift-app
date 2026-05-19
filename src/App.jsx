@@ -847,9 +847,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const intervalThreshold = dept.intervalThreshold ?? null;
   const isBadTransition = (prev, curr) => {
     if (!prev || !curr) return false;
+    // ★インターバル特例部署（栄養科等）: 時間インターバルのみで判定、文字ルールは不使用
     if (intervalThreshold != null) return shiftIntervalHours(prev, curr, dept) < intervalThreshold;
-    // 遅番→早番、日勤→早番 のみNG（遅番→日勤は許可）
-    return (prev === "遅番" || prev === "日勤" || prev === "夜勤") && curr === "早番";
+    // ★通常部署（介護職等）: 現場防衛のため3パターンを完全禁止
+    //   遅番→早番（11時間）、遅番→日勤（12.5時間）、日勤→早番（13.5時間）
+    return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
   };
   const canRest = (id, d) => {
     if (res[id][d - 1] === "明け") return false;
