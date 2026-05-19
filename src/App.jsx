@@ -1893,21 +1893,23 @@ function ShiftBadge({ type, defs }) {
   return <span style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:3,padding:"1px 4px",fontSize:10,fontWeight:800,display:"inline-block",minWidth:22,textAlign:"center",lineHeight:"18px"}}>{s.short}</span>;
 }
 
-function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount }) {
+function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount, roleAllowed }) {
   const ref = useRef();
   useEffect(() => { const h = (e) => { if(ref.current && !ref.current.contains(e.target)) onClose(); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [onClose]);
   const [pos, setPos] = useState({x,y});
   useEffect(() => { setPos({ x: Math.min(x, window.innerWidth-200), y: Math.min(y, window.innerHeight-320) }); }, [x,y]);
   const customWorkKeys = (customDefs||[]).filter(cd=>cd.key&&deptShiftTypes?.includes(cd.key));
   const isBulk = selectionCount > 1;
+  const visibleKeys = roleAllowed ? SHIFT_KEYS_MANUAL.filter(k=>!WORK_TYPES.has(k)||roleAllowed.includes(k)) : SHIFT_KEYS_MANUAL;
   return (
     <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#ffffff",border:"1px solid #90cbc8",borderRadius:10,padding:6,boxShadow:"0 12px 40px #000a",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170}}>
       {isBulk&&<div style={{gridColumn:"1/-1",background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:6,padding:"4px 8px",marginBottom:2,fontSize:11,color:"#1d4ed8",fontWeight:700,textAlign:"center"}}>📋 {selectionCount}セルに一括適用</div>}
+      {roleAllowed&&<div style={{gridColumn:"1/-1",background:"#fff3cd",border:"1px solid #e6a817",borderRadius:6,padding:"3px 8px",marginBottom:2,fontSize:10,color:"#7a5000",textAlign:"center"}}>役職制限: {roleAllowed.join("・")}のみ</div>}
       {customWorkKeys.length>0&&<>
         {customWorkKeys.map(cd => { const s=getShiftDef(cd.key,customDefs); return <button key={cd.key} onClick={()=>onSelect(cd.key)} style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:s.bg,borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#6ab5b2"}}>{cd.key}</span></button>; })}
         <div style={{gridColumn:"1/-1",borderTop:"1px solid #b8deda",margin:"2px 0"}}/>
       </>}
-      {SHIFT_KEYS_MANUAL.map(k => { const s=SHIFTS[k]; return <button key={k||"empty"} onClick={()=>onSelect(k)} style={{background:s.bg||"#ffffff",color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:k?s.bg:"transparent",borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#6ab5b2"}}>{k||"クリア"}</span></button>; })}
+      {visibleKeys.map(k => { const s=SHIFTS[k]; return <button key={k||"empty"} onClick={()=>onSelect(k)} style={{background:s.bg||"#ffffff",color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:k?s.bg:"transparent",borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#6ab5b2"}}>{k||"クリア"}</span></button>; })}
     </div>
   );
 }
@@ -5109,8 +5111,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (isLockedRef.current) return;
     if (isMonthLoading) return; // 月ロード中は操作ブロック
     activeCellRef.current = { staffId, day, time: Date.now() }; // アクティブセル記録（Realtime上書き保護）
-    setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const idx=SHIFT_KEYS.indexOf(cur);const next=SHIFT_KEYS[(idx+1)%SHIFT_KEYS.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
-  }, [setDeptShifts]);
+    setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const s=staffList.find(x=>x.id===staffId);const roleAllowed=s?dept?.roleShiftTypes?.[s.role]:null;const keys=roleAllowed?SHIFT_KEYS.filter(k=>!WORK_TYPES.has(k)||roleAllowed.includes(k)):SHIFT_KEYS;const idx=keys.indexOf(cur);const next=keys[(idx+1)%keys.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
+  }, [setDeptShifts, staffList, dept]);
 
   const handleRightClick = useCallback((staffId, day, e, selCells) => {
     if (isLockedRef.current) return;
@@ -5281,7 +5283,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       </div>
 
       {jissekiModal&&<JissekiInputModal staffName={jissekiModal.staff.name} day={jissekiModal.day} year={year} month={month} plannedShift={jissekiModal.planned} record={allJisseki[activeDeptId]?.[jissekiModal.staff.id]?.[jissekiModal.day]} deptShiftTypes={dept?.shiftTypes||["早番","日勤","遅番","夜勤"]} onSave={rec=>{saveJisseki(jissekiModal.staff.id,jissekiModal.day,rec);setJissekiModal(null);}} onClear={()=>{clearJisseki(jissekiModal.staff.id,jissekiModal.day);setJissekiModal(null);}} onClose={()=>setJissekiModal(null)}/>}
-      {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1}/>}
+      {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[staffList.find(s=>s.id===ctxMenu.staffId)?.role]??null:null}/>}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
