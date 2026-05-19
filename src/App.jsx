@@ -500,20 +500,44 @@ function computeShiftTrendFromRaw(rawByMonth, exceptionMonths = []) {
       if (d.dowShift) for (let i=0;i<7;i++) { COUNT_KEYS.forEach(k => { trendMap[name].dowShift[i][k]=(trendMap[name].dowShift[i][k]||0)+(d.dowShift[i]?.[k]||0); }); }
     }
   }
+  // ②③ 部署平均を計算（データ薄スタッフ・薄曜日のスムージング基準）
+  const deptEntries = Object.values(trendMap).filter(d => d.total >= 3);
+  const deptAvgFreq = {}, deptAvgDow = Array.from({length:7},()=>({})), deptAvgRest = [null,null,null,null,null,null,null];
+  if (deptEntries.length > 0) {
+    COUNT_KEYS.forEach(k => { deptAvgFreq[k] = deptEntries.reduce((s,d)=>s+(d.total>0?d[k]/d.total:0),0)/deptEntries.length; });
+    for (let i = 0; i < 7; i++) {
+      const totW = deptEntries.reduce((s,d)=>s+Object.values(d.dowShift[i]).reduce((a,b)=>a+b,0),0);
+      COUNT_KEYS.forEach(k=>{ deptAvgDow[i][k]=totW>0?deptEntries.reduce((s,d)=>s+(d.dowShift[i][k]||0),0)/totW:0; });
+      const totR = deptEntries.reduce((s,d)=>s+d.dowTotal[i],0);
+      deptAvgRest[i] = totR>0 ? deptEntries.reduce((s,d)=>s+d.dowRest[i],0)/totR : null;
+    }
+  }
   const result = {};
   for (const [name, d] of Object.entries(trendMap)) {
-    if (d.total < 3) continue;
+    if (d.total < 1) continue; // 完全0件のみスキップ、薄いデータは部署平均でスムージング
+    const alpha = Math.min(1, d.total / 3); // 信頼度: 3件以上で個人データ100%、未満は部署平均へブレンド
     const freq = {};
-    COUNT_KEYS.forEach(k => { freq[k] = d.total > 0 ? d[k]/d.total : 0; });
-    // dowShiftRate[dow] = {早番:確率, 日勤:確率, ...} 曜日別勤務種別確率
+    COUNT_KEYS.forEach(k => {
+      const raw = d.total > 0 ? d[k]/d.total : 0;
+      freq[k] = raw * alpha + (deptAvgFreq[k] || 0) * (1 - alpha);
+    });
+    // dowShiftRate[dow] = {早番:確率, 日勤:確率, ...} 曜日別勤務種別確率（薄曜日は部署平均ブレンド）
     const dowShiftRate = d.dowShift.map((shiftCounts, i) => {
       const workTot = Object.values(shiftCounts).reduce((s,v)=>s+v,0);
-      if (workTot < 2) return null;
+      const da = Math.min(1, workTot / 2);
       const rate = {};
-      COUNT_KEYS.forEach(k => { if (shiftCounts[k]) rate[k] = shiftCounts[k] / workTot; });
+      COUNT_KEYS.forEach(k => {
+        const raw = workTot > 0 ? (shiftCounts[k]||0)/workTot : 0;
+        rate[k] = raw * da + (deptAvgDow[i][k] || 0) * (1 - da);
+      });
       return rate;
     });
-    result[name] = { ...freq, dowRestRate: d.dowTotal.map((tot,i) => tot>0 ? d.dowRest[i]/tot : null), dowShiftRate, _workTotal: d.total };
+    const dowRestRate = d.dowTotal.map((tot, i) => {
+      if (tot === 0) return deptAvgRest[i];
+      const raw = d.dowRest[i]/tot, ra = Math.min(1, tot/3);
+      return raw * ra + (deptAvgRest[i] ?? raw) * (1 - ra);
+    });
+    result[name] = { ...freq, dowRestRate, dowShiftRate, _workTotal: d.total };
   }
   result._months = Object.keys(rawByMonth||{}).filter(m=>!exceptions.has(m)).sort();
   return result;
@@ -629,29 +653,57 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
       }
     }
   }
+  // ②③ 部署平均を事前計算（スムージング基準: データ豊富スタッフのみ）
+  const deptStaffL = staffList.filter(s => counts[s.id] && totals[s.id] >= 10);
+  const deptAvgFreqL = {}, deptAvgDowL = Array.from({length:7},()=>({})), deptAvgRestL = [null,null,null,null,null,null,null];
+  if (deptStaffL.length > 0) {
+    const allShiftKeys = new Set(deptStaffL.flatMap(s => Object.keys(counts[s.id])));
+    for (const k of allShiftKeys) {
+      deptAvgFreqL[k] = deptStaffL.reduce((s,st)=>s+(counts[st.id][k]||0)/totals[st.id],0)/deptStaffL.length;
+    }
+    for (let i = 0; i < 7; i++) {
+      const totW = deptStaffL.reduce((s,st)=>s+Object.values(dowShifts[st.id]?.[i]||{}).reduce((a,b)=>a+b,0),0);
+      const allDK = new Set(deptStaffL.flatMap(s=>Object.keys(dowShifts[s.id]?.[i]||{})));
+      for (const k of allDK) { deptAvgDowL[i][k]=totW>0?deptStaffL.reduce((s,st)=>s+(dowShifts[st.id]?.[i]?.[k]||0),0)/totW:0; }
+      const totR = deptStaffL.reduce((s,st)=>s+(dowTotalsR[st.id]?.[i]||0),0);
+      deptAvgRestL[i] = totR>0 ? deptStaffL.reduce((s,st)=>s+(dowRests[st.id]?.[i]||0),0)/totR : null;
+    }
+  }
   const result = {}, monthCounts = {};
   for (const staff of staffList) {
-    if (!counts[staff.id] || totals[staff.id] < 10) continue;
+    if (!counts[staff.id] || totals[staff.id] < 1) continue; // 完全0件のみスキップ
+    const alpha = Math.min(1, totals[staff.id] / 10);
     const freq = {};
-    for (const [shift, cnt] of Object.entries(counts[staff.id])) freq[shift] = cnt / totals[staff.id];
-    // 遷移確率を正規化して付与
-    const transitionRate = {};
-    for (const [prev, toCounts] of Object.entries(transitions[staff.id] || {})) {
-      const tot = transitionTotals[staff.id][prev] || 1;
-      transitionRate[prev] = {};
-      for (const [curr, cnt] of Object.entries(toCounts)) transitionRate[prev][curr] = cnt / tot;
+    for (const k of new Set([...Object.keys(counts[staff.id]), ...Object.keys(deptAvgFreqL)])) {
+      const raw = totals[staff.id] > 0 ? (counts[staff.id][k]||0)/totals[staff.id] : 0;
+      freq[k] = raw * alpha + (deptAvgFreqL[k] || 0) * (1 - alpha);
     }
-    // 曜日別シフト確率を正規化して付与
-    const dowShiftRate = (dowShifts[staff.id] || [{},{},{},{},{},{},{}]).map(shiftCounts => {
+    // 遷移確率はデータ十分なスタッフのみ（スムージング対象外）
+    const transitionRate = {};
+    if (totals[staff.id] >= 10) {
+      for (const [prev, toCounts] of Object.entries(transitions[staff.id] || {})) {
+        const tot = transitionTotals[staff.id][prev] || 1;
+        transitionRate[prev] = {};
+        for (const [curr, cnt] of Object.entries(toCounts)) transitionRate[prev][curr] = cnt / tot;
+      }
+    }
+    // 曜日別シフト確率（薄曜日は部署平均ブレンド）
+    const dowShiftRate = (dowShifts[staff.id] || [{},{},{},{},{},{},{}]).map((shiftCounts, i) => {
       const workTot = Object.values(shiftCounts).reduce((s,v)=>s+v,0);
-      if (workTot < 2) return null;
+      const da = Math.min(1, workTot / 2);
       const rate = {};
-      for (const [k, cnt] of Object.entries(shiftCounts)) rate[k] = cnt / workTot;
-      return rate;
+      const dKeys = new Set([...Object.keys(shiftCounts), ...Object.keys(deptAvgDowL[i])]);
+      for (const k of dKeys) {
+        const raw = workTot > 0 ? (shiftCounts[k]||0)/workTot : 0;
+        rate[k] = raw * da + (deptAvgDowL[i][k] || 0) * (1 - da);
+      }
+      return Object.keys(rate).length > 0 ? rate : null;
     });
-    const dowRestRate = dowTotalsR[staff.id]
-      ? dowTotalsR[staff.id].map((tot, i) => tot > 0 ? (dowRests[staff.id]?.[i] || 0) / tot : null)
-      : [null,null,null,null,null,null,null];
+    const dowRestRate = (dowTotalsR[staff.id] || [0,0,0,0,0,0,0]).map((tot, i) => {
+      if (tot === 0) return deptAvgRestL[i];
+      const raw = (dowRests[staff.id]?.[i]||0)/tot, ra = Math.min(1, tot/3);
+      return raw * ra + (deptAvgRestL[i] ?? raw) * (1 - ra);
+    });
     result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate };
     monthCounts[staff.name] = monthSets[staff.id].size;
   }
@@ -675,9 +727,9 @@ function mergeShiftTrends(excelTrend, learnedTrend) {
   for (const name of allNames) {
     const ex = excelTrend[name], le = learnedTrend[name];
     if (ex && le) {
-      // 新ブレンド比率: n=1-3→30%DB, n=6→80%DB, n12+→95%DB
+      // 自動進化ウェイト: 1-2ヶ月=Excel100%/App0%, 3-5ヶ月=50/50, 6ヶ月+=Excel10%/App90%
       const n = monthCounts[name] || 1;
-      const lw = n <= 3 ? 0.30 : Math.min(0.95, 0.30 + (n - 3) * (0.50 / 3));
+      const lw = n <= 2 ? 0.0 : n <= 5 ? 0.5 : 0.9;
       const merged = {};
       for (const k of new Set([...Object.keys(ex), ...Object.keys(le)])) {
         // transitionRate・dowRestRate・dowShiftRate・_workTotal は数値ブレンド対象外
@@ -1538,9 +1590,10 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
     if (hasNight) score += (varN / ds.length) * 500;
     score += (varW / ds.length) * 200;
   }
-  // 学習適合ペナルティ: ルール違反ゼロ同士の最終判定に学習が機能する
-  // 1人1日あたり最大100点。ルール違反(10000点)より低く、公平性ペナルティと競合できるスケール
+  // ④⑤ 学習適合ペナルティ: 勤務日も休日も含む。1人1日あたり最大100点
+  // ルール違反(10000点)を逆転しない範囲で公平性ペナルティ(2000点~)を上回るスケール
   const LEARN_TYPES = new Set(dept.shiftTypes.filter(k => k !== '夜勤' && k !== '明け'));
+  const LEARN_REST = new Set(['休み', '希望休']); // 休日パターンもシンクロ率に100%直結
   if (shiftTrend && ds.length > 0) {
     const trendKeys = Object.keys(shiftTrend).filter(k => k !== '_months' && k !== '_monthCounts');
     if (trendKeys.length > 0) {
@@ -1550,13 +1603,18 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
         if (!trend) continue;
         for (let d = 1; d <= days; d++) {
           const shift = res[s.id]?.[d];
-          if (!shift || !LEARN_TYPES.has(shift)) continue;
+          if (!shift) continue;
           const dow = new Date(year, month, d).getDay();
-          const dowRate = trend.dowShiftRate?.[dow] ?? null;
-          const predictedProb = dowRate
-            ? (dowRate[shift] ?? 0)
-            : (typeof trend[shift] === 'number' ? trend[shift] : 0);
-          score += (1 - predictedProb) * 100;
+          if (LEARN_TYPES.has(shift)) {
+            const dowRate = trend.dowShiftRate?.[dow] ?? null;
+            const predictedProb = dowRate
+              ? (dowRate[shift] ?? 0)
+              : (typeof trend[shift] === 'number' ? trend[shift] : 0);
+            score += (1 - predictedProb) * 100;
+          } else if (LEARN_REST.has(shift)) {
+            const restProb = trend.dowRestRate?.[dow] ?? null;
+            if (restProb != null) score += (1 - restProb) * 100;
+          }
         }
       }
     }
@@ -2358,13 +2416,23 @@ function PinModal({ deptLabel, onVerify, onClose }) {
 
 function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm, exceptionMonths = [], onExceptionMonthsChange, excelRawMonths = {}, onExcelRawMonthsChange, onAutoSetRatios, staffList = [], customShiftKeys = [] }) {
   const [status, setStatus] = useState("idle"), [preview, setPreview] = useState(null), [errorMsg, setErrorMsg] = useState("");
+  const [unmatchedNames, setUnmatchedNames] = useState([]); // ① 名前不一致スタッフ一覧
   const [exInput, setExInput] = useState(""); // "YYYY-M" 入力用
   const fileRef = useRef(null);
   const handleFile = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     if (!window.XLSX) { setErrorMsg("ライブラリ読み込み中…"); setStatus("error"); return; }
-    setStatus("parsing"); setErrorMsg("");
-    try { const buf=await file.arrayBuffer(); const wb=window.XLSX.read(buf,{type:"array"}); const trend=parseShiftExcel(wb, customShiftKeys); if(Object.keys(trend).length===0){setErrorMsg("シフトデータを読み取れませんでした。");setStatus("error");if(fileRef.current)fileRef.current.value="";return;} setPreview(trend); setStatus("done"); }
+    setStatus("parsing"); setErrorMsg(""); setUnmatchedNames([]);
+    try {
+      const buf=await file.arrayBuffer(); const wb=window.XLSX.read(buf,{type:"array"}); const trend=parseShiftExcel(wb, customShiftKeys);
+      if(Object.keys(trend).length===0){setErrorMsg("シフトデータを読み取れませんでした。");setStatus("error");if(fileRef.current)fileRef.current.value="";return;}
+      // ① Excelの名前とアプリのスタッフ名を照合して不一致を検出
+      const excelNames = new Set();
+      Object.values(trend._rawByMonth||{}).forEach(monthData => Object.keys(monthData).forEach(n => excelNames.add(n)));
+      const unmatched = [...excelNames].filter(n => !staffList.some(s => nameMatch(n, s.name)));
+      setUnmatchedNames(unmatched);
+      setPreview(trend); setStatus("done");
+    }
     catch(err) { setErrorMsg("読み込み失敗: "+err.message); setStatus("error"); }
     finally { if(fileRef.current)fileRef.current.value=""; }
   };
@@ -2410,7 +2478,19 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
         <button onClick={()=>fileRef.current?.click()} style={{width:"100%",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:9,padding:"13px 0",cursor:"pointer",fontSize:14,fontWeight:800,marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>📂 Excelファイルを選択</button>
         {status==="parsing"&&<div style={{textAlign:"center",color:"#2BBFBA",padding:"16px 0"}}>⏳ 解析中…</div>}
         {status==="error"&&<div style={{background:"#fff0f0",border:"1px solid #dc2626",borderRadius:8,padding:"10px 14px",color:"#f87171",fontSize:12,marginBottom:14}}>{errorMsg}</div>}
-        {status==="done"&&preview&&(<div><div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>✅ {Object.keys(preview).filter(k=>k!=='_months').length} 名分のデータを読み込みました</div><div style={{display:"flex",gap:10}}><button onClick={()=>onImport(preview)} style={{flex:1,background:"linear-gradient(135deg,#2d8a52,#2a7a6e)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div></div>)}
+        {status==="done"&&preview&&(<div>
+          <div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>✅ {Object.keys(preview).filter(k=>k!=='_months').length} 名分のデータを読み込みました</div>
+          {unmatchedNames.length>0&&(
+            <div style={{background:"#fff8e1",border:"2px solid #f59e0b",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
+              <div style={{color:"#b45309",fontWeight:800,fontSize:12,marginBottom:6}}>⚠️ アプリに存在しないスタッフ名（{unmatchedNames.length}件）— 学習対象外になります</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
+                {unmatchedNames.map(n=><span key={n} style={{background:"#fef3c7",border:"1px solid #f59e0b",borderRadius:12,padding:"2px 8px",fontSize:11,color:"#92400e"}}>{n}</span>)}
+              </div>
+              <div style={{fontSize:10,color:"#92400e"}}>スタッフ設定の名前を上記に合わせるか、Excelの名前を修正してください。</div>
+            </div>
+          )}
+          <div style={{display:"flex",gap:10}}><button onClick={()=>onImport(preview)} style={{flex:1,background:"linear-gradient(135deg,#2d8a52,#2a7a6e)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
+        </div>)}
         {/* インポート済み月一覧 */}
         {Object.keys(excelRawMonths).length > 0 && (
           <div style={{marginTop:20,borderTop:"1px solid #b8deda",paddingTop:16}}>
