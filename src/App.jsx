@@ -3031,7 +3031,29 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
     return result;
   }, [shifts, ds, year, month, dept.shiftTypes]);
 
+  const roleViolationCount = useMemo(() => {
+    if (!dept.roleShiftTypes) return 0;
+    let count = 0;
+    for (const s of ds) {
+      const ra = dept.roleShiftTypes[s.role];
+      if (!ra) continue;
+      for (let d = 1; d <= days; d++) {
+        const sh = shifts[s.id]?.[d] || '';
+        if (!sh || !deptWork.has(sh) || sh === '明け') continue;
+        if (!ra.includes(sh)) count++;
+      }
+    }
+    return count;
+  }, [shifts, ds, days, dept.roleShiftTypes, deptWork]);
+
   return (
+    <div>
+    {roleViolationCount > 0 && (
+      <div style={{background:"#fee2e2",border:"1px solid #ef4444",borderRadius:6,padding:"6px 12px",marginBottom:6,color:"#991b1b",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
+        <span>⚠️</span>
+        <span>役職制限違反: {roleViolationCount}件 — 赤いセルに許可外シフトが入っています</span>
+      </div>
+    )}
     <div style={{overflowX:"auto",overflowY:"visible",userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
         <thead>
@@ -3072,7 +3094,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&type&&deptWork.has(type)&&type!=="明け"&&!_ra.includes(type);
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -3107,6 +3130,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
           </tr>
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
