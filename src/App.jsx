@@ -1916,8 +1916,9 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
     sampleDataRows.forEach(row => { row.forEach((cell, ci) => { if (isShiftCell(cell) && (detectedShiftStart === -1 || ci < detectedShiftStart)) detectedShiftStart = ci; }); });
     if (detectedShiftStart < 0) return;
     const nameColVotes = {};
-    sampleDataRows.slice(0, 10).forEach(row => { for (let ci = 0; ci < detectedShiftStart; ci++) { const val = String(row[ci] ?? "").trim(); if (val.length >= 2 && !/^\d/.test(val) && !isShiftCell(val)) nameColVotes[ci] = (nameColVotes[ci] || 0) + 1; } });
-    const votedNameCol = Object.entries(nameColVotes).sort((a,b) => b[1]-a[1])[0];
+    const nameColUnique = {};
+    sampleDataRows.slice(0, 10).forEach(row => { for (let ci = 0; ci < detectedShiftStart; ci++) { const val = String(row[ci] ?? "").trim(); if (val.length >= 2 && !/^\d/.test(val) && !isShiftCell(val)) { nameColVotes[ci] = (nameColVotes[ci] || 0) + 1; if (!nameColUnique[ci]) nameColUnique[ci] = new Set(); nameColUnique[ci].add(val); } } });
+    const votedNameCol = Object.entries(nameColVotes).sort((a, b) => { if (b[1] !== a[1]) return b[1] - a[1]; return (nameColUnique[b[0]]?.size || 0) - (nameColUnique[a[0]]?.size || 0); })[0];
     if (!votedNameCol) return;
     const detectedNameCol = +votedNameCol[0];
     const colToDow = {};
