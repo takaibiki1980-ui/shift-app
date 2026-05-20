@@ -2527,6 +2527,7 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
   const DOW_SET = new Set(["月","火","水","木","金","土","日"]);
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const rows = tsvText.trim().split(/\r?\n/).map(r => r.split('\t'));
+  console.log("[parseExcelPasteData] rows:", rows.length, "first3:", rows.slice(0,3).map(r=>r.slice(0,10)));
   if (rows.length < 2) return null;
   // Format B detection: row with 20+ sequential integers starting from 1
   let dateRowIdx = -1, dateColOffset = -1;
@@ -2541,6 +2542,7 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
     }
     if (seqLen >= 20) { dateRowIdx = ri; dateColOffset = seqStart; break; }
   }
+  console.log("[parseExcelPasteData] FormatB dateRowIdx:", dateRowIdx, "dateColOffset:", dateColOffset);
   const result = {}, matched = [], unmatched = [];
   if (dateRowIdx >= 0) {
     // Format B: col→day from date row (explicit date numbers)
@@ -2569,8 +2571,10 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
     for (let ri = 0; ri < Math.min(5, rows.length); ri++) {
       const row = rows[ri];
       const dowCount = row.filter(c => DOW_SET.has(String(c??'').trim())).length;
+      console.log("[parseExcelPasteData] FormatA ri:", ri, "dowCount:", dowCount, "sample:", row.slice(0,8));
       if (dowCount >= 20) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
     }
+    console.log("[parseExcelPasteData] FormatA headerRowIdx:", headerRowIdx, "shiftStartCol:", shiftStartCol);
     const colToDay = {};
     for (let i = 0; i < daysInMonth; i++) colToDay[shiftStartCol + i] = i + 1;
     for (let ri = (headerRowIdx >= 0 ? headerRowIdx + 1 : 0); ri < rows.length; ri++) {
@@ -2591,6 +2595,7 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
       shiftCols.forEach(ci => { const sk = toShift(row[ci]); if (sk) result[staff.id][colToDay[ci]] = sk; });
     }
   }
+  console.log("[parseExcelPasteData] result staffIds:", Object.keys(result).length, "matched:", matched, "unmatched:", unmatched);
   if (Object.keys(result).length === 0) return null;
   return { result, matched, unmatched };
 }
