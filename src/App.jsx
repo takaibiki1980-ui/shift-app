@@ -2516,6 +2516,152 @@ function PinModal({ deptLabel, onVerify, onClose }) {
   );
 }
 
+const PASTE_SHIFT_MAP = {"早":"早番","早番":"早番","日":"日勤","日勤":"日勤","遅":"遅番","遅番":"遅番","夜":"夜勤","夜勤":"夜勤","明":"明け","明け":"明け","休":"休み","休み":"休み","公":"休み","公休":"休み","休日":"休み","振休":"休み","有":"有休","有休":"有休","有給":"有休","希":"希望休","希望休":"希望休","E":"早番","D":"日勤","L":"遅番","N":"夜勤"};
+function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]) {
+  const normMap = {};
+  Object.entries(PASTE_SHIFT_MAP).forEach(([k,v]) => { normMap[normName(k)] = v; });
+  customShiftKeys.filter(Boolean).forEach(k => { normMap[normName(k)] = k; });
+  const toShift = c => normMap[normName(String(c??'').trim())] || null;
+  const isShift = c => !!toShift(c);
+  const ROLE_WORDS = new Set(["常勤","非常勤","パート","嘱託","正規","委託","管理","職員","名前","氏名","スタッフ"]);
+  const DOW_SET = new Set(["月","火","水","木","金","土","日"]);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const rows = tsvText.trim().split(/\r?\n/).map(r => r.split('\t'));
+  if (rows.length < 2) return null;
+  // Format B detection: row with 20+ sequential integers starting from 1
+  let dateRowIdx = -1, dateColOffset = -1;
+  for (let ri = 0; ri < Math.min(6, rows.length); ri++) {
+    const row = rows[ri];
+    let seqStart = -1, seqLen = 0;
+    for (let ci = 0; ci < row.length; ci++) {
+      const n = parseInt(String(row[ci]??'').trim(), 10);
+      if (n === 1 && seqStart < 0) { seqStart = ci; seqLen = 1; }
+      else if (seqStart >= 0 && n === seqLen + 1) seqLen++;
+      else if (seqStart >= 0) break;
+    }
+    if (seqLen >= 20) { dateRowIdx = ri; dateColOffset = seqStart; break; }
+  }
+  const result = {}, matched = [], unmatched = [];
+  if (dateRowIdx >= 0) {
+    // Format B: col→day from date row (explicit date numbers)
+    const colToDay = {};
+    rows[dateRowIdx].forEach((c, ci) => { const n = parseInt(String(c??'').trim(), 10); if (n >= 1 && n <= 31) colToDay[ci] = n; });
+    for (let ri = dateRowIdx + 1; ri < rows.length; ri++) {
+      const row = rows[ri];
+      const shiftCols = Object.keys(colToDay).filter(ci => isShift(row[ci])).map(Number);
+      if (shiftCols.length < 3) continue;
+      let nameCell = '';
+      for (let ci = 0; ci < dateColOffset; ci++) {
+        const v = String(row[ci]??'').trim();
+        if (!v || v.length < 2 || /^\d/.test(v) || ROLE_WORDS.has(v) || isShift(v)) continue;
+        nameCell = v; break;
+      }
+      if (!nameCell) continue;
+      const staff = staffList.find(s => nameMatch(nameCell, s.name));
+      if (!staff) { if (!unmatched.includes(nameCell)) unmatched.push(nameCell); continue; }
+      if (!matched.includes(staff.name)) matched.push(staff.name);
+      if (!result[staff.id]) result[staff.id] = {};
+      shiftCols.forEach(ci => { const sk = toShift(row[ci]); if (sk) result[staff.id][colToDay[ci]] = sk; });
+    }
+  } else {
+    // Format A: 月火水木金土日 header, column position = day number
+    let headerRowIdx = -1, shiftStartCol = 1;
+    for (let ri = 0; ri < Math.min(5, rows.length); ri++) {
+      const row = rows[ri];
+      const dowCount = row.filter(c => DOW_SET.has(String(c??'').trim())).length;
+      if (dowCount >= 20) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
+    }
+    const colToDay = {};
+    for (let i = 0; i < daysInMonth; i++) colToDay[shiftStartCol + i] = i + 1;
+    for (let ri = (headerRowIdx >= 0 ? headerRowIdx + 1 : 0); ri < rows.length; ri++) {
+      const row = rows[ri];
+      const shiftCols = Object.keys(colToDay).filter(ci => isShift(row[Number(ci)])).map(Number);
+      if (shiftCols.length < 3) continue;
+      let nameCell = '';
+      for (let ci = 0; ci < shiftStartCol; ci++) {
+        const v = String(row[ci]??'').trim();
+        if (!v || v.length < 2 || /^\d/.test(v) || ROLE_WORDS.has(v) || isShift(v)) continue;
+        nameCell = v; break;
+      }
+      if (!nameCell) continue;
+      const staff = staffList.find(s => nameMatch(nameCell, s.name));
+      if (!staff) { if (!unmatched.includes(nameCell)) unmatched.push(nameCell); continue; }
+      if (!matched.includes(staff.name)) matched.push(staff.name);
+      if (!result[staff.id]) result[staff.id] = {};
+      shiftCols.forEach(ci => { const sk = toShift(row[ci]); if (sk) result[staff.id][colToDay[ci]] = sk; });
+    }
+  }
+  if (Object.keys(result).length === 0) return null;
+  return { result, matched, unmatched };
+}
+
+function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShiftKeys=[] }) {
+  const [parsed, setParsed] = useState(null);
+  const [error, setError] = useState('');
+  const [pasting, setPasting] = useState(false);
+  const areaRef = useRef(null);
+  const process = (text) => {
+    setError('');
+    const r = parseExcelPasteData(text, staffList, year, month, customShiftKeys);
+    if (!r) setError('シフトデータを読み取れませんでした。スタッフ名＋シフト（早/遅/夜/明/休等）のセル範囲を選択してCtrl+Cしてください。');
+    else setParsed(r);
+  };
+  const handleClickPaste = async () => {
+    setPasting(true);
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) setError('クリップボードが空です。Excelで範囲を選択しCtrl+Cしてから押してください。');
+      else process(text);
+    } catch { setError('クリップボードを読み取れませんでした。下のエリアをクリックしてCtrl+Vで貼り付けてください。'); }
+    setPasting(false);
+  };
+  const handlePasteEvent = (e) => { const text = e.clipboardData.getData('text'); if (text.trim()) { e.preventDefault(); process(text); } };
+  return (
+    <div style={{position:'fixed',inset:0,background:'#000000cc',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:'#f3fffe',border:'1px solid #90cbc8',borderRadius:14,padding:24,width:'100%',maxWidth:480,maxHeight:'85vh',overflowY:'auto',boxShadow:'0 30px 80px #000'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+          <div><div style={{fontSize:15,fontWeight:900,color:'#1a3635'}}>📋 Excelからシフトを貼り付け</div><div style={{fontSize:11,color:'#3a8a87',marginTop:3}}>{year}年{month+1}月のシフト表に上書き適用します</div></div>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#3a8a87',cursor:'pointer',fontSize:20}}>✕</button>
+        </div>
+        <div style={{background:'#e8f5ee',border:'1px solid #14532d',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:11,color:'#1a3635'}}>
+          <div style={{fontWeight:700,marginBottom:4}}>手順</div>
+          <ol style={{margin:0,paddingLeft:16,lineHeight:1.9}}>
+            <li>Excelで<b>スタッフ名〜月末</b>のシフト範囲を選択（曜日ヘッダー行含む）</li>
+            <li><b>Ctrl+C</b> でコピー</li>
+            <li>「クリップボードから貼り付け」ボタン または 下のエリアに<b>Ctrl+V</b></li>
+          </ol>
+        </div>
+        <div ref={areaRef} tabIndex={0} onPaste={handlePasteEvent}
+          style={{background:'#fff',border:'2px dashed #90cbc8',borderRadius:8,padding:'18px',textAlign:'center',marginBottom:14,outline:'none',minHeight:60,display:'flex',alignItems:'center',justifyContent:'center',cursor:'text'}}>
+          {parsed
+            ? <div style={{color:'#16a34a',fontWeight:700,fontSize:13}}>✅ {Object.keys(parsed.result).length}名分を読み込みました</div>
+            : <div style={{color:'#6ab5b2',fontSize:12}}>ここをクリックして Ctrl+V で貼り付け</div>}
+        </div>
+        <button onClick={handleClickPaste} disabled={pasting} style={{width:'100%',background:'linear-gradient(135deg,#2BBFBA,#45B7D1)',color:'#fff',border:'none',borderRadius:9,padding:'12px 0',cursor:'pointer',fontSize:14,fontWeight:800,marginBottom:14}}>
+          {pasting?'⏳ 読み込み中…':'📋 クリップボードから貼り付け'}
+        </button>
+        {error&&<div style={{background:'#fff0f0',border:'1px solid #dc2626',borderRadius:8,padding:'10px 14px',color:'#f87171',fontSize:12,marginBottom:14}}>{error}</div>}
+        {parsed&&(<div>
+          {parsed.matched.length>0&&(<div style={{marginBottom:10}}>
+            <div style={{fontSize:11,fontWeight:700,color:'#16a34a',marginBottom:4}}>✅ マッチ（{parsed.matched.length}名）</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:4}}>{parsed.matched.map(n=><span key={n} style={{background:'#d1fae5',border:'1px solid #16a34a',borderRadius:12,padding:'2px 8px',fontSize:11,color:'#15803d'}}>{n}</span>)}</div>
+          </div>)}
+          {parsed.unmatched.length>0&&(<div style={{background:'#fff8e1',border:'2px solid #f59e0b',borderRadius:8,padding:'10px 14px',marginBottom:12}}>
+            <div style={{color:'#b45309',fontWeight:800,fontSize:12,marginBottom:6}}>⚠️ 未マッチ（{parsed.unmatched.length}件）— スキップ</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:4}}>{parsed.unmatched.map(n=><span key={n} style={{background:'#fef3c7',border:'1px solid #f59e0b',borderRadius:12,padding:'2px 8px',fontSize:11,color:'#92400e'}}>{n}</span>)}</div>
+            <div style={{fontSize:10,color:'#92400e',marginTop:6}}>スタッフ設定の名前を合わせるか、Excelの名前を修正してください。</div>
+          </div>)}
+          <div style={{display:'flex',gap:10}}>
+            <button onClick={()=>onApply(parsed.result)} style={{flex:1,background:'linear-gradient(135deg,#2d8a52,#2a7a6e)',color:'#fff',border:'none',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14,fontWeight:800}}>✅ このシフトを適用する</button>
+            <button onClick={onClose} style={{flex:1,background:'#d5edeb',color:'#3a8a87',border:'1px solid #90cbc8',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14}}>キャンセル</button>
+          </div>
+        </div>)}
+        {!parsed&&!error&&<button onClick={onClose} style={{width:'100%',background:'#d5edeb',color:'#3a8a87',border:'1px solid #90cbc8',borderRadius:8,padding:'9px 0',cursor:'pointer',fontSize:13,marginTop:4}}>キャンセル</button>}
+      </div>
+    </div>
+  );
+}
+
 function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm, exceptionMonths = [], onExceptionMonthsChange, excelRawMonths = {}, onExcelRawMonthsChange, onAutoSetRatios, staffList = [], customShiftKeys = [] }) {
   const [status, setStatus] = useState("idle"), [preview, setPreview] = useState(null), [errorMsg, setErrorMsg] = useState("");
   const [unmatchedNames, setUnmatchedNames] = useState([]); // ① 名前不一致スタッフ一覧
@@ -5023,6 +5169,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => { if(autoFitApplied.current)return; try{const s=localStorage.getItem("shiftTableZoom");if(s&&!isMobile){autoFitApplied.current=true;return;}}catch{} setTableZoom(autoFitZoom(staffList.filter(s=>s.dept===activeDeptId).length,getDays(now.getFullYear(),now.getMonth()))); autoFitApplied.current=true; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [excelImportModal, setExcelImportModal] = useState(false);
+  const [excelPasteModal, setExcelPasteModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
 
@@ -5414,6 +5561,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:700,opacity:saveStatus==="unsaved"?0.5:1}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
           {!isMobile&&(()=>{const deptTrend=shiftTrend[activeDeptId]||{};const excelCnt=Object.keys(deptTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const syncColor=syncRate!=null?(syncRate>=85?"#16a34a":syncRate>=70?"#ca8a04":"#dc2626"):"#2a9a96";const label=hasAny?`🎯 シンクロ率 ${syncRate!=null?syncRate+'%':'--%'}`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#f0f9ff":"#ffffff",color:syncColor,border:`1px solid ${hasAny?syncColor:"#90cbc8"}`,borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          {!isMobile&&<button onClick={()=>setExcelPasteModal(true)} style={{background:'#ffffff',color:'#7c3aed',border:'1px solid #7c3aed',borderRadius:8,padding:'7px 12px',cursor:'pointer',fontSize:12,fontWeight:700}} title="ExcelのシフトをコピーしてここにCtrl+Vで貼り付け">📋 貼付</button>}
           <button onClick={()=>setHistoryModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}} title="過去15世代の履歴から復元">{isMobile?"🕐":"🕐 履歴復元"}</button>
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
           <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
@@ -5513,6 +5661,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0){delete next[activeDeptId];supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});}else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
+      {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onApply={(pastedShifts)=>{setAllShifts(prev=>{const cur=prev[activeDeptId]||{};const next={};const allIds=new Set([...Object.keys(cur),...Object.keys(pastedShifts)]);allIds.forEach(id=>{next[id]={...(cur[id]||{}),...(pastedShifts[id]||{})};});return{...prev,[activeDeptId]:next};});setSaveStatus('unsaved');setExcelPasteModal(false);}} onClose={()=>setExcelPasteModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} onClose={()=>setGenerateWarnings(null)}/>}
