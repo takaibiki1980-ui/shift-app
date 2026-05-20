@@ -1902,6 +1902,7 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
   const initData = () => { const c = {}; COUNT_KEYS.forEach(k => c[k]=0); return {...c, total:0, dowRest:[0,0,0,0,0,0,0], dowTotal:[0,0,0,0,0,0,0], dowShift:[{},{},{},{},{},{},{}]}; };
   const trendMap = {};
   const processedYearMonths = new Set();
+  const processedStaffByMonth = {}; // { "YYYY-M": Set<staffName> } — 同一月×同一スタッフの重複カウント防止
   const monthlyData = {}; // { "YYYY-M": { name: { 早番, 日勤, 遅番, 夜勤, ...custom, total, dowRest, dowTotal } } }
   workbook.SheetNames.forEach(sheetName => {
     if (/祝日|holidays|calendar|カレンダー/i.test(sheetName)) return;
@@ -1951,7 +1952,8 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
       }
     }
     if (!dateRowFound && sy && sm) { for (let i = 0; i < 31; i++) { const col = detectedShiftStart + i; const d = new Date(sy, sm - 1, i + 1); if (d.getMonth() === sm - 1) colToDow[col] = (d.getDay() + 6) % 7; } sheetYearMonth = `${sy}-${sm}`; }
-    if (sheetYearMonth) { if (processedYearMonths.has(sheetYearMonth)) return; processedYearMonths.add(sheetYearMonth); } else return;
+    // ★1シート=1スタッフ構造に対応: 同一年月でも別シートは処理する（重複は staffByMonth で防ぐ）
+    if (sheetYearMonth) { processedYearMonths.add(sheetYearMonth); } else return;
     dataRaw.forEach(row => {
       if (!row || row.length < detectedShiftStart + 3) return;
       const nameCell = String(row[detectedNameCol] ?? "").trim();
@@ -1974,6 +1976,10 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
         }
       }
       if (total < 3) return;
+      // 同一月に同一スタッフが複数シートにある場合は2回目以降をスキップ（重複防止）
+      if (!processedStaffByMonth[sheetYearMonth]) processedStaffByMonth[sheetYearMonth] = new Set();
+      if (processedStaffByMonth[sheetYearMonth].has(nameCell)) return;
+      processedStaffByMonth[sheetYearMonth].add(nameCell);
       if (!trendMap[nameCell]) trendMap[nameCell] = initData();
       COUNT_KEYS.forEach(k => { trendMap[nameCell][k] += counts[k]; });
       trendMap[nameCell].total += total;
