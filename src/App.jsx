@@ -2529,18 +2529,20 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
   const rows = tsvText.trim().split(/\r?\n/).map(r => r.split('\t'));
   console.log("[parseExcelPasteData] rows:", rows.length, "first3:", rows.slice(0,3).map(r=>r.slice(0,10)));
   if (rows.length < 2) return null;
-  // Format B detection: row with 20+ sequential integers starting from 1
+  // Format B detection: row with 15+ consecutive integers (any starting value 1-15)
   let dateRowIdx = -1, dateColOffset = -1;
-  for (let ri = 0; ri < Math.min(6, rows.length); ri++) {
+  for (let ri = 0; ri < Math.min(8, rows.length); ri++) {
     const row = rows[ri];
-    let seqStart = -1, seqLen = 0;
+    let bestStart = -1, bestLen = 0, curStart = -1, curLen = 0, curVal = -1;
     for (let ci = 0; ci < row.length; ci++) {
       const n = parseInt(String(row[ci]??'').trim(), 10);
-      if (n === 1 && seqStart < 0) { seqStart = ci; seqLen = 1; }
-      else if (seqStart >= 0 && n === seqLen + 1) seqLen++;
-      else if (seqStart >= 0) break;
+      if (!isNaN(n) && n >= 1 && n <= 31) {
+        if (curLen === 0 || n === curVal + 1) { if (curLen === 0) curStart = ci; curLen++; curVal = n; }
+        else { if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; } curStart = ci; curLen = 1; curVal = n; }
+      } else { if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; } curLen = 0; curVal = -1; }
     }
-    if (seqLen >= 20) { dateRowIdx = ri; dateColOffset = seqStart; break; }
+    if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; }
+    if (bestLen >= 15) { dateRowIdx = ri; dateColOffset = bestStart; break; }
   }
   console.log("[parseExcelPasteData] FormatB dateRowIdx:", dateRowIdx, "dateColOffset:", dateColOffset);
   const result = {}, matched = [], unmatched = [];
@@ -2568,11 +2570,11 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
   } else {
     // Format A: 月火水木金土日 header, column position = day number
     let headerRowIdx = -1, shiftStartCol = 1;
-    for (let ri = 0; ri < Math.min(5, rows.length); ri++) {
+    for (let ri = 0; ri < Math.min(8, rows.length); ri++) {
       const row = rows[ri];
       const dowCount = row.filter(c => DOW_SET.has(String(c??'').trim())).length;
       console.log("[parseExcelPasteData] FormatA ri:", ri, "dowCount:", dowCount, "sample:", row.slice(0,8));
-      if (dowCount >= 20) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
+      if (dowCount >= 14) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
     }
     console.log("[parseExcelPasteData] FormatA headerRowIdx:", headerRowIdx, "shiftStartCol:", shiftStartCol);
     const colToDay = {};
