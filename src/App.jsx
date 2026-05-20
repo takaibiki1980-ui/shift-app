@@ -2529,20 +2529,18 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
   const rows = tsvText.trim().split(/\r?\n/).map(r => r.split('\t'));
   console.log("[parseExcelPasteData] rows:", rows.length, "first3:", rows.slice(0,3).map(r=>r.slice(0,10)));
   if (rows.length < 2) return null;
-  // Format B detection: row with 15+ consecutive integers (any starting value 1-15)
+  // Format B detection: row with 20+ sequential integers starting from 1
   let dateRowIdx = -1, dateColOffset = -1;
-  for (let ri = 0; ri < Math.min(8, rows.length); ri++) {
+  for (let ri = 0; ri < Math.min(6, rows.length); ri++) {
     const row = rows[ri];
-    let bestStart = -1, bestLen = 0, curStart = -1, curLen = 0, curVal = -1;
+    let seqStart = -1, seqLen = 0;
     for (let ci = 0; ci < row.length; ci++) {
       const n = parseInt(String(row[ci]??'').trim(), 10);
-      if (!isNaN(n) && n >= 1 && n <= 31) {
-        if (curLen === 0 || n === curVal + 1) { if (curLen === 0) curStart = ci; curLen++; curVal = n; }
-        else { if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; } curStart = ci; curLen = 1; curVal = n; }
-      } else { if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; } curLen = 0; curVal = -1; }
+      if (n === 1 && seqStart < 0) { seqStart = ci; seqLen = 1; }
+      else if (seqStart >= 0 && n === seqLen + 1) seqLen++;
+      else if (seqStart >= 0) break;
     }
-    if (curLen > bestLen) { bestLen = curLen; bestStart = curStart; }
-    if (bestLen >= 15) { dateRowIdx = ri; dateColOffset = bestStart; break; }
+    if (seqLen >= 20) { dateRowIdx = ri; dateColOffset = seqStart; break; }
   }
   console.log("[parseExcelPasteData] FormatB dateRowIdx:", dateRowIdx, "dateColOffset:", dateColOffset);
   const result = {}, matched = [], unmatched = [];
@@ -2570,11 +2568,11 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
   } else {
     // Format A: 月火水木金土日 header, column position = day number
     let headerRowIdx = -1, shiftStartCol = 1;
-    for (let ri = 0; ri < Math.min(8, rows.length); ri++) {
+    for (let ri = 0; ri < Math.min(5, rows.length); ri++) {
       const row = rows[ri];
       const dowCount = row.filter(c => DOW_SET.has(String(c??'').trim())).length;
       console.log("[parseExcelPasteData] FormatA ri:", ri, "dowCount:", dowCount, "sample:", row.slice(0,8));
-      if (dowCount >= 14) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
+      if (dowCount >= 20) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
     }
     console.log("[parseExcelPasteData] FormatA headerRowIdx:", headerRowIdx, "shiftStartCol:", shiftStartCol);
     const colToDay = {};
@@ -5677,7 +5675,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0){delete next[activeDeptId];supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});}else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
-      {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onApply={(pastedShifts)=>{console.log("[PASTE_APPLY]",pastedShifts);console.log("[setAllShifts]","reason=paste_apply",{year,month:month+1,activeDeptId,keys:Object.keys(pastedShifts),stack:new Error().stack});setAllShifts(prev=>{const cur=prev[activeDeptId]||{};const next={};const allIds=new Set([...Object.keys(cur),...Object.keys(pastedShifts)]);allIds.forEach(id=>{next[id]={...(cur[id]||{}),...(pastedShifts[id]||{})};});return{...prev,[activeDeptId]:next};});setSaveStatus('unsaved');setExcelPasteModal(false);}} onClose={()=>setExcelPasteModal(false)}/>}
+      {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onApply={(pastedShifts)=>{
+            console.log("[PASTE_APPLY]",pastedShifts);
+            const snapshot=allShiftsRef.current[activeDeptId]||{};
+            const stack=undoStackRef.current[activeDeptId]||[];
+            undoStackRef.current[activeDeptId]=[...stack,snapshot].slice(-30);
+            setUndoCount(undoStackRef.current[activeDeptId].length);
+            userEditSeq.current++;
+            saveStatusRef.current="unsaved";
+            console.log("[setAllShifts]","reason=paste_apply",{year,month:month+1,activeDeptId,keys:Object.keys(pastedShifts),userEditSeq:userEditSeq.current});
+            setAllShifts(prev=>{const cur=prev[activeDeptId]||{};const next={};const allIds=new Set([...Object.keys(cur),...Object.keys(pastedShifts)]);allIds.forEach(id=>{next[id]={...(cur[id]||{}),...(pastedShifts[id]||{})};});return{...prev,[activeDeptId]:next};});
+            setSaveStatus('unsaved');
+            setExcelPasteModal(false);
+          }} onClose={()=>setExcelPasteModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} onClose={()=>setGenerateWarnings(null)}/>}
