@@ -2600,68 +2600,152 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
   return { result, matched, unmatched };
 }
 
-function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShiftKeys=[] }) {
-  const [parsed, setParsed] = useState(null);
-  const [error, setError] = useState('');
+function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShiftKeys=[], deptShiftTypes=[], customShiftDefs=[] }) {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const days = Array.from({length: daysInMonth}, (_, i) => i + 1);
+  const DOW = ['日','月','火','水','木','金','土'];
+  const allCycleKeys = [...new Set([...(deptShiftTypes.length > 0 ? deptShiftTypes : ['早番','日勤','遅番','夜勤']), '休み', '有休', '希望休', ''])];
+
+  const [gridData, setGridData] = useState({});
+  const [unmatchedNames, setUnmatchedNames] = useState([]);
+  const [parseError, setParseError] = useState('');
   const [pasting, setPasting] = useState(false);
-  const areaRef = useRef(null);
+
   const process = (text) => {
-    setError('');
+    setParseError('');
     const r = parseExcelPasteData(text, staffList, year, month, customShiftKeys);
-    if (!r) setError('シフトデータを読み取れませんでした。スタッフ名＋シフト（早/遅/夜/明/休等）のセル範囲を選択してCtrl+Cしてください。');
-    else setParsed(r);
+    if (!r) { setParseError('シフトデータを読み取れませんでした。スタッフ名＋シフトの範囲を選択してCtrl+Cしてください。'); return; }
+    setGridData(r.result);
+    setUnmatchedNames(r.unmatched);
   };
+
+  const handlePasteEvent = (e) => { const text = e.clipboardData.getData('text'); if (text.trim()) { e.preventDefault(); process(text); } };
+
   const handleClickPaste = async () => {
     setPasting(true);
     try {
       const text = await navigator.clipboard.readText();
-      if (!text.trim()) setError('クリップボードが空です。Excelで範囲を選択しCtrl+Cしてから押してください。');
+      if (!text.trim()) setParseError('クリップボードが空です。Excelで範囲を選択しCtrl+Cしてから押してください。');
       else process(text);
-    } catch { setError('クリップボードを読み取れませんでした。下のエリアをクリックしてCtrl+Vで貼り付けてください。'); }
+    } catch { setParseError('クリップボードを読み取れませんでした。Ctrl+Vで貼り付けてください。'); }
     setPasting(false);
   };
-  const handlePasteEvent = (e) => { const text = e.clipboardData.getData('text'); if (text.trim()) { e.preventDefault(); process(text); } };
+
+  const cycleCell = (staffId, day) => {
+    setGridData(prev => {
+      const cur = (prev[staffId] || {})[day] ?? '';
+      const idx = allCycleKeys.indexOf(cur);
+      const next = allCycleKeys[(idx + 1) % allCycleKeys.length];
+      return { ...prev, [staffId]: { ...(prev[staffId] || {}), [day]: next } };
+    });
+  };
+
+  const totalCells = Object.values(gridData).reduce((sum, d) => sum + Object.values(d).filter(v => v).length, 0);
+
+  const handleApply = () => {
+    const cleaned = {};
+    Object.entries(gridData).forEach(([id, dayMap]) => {
+      const filtered = Object.fromEntries(Object.entries(dayMap).filter(([, v]) => v));
+      if (Object.keys(filtered).length > 0) cleaned[id] = filtered;
+    });
+    onApply(cleaned);
+  };
+
   return (
-    <div style={{position:'fixed',inset:0,background:'#000000cc',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:'#f3fffe',border:'1px solid #90cbc8',borderRadius:14,padding:24,width:'100%',maxWidth:480,maxHeight:'85vh',overflowY:'auto',boxShadow:'0 30px 80px #000'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-          <div><div style={{fontSize:15,fontWeight:900,color:'#1a3635'}}>📋 Excelからシフトを貼り付け</div><div style={{fontSize:11,color:'#3a8a87',marginTop:3}}>{year}年{month+1}月のシフト表に上書き適用します</div></div>
-          <button onClick={onClose} style={{background:'none',border:'none',color:'#3a8a87',cursor:'pointer',fontSize:20}}>✕</button>
-        </div>
-        <div style={{background:'#e8f5ee',border:'1px solid #14532d',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:11,color:'#1a3635'}}>
-          <div style={{fontWeight:700,marginBottom:4}}>手順</div>
-          <ol style={{margin:0,paddingLeft:16,lineHeight:1.9}}>
-            <li>Excelで<b>スタッフ名〜月末</b>のシフト範囲を選択（曜日ヘッダー行含む）</li>
-            <li><b>Ctrl+C</b> でコピー</li>
-            <li>「クリップボードから貼り付け」ボタン または 下のエリアに<b>Ctrl+V</b></li>
-          </ol>
-        </div>
-        <div ref={areaRef} tabIndex={0} onPaste={handlePasteEvent}
-          style={{background:'#fff',border:'2px dashed #90cbc8',borderRadius:8,padding:'18px',textAlign:'center',marginBottom:14,outline:'none',minHeight:60,display:'flex',alignItems:'center',justifyContent:'center',cursor:'text'}}>
-          {parsed
-            ? <div style={{color:'#16a34a',fontWeight:700,fontSize:13}}>✅ {Object.keys(parsed.result).length}名分を読み込みました</div>
-            : <div style={{color:'#6ab5b2',fontSize:12}}>ここをクリックして Ctrl+V で貼り付け</div>}
-        </div>
-        <button onClick={handleClickPaste} disabled={pasting} style={{width:'100%',background:'linear-gradient(135deg,#2BBFBA,#45B7D1)',color:'#fff',border:'none',borderRadius:9,padding:'12px 0',cursor:'pointer',fontSize:14,fontWeight:800,marginBottom:14}}>
-          {pasting?'⏳ 読み込み中…':'📋 クリップボードから貼り付け'}
-        </button>
-        {error&&<div style={{background:'#fff0f0',border:'1px solid #dc2626',borderRadius:8,padding:'10px 14px',color:'#f87171',fontSize:12,marginBottom:14}}>{error}</div>}
-        {parsed&&(<div>
-          {parsed.matched.length>0&&(<div style={{marginBottom:10}}>
-            <div style={{fontSize:11,fontWeight:700,color:'#16a34a',marginBottom:4}}>✅ マッチ（{parsed.matched.length}名）</div>
-            <div style={{display:'flex',flexWrap:'wrap',gap:4}}>{parsed.matched.map(n=><span key={n} style={{background:'#d1fae5',border:'1px solid #16a34a',borderRadius:12,padding:'2px 8px',fontSize:11,color:'#15803d'}}>{n}</span>)}</div>
-          </div>)}
-          {parsed.unmatched.length>0&&(<div style={{background:'#fff8e1',border:'2px solid #f59e0b',borderRadius:8,padding:'10px 14px',marginBottom:12}}>
-            <div style={{color:'#b45309',fontWeight:800,fontSize:12,marginBottom:6}}>⚠️ 未マッチ（{parsed.unmatched.length}件）— スキップ</div>
-            <div style={{display:'flex',flexWrap:'wrap',gap:4}}>{parsed.unmatched.map(n=><span key={n} style={{background:'#fef3c7',border:'1px solid #f59e0b',borderRadius:12,padding:'2px 8px',fontSize:11,color:'#92400e'}}>{n}</span>)}</div>
-            <div style={{fontSize:10,color:'#92400e',marginTop:6}}>スタッフ設定の名前を合わせるか、Excelの名前を修正してください。</div>
-          </div>)}
-          <div style={{display:'flex',gap:10}}>
-            <button onClick={()=>onApply(parsed.result)} style={{flex:1,background:'linear-gradient(135deg,#2d8a52,#2a7a6e)',color:'#fff',border:'none',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14,fontWeight:800}}>✅ このシフトを適用する</button>
-            <button onClick={onClose} style={{flex:1,background:'#d5edeb',color:'#3a8a87',border:'1px solid #90cbc8',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14}}>キャンセル</button>
+    <div style={{position:'fixed',inset:0,background:'#000000cc',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:8}}
+      onPaste={handlePasteEvent}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:'#f3fffe',border:'1px solid #90cbc8',borderRadius:14,padding:'16px 18px',width:'100%',maxWidth:960,maxHeight:'95vh',boxShadow:'0 30px 80px #000',display:'flex',flexDirection:'column',gap:10}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:900,color:'#1a3635'}}>📋 シフト貼り付けグリッド</div>
+            <div style={{fontSize:11,color:'#3a8a87',marginTop:2}}>{year}年{month+1}月 ／ Ctrl+Vで読み込み・セルをクリックでシフト変更</div>
           </div>
-        </div>)}
-        {!parsed&&!error&&<button onClick={onClose} style={{width:'100%',background:'#d5edeb',color:'#3a8a87',border:'1px solid #90cbc8',borderRadius:8,padding:'9px 0',cursor:'pointer',fontSize:13,marginTop:4}}>キャンセル</button>}
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#3a8a87',cursor:'pointer',fontSize:20,lineHeight:1}}>✕</button>
+        </div>
+
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+          <button onClick={handleClickPaste} disabled={pasting}
+            style={{background:'linear-gradient(135deg,#2BBFBA,#45B7D1)',color:'#fff',border:'none',borderRadius:9,padding:'8px 14px',cursor:'pointer',fontSize:13,fontWeight:800,whiteSpace:'nowrap'}}>
+            {pasting ? '⏳ 読み込み中…' : '📋 クリップボードから読み込み'}
+          </button>
+          <span style={{fontSize:11,color:'#6ab5b2'}}>または画面にCtrl+V</span>
+          {unmatchedNames.length > 0 && (
+            <div style={{background:'#fff8e1',border:'1px solid #f59e0b',borderRadius:8,padding:'3px 10px',fontSize:11,color:'#b45309',fontWeight:700}}>
+              ⚠️ 未マッチ: {unmatchedNames.join('、')}
+            </div>
+          )}
+        </div>
+
+        {parseError && (
+          <div style={{background:'#fff0f0',border:'1px solid #dc2626',borderRadius:8,padding:'7px 12px',color:'#dc2626',fontSize:12}}>{parseError}</div>
+        )}
+
+        <div style={{overflowX:'auto',overflowY:'auto',flex:1,border:'1px solid #b8deda',borderRadius:8,minHeight:0}}>
+          <table style={{borderCollapse:'collapse',fontSize:11,tableLayout:'fixed',minWidth:'max-content',width:'100%'}}>
+            <thead>
+              <tr style={{position:'sticky',top:0,zIndex:2}}>
+                <th style={{width:88,padding:'5px 8px',border:'1px solid #b8deda',textAlign:'left',fontWeight:700,color:'#1a3635',position:'sticky',left:0,zIndex:3,background:'#c8e8e5'}}>スタッフ</th>
+                {days.map(d => {
+                  const dow = new Date(year, month, d).getDay();
+                  return (
+                    <th key={d} style={{width:34,padding:'2px 1px',border:'1px solid #b8deda',textAlign:'center',fontWeight:700,background:'#d5edeb',
+                      color: dow===0?'#e53935':dow===6?'#1E88E5':'#1a3635'}}>
+                      <div style={{fontSize:11}}>{d}</div>
+                      <div style={{fontSize:9,fontWeight:400}}>{DOW[dow]}</div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {staffList.map((s, si) => {
+                const staffShifts = gridData[s.id] || {};
+                return (
+                  <tr key={s.id} style={{background: si%2===0 ? '#fff' : '#f7fdfc'}}>
+                    <td style={{padding:'3px 8px',border:'1px solid #b8deda',fontWeight:600,color:'#1a3635',background: si%2===0 ? '#e8f5f4' : '#ddf0ee',
+                      position:'sticky',left:0,zIndex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:88,fontSize:11}}>
+                      {s.name}
+                    </td>
+                    {days.map(d => {
+                      const sk = staffShifts[d] || '';
+                      const def = getShiftDef(sk, customShiftDefs);
+                      return (
+                        <td key={d} onClick={() => cycleCell(s.id, d)}
+                          style={{width:34,padding:'2px 1px',border:'1px solid #ddd',textAlign:'center',cursor:'pointer',
+                            background: sk ? def.bg : 'inherit',
+                            color: sk ? def.color : '#ccc',
+                            fontWeight: sk ? 700 : 400,
+                            userSelect:'none',fontSize:11}}>
+                          {sk ? (def.short || sk) : '－'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+          <span style={{color:'#3a8a87',fontWeight:700,fontSize:11}}>凡例:</span>
+          {allCycleKeys.filter(k => k !== '').map(k => {
+            const def = getShiftDef(k, customShiftDefs);
+            return <span key={k} style={{background:def.bg,border:`1px solid ${def.border}`,borderRadius:6,padding:'2px 7px',color:def.color,fontWeight:700,fontSize:11}}>{k}</span>;
+          })}
+        </div>
+
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={handleApply} disabled={totalCells === 0}
+            style={{flex:2,background:totalCells>0?'linear-gradient(135deg,#2d8a52,#2a7a6e)':'#b0cece',color:'#fff',border:'none',borderRadius:8,padding:'11px 0',cursor:totalCells>0?'pointer':'default',fontSize:14,fontWeight:800}}>
+            ✅ このシフトを適用する{totalCells>0?` (${totalCells}件)`:''}
+          </button>
+          <button onClick={onClose}
+            style={{flex:1,background:'#d5edeb',color:'#3a8a87',border:'1px solid #90cbc8',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14}}>
+            キャンセル
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -5681,7 +5765,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0){delete next[activeDeptId];supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});}else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
-      {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onApply={(pastedShifts)=>{
+      {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
             console.log("[PASTE_APPLY]",pastedShifts);
             const snapshot=allShiftsRef.current[activeDeptId]||{};
             const stack=undoStackRef.current[activeDeptId]||[];
