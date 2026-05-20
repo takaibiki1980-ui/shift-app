@@ -4503,6 +4503,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
   const lastSelfSaveTime = useRef(0); // 自分の保存完了時刻（Realtime自己ループ検知用）
+  const pasteTimestamp = useRef(0); // 貼り付け時刻（貼り付け直後のRealtime上書きをブロック）
   const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
   const lastSavedDeptsRef = useRef(null); // depts: 最終Supabase保存済み値（null=DB未読込→保存ブロック）
   const deptsUpsertInProgress = useRef(false); // depts保存中フラグ
@@ -4779,6 +4780,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // 自分の保存から8秒以内は自己ループなので競合バナーを出さない
         const isSelfTriggered = Date.now() - lastSelfSaveTime.current < 8000;
         if (!isSelfTriggered && !conflictBannerDismissed.current) setConflictBanner(true);
+        return;
+      }
+      // 貼り付け後5秒間はRealtime上書きをブロック（保存完了前にRTが旧データを上書きするのを防ぐ）
+      if (Date.now() - pasteTimestamp.current < 5000) {
+        console.log("[RT_GUARD] BLOCKED by pasteTimestamp", Date.now() - pasteTimestamp.current, "ms after paste");
         return;
       }
       // 保存完了後に実際にロードする際はdismissedフラグをリセット
@@ -5681,9 +5687,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const stack=undoStackRef.current[activeDeptId]||[];
             undoStackRef.current[activeDeptId]=[...stack,snapshot].slice(-30);
             setUndoCount(undoStackRef.current[activeDeptId].length);
+            pasteTimestamp.current = Date.now(); // Realtime上書きを5秒ブロック
             userEditSeq.current++;
+            seqAtLastRemoteLoad.current = userEditSeq.current - 1; // 保存スキップされないよう保証
             saveStatusRef.current="unsaved";
-            console.log("[setAllShifts]","reason=paste_apply",{year,month:month+1,activeDeptId,keys:Object.keys(pastedShifts),userEditSeq:userEditSeq.current});
+            console.log("[setAllShifts]","reason=paste_apply",{year,month:month+1,activeDeptId,keys:Object.keys(pastedShifts),userEditSeq:userEditSeq.current,seqAtLastRemoteLoad:seqAtLastRemoteLoad.current});
             setAllShifts(prev=>{const cur=prev[activeDeptId]||{};const next={};const allIds=new Set([...Object.keys(cur),...Object.keys(pastedShifts)]);allIds.forEach(id=>{next[id]={...(cur[id]||{}),...(pastedShifts[id]||{})};});return{...prev,[activeDeptId]:next};});
             setSaveStatus('unsaved');
             setExcelPasteModal(false);
