@@ -4726,6 +4726,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const merged = {};
           for (const [k, v] of deptShiftEntries) { merged[k.slice(shiftPrefix.length)] = v; }
           isLoadingMonth.current = true;
+          console.log("[setAllShifts]", "reason=initial_load", { year: now.getFullYear(), month: now.getMonth()+1, activeDeptId, keys: Object.keys(merged), stack: new Error().stack });
           setAllShifts(restoreShifts(merged));
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
         } else {
@@ -4733,6 +4734,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const legacyKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
           if (byKey[legacyKey]) {
             isLoadingMonth.current = true;
+            console.log("[setAllShifts]", "reason=initial_load_legacy", { year: now.getFullYear(), month: now.getMonth()+1, activeDeptId, keys: [legacyKey], stack: new Error().stack });
             setAllShifts(restoreShifts(byKey[legacyKey]));
             setTimeout(() => { isLoadingMonth.current = false; }, 100);
           }
@@ -4841,6 +4843,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
+          console.log("[setAllShifts]", "reason=realtime_update", { year: yearRef.current, month: monthRef.current+1, activeDeptId: activeDeptIdRef.current, keys: deptShiftEntries.map(([k])=>k), stack: new Error().stack });
           setAllShifts(prev => {
             // updater実行時に再チェック（fetch後に編集があればキャンセル）
             if (userEditSeq.current !== seqAtStart) return prev;
@@ -4869,6 +4872,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const legacyKey = `shifts_${yearRef.current}_${monthRef.current+1}`;
           if (byKey[legacyKey]) {
             isLoadingMonth.current = true;
+            console.log("[setAllShifts]", "reason=realtime_update_legacy", { year: yearRef.current, month: monthRef.current+1, activeDeptId: activeDeptIdRef.current, key: legacyKey, stack: new Error().stack });
             setAllShifts(prev => {
               if (userEditSeq.current !== seqAtStart) return prev;
               seqAtLastRemoteLoad.current = userEditSeq.current;
@@ -4989,6 +4993,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (saveTimer.current) clearTimeout(saveTimer.current); // 旧月の保存タイマーを即キャンセル
     isLoadingMonth.current = true;
     setIsMonthLoading(true); // UIロック開始
+    console.log("[setAllShifts]", "reason=month_clear", { year, month: month+1, activeDeptId, stack: new Error().stack });
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
     undoStackRef.current = {}; // 月切替でアンドゥ履歴をリセット
     setUndoCount(0);
@@ -4998,6 +5003,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         console.warn('[fetch] 古いリクエストを破棄 reqId:', reqId, '最新:', fetchReqIdRef.current);
         return;
       }
+      console.log("[setAllShifts]", "reason=month_load_supabase", { year, month: month+1, activeDeptId, keys: Object.keys(data||{}), stack: new Error().stack });
       setAllShifts(restoreShifts(data));
       setTimeout(() => {
         if (reqId !== fetchReqIdRef.current) return;
@@ -5396,6 +5402,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // ユーザー操作はRealtimeより常に優先: 編集前にシーケンス番号を上げてRealtimeをキャンセル
     userEditSeq.current++;
     saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
+    console.log("[setAllShifts]", "reason=user_edit", { year, month: month+1, activeDeptId, stack: new Error().stack });
     setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater}));
   }, [activeDeptId]);
 
@@ -5438,6 +5445,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
         if (Object.keys(warnings).length > 0 || (timelineWarnings&&timelineWarnings.length>0)) setTimeout(()=>setGenerateWarnings({warnings,timelineWarnings,deptLabel:cd.label,score}),0);
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
+        console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
         if (ratioFeedback && Object.keys(ratioFeedback).length > 0) {
@@ -5463,6 +5471,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setUndoCount(undoStackRef.current[activeDeptId].length);
     userEditSeq.current++;
     saveStatusRef.current = "unsaved";
+    console.log("[setAllShifts]", "reason=undo", { year, month: month+1, activeDeptId, stack: new Error().stack });
     setAllShifts(prev => ({...prev, [activeDeptId]: previous}));
   }, [activeDeptId]);
 
@@ -5518,7 +5527,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
 
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
-  const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
+  const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{console.log("[setAllShifts]","reason=dept_delete",{deptId,stack:new Error().stack});const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
   if (dbLoading) return (
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",userSelect:"none",pointerEvents:"none"}}>
@@ -5661,7 +5670,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0){delete next[activeDeptId];supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});}else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
-      {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onApply={(pastedShifts)=>{setAllShifts(prev=>{const cur=prev[activeDeptId]||{};const next={};const allIds=new Set([...Object.keys(cur),...Object.keys(pastedShifts)]);allIds.forEach(id=>{next[id]={...(cur[id]||{}),...(pastedShifts[id]||{})};});return{...prev,[activeDeptId]:next};});setSaveStatus('unsaved');setExcelPasteModal(false);}} onClose={()=>setExcelPasteModal(false)}/>}
+      {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onApply={(pastedShifts)=>{console.log("[PASTE_APPLY]",pastedShifts);console.log("[setAllShifts]","reason=paste_apply",{year,month:month+1,activeDeptId,keys:Object.keys(pastedShifts),stack:new Error().stack});setAllShifts(prev=>{const cur=prev[activeDeptId]||{};const next={};const allIds=new Set([...Object.keys(cur),...Object.keys(pastedShifts)]);allIds.forEach(id=>{next[id]={...(cur[id]||{}),...(pastedShifts[id]||{})};});return{...prev,[activeDeptId]:next};});setSaveStatus('unsaved');setExcelPasteModal(false);}} onClose={()=>setExcelPasteModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} onClose={()=>setGenerateWarnings(null)}/>}
@@ -5675,6 +5684,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         onClose={()=>setHistoryModal(false)}
         onRestore={(restoredData)=>{
           const restoreDeptId = activeDeptIdRef.current;
+          console.log("[setAllShifts]", "reason=history_restore", { year, month: month+1, activeDeptId: restoreDeptId, keys: Object.keys(restoredData||{}), stack: new Error().stack });
           setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
           setSaveStatus('saved');
         }}
