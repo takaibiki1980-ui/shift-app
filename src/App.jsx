@@ -5156,6 +5156,29 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
   const [excelRawMonths, setExcelRawMonths] = useState({}); // { deptId: { "YYYY-M": { name: {counts} } } }
   const [excelResetDismissed, setExcelResetDismissed] = useState(() => { try{return localStorage.getItem('shiftNavi_excelResetDismissed')==='true';}catch{return false;} });
+  const excelRawSaveTimer = useRef(null);
+  const prevExcelRawRef = useRef({});
+  const isSavingExcelRaw = useRef(false);
+  const saveExcelRawMonths = useCallback(async (data, userId) => {
+    if (excelRawSaveTimer.current) clearTimeout(excelRawSaveTimer.current);
+    excelRawSaveTimer.current = setTimeout(async () => {
+      if (isSavingExcelRaw.current) return;
+      isSavingExcelRaw.current = true;
+      try {
+        const prev = prevExcelRawRef.current;
+        const changed = Object.entries(data).filter(([id, raw]) => JSON.stringify(prev[id]) !== JSON.stringify(raw));
+        if (changed.length > 0) {
+          await Promise.all(changed.map(([deptId, deptRaw]) =>
+            supabase.from('shift_data').upsert({ user_id:userId, data_key:`excelRawMonths_${deptId}`, data_value:deptRaw, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+              .then(({error}) => { if(error) console.error('[excelRawMonths save]', deptId, error); })
+          ));
+          prevExcelRawRef.current = { ...data };
+        }
+      } finally {
+        isSavingExcelRaw.current = false;
+      }
+    }, 500);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
   const [pinModal, setPinModal] = useState(false);
@@ -5198,13 +5221,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }
   }, [exceptionMonths]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!isInitializing.current) {
-      for (const [deptId, deptRaw] of Object.entries(excelRawMonths)) {
-        supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:`excelRawMonths_${deptId}`, data_value:deptRaw, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-          .then(({error}) => { if(error) console.error('[excelRawMonths save]', deptId, error); });
-      }
-    }
-  }, [excelRawMonths]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!isInitializing.current) saveExcelRawMonths(excelRawMonths, session.user.id);
+  }, [excelRawMonths, saveExcelRawMonths, session.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isInitializing.current || dbLoading) return;
     supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'portalSettings', data_value:portalSettings, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{}).catch(()=>{});
