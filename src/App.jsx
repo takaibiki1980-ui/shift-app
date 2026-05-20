@@ -1152,12 +1152,20 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       const allowed = getAllowedTypes(s).filter(k => k !== '夜勤' && k !== '明け');
       if (!allowed.length) return;
 
-      // シフト確率テーブルを取得（trend or deptAvg or 均等）
+      // シフト確率テーブルを取得（trend×比率ブレンド or 比率単独 or 均等）
       const getShiftWeight = (d, k) => {
         const weekday = new Date(year, month, d).getDay();
-        if (trend?.dowShiftRate?.[weekday]?.[k] != null) return Math.max(0.01, trend.dowShiftRate[weekday][k]);
-        if (trend && typeof trend[k] === 'number') return Math.max(0.01, trend[k]);
-        if (deptAvgRatio?.[k] != null) return Math.max(0.01, deptAvgRatio[k]);
+        const ratioTotal = ratio ? allowed.reduce((sum, j) => sum + (ratio[j] || 0), 0) : 0;
+        const ratioW = (ratio && ratioTotal > 0) ? Math.max(0.01, (ratio[k] || 0.01) / ratioTotal) : null;
+        if (trend?.dowShiftRate?.[weekday]?.[k] != null) {
+          const trendW = Math.max(0.01, trend.dowShiftRate[weekday][k]);
+          return ratioW ? trendW * 0.6 + ratioW * 0.4 : trendW;
+        }
+        if (trend && typeof trend[k] === 'number') {
+          const trendW = Math.max(0.01, trend[k]);
+          return ratioW ? trendW * 0.6 + ratioW * 0.4 : trendW;
+        }
+        if (ratioW) return ratioW;
         return 1 / allowed.length;
       };
 
@@ -1271,37 +1279,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
   }
 
-  // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
-  const enforceMaxStaff = () => {
-    for (let d = 1; d <= days; d++) {
-      for (const [shiftKey, limit] of Object.entries(maxStaff)) {
-        const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
-        if (overStaff.length <= limit) continue;
-        const toFix = [
-          ...overStaff.filter(s => !lockedDays[s.id].has(d)),
-          ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
-        ];
-        let excess = overStaff.length - limit;
-        for (const s of toFix) {
-          if (excess <= 0) break;
-          if (lockedDays[s.id].has(d) && excess < overStaff.length) break;
-          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
-          // 超過シフト以外で空きのある種別に振替を試みる
-          const altShift = dayTypes.find(k => {
-            if (k === shiftKey) return false;
-            if (!getAllowedTypes(s).includes(k)) return false;
-            if (isBadTransition(prev, k)) return false;
-            if (isBadTransition(k, next)) return false;
-            const cnt = ds.filter(sx => res[sx.id][d] === k).length;
-            return cnt < (maxStaff[k] ?? 99);
-          });
-          res[s.id][d] = altShift || "休み";
-          excess--;
-        }
-      }
-    }
-  };
-  enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
+  // ★enforceMaxStaff廃止: maxStaff超過はscoreShiftsのSoft-Mediumペナルティで評価
 
   // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
   const isViolation = (prev, curr) => isBadTransition(prev, curr);
@@ -1327,7 +1305,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
-  enforceMaxStaff(); // 2回目: 違反修正後に新たな超過が生じた場合も除去
+  // (enforceMaxStaff廃止)
 
   // 最低配置保証フェーズ: minStaff未満の日にスタッフを補充
   // 優先①: 他シフト勤務中のスタッフをスライド（振替）→ 休み数は変わらない
@@ -1355,12 +1333,18 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (fromActual - 1 < fromMin) return false;
           return true;
         }).sort((a, b) => {
-          // maxStaffに余裕があるシフトのスタッフを優先してスライド
+          // ★最小変更原則: 比率ターゲットのシフト中スタッフはスライドを最後に選ぶ
+          const aRatio = a.shiftRatio || a.shiftRatioByMonth?.[mk];
+          const bRatio = b.shiftRatio || b.shiftRatioByMonth?.[mk];
+          const aOnTarget = aRatio && (aRatio[res[a.id][d]] || 0) > 0;
+          const bOnTarget = bRatio && (bRatio[res[b.id][d]] || 0) > 0;
+          if (aOnTarget && !bOnTarget) return 1;
+          if (!aOnTarget && bOnTarget) return -1;
           const cntA = ds.filter(s => res[s.id][d] === res[a.id][d]).length;
           const cntB = ds.filter(s => res[s.id][d] === res[b.id][d]).length;
           const maxA = maxStaff[res[a.id][d]] ?? 99;
           const maxB = maxStaff[res[b.id][d]] ?? 99;
-          return (maxA - cntA) - (maxB - cntB); // 余裕が少ない方を先に
+          return (maxA - cntA) - (maxB - cntB);
         });
         let need = minCount - actual;
         for (const s of slideCands) {
@@ -1383,7 +1367,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
           const curCount = ds.filter(sx => res[sx.id][d] === shiftKey).length;
           if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
-          // 公休数が目標より多い場合のみ許可（kyukoDays死守）
           const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
           const actualKyuko = Object.values(res[s.id]).filter(v => v === "休み" || v === "希望休").length;
           return actualKyuko > targetKyuko;
@@ -1392,7 +1375,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           const targetB = b.kyukoDaysByMonth?.[mk] ?? b.kyukoDays ?? 8;
           const surplusA = Object.values(res[a.id]).filter(v => v === "休み" || v === "希望休").length - targetA;
           const surplusB = Object.values(res[b.id]).filter(v => v === "休み" || v === "希望休").length - targetB;
-          return surplusB - surplusA; // 余剰が多い人から優先
+          return surplusB - surplusA;
         });
         for (const s of restCands) {
           if (need <= 0) break;
@@ -1403,7 +1386,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     if (!anyFixed) break;
   }
 
-  enforceMaxStaff(); // 3回目: 補充後の超過確認
+  // (enforceMaxStaff廃止)
 
   // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
   // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
@@ -1491,6 +1474,54 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
+  // ★比率修復パス: minStaff保証後の比率乖離を実際のシフト変換で修正する
+  // minStaff slide 等で A1→A に崩れたスタッフのシフトを制約内で書き戻す
+  {
+    for (const s of ds) {
+      const sratio = s.shiftRatio || s.shiftRatioByMonth?.[mk];
+      if (!sratio) continue;
+      const ratioTotal = Object.values(sratio).reduce((sum, v) => sum + (v||0), 0);
+      if (ratioTotal <= 0) continue;
+      const allowed = getAllowedTypes(s);
+      const workDaysArr = Array.from({length:days},(_,i)=>i+1)
+        .filter(d => deptWork.has(res[s.id][d]) && res[s.id][d] !== '明け' && !lockedDays[s.id].has(d));
+      const totalWork = workDaysArr.length;
+      if (totalWork === 0) continue;
+      const targets = {}, actuals = {};
+      for (const [k, v] of Object.entries(sratio)) {
+        if (v > 0 && allowed.includes(k)) {
+          targets[k] = Math.round(totalWork * v / ratioTotal);
+          actuals[k] = workDaysArr.filter(d => res[s.id][d] === k).length;
+        }
+      }
+      // 過多シフト → 過少シフトへの変換（制約チェック付き）
+      const fromShifts = Object.keys(targets).filter(k => (actuals[k]||0) > targets[k])
+        .sort((a,b) => (actuals[b]||0)-targets[b] - ((actuals[a]||0)-targets[a]));
+      for (const fromShift of fromShifts) {
+        const fromDays = workDaysArr.filter(d => res[s.id][d] === fromShift);
+        const toShifts = Object.keys(targets).filter(k => k !== fromShift && targets[k] > (actuals[k]||0))
+          .sort((a,b) => targets[b]-(actuals[b]||0) - (targets[a]-(actuals[a]||0)));
+        for (const toShift of toShifts) {
+          const canConvert = Math.min((actuals[fromShift]||0)-targets[fromShift], targets[toShift]-(actuals[toShift]||0));
+          let converted = 0;
+          for (const d of fromDays) {
+            if (converted >= canConvert) break;
+            if (res[s.id][d] !== fromShift) continue;
+            const prev = res[s.id][d-1], next = res[s.id][d+1];
+            if (isBadTransition(prev, toShift)) continue;
+            if (isBadTransition(toShift, next)) continue;
+            const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
+            if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
+            res[s.id][d] = toShift;
+            actuals[fromShift]--;
+            actuals[toShift] = (actuals[toShift]||0) + 1;
+            converted++;
+          }
+        }
+      }
+    }
+  }
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
@@ -1523,6 +1554,8 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
   const REST = new Set(["休み","希望休"]); // 有休は賃金支払い対象のため休日カウントから除外
   const maxConsec = dept.maxConsecutive || 5;
   const mk = monthKey(year, month);
+  const maxStaffSc = {};
+  [...new Set(dept.shiftTypes)].forEach(k => { const cd=(dept.customShiftDefs||[]).find(d=>d.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=dept.maxStaff?.[k];maxStaffSc[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def; });
   const workShiftTypes = dept.shiftTypes.filter(k => WORK.has(k) && k !== "夜勤");
   for (const s of ds) {
     // kyukoDays 逸脱ペナルティ（ルール内で解決できない場合を許容: 1日ズレごとに10,000点）
@@ -1556,11 +1589,16 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
       }
     }
   }
-  // minStaff不足
+  // minStaff不足: Semi-Hard / maxStaff超過: Soft-Medium
   for (let d = 1; d <= days; d++) {
     for (const [k, minC] of Object.entries(dept.minStaff || {})) {
       const actual = ds.filter(s => res[s.id]?.[d] === k).length;
-      if (actual < minC) score += actual === 0 ? (minC - actual) * 30 : (minC - actual) * 10;
+      if (actual < minC) score += actual === 0 ? minC * 1000 : (minC - actual) * 300;
+    }
+    for (const [k, maxC] of Object.entries(maxStaffSc)) {
+      if (maxC >= 99) continue;
+      const actual = ds.filter(s => res[s.id]?.[d] === k).length;
+      if (actual > maxC) score += (actual - maxC) * 150;
     }
   }
   // 公平性ペナルティ: 夜勤回数・土日出勤回数の分散（スタッフ間の不均衡を抑制）
@@ -1602,6 +1640,30 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
       }
     }
   }
+  // ★勤務比率乖離ペナルティ（1%乖離ごとに50点: 役職制限5000点より軽い誘導）
+  for (const s of ds) {
+    const ratio = s.shiftRatio || s.shiftRatioByMonth?.[mk];
+    if (!ratio) { continue; }
+    const ratioTotal = Object.values(ratio).reduce((sum, v) => sum + (v || 0), 0);
+    if (ratioTotal <= 0) { continue; }
+    const workCounts = {};
+    let totalWork = 0;
+    for (let d = 1; d <= days; d++) {
+      const sh = res[s.id]?.[d];
+      if (!sh || !WORK.has(sh) || sh === '明け') continue;
+      workCounts[sh] = (workCounts[sh] || 0) + 1;
+      totalWork++;
+    }
+    if (totalWork === 0) continue;
+    let ratioPenalty = 0;
+    Object.entries(ratio).forEach(([k, targetRate]) => {
+      if (!targetRate || targetRate <= 0) return;
+      const targetRatio = targetRate / ratioTotal;
+      const actualRatio = (workCounts[k] || 0) / totalWork;
+      ratioPenalty += Math.abs(actualRatio - targetRatio) * 100 * 50;
+    });
+    score += ratioPenalty;
+  }
   // ④⑤ 学習適合ペナルティ: 勤務日も休日も含む。1人1日あたり最大100点
   // ルール違反(10000点)を逆転しない範囲で公平性ペナルティ(2000点~)を上回るスケール
   const LEARN_TYPES = new Set(dept.shiftTypes.filter(k => k !== '夜勤' && k !== '明け'));
@@ -1622,11 +1684,11 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
             const predictedProb = dowRate
               ? (dowRate[shift] ?? 0)
               : (typeof trend[shift] === 'number' ? trend[shift] : 0);
-            score += (1 - predictedProb) * 100;
+            score += (1 - predictedProb) * 30; // Excel学習はSoft: 傾向補正として軽く
           } else if (LEARN_REST.has(shift)) {
             const dow6 = (dow + 6) % 7; // dowRestRateは月曜=0インデックスで格納
             const restProb = trend.dowRestRate?.[dow6] ?? null;
-            if (restProb != null) score += (1 - restProb) * 100;
+            if (restProb != null) score += (1 - restProb) * 30;
           }
         }
       }
@@ -1840,6 +1902,7 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
   const initData = () => { const c = {}; COUNT_KEYS.forEach(k => c[k]=0); return {...c, total:0, dowRest:[0,0,0,0,0,0,0], dowTotal:[0,0,0,0,0,0,0], dowShift:[{},{},{},{},{},{},{}]}; };
   const trendMap = {};
   const processedYearMonths = new Set();
+  const processedStaffByMonth = {}; // { "YYYY-M": Set<staffName> } — 同一月×同一スタッフの重複カウント防止
   const monthlyData = {}; // { "YYYY-M": { name: { 早番, 日勤, 遅番, 夜勤, ...custom, total, dowRest, dowTotal } } }
   workbook.SheetNames.forEach(sheetName => {
     if (/祝日|holidays|calendar|カレンダー/i.test(sheetName)) return;
@@ -1853,14 +1916,29 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
     sampleDataRows.forEach(row => { row.forEach((cell, ci) => { if (isShiftCell(cell) && (detectedShiftStart === -1 || ci < detectedShiftStart)) detectedShiftStart = ci; }); });
     if (detectedShiftStart < 0) return;
     const nameColVotes = {};
-    sampleDataRows.slice(0, 10).forEach(row => { for (let ci = 0; ci < detectedShiftStart; ci++) { const val = String(row[ci] ?? "").trim(); if (val.length >= 2 && !/^\d/.test(val) && !isShiftCell(val)) nameColVotes[ci] = (nameColVotes[ci] || 0) + 1; } });
-    const votedNameCol = Object.entries(nameColVotes).sort((a,b) => b[1]-a[1])[0];
+    const nameColUnique = {};
+    sampleDataRows.slice(0, 10).forEach(row => { for (let ci = 0; ci < detectedShiftStart; ci++) { const val = String(row[ci] ?? "").trim(); if (val.length >= 2 && !/^\d/.test(val) && !isShiftCell(val)) { nameColVotes[ci] = (nameColVotes[ci] || 0) + 1; if (!nameColUnique[ci]) nameColUnique[ci] = new Set(); nameColUnique[ci].add(val); } } });
+    const votedNameCol = Object.entries(nameColVotes).sort((a, b) => { if (b[1] !== a[1]) return b[1] - a[1]; return (nameColUnique[b[0]]?.size || 0) - (nameColUnique[a[0]]?.size || 0); })[0];
     if (!votedNameCol) return;
     const detectedNameCol = +votedNameCol[0];
     const colToDow = {};
     let sheetYearMonth = null, sy = null, sm = null;
     const row1Raw = dataRaw[0] || [];
     for (let ci = 0; ci < Math.min(row1Raw.length, 12); ci++) { const v = row1Raw[ci]; if (typeof v === "number" && v >= 2000 && v <= 2100) sy = v; if (typeof v === "number" && v >= 1 && v <= 12 && sy && ci > 0) { sm = v; break; } }
+    // ★シート名から年月を補完（令和/平成元号・YYYY年M月形式に対応）
+    if (!sy || !sm) {
+      const sn = sheetName.trim();
+      if (!sy) {
+        const my = sn.match(/(\d{4})[年\-\/]/);
+        if (my && +my[1] >= 2000 && +my[1] <= 2100) sy = +my[1];
+        if (!sy) { const mr = sn.match(/令和(\d{1,2})/); if (mr) sy = 2018 + +mr[1]; }
+        if (!sy) { const mh = sn.match(/平成(\d{1,2})/); if (mh) sy = 1988 + +mh[1]; }
+      }
+      if (!sm) {
+        const mm = sn.match(/[年\-\/](\d{1,2})[月]?$/) || sn.match(/^(\d{1,2})[月]/);
+        if (mm && +mm[1] >= 1 && +mm[1] <= 12) sm = +mm[1];
+      }
+    }
     let dateRowFound = false;
     for (const row of dataCellDates) {
       if (!row) continue;
@@ -1875,7 +1953,8 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
       }
     }
     if (!dateRowFound && sy && sm) { for (let i = 0; i < 31; i++) { const col = detectedShiftStart + i; const d = new Date(sy, sm - 1, i + 1); if (d.getMonth() === sm - 1) colToDow[col] = (d.getDay() + 6) % 7; } sheetYearMonth = `${sy}-${sm}`; }
-    if (sheetYearMonth) { if (processedYearMonths.has(sheetYearMonth)) return; processedYearMonths.add(sheetYearMonth); } else return;
+    // ★1シート=1スタッフ構造に対応: 同一年月でも別シートは処理する（重複は staffByMonth で防ぐ）
+    if (sheetYearMonth) { processedYearMonths.add(sheetYearMonth); } else return;
     dataRaw.forEach(row => {
       if (!row || row.length < detectedShiftStart + 3) return;
       const nameCell = String(row[detectedNameCol] ?? "").trim();
@@ -1898,6 +1977,10 @@ function parseShiftExcel(workbook, customShiftKeys = []) {
         }
       }
       if (total < 3) return;
+      // 同一月に同一スタッフが複数シートにある場合は2回目以降をスキップ（重複防止）
+      if (!processedStaffByMonth[sheetYearMonth]) processedStaffByMonth[sheetYearMonth] = new Set();
+      if (processedStaffByMonth[sheetYearMonth].has(nameCell)) return;
+      processedStaffByMonth[sheetYearMonth].add(nameCell);
       if (!trendMap[nameCell]) trendMap[nameCell] = initData();
       COUNT_KEYS.forEach(k => { trendMap[nameCell][k] += counts[k]; });
       trendMap[nameCell].total += total;
@@ -2433,6 +2516,152 @@ function PinModal({ deptLabel, onVerify, onClose }) {
   );
 }
 
+const PASTE_SHIFT_MAP = {"早":"早番","早番":"早番","日":"日勤","日勤":"日勤","遅":"遅番","遅番":"遅番","夜":"夜勤","夜勤":"夜勤","明":"明け","明け":"明け","休":"休み","休み":"休み","公":"休み","公休":"休み","休日":"休み","振休":"休み","有":"有休","有休":"有休","有給":"有休","希":"希望休","希望休":"希望休","E":"早番","D":"日勤","L":"遅番","N":"夜勤"};
+function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]) {
+  const normMap = {};
+  Object.entries(PASTE_SHIFT_MAP).forEach(([k,v]) => { normMap[normName(k)] = v; });
+  customShiftKeys.filter(Boolean).forEach(k => { normMap[normName(k)] = k; });
+  const toShift = c => normMap[normName(String(c??'').trim())] || null;
+  const isShift = c => !!toShift(c);
+  const ROLE_WORDS = new Set(["常勤","非常勤","パート","嘱託","正規","委託","管理","職員","名前","氏名","スタッフ"]);
+  const DOW_SET = new Set(["月","火","水","木","金","土","日"]);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const rows = tsvText.trim().split(/\r?\n/).map(r => r.split('\t'));
+  if (rows.length < 2) return null;
+  // Format B detection: row with 20+ sequential integers starting from 1
+  let dateRowIdx = -1, dateColOffset = -1;
+  for (let ri = 0; ri < Math.min(6, rows.length); ri++) {
+    const row = rows[ri];
+    let seqStart = -1, seqLen = 0;
+    for (let ci = 0; ci < row.length; ci++) {
+      const n = parseInt(String(row[ci]??'').trim(), 10);
+      if (n === 1 && seqStart < 0) { seqStart = ci; seqLen = 1; }
+      else if (seqStart >= 0 && n === seqLen + 1) seqLen++;
+      else if (seqStart >= 0) break;
+    }
+    if (seqLen >= 20) { dateRowIdx = ri; dateColOffset = seqStart; break; }
+  }
+  const result = {}, matched = [], unmatched = [];
+  if (dateRowIdx >= 0) {
+    // Format B: col→day from date row (explicit date numbers)
+    const colToDay = {};
+    rows[dateRowIdx].forEach((c, ci) => { const n = parseInt(String(c??'').trim(), 10); if (n >= 1 && n <= 31) colToDay[ci] = n; });
+    for (let ri = dateRowIdx + 1; ri < rows.length; ri++) {
+      const row = rows[ri];
+      const shiftCols = Object.keys(colToDay).filter(ci => isShift(row[ci])).map(Number);
+      if (shiftCols.length < 3) continue;
+      let nameCell = '';
+      for (let ci = 0; ci < dateColOffset; ci++) {
+        const v = String(row[ci]??'').trim();
+        if (!v || v.length < 2 || /^\d/.test(v) || ROLE_WORDS.has(v) || isShift(v)) continue;
+        nameCell = v; break;
+      }
+      if (!nameCell) continue;
+      const staff = staffList.find(s => nameMatch(nameCell, s.name));
+      if (!staff) { if (!unmatched.includes(nameCell)) unmatched.push(nameCell); continue; }
+      if (!matched.includes(staff.name)) matched.push(staff.name);
+      if (!result[staff.id]) result[staff.id] = {};
+      shiftCols.forEach(ci => { const sk = toShift(row[ci]); if (sk) result[staff.id][colToDay[ci]] = sk; });
+    }
+  } else {
+    // Format A: 月火水木金土日 header, column position = day number
+    let headerRowIdx = -1, shiftStartCol = 1;
+    for (let ri = 0; ri < Math.min(5, rows.length); ri++) {
+      const row = rows[ri];
+      const dowCount = row.filter(c => DOW_SET.has(String(c??'').trim())).length;
+      if (dowCount >= 20) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
+    }
+    const colToDay = {};
+    for (let i = 0; i < daysInMonth; i++) colToDay[shiftStartCol + i] = i + 1;
+    for (let ri = (headerRowIdx >= 0 ? headerRowIdx + 1 : 0); ri < rows.length; ri++) {
+      const row = rows[ri];
+      const shiftCols = Object.keys(colToDay).filter(ci => isShift(row[Number(ci)])).map(Number);
+      if (shiftCols.length < 3) continue;
+      let nameCell = '';
+      for (let ci = 0; ci < shiftStartCol; ci++) {
+        const v = String(row[ci]??'').trim();
+        if (!v || v.length < 2 || /^\d/.test(v) || ROLE_WORDS.has(v) || isShift(v)) continue;
+        nameCell = v; break;
+      }
+      if (!nameCell) continue;
+      const staff = staffList.find(s => nameMatch(nameCell, s.name));
+      if (!staff) { if (!unmatched.includes(nameCell)) unmatched.push(nameCell); continue; }
+      if (!matched.includes(staff.name)) matched.push(staff.name);
+      if (!result[staff.id]) result[staff.id] = {};
+      shiftCols.forEach(ci => { const sk = toShift(row[ci]); if (sk) result[staff.id][colToDay[ci]] = sk; });
+    }
+  }
+  if (Object.keys(result).length === 0) return null;
+  return { result, matched, unmatched };
+}
+
+function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShiftKeys=[] }) {
+  const [parsed, setParsed] = useState(null);
+  const [error, setError] = useState('');
+  const [pasting, setPasting] = useState(false);
+  const areaRef = useRef(null);
+  const process = (text) => {
+    setError('');
+    const r = parseExcelPasteData(text, staffList, year, month, customShiftKeys);
+    if (!r) setError('シフトデータを読み取れませんでした。スタッフ名＋シフト（早/遅/夜/明/休等）のセル範囲を選択してCtrl+Cしてください。');
+    else setParsed(r);
+  };
+  const handleClickPaste = async () => {
+    setPasting(true);
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) setError('クリップボードが空です。Excelで範囲を選択しCtrl+Cしてから押してください。');
+      else process(text);
+    } catch { setError('クリップボードを読み取れませんでした。下のエリアをクリックしてCtrl+Vで貼り付けてください。'); }
+    setPasting(false);
+  };
+  const handlePasteEvent = (e) => { const text = e.clipboardData.getData('text'); if (text.trim()) { e.preventDefault(); process(text); } };
+  return (
+    <div style={{position:'fixed',inset:0,background:'#000000cc',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:'#f3fffe',border:'1px solid #90cbc8',borderRadius:14,padding:24,width:'100%',maxWidth:480,maxHeight:'85vh',overflowY:'auto',boxShadow:'0 30px 80px #000'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+          <div><div style={{fontSize:15,fontWeight:900,color:'#1a3635'}}>📋 Excelからシフトを貼り付け</div><div style={{fontSize:11,color:'#3a8a87',marginTop:3}}>{year}年{month+1}月のシフト表に上書き適用します</div></div>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#3a8a87',cursor:'pointer',fontSize:20}}>✕</button>
+        </div>
+        <div style={{background:'#e8f5ee',border:'1px solid #14532d',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:11,color:'#1a3635'}}>
+          <div style={{fontWeight:700,marginBottom:4}}>手順</div>
+          <ol style={{margin:0,paddingLeft:16,lineHeight:1.9}}>
+            <li>Excelで<b>スタッフ名〜月末</b>のシフト範囲を選択（曜日ヘッダー行含む）</li>
+            <li><b>Ctrl+C</b> でコピー</li>
+            <li>「クリップボードから貼り付け」ボタン または 下のエリアに<b>Ctrl+V</b></li>
+          </ol>
+        </div>
+        <div ref={areaRef} tabIndex={0} onPaste={handlePasteEvent}
+          style={{background:'#fff',border:'2px dashed #90cbc8',borderRadius:8,padding:'18px',textAlign:'center',marginBottom:14,outline:'none',minHeight:60,display:'flex',alignItems:'center',justifyContent:'center',cursor:'text'}}>
+          {parsed
+            ? <div style={{color:'#16a34a',fontWeight:700,fontSize:13}}>✅ {Object.keys(parsed.result).length}名分を読み込みました</div>
+            : <div style={{color:'#6ab5b2',fontSize:12}}>ここをクリックして Ctrl+V で貼り付け</div>}
+        </div>
+        <button onClick={handleClickPaste} disabled={pasting} style={{width:'100%',background:'linear-gradient(135deg,#2BBFBA,#45B7D1)',color:'#fff',border:'none',borderRadius:9,padding:'12px 0',cursor:'pointer',fontSize:14,fontWeight:800,marginBottom:14}}>
+          {pasting?'⏳ 読み込み中…':'📋 クリップボードから貼り付け'}
+        </button>
+        {error&&<div style={{background:'#fff0f0',border:'1px solid #dc2626',borderRadius:8,padding:'10px 14px',color:'#f87171',fontSize:12,marginBottom:14}}>{error}</div>}
+        {parsed&&(<div>
+          {parsed.matched.length>0&&(<div style={{marginBottom:10}}>
+            <div style={{fontSize:11,fontWeight:700,color:'#16a34a',marginBottom:4}}>✅ マッチ（{parsed.matched.length}名）</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:4}}>{parsed.matched.map(n=><span key={n} style={{background:'#d1fae5',border:'1px solid #16a34a',borderRadius:12,padding:'2px 8px',fontSize:11,color:'#15803d'}}>{n}</span>)}</div>
+          </div>)}
+          {parsed.unmatched.length>0&&(<div style={{background:'#fff8e1',border:'2px solid #f59e0b',borderRadius:8,padding:'10px 14px',marginBottom:12}}>
+            <div style={{color:'#b45309',fontWeight:800,fontSize:12,marginBottom:6}}>⚠️ 未マッチ（{parsed.unmatched.length}件）— スキップ</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:4}}>{parsed.unmatched.map(n=><span key={n} style={{background:'#fef3c7',border:'1px solid #f59e0b',borderRadius:12,padding:'2px 8px',fontSize:11,color:'#92400e'}}>{n}</span>)}</div>
+            <div style={{fontSize:10,color:'#92400e',marginTop:6}}>スタッフ設定の名前を合わせるか、Excelの名前を修正してください。</div>
+          </div>)}
+          <div style={{display:'flex',gap:10}}>
+            <button onClick={()=>onApply(parsed.result)} style={{flex:1,background:'linear-gradient(135deg,#2d8a52,#2a7a6e)',color:'#fff',border:'none',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14,fontWeight:800}}>✅ このシフトを適用する</button>
+            <button onClick={onClose} style={{flex:1,background:'#d5edeb',color:'#3a8a87',border:'1px solid #90cbc8',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14}}>キャンセル</button>
+          </div>
+        </div>)}
+        {!parsed&&!error&&<button onClick={onClose} style={{width:'100%',background:'#d5edeb',color:'#3a8a87',border:'1px solid #90cbc8',borderRadius:8,padding:'9px 0',cursor:'pointer',fontSize:13,marginTop:4}}>キャンセル</button>}
+      </div>
+    </div>
+  );
+}
+
 function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm, exceptionMonths = [], onExceptionMonthsChange, excelRawMonths = {}, onExcelRawMonthsChange, onAutoSetRatios, staffList = [], customShiftKeys = [] }) {
   const [status, setStatus] = useState("idle"), [preview, setPreview] = useState(null), [errorMsg, setErrorMsg] = useState("");
   const [unmatchedNames, setUnmatchedNames] = useState([]); // ① 名前不一致スタッフ一覧
@@ -2444,7 +2673,8 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
     setStatus("parsing"); setErrorMsg(""); setUnmatchedNames([]);
     try {
       const buf=await file.arrayBuffer(); const wb=window.XLSX.read(buf,{type:"array"}); const trend=parseShiftExcel(wb, customShiftKeys);
-      if(Object.keys(trend).length===0){setErrorMsg("シフトデータを読み取れませんでした。");setStatus("error");if(fileRef.current)fileRef.current.value="";return;}
+      const trendStaffCount = Object.keys(trend).filter(k=>k!=='_months'&&k!=='_rawByMonth').length;
+      if(trendStaffCount===0){setErrorMsg("シフトデータを読み取れませんでした。シート名に年月（例: 2026年5月・令和8年5月・5月）が含まれているか確認してください。");setStatus("error");if(fileRef.current)fileRef.current.value="";return;}
       // ① Excelの名前とアプリのスタッフ名を照合して不一致を検出
       const excelNames = new Set();
       Object.values(trend._rawByMonth||{}).forEach(monthData => Object.keys(monthData).forEach(n => excelNames.add(n)));
@@ -2498,7 +2728,7 @@ function ExcelImportModal({ onImport, onReset, onClose, currentTrend, onConfirm,
         {status==="parsing"&&<div style={{textAlign:"center",color:"#2BBFBA",padding:"16px 0"}}>⏳ 解析中…</div>}
         {status==="error"&&<div style={{background:"#fff0f0",border:"1px solid #dc2626",borderRadius:8,padding:"10px 14px",color:"#f87171",fontSize:12,marginBottom:14}}>{errorMsg}</div>}
         {status==="done"&&preview&&(<div>
-          <div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>✅ {Object.keys(preview).filter(k=>k!=='_months').length} 名分のデータを読み込みました</div>
+          <div style={{color:"#5cb87a",fontSize:13,fontWeight:700,marginBottom:6}}>✅ {Object.keys(preview).filter(k=>k!=='_months'&&k!=='_rawByMonth').length} 名分のデータを読み込みました</div>
           {unmatchedNames.length>0&&(
             <div style={{background:"#fff8e1",border:"2px solid #f59e0b",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
               <div style={{color:"#b45309",fontWeight:800,fontSize:12,marginBottom:6}}>⚠️ アプリに存在しないスタッフ名（{unmatchedNames.length}件）— 学習対象外になります</div>
@@ -3031,7 +3261,29 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
     return result;
   }, [shifts, ds, year, month, dept.shiftTypes]);
 
+  const roleViolationCount = useMemo(() => {
+    if (!dept.roleShiftTypes) return 0;
+    let count = 0;
+    for (const s of ds) {
+      const ra = dept.roleShiftTypes[s.role];
+      if (!ra) continue;
+      for (let d = 1; d <= days; d++) {
+        const sh = shifts[s.id]?.[d] || '';
+        if (!sh || !deptWork.has(sh) || sh === '明け') continue;
+        if (!ra.includes(sh)) count++;
+      }
+    }
+    return count;
+  }, [shifts, ds, days, dept.roleShiftTypes, deptWork]);
+
   return (
+    <div>
+    {roleViolationCount > 0 && (
+      <div style={{background:"#fee2e2",border:"1px solid #ef4444",borderRadius:6,padding:"6px 12px",marginBottom:6,color:"#991b1b",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
+        <span>⚠️</span>
+        <span>役職制限違反: {roleViolationCount}件 — 赤いセルに許可外シフトが入っています</span>
+      </div>
+    )}
     <div style={{overflowX:"auto",overflowY:"visible",userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
         <thead>
@@ -3072,7 +3324,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&type&&deptWork.has(type)&&type!=="明け"&&!_ra.includes(type);
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -3107,6 +3360,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
           </tr>
         </tbody>
       </table>
+    </div>
     </div>
   );
 }
@@ -4433,18 +4687,28 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:defaultStaff, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
             .then(({ error }) => { if (!error) lastSavedStaffListRef.current = staffListRef.current; });
         }
-        if (byKey['excelRawMonths']) {
-          const actualDepts = byKey['depts'] || depts;
-          const migrated = migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts);
-          const filteredRaw = filterExpiredExcelMonths(migrated);
-          setExcelRawMonths(filteredRaw);
-          const excl = filterExpiredExceptions(byKey['exceptionMonths'] || []);
-          const trend = {};
-          for (const [dId, deptRaw] of Object.entries(filteredRaw)) {
-            const recomp = computeShiftTrendFromRaw(deptRaw, excl);
-            if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend[dId] = recomp;
+        {
+          const perDeptKeys = Object.keys(byKey).filter(k => k.startsWith('excelRawMonths_'));
+          const rawMonths = {};
+          if (perDeptKeys.length > 0) {
+            for (const k of perDeptKeys) rawMonths[k.slice('excelRawMonths_'.length)] = byKey[k];
+          } else if (byKey['excelRawMonths']) {
+            const actualDepts = byKey['depts'] || depts;
+            Object.assign(rawMonths, migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts));
+            // 旧フォーマット行を削除（移行完了後は不要）
+            supabase.from('shift_data').delete().eq('user_id', session.user.id).eq('data_key', 'excelRawMonths').then(({error})=>{ if(error) console.error('[excelRawMonths legacy delete]', error); });
           }
-          if (Object.keys(trend).length > 0) setShiftTrend(trend);
+          if (Object.keys(rawMonths).length > 0) {
+            const filteredRaw = filterExpiredExcelMonths(rawMonths);
+            setExcelRawMonths(filteredRaw);
+            const excl = filterExpiredExceptions(byKey['exceptionMonths'] || []);
+            const trend = {};
+            for (const [dId, deptRaw] of Object.entries(filteredRaw)) {
+              const recomp = computeShiftTrendFromRaw(deptRaw, excl);
+              if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend[dId] = recomp;
+            }
+            if (Object.keys(trend).length > 0) setShiftTrend(trend);
+          }
         }
         if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
         if (byKey['events_data']) setAllEvents(byKey['events_data']);
@@ -4545,17 +4809,25 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         const latestExcRT = filterExpiredExceptions(byKey['exceptionMonths'] || exceptionMonths);
-        if (byKey['excelRawMonths']) {
-          const actualDepts2 = byKey['depts'] || depts;
-          const migrated2 = migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts2);
-          const filteredRaw2 = filterExpiredExcelMonths(migrated2);
-          setExcelRawMonths(filteredRaw2);
-          const trend2 = {};
-          for (const [dId, deptRaw] of Object.entries(filteredRaw2)) {
-            const recomp = computeShiftTrendFromRaw(deptRaw, latestExcRT);
-            if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend2[dId] = recomp;
+        {
+          const perDeptKeys2 = Object.keys(byKey).filter(k => k.startsWith('excelRawMonths_'));
+          const rawMonths2 = {};
+          if (perDeptKeys2.length > 0) {
+            for (const k of perDeptKeys2) rawMonths2[k.slice('excelRawMonths_'.length)] = byKey[k];
+          } else if (byKey['excelRawMonths']) {
+            const actualDepts2 = byKey['depts'] || depts;
+            Object.assign(rawMonths2, migrateLegacyExcelRaw(byKey['excelRawMonths'], actualDepts2));
           }
-          if (Object.keys(trend2).length > 0) setShiftTrend(trend2);
+          if (Object.keys(rawMonths2).length > 0) {
+            const filteredRaw2 = filterExpiredExcelMonths(rawMonths2);
+            setExcelRawMonths(filteredRaw2);
+            const trend2 = {};
+            for (const [dId, deptRaw] of Object.entries(filteredRaw2)) {
+              const recomp = computeShiftTrendFromRaw(deptRaw, latestExcRT);
+              if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend2[dId] = recomp;
+            }
+            if (Object.keys(trend2).length > 0) setShiftTrend(trend2);
+          }
         }
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
         if (byKey['exceptionMonths']) setExceptionMonths(latestExcRT);
@@ -4897,6 +5169,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => { if(autoFitApplied.current)return; try{const s=localStorage.getItem("shiftTableZoom");if(s&&!isMobile){autoFitApplied.current=true;return;}}catch{} setTableZoom(autoFitZoom(staffList.filter(s=>s.dept===activeDeptId).length,getDays(now.getFullYear(),now.getMonth()))); autoFitApplied.current=true; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [excelImportModal, setExcelImportModal] = useState(false);
+  const [excelPasteModal, setExcelPasteModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
 
@@ -5015,6 +5288,29 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
   const [excelRawMonths, setExcelRawMonths] = useState({}); // { deptId: { "YYYY-M": { name: {counts} } } }
   const [excelResetDismissed, setExcelResetDismissed] = useState(() => { try{return localStorage.getItem('shiftNavi_excelResetDismissed')==='true';}catch{return false;} });
+  const excelRawSaveTimer = useRef(null);
+  const prevExcelRawRef = useRef({});
+  const isSavingExcelRaw = useRef(false);
+  const saveExcelRawMonths = useCallback(async (data, userId) => {
+    if (excelRawSaveTimer.current) clearTimeout(excelRawSaveTimer.current);
+    excelRawSaveTimer.current = setTimeout(async () => {
+      if (isSavingExcelRaw.current) return;
+      isSavingExcelRaw.current = true;
+      try {
+        const prev = prevExcelRawRef.current;
+        const changed = Object.entries(data).filter(([id, raw]) => JSON.stringify(prev[id]) !== JSON.stringify(raw));
+        if (changed.length > 0) {
+          await Promise.all(changed.map(([deptId, deptRaw]) =>
+            supabase.from('shift_data').upsert({ user_id:userId, data_key:`excelRawMonths_${deptId}`, data_value:deptRaw, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
+              .then(({error}) => { if(error) console.error('[excelRawMonths save]', deptId, error); })
+          ));
+          prevExcelRawRef.current = { ...data };
+        }
+      } finally {
+        isSavingExcelRaw.current = false;
+      }
+    }, 500);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
   const [pinModal, setPinModal] = useState(false);
@@ -5057,11 +5353,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }
   }, [exceptionMonths]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!isInitializing.current) {
-      supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'excelRawMonths', data_value:excelRawMonths, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-        .then(({error}) => { if(error) console.error('[excelRawMonths save]', error); });
-    }
-  }, [excelRawMonths]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!isInitializing.current) saveExcelRawMonths(excelRawMonths, session.user.id);
+  }, [excelRawMonths, saveExcelRawMonths, session.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isInitializing.current || dbLoading) return;
     supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'portalSettings', data_value:portalSettings, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{}).catch(()=>{});
@@ -5268,6 +5561,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:700,opacity:saveStatus==="unsaved"?0.5:1}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
           {!isMobile&&(()=>{const deptTrend=shiftTrend[activeDeptId]||{};const excelCnt=Object.keys(deptTrend).filter(k=>k!=='_months').length;const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=excelCnt>0||learnedCnt>0;const syncColor=syncRate!=null?(syncRate>=85?"#16a34a":syncRate>=70?"#ca8a04":"#dc2626"):"#2a9a96";const label=hasAny?`🎯 シンクロ率 ${syncRate!=null?syncRate+'%':'--%'}`:`📊 傾向学習`;return(<button onClick={()=>setExcelImportModal(true)} style={{background:hasAny?"#f0f9ff":"#ffffff",color:syncColor,border:`1px solid ${hasAny?syncColor:"#90cbc8"}`,borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          {!isMobile&&<button onClick={()=>setExcelPasteModal(true)} style={{background:'#ffffff',color:'#7c3aed',border:'1px solid #7c3aed',borderRadius:8,padding:'7px 12px',cursor:'pointer',fontSize:12,fontWeight:700}} title="ExcelのシフトをコピーしてここにCtrl+Vで貼り付け">📋 貼付</button>}
           <button onClick={()=>setHistoryModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}} title="過去15世代の履歴から復元">{isMobile?"🕐":"🕐 履歴復元"}</button>
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
           <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
@@ -5366,7 +5660,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
-      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0)delete next[activeDeptId];else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'excelRawMonths',data_value:next,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(({error})=>{if(error)console.error('[Excel import save]',error);});setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
+      {excelImportModal&&<ExcelImportModal currentTrend={shiftTrend[activeDeptId]||{}} exceptionMonths={exceptionMonths} onExceptionMonthsChange={setExceptionMonths} excelRawMonths={excelRawMonths[activeDeptId]||{}} onExcelRawMonthsChange={(newDeptRaw)=>{const next={...excelRawMonths};if(!newDeptRaw||Object.keys(newDeptRaw).length===0){delete next[activeDeptId];supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});}else next[activeDeptId]=newDeptRaw;setExcelRawMonths(next);const recomp=computeShiftTrendFromRaw(newDeptRaw||{},exceptionMonths);setShiftTrend(prev=>{const n={...prev};if(Object.keys(recomp).filter(k=>k!=='_months').length>0)n[activeDeptId]=recomp;else delete n[activeDeptId];return n;});}} onImport={(newTrend)=>{const newRaw=newTrend._rawByMonth||{};const deptRaw={...(excelRawMonths[activeDeptId]||{}),...newRaw};const next={...excelRawMonths,[activeDeptId]:deptRaw};const recomp=computeShiftTrendFromRaw(deptRaw,exceptionMonths);setExcelRawMonths(next);setShiftTrend(p=>({...p,[activeDeptId]:recomp}));setExcelImportModal(false);}} onReset={()=>{const next={...excelRawMonths};delete next[activeDeptId];setShiftTrend(prev=>{const n={...prev};delete n[activeDeptId];return n;});setExcelRawMonths(next);supabase.from('shift_data').delete().eq('user_id',session.user.id).eq('data_key',`excelRawMonths_${activeDeptId}`).then(({error})=>{if(error)console.error('[excelRawMonths delete]',error);});setExcelResetDismissed(false);try{localStorage.removeItem('shiftNavi_excelResetDismissed');}catch{}setExcelImportModal(false);}} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onAutoSetRatios={(ratioMap)=>{setStaffList(prev=>prev.map(s=>{if(s.dept!==activeDeptId)return s;const r=ratioMap[s.name];return r?{...s,shiftRatio:r}:s;}));}} onClose={()=>setExcelImportModal(false)}/>}
+      {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} onApply={(pastedShifts)=>{setAllShifts(prev=>{const cur=prev[activeDeptId]||{};const next={};const allIds=new Set([...Object.keys(cur),...Object.keys(pastedShifts)]);allIds.forEach(id=>{next[id]={...(cur[id]||{}),...(pastedShifts[id]||{})};});return{...prev,[activeDeptId]:next};});setSaveStatus('unsaved');setExcelPasteModal(false);}} onClose={()=>setExcelPasteModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} onClose={()=>setGenerateWarnings(null)}/>}
