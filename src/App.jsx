@@ -3312,7 +3312,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
   );
 }
 
-function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit }) {
+function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, debugReasons = {} }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
@@ -3331,6 +3331,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   const mouseStartRef = useRef(null);
   const [selAnchor, setSelAnchor] = useState(null);
   const [selCur, setSelCur] = useState(null);
+  const [reasonPopup, setReasonPopup] = useState(null); // {text, severity, x, y}
+  const SEVERITY_COLOR = { critical: '#ef4444', warning: '#f59e0b', info: '#3b82f6' };
 
   const selectedCells = useMemo(() => {
     if (!selAnchor || !selCur) return new Set();
@@ -3480,6 +3482,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   }, [shifts, ds, days, dept.roleShiftTypes, deptWork]);
 
   return (
+    <>
     <div>
     {roleViolationCount > 0 && (
       <div style={{background:"#fee2e2",border:"1px solid #ef4444",borderRadius:6,padding:"6px 12px",marginBottom:6,color:"#991b1b",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
@@ -3528,7 +3531,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
                   const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&type&&deptWork.has(type)&&type!=="明け"&&!_ra.includes(type);
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  const reason=debugReasons[s.id]?.[d];
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined,position:'relative'}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{reason&&<span style={{position:'absolute',top:1,right:1,width:7,height:7,borderRadius:'50%',background:SEVERITY_COLOR[reason.severity]||'#94a3b8',opacity:0.6,cursor:'pointer',zIndex:1}} title={reason.userFacing} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setReasonPopup({text:reason.userFacing,severity:reason.severity,x:e.clientX,y:e.clientY});}} onTouchStart={e=>e.stopPropagation()} onTouchEnd={e=>{e.stopPropagation();e.preventDefault();const t=e.changedTouches[0];setReasonPopup({text:reason.userFacing,severity:reason.severity,x:t.clientX,y:t.clientY});}}/>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -3565,6 +3569,13 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
       </table>
     </div>
     </div>
+    {reasonPopup&&<>
+      <div style={{position:'fixed',inset:0,zIndex:999}} onClick={()=>setReasonPopup(null)} onTouchEnd={e=>{e.preventDefault();setReasonPopup(null);}}/>
+      <div style={{position:'fixed',left:Math.min(reasonPopup.x+6,window.innerWidth-196),top:Math.max(44,reasonPopup.y-52),background:'#1a3635',color:'#fff',padding:'7px 12px',borderRadius:8,fontSize:12,zIndex:1000,maxWidth:190,boxShadow:'0 4px 12px #0005',lineHeight:1.5,pointerEvents:'none',borderLeft:`3px solid ${SEVERITY_COLOR[reasonPopup.severity]||'#94a3b8'}`}}>
+        {reasonPopup.text}
+      </div>
+    </>}
+    </>
   );
 }
 
@@ -5371,6 +5382,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
+  const [lastDebugReasons, setLastDebugReasons] = useState({});
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
   const undoStackRef = useRef({}); // { [deptId]: deptShifts[] } — アンドゥ履歴（最大30ステップ）
@@ -5651,9 +5663,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         undoStackRef.current[cd.id] = [...genStack, genSnapshot].slice(-30);
         setUndoCount(undoStackRef.current[cd.id].length);
         const cs2 = allShiftsRef.current[cd.id] || {};
-        const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
+        const {shifts:result, warnings, timelineWarnings, score, ratioFeedback, debugReasons: genDebugReasons} = bestOfN(cs, cd, year, month, cs2, ct, 30);
         if (Object.keys(warnings).length > 0 || (timelineWarnings&&timelineWarnings.length>0)) setTimeout(()=>setGenerateWarnings({warnings,timelineWarnings,deptLabel:cd.label,score}),0);
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
+        setLastDebugReasons(genDebugReasons || {});
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
@@ -5732,8 +5745,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const deleteStaff = (id) => { const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
   const handleBulkKyuko = (days, mk) => { setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}}))); setBulkKyukoModal(false); };
 
-  const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
-  const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
+  const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); setLastDebugReasons({}); };
+  const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); setLastDebugReasons({}); };
 
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
   const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{console.log("[setAllShifts]","reason=dept_delete",{deptId,stack:new Error().stack});const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
@@ -5864,7 +5877,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
             </div>
           </div>}
-          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper>
+          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} debugReasons={lastDebugReasons}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}

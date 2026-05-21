@@ -581,7 +581,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           if (need <= 0) break;
           const fromShift = res[s.id][d];
           res[s.id][d] = shiftKey; need--; anyFixed = true;
-          debugReasons[s.id][d] = `[Hard①slide] ${fromShift}→${shiftKey} (minStaff不足 need=${minCount})`;
+          debugReasons[s.id][d] = { technical: `[Hard①slide] ${fromShift}→${shiftKey} (minStaff不足 need=${minCount})`, userFacing: '最低人数を満たすため配置', cause: 'minStaff_shortage', severity: 'critical' };
           actual++;
         }
 
@@ -613,7 +613,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         for (const s of restCands) {
           if (need <= 0) break;
           res[s.id][d] = shiftKey; need--; anyFixed = true;
-          debugReasons[s.id][d] = `[Hard②rest→work] 休み→${shiftKey} (minStaff不足 need=${minCount})`;
+          debugReasons[s.id][d] = { technical: `[Hard②rest→work] 休み→${shiftKey} (minStaff不足 need=${minCount})`, userFacing: '最低人数を満たすため配置', cause: 'minStaff_shortage', severity: 'critical' };
         }
       }
     }
@@ -747,7 +747,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
             res[s.id][d] = toShift;
-            debugReasons[s.id][d] = `[Soft比率修復] ${fromShift}→${toShift} (目標:${targets[toShift]} 実績:${actuals[toShift]||0})`;
+            debugReasons[s.id][d] = { technical: `[Soft比率修復] ${fromShift}→${toShift} (目標:${targets[toShift]} 実績:${actuals[toShift]||0})`, userFacing: '比率調整のため変更', cause: 'ratio_drift', severity: 'info' };
             actuals[fromShift]--;
             actuals[toShift] = (actuals[toShift]||0) + 1;
             converted++;
