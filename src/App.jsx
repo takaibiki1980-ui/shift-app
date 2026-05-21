@@ -2575,12 +2575,12 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
       if (dowCount >= 20) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
     }
     console.log("[parseExcelPasteData] FormatA headerRowIdx:", headerRowIdx, "shiftStartCol:", shiftStartCol);
-    // Align shiftStartCol with day 1's actual DOW (skip any 先月末 DOW column)
+    // Align shiftStartCol with day 1's actual DOW: verify 3 consecutive DOW chars match the month
     if (headerRowIdx >= 0) {
-      const day1DowChar = ['日','月','火','水','木','金','土'][new Date(year, month, 1).getDay()];
+      const dowSeq = Array.from({length: 3}, (_, i) => ['日','月','火','水','木','金','土'][new Date(year, month, i+1).getDay()]);
       const hrow = rows[headerRowIdx];
-      for (let ci = shiftStartCol; ci < Math.min(shiftStartCol + 5, hrow.length); ci++) {
-        if (String(hrow[ci]??'').trim() === day1DowChar) { shiftStartCol = ci; break; }
+      for (let ci = shiftStartCol; ci < Math.min(shiftStartCol + 5, hrow.length - 2); ci++) {
+        if (dowSeq.every((d, k) => String(hrow[ci+k]??'').trim() === d)) { shiftStartCol = ci; break; }
       }
     }
     const colToDay = {};
@@ -2643,10 +2643,10 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
     const isNameLike = c => c && c.length >= 2 && !isShiftCell(c) && !/^\d+$/.test(c) && !DOW_CHARS.has(c);
 
     const totalShiftCells = filled.reduce((s, r) => s + r.filter(isShiftCell).length, 0);
-    const totalShiftRows = filled.filter(r => r.filter(isShiftCell).length >= 3).length;
-    const firstColHasMatchedName = filled.some(r => isNameLike(r[0]) && staffList.some(s => nameMatch(r[0], s.name)));
+    // Check if any cell (any column) has a recognizable staff name
+    const anyColHasMatchedName = filled.some(r => r.some(cell => isNameLike(cell) && staffList.some(s => nameMatch(cell, s.name))));
 
-    console.log('[paste detect] totalShiftCells:', totalShiftCells, 'totalShiftRows:', totalShiftRows, 'firstColHasMatchedName:', firstColHasMatchedName, 'rows:', filled.length);
+    console.log('[paste detect] totalShiftCells:', totalShiftCells, 'anyColHasMatchedName:', anyColHasMatchedName, 'rows:', filled.length);
 
     // Case 1: Names-only paste (≤2 shift cells total → treat as names)
     if (totalShiftCells <= 2) {
@@ -2668,8 +2668,8 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
       }
     }
 
-    // Case 2: Shifts-only paste (has shifts but no matched name in first col)
-    if (totalShiftCells > 2 && !firstColHasMatchedName) {
+    // Case 2: Shifts-only paste (has shifts but no matched staff name anywhere in data)
+    if (totalShiftCells > 2 && !anyColHasMatchedName) {
       const order = namedOrder && namedOrder.length > 0 ? namedOrder : staffList.map(s => s.id);
       const shiftRows = filled.filter(r => r.some(c => c)); // all non-empty rows
       if (shiftRows.length > 0) {
