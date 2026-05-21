@@ -2575,6 +2575,14 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
       if (dowCount >= 20) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
     }
     console.log("[parseExcelPasteData] FormatA headerRowIdx:", headerRowIdx, "shiftStartCol:", shiftStartCol);
+    // Align shiftStartCol with day 1's actual DOW (skip any 先月末 DOW column)
+    if (headerRowIdx >= 0) {
+      const day1DowChar = ['日','月','火','水','木','金','土'][new Date(year, month, 1).getDay()];
+      const hrow = rows[headerRowIdx];
+      for (let ci = shiftStartCol; ci < Math.min(shiftStartCol + 5, hrow.length); ci++) {
+        if (String(hrow[ci]??'').trim() === day1DowChar) { shiftStartCol = ci; break; }
+      }
+    }
     const colToDay = {};
     for (let i = 0; i < daysInMonth; i++) colToDay[shiftStartCol + i] = i + 1;
     for (let ri = (headerRowIdx >= 0 ? headerRowIdx + 1 : 0); ri < rows.length; ri++) {
@@ -2610,13 +2618,82 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
   const [unmatchedNames, setUnmatchedNames] = useState([]);
   const [parseError, setParseError] = useState('');
   const [pasting, setPasting] = useState(false);
+  const [namedOrder, setNamedOrder] = useState(null); // staff IDs in paste order from step-1
+  const [pasteStartDay, setPasteStartDay] = useState(1);
+  const [lastPasteType, setLastPasteType] = useState(''); // 'full'|'names'|'shifts'
+
+  const isShiftCell = (c) => {
+    if (!c) return false;
+    return PASTE_SHIFT_MAP[normName(String(c).trim())] != null ||
+      customShiftKeys.some(k => normName(k) === normName(String(c).trim()));
+  };
+  const parseShiftCell = (c) => {
+    if (!c) return null;
+    const n = normName(String(c).trim());
+    return PASTE_SHIFT_MAP[n] || (customShiftKeys.find(k => normName(k) === n)) || null;
+  };
 
   const process = (text) => {
     setParseError('');
+    const rows = text.trim().split(/\r?\n/).map(r => r.split('\t').map(c => String(c??'').trim()));
+    const filled = rows.filter(r => r.some(c => c));
+
+    // Detect total shift cells vs name-like cells
+    const totalShiftCells = filled.reduce((s, r) => s + r.filter(isShiftCell).length, 0);
+    const isNameLike = c => c && c.length >= 2 && !isShiftCell(c) && !/^\d+$/.test(c) && !new Set(['月','火','水','木','金','土','日']).has(c);
+
+    // Case 1: Names-only paste (no shift cells, has name-like cells)
+    if (totalShiftCells === 0) {
+      const order = [];
+      const unmatched = [];
+      filled.forEach(r => {
+        const name = r.find(isNameLike);
+        if (!name) return;
+        const staff = staffList.find(s => nameMatch(name, s.name));
+        if (staff && !order.includes(staff.id)) order.push(staff.id);
+        else if (!staff) unmatched.push(name);
+      });
+      if (order.length > 0) {
+        setNamedOrder(order);
+        setUnmatchedNames(unmatched);
+        setLastPasteType('names');
+        return;
+      }
+    }
+
+    // Case 2: Shifts-only paste (has shift cells but no recognizable names)
+    const firstColHasNames = filled.some(r => isNameLike(r[0]) && staffList.some(s => nameMatch(r[0], s.name)));
+    if (totalShiftCells > 0 && !firstColHasNames && namedOrder && namedOrder.length > 0) {
+      const shiftRows = filled.filter(r => r.filter(isShiftCell).length >= 1);
+      if (shiftRows.length > 0) {
+        const newData = {};
+        Object.entries(gridData).forEach(([id, d]) => { newData[id] = { ...d }; });
+        shiftRows.forEach((row, ri) => {
+          if (ri >= namedOrder.length) return;
+          const staffId = namedOrder[ri];
+          if (!newData[staffId]) newData[staffId] = {};
+          row.forEach((cell, ci) => {
+            const day = pasteStartDay + ci;
+            if (day < 1 || day > daysInMonth) return;
+            const sk = parseShiftCell(cell);
+            if (sk) newData[staffId][day] = sk;
+          });
+        });
+        setGridData(newData);
+        setLastPasteType('shifts');
+        return;
+      }
+    }
+
+    // Case 3: Full paste (names + shifts)
     const r = parseExcelPasteData(text, staffList, year, month, customShiftKeys);
     if (!r) { setParseError('シフトデータを読み取れませんでした。スタッフ名＋シフトの範囲を選択してCtrl+Cしてください。'); return; }
     setGridData(r.result);
     setUnmatchedNames(r.unmatched);
+    setLastPasteType('full');
+    if (r.matched.length > 0) {
+      setNamedOrder(r.matched.map(name => staffList.find(s => s.name === name)?.id).filter(Boolean));
+    }
   };
 
   const handlePasteEvent = (e) => { const text = e.clipboardData.getData('text'); if (text.trim()) { e.preventDefault(); process(text); } };
@@ -2664,12 +2741,33 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
           <button onClick={onClose} style={{background:'none',border:'none',color:'#3a8a87',cursor:'pointer',fontSize:20,lineHeight:1}}>✕</button>
         </div>
 
+        {/* Step guide */}
+        <div style={{background:'#e8f5f4',border:'1px solid #90cbc8',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#1a5a57'}}>
+          {lastPasteType === 'names'
+            ? <span style={{color:'#16a34a',fontWeight:700}}>✅ ステップ1完了: {namedOrder?.length||0}名の名前を確認しました。次に先月末を除いた <b>シフト列だけ</b>（D〜AH等）をCtrl+Cして貼り付けてください。</span>
+            : lastPasteType === 'shifts'
+            ? <span style={{color:'#2563eb',fontWeight:700}}>✅ ステップ2完了: シフトをグリッドに反映しました。確認して「適用」してください。</span>
+            : lastPasteType === 'full'
+            ? <span style={{color:'#1a3635'}}>✅ 名前＋シフトを一括読み込みしました。</span>
+            : <span><b>方法①</b> 名前列だけコピーして貼り付け → ②先月末を除くシフト列をコピーして貼り付け　　<b>方法②</b> 名前＋シフト（先月末含まず）をまとめてコピーして貼り付け</span>
+          }
+        </div>
+
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
           <button onClick={handleClickPaste} disabled={pasting}
             style={{background:'linear-gradient(135deg,#2BBFBA,#45B7D1)',color:'#fff',border:'none',borderRadius:9,padding:'8px 14px',cursor:'pointer',fontSize:13,fontWeight:800,whiteSpace:'nowrap'}}>
             {pasting ? '⏳ 読み込み中…' : '📋 クリップボードから読み込み'}
           </button>
           <span style={{fontSize:11,color:'#6ab5b2'}}>または画面にCtrl+V</span>
+          {lastPasteType === 'names' && (
+            <div style={{display:'flex',alignItems:'center',gap:6,background:'#fff',border:'1px solid #90cbc8',borderRadius:8,padding:'4px 10px'}}>
+              <span style={{fontSize:11,color:'#3a8a87',fontWeight:700}}>シフト開始日:</span>
+              <button onClick={()=>setPasteStartDay(d=>Math.max(1,d-1))} style={{width:22,height:22,border:'1px solid #b8deda',borderRadius:4,background:'#d5edeb',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>−</button>
+              <span style={{fontSize:13,fontWeight:900,color:'#1a3635',minWidth:20,textAlign:'center'}}>{pasteStartDay}</span>
+              <button onClick={()=>setPasteStartDay(d=>Math.min(daysInMonth,d+1))} style={{width:22,height:22,border:'1px solid #b8deda',borderRadius:4,background:'#d5edeb',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>＋</button>
+              <span style={{fontSize:11,color:'#3a8a87'}}>日から</span>
+            </div>
+          )}
           {unmatchedNames.length > 0 && (
             <div style={{background:'#fff8e1',border:'1px solid #f59e0b',borderRadius:8,padding:'3px 10px',fontSize:11,color:'#b45309',fontWeight:700}}>
               ⚠️ 未マッチ: {unmatchedNames.join('、')}
@@ -2699,12 +2797,20 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
               </tr>
             </thead>
             <tbody>
-              {staffList.map((s, si) => {
+              {(namedOrder
+                ? [...namedOrder.map(id => staffList.find(s => s.id === id)).filter(Boolean),
+                   ...staffList.filter(s => !namedOrder.includes(s.id))]
+                : staffList
+              ).map((s, si) => {
+                const isNamed = namedOrder?.includes(s.id);
+                const namedIdx = namedOrder?.indexOf(s.id) ?? -1;
                 const staffShifts = gridData[s.id] || {};
                 return (
                   <tr key={s.id} style={{background: si%2===0 ? '#fff' : '#f7fdfc'}}>
-                    <td style={{padding:'3px 8px',border:'1px solid #b8deda',fontWeight:600,color:'#1a3635',background: si%2===0 ? '#e8f5f4' : '#ddf0ee',
+                    <td style={{padding:'3px 8px',border:'1px solid #b8deda',fontWeight:600,color:'#1a3635',
+                      background: isNamed ? (si%2===0 ? '#d5f0e8' : '#c8eadf') : (si%2===0 ? '#e8f5f4' : '#ddf0ee'),
                       position:'sticky',left:0,zIndex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:88,fontSize:11}}>
+                      {isNamed && <span style={{fontSize:9,color:'#16a34a',marginRight:3}}>#{namedIdx+1}</span>}
                       {s.name}
                     </td>
                     {days.map(d => {
