@@ -2637,13 +2637,19 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
     setParseError('');
     const rows = text.trim().split(/\r?\n/).map(r => r.split('\t').map(c => String(c??'').trim()));
     const filled = rows.filter(r => r.some(c => c));
+    if (filled.length === 0) { setParseError('データが空です。'); return; }
 
-    // Detect total shift cells vs name-like cells
+    const DOW_CHARS = new Set(['月','火','水','木','金','土','日']);
+    const isNameLike = c => c && c.length >= 2 && !isShiftCell(c) && !/^\d+$/.test(c) && !DOW_CHARS.has(c);
+
     const totalShiftCells = filled.reduce((s, r) => s + r.filter(isShiftCell).length, 0);
-    const isNameLike = c => c && c.length >= 2 && !isShiftCell(c) && !/^\d+$/.test(c) && !new Set(['月','火','水','木','金','土','日']).has(c);
+    const totalShiftRows = filled.filter(r => r.filter(isShiftCell).length >= 3).length;
+    const firstColHasMatchedName = filled.some(r => isNameLike(r[0]) && staffList.some(s => nameMatch(r[0], s.name)));
 
-    // Case 1: Names-only paste (no shift cells, has name-like cells)
-    if (totalShiftCells === 0) {
+    console.log('[paste detect] totalShiftCells:', totalShiftCells, 'totalShiftRows:', totalShiftRows, 'firstColHasMatchedName:', firstColHasMatchedName, 'rows:', filled.length);
+
+    // Case 1: Names-only paste (≤2 shift cells total → treat as names)
+    if (totalShiftCells <= 2) {
       const order = [];
       const unmatched = [];
       filled.forEach(r => {
@@ -2651,26 +2657,27 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
         if (!name) return;
         const staff = staffList.find(s => nameMatch(name, s.name));
         if (staff && !order.includes(staff.id)) order.push(staff.id);
-        else if (!staff) unmatched.push(name);
+        else if (!staff && name.length >= 2) unmatched.push(name);
       });
-      if (order.length > 0) {
-        setNamedOrder(order);
+      if (order.length > 0 || unmatched.length > 0) {
+        if (order.length > 0) setNamedOrder(order);
         setUnmatchedNames(unmatched);
         setLastPasteType('names');
+        if (order.length === 0) setParseError(`名前を認識しましたが、スタッフと一致しません: ${unmatched.join('、')}`);
         return;
       }
     }
 
-    // Case 2: Shifts-only paste (has shift cells but no recognizable names)
-    const firstColHasNames = filled.some(r => isNameLike(r[0]) && staffList.some(s => nameMatch(r[0], s.name)));
-    if (totalShiftCells > 0 && !firstColHasNames && namedOrder && namedOrder.length > 0) {
-      const shiftRows = filled.filter(r => r.filter(isShiftCell).length >= 1);
+    // Case 2: Shifts-only paste (has shifts but no matched name in first col)
+    if (totalShiftCells > 2 && !firstColHasMatchedName) {
+      const order = namedOrder && namedOrder.length > 0 ? namedOrder : staffList.map(s => s.id);
+      const shiftRows = filled.filter(r => r.some(c => c)); // all non-empty rows
       if (shiftRows.length > 0) {
         const newData = {};
         Object.entries(gridData).forEach(([id, d]) => { newData[id] = { ...d }; });
         shiftRows.forEach((row, ri) => {
-          if (ri >= namedOrder.length) return;
-          const staffId = namedOrder[ri];
+          if (ri >= order.length) return;
+          const staffId = order[ri];
           if (!newData[staffId]) newData[staffId] = {};
           row.forEach((cell, ci) => {
             const day = pasteStartDay + ci;
@@ -2681,6 +2688,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
         });
         setGridData(newData);
         setLastPasteType('shifts');
+        if (!namedOrder) setParseError(''); // clear error, show info instead
         return;
       }
     }
@@ -2759,7 +2767,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
             {pasting ? '⏳ 読み込み中…' : '📋 クリップボードから読み込み'}
           </button>
           <span style={{fontSize:11,color:'#6ab5b2'}}>または画面にCtrl+V</span>
-          {lastPasteType === 'names' && (
+          {(lastPasteType === 'names' || lastPasteType === 'shifts') && (
             <div style={{display:'flex',alignItems:'center',gap:6,background:'#fff',border:'1px solid #90cbc8',borderRadius:8,padding:'4px 10px'}}>
               <span style={{fontSize:11,color:'#3a8a87',fontWeight:700}}>シフト開始日:</span>
               <button onClick={()=>setPasteStartDay(d=>Math.max(1,d-1))} style={{width:22,height:22,border:'1px solid #b8deda',borderRadius:4,background:'#d5edeb',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>−</button>
