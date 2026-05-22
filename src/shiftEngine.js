@@ -475,12 +475,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
           av = av.filter(k => getAllowedTypes(s).includes(k));
           { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
-          if (!av.length) {
-            const prevShift = res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
-            const roleAllowed = getAllowedTypes(s);
-            const forceShift = roleAllowed.length < dayTypes.length ? roleAllowed[0] : dayTypes.find(k => { if (isBadTransition(prevShift, k)) return false; if (isBadTransition(k, nextShift)) return false; return true; }) || "遅番";
-            res[s.id][d] = forceShift; excess--; continue;
-          }
+          if (!av.length) continue; // maxStaff上限またはisBadTransitionで振替先なし→休みのまま維持
           const pick = [...av].sort((a, b) => { const dA=Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]),dB=Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if(dA!==dB)return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
           res[s.id][d] = pick; excess--;
         }
@@ -585,6 +580,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         let need = minCount - actual;
         for (const s of slideCands) {
           if (need <= 0) break;
+          if (actual >= (maxStaff[shiftKey] ?? 99)) break; // maxStaff上限に達したらスライド停止
           const fromShift = res[s.id][d];
           res[s.id][d] = shiftKey; need--; anyFixed = true;
           debugReasons[s.id][d] = `[Hard①slide] ${fromShift}→${shiftKey} (minStaff不足 need=${minCount})`;
@@ -785,6 +781,30 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+  // ★最終maxStaff保証: 全フェーズ後に残った超過を強制修正（日勤または休みへ振替）
+  for (let d = 1; d <= days; d++) {
+    for (const [shiftKey, limit] of Object.entries(maxStaff)) {
+      if (limit >= 99) continue;
+      const over = ds.filter(s => res[s.id][d] === shiftKey);
+      if (over.length <= limit) continue;
+      let excess = over.length - limit;
+      for (const s of over) {
+        if (excess <= 0) break;
+        if (lockedDays[s.id].has(d)) continue;
+        const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+        const alt = dayTypes.find(k => {
+          if (k === shiftKey) return false;
+          if (!getAllowedTypes(s).includes(k)) return false;
+          if (isBadTransition(prev, k)) return false;
+          if (isBadTransition(k, next)) return false;
+          return ds.filter(sx => res[sx.id][d] === k).length < (maxStaff[k] ?? 99);
+        });
+        res[s.id][d] = alt || (dayTypes.includes('日勤') ? '日勤' : '休み');
+        excess--;
+      }
+    }
+  }
+
   return { shifts: res, warnings, timelineWarnings, debugReasons };
 }
 
