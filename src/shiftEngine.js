@@ -429,6 +429,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           allowed.forEach(k => {
             const deficit = Math.max(0, (dept.minStaff[k] || 0) - (dayCnts[k] || 0));
             if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
+            if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) probs[k] = 0;
           });
           const pick = sampleFromProbs(probs) || allowed[0];
           res[s.id][d] = pick;
@@ -777,6 +778,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       console.log('[比率修復] 完了', s.name, '実績:', JSON.stringify(actuals));
     }
   }
+
+  enforceMaxStaff(); // 4回目: 比率修復パス後の最終確認
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
