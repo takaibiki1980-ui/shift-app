@@ -83,14 +83,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   const maxConsec = dept.maxConsecutive || 5;
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
-  // ── 制約強度 Tier 定義 ────────────────────────────────────────────────────
-  // Tier1(Hard)  : 早番・遅番・夜勤 の maxStaff  → default=1, 最終保証で強制修正
-  // Tier2(Soft)  : 日勤 maxStaff / minStaff / 連続勤務 → score penalty + repair 逃がし先
-  // Tier3(快適性): 曜日偏り・好み → 軽い penalty のみ
-  // ── Tier 判定: maxStaff[k] < 99 = Hard枠（早番・遅番・夜勤）────────────────
   const maxStaff = {};
   [...new Set(dept.shiftTypes)].forEach(k => { const cd=(dept.customShiftDefs||[]).find(d=>d.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=dept.maxStaff?.[k];maxStaff[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def; });
-  const isHardMaxShift = (k) => (maxStaff[k] ?? 99) < 99; // Tier1: 早番/遅番/夜勤
   const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
   (dept.customShiftDefs||[]).forEach(cd => { if (cd.key && PRIORITY[cd.key]==null) PRIORITY[cd.key] = PRIORITY[cd.baseType]??2; });
 
@@ -122,9 +116,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   };
 
   const res = {};
-  const debugReasons = {}; // { staffId: { day: string } } — Hard修復フェーズの変更理由ログ
   const ds = staffList.filter(s => s.dept === dept.id);
-  ds.forEach(s => { res[s.id] = {}; debugReasons[s.id] = {}; });
+  ds.forEach(s => { res[s.id] = {}; });
 
   const consecWork = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptWork.has(res[id][i])) c++; else break; } return c; };
   const consecRest = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
@@ -385,22 +378,20 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       const allowed = getAllowedTypes(s).filter(k => k !== '夜勤' && k !== '明け');
       if (!allowed.length) return;
 
-      // シフト確率テーブルを取得（trend×比率ブレンド or 比率単独 or 均等）
+      // シフト確率テーブルを取得（trend or deptAvg or 均等）
       const getShiftWeight = (d, k) => {
         const weekday = new Date(year, month, d).getDay();
-        // 比率が設定されていれば常に準備（trendとのブレンド用）
-        const ratioTotal = ratio ? allowed.reduce((sum, j) => sum + (ratio[j] || 0), 0) : 0;
-        const ratioW = (ratio && ratioTotal > 0) ? Math.max(0.01, (ratio[k] || 0.01) / ratioTotal) : null;
-        if (trend?.dowShiftRate?.[weekday]?.[k] != null) {
-          const trendW = Math.max(0.01, trend.dowShiftRate[weekday][k]);
-          return ratioW ? trendW * 0.6 + ratioW * 0.4 : trendW; // trend+比率ブレンド(6:4)
+        if (trend?.dowShiftRate?.[weekday]?.[k] != null) return Math.max(0.01, trend.dowShiftRate[weekday][k]);
+        if (trend && typeof trend[k] === 'number') return Math.max(0.01, trend[k]);
+        // ★勤務比率設定あり+個人trendなし: UIで入力した比率を重みとして直接使用
+        if (!trend && ratio) {
+          const ratioTotal = allowed.reduce((sum, j) => sum + (ratio[j] || 0), 0);
+          if (ratioTotal > 0) return Math.max(0.01, (ratio[k] || 0.01) / ratioTotal);
         }
-        if (trend && typeof trend[k] === 'number') {
-          const trendW = Math.max(0.01, trend[k]);
-          return ratioW ? trendW * 0.6 + ratioW * 0.4 : trendW; // trend+比率ブレンド(6:4)
-        }
-        if (ratioW) return ratioW; // trendなし+比率あり: 比率を直接使用
-        return 1 / allowed.length; // 均等フォールバック（deptAvgRatio廃止）
+        // ★役職制限あり+比率もtrendもなし: 許可シフト内で均等
+        if (!trend && dept.roleShiftTypes?.[s.role]) return 1 / allowed.length;
+        if (deptAvgRatio?.[k] != null) return Math.max(0.01, deptAvgRatio[k]);
+        return 1 / allowed.length;
       };
 
       if (ratio && Object.values(targetShiftCounts[s.id]).some(v => v > 0)) {
@@ -409,13 +400,10 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         allowed.filter(k => k !== '日勤').forEach(shiftType => {
           const targetCount = targetShiftCounts[s.id][shiftType] || 0;
           if (!targetCount) return;
-          // maxStaff制約: その日に既にshiftType上限に達している日は除外
-          const pool = [...remaining].filter(d => {
-            const cnt = ds.filter(sx => res[sx.id][d] === shiftType).length;
-            return cnt < (maxStaff[shiftType] ?? 99);
-          });
+          const pool = [...remaining];
           const weights = pool.map(d => getShiftWeight(d, shiftType));
-          const picked = weightedSampleN(pool, weights, Math.min(targetCount, pool.length));
+          // サンプリングにスロット上限ブースト: まだ余裕のある日に偏らせる（但しランダム性維持）
+          const picked = weightedSampleN(pool, weights, targetCount);
           picked.forEach(d => {
             res[s.id][d] = shiftType;
             assignedShiftCounts[s.id][shiftType] = (assignedShiftCounts[s.id][shiftType] || 0) + 1;
@@ -430,19 +418,16 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       } else {
         // ★ratio指定なし / trendのみ / trendなし: 各日を確率サンプリングで決定
         workDays.forEach(d => {
+          const probs = {};
+          allowed.forEach(k => { probs[k] = getShiftWeight(d, k); });
+          // minStaff 不足シフトにブースト（minStaff充足優先）
           const dayCnts = {};
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
-          // maxStaff制約: 上限に達したシフトは選択肢から除外し、日勤等に振り分ける
-          const capAllowed = allowed.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
-          const sample = capAllowed.length ? capAllowed : allowed;
-          const probs = {};
-          sample.forEach(k => { probs[k] = getShiftWeight(d, k); });
-          // minStaff 不足シフトにブースト（minStaff充足優先）
-          sample.forEach(k => {
+          allowed.forEach(k => {
             const deficit = Math.max(0, (dept.minStaff[k] || 0) - (dayCnts[k] || 0));
             if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
           });
-          const pick = sampleFromProbs(probs) || sample[0];
+          const pick = sampleFromProbs(probs) || allowed[0];
           res[s.id][d] = pick;
           assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
         });
@@ -481,7 +466,12 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
           av = av.filter(k => getAllowedTypes(s).includes(k));
           { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
-          if (!av.length) continue; // maxStaff上限またはisBadTransitionで振替先なし→休みのまま維持
+          if (!av.length) {
+            const prevShift = res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
+            const roleAllowed = getAllowedTypes(s);
+            const forceShift = roleAllowed.length < dayTypes.length ? roleAllowed[0] : dayTypes.find(k => { if (isBadTransition(prevShift, k)) return false; if (isBadTransition(k, nextShift)) return false; return true; }) || "遅番";
+            res[s.id][d] = forceShift; excess--; continue;
+          }
           const pick = [...av].sort((a, b) => { const dA=Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]),dB=Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if(dA!==dB)return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
           res[s.id][d] = pick; excess--;
         }
@@ -514,8 +504,37 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     });
   }
 
-  // ★enforceMaxStaff廃止: maxStaff超過はscoreShiftsのSoft-Mediumペナルティで評価
-  // Hard修復フェーズはminStaff不足のみ担当。max超過はbestOfN×30試行+スコアで解消する。
+  // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
+  const enforceMaxStaff = () => {
+    for (let d = 1; d <= days; d++) {
+      for (const [shiftKey, limit] of Object.entries(maxStaff)) {
+        const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
+        if (overStaff.length <= limit) continue;
+        const toFix = [
+          ...overStaff.filter(s => !lockedDays[s.id].has(d)),
+          ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
+        ];
+        let excess = overStaff.length - limit;
+        for (const s of toFix) {
+          if (excess <= 0) break;
+          if (lockedDays[s.id].has(d) && excess < overStaff.length) break;
+          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          // 超過シフト以外で空きのある種別に振替を試みる
+          const altShift = dayTypes.find(k => {
+            if (k === shiftKey) return false;
+            if (!getAllowedTypes(s).includes(k)) return false;
+            if (isBadTransition(prev, k)) return false;
+            if (isBadTransition(k, next)) return false;
+            const cnt = ds.filter(sx => res[sx.id][d] === k).length;
+            return cnt < (maxStaff[k] ?? 99);
+          });
+          res[s.id][d] = altShift || "休み";
+          excess--;
+        }
+      }
+    }
+  };
+  enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
 
   // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
   const isViolation = (prev, curr) => isBadTransition(prev, curr);
@@ -541,7 +560,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
 
-  // (enforceMaxStaff廃止: max超過はscoreShiftsペナルティに委譲)
+  enforceMaxStaff(); // 2回目: 違反修正後に新たな超過が生じた場合も除去
 
   // 最低配置保証フェーズ: minStaff未満の日にスタッフを補充
   // 優先①: 他シフト勤務中のスタッフをスライド（振替）→ 休み数は変わらない
@@ -569,27 +588,17 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           if (fromActual - 1 < fromMin) return false;
           return true;
         }).sort((a, b) => {
-          // ★最小変更原則: 比率ターゲットのシフト中スタッフはスライドを最後に選ぶ
-          const aRatio = a.shiftRatio || a.shiftRatioByMonth?.[mk];
-          const bRatio = b.shiftRatio || b.shiftRatioByMonth?.[mk];
-          const aOnTarget = aRatio && (aRatio[res[a.id][d]] || 0) > 0;
-          const bOnTarget = bRatio && (bRatio[res[b.id][d]] || 0) > 0;
-          if (aOnTarget && !bOnTarget) return 1;   // 比率targetを後回し
-          if (!aOnTarget && bOnTarget) return -1;
-          // maxStaff余裕が少ない方から先にスライド（既存ロジック）
+          // maxStaffに余裕があるシフトのスタッフを優先してスライド
           const cntA = ds.filter(s => res[s.id][d] === res[a.id][d]).length;
           const cntB = ds.filter(s => res[s.id][d] === res[b.id][d]).length;
           const maxA = maxStaff[res[a.id][d]] ?? 99;
           const maxB = maxStaff[res[b.id][d]] ?? 99;
-          return (maxA - cntA) - (maxB - cntB);
+          return (maxA - cntA) - (maxB - cntB); // 余裕が少ない方を先に
         });
         let need = minCount - actual;
         for (const s of slideCands) {
           if (need <= 0) break;
-          if (actual >= (maxStaff[shiftKey] ?? 99)) break; // maxStaff上限に達したらスライド停止
-          const fromShift = res[s.id][d];
           res[s.id][d] = shiftKey; need--; anyFixed = true;
-          debugReasons[s.id][d] = `[Hard①slide] ${fromShift}→${shiftKey} (minStaff不足 need=${minCount})`;
           actual++;
         }
 
@@ -621,14 +630,13 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         for (const s of restCands) {
           if (need <= 0) break;
           res[s.id][d] = shiftKey; need--; anyFixed = true;
-          debugReasons[s.id][d] = `[Hard②rest→work] 休み→${shiftKey} (minStaff不足 need=${minCount})`;
         }
       }
     }
     if (!anyFixed) break;
   }
 
-  // (enforceMaxStaff廃止: max超過はscoreShiftsペナルティに委譲)
+  enforceMaxStaff(); // 3回目: 補充後の超過確認
 
   // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
   // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
@@ -736,6 +744,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           actuals[k] = workDaysArr.filter(d => res[s.id][d] === k).length;
         }
       }
+      console.log('[比率修復]', s.name, '目標:', JSON.stringify(targets), '実績:', JSON.stringify(actuals));
       // 過多シフト → 過少シフトへの変換（制約チェック付き）
       const fromShifts = Object.keys(targets).filter(k => (actuals[k]||0) > targets[k])
         .sort((a,b) => (actuals[b]||0)-targets[b] - ((actuals[a]||0)-targets[a]));
@@ -754,17 +763,16 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             if (isBadTransition(toShift, next)) continue;
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
-            // Tier1: toShift の maxStaff を超えない（早番・遅番・夜勤は上限1が Hard）
             const toCnt = ds.filter(sx => res[sx.id][d] === toShift).length;
             if (toCnt >= (maxStaff[toShift] ?? 99)) continue;
             res[s.id][d] = toShift;
-            debugReasons[s.id][d] = `[Soft比率修復] ${fromShift}→${toShift} (目標:${targets[toShift]} 実績:${actuals[toShift]||0})`;
             actuals[fromShift]--;
             actuals[toShift] = (actuals[toShift]||0) + 1;
             converted++;
           }
         }
       }
+      console.log('[比率修復] 完了', s.name, '実績:', JSON.stringify(actuals));
     }
   }
 
@@ -790,33 +798,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
-  // ★Tier1 Hard 最終保証: 全フェーズ後の 早番・遅番・夜勤 超過を強制修正（Tier2=日勤 を逃がし先に使う）
-  for (let d = 1; d <= days; d++) {
-    for (const [shiftKey, limit] of Object.entries(maxStaff)) {
-      if (limit >= 99) continue;
-      const over = ds.filter(s => res[s.id][d] === shiftKey);
-      if (over.length <= limit) continue;
-      let excess = over.length - limit;
-      for (const s of over) {
-        if (excess <= 0) break;
-        if (lockedDays[s.id].has(d)) continue;
-        const prev = res[s.id][d - 1], next = res[s.id][d + 1];
-        const alt = dayTypes.find(k => {
-          if (k === shiftKey) return false;
-          if (!getAllowedTypes(s).includes(k)) return false;
-          if (isBadTransition(prev, k)) return false;
-          if (isBadTransition(k, next)) return false;
-          return ds.filter(sx => res[sx.id][d] === k).length < (maxStaff[k] ?? 99);
-        });
-        // Tier2（日勤）を逃がし先として使うが、日勤も満員なら休みへ
-        const nikkinFallback = dayTypes.find(k => k !== shiftKey && k === '日勤' && ds.filter(sx => res[sx.id][d] === k).length < (maxStaff[k] ?? 99));
-        res[s.id][d] = alt || nikkinFallback || '休み';
-        excess--;
-      }
-    }
-  }
-
-  return { shifts: res, warnings, timelineWarnings, debugReasons };
+  return { shifts: res, warnings, timelineWarnings };
 }
 
 // 生成結果のペナルティスコアを計算（低いほど良い）
@@ -826,15 +808,6 @@ export function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
   const REST = new Set(["休み","希望休"]); // 有休は賃金支払い対象のため休日カウントから除外
   const maxConsec = dept.maxConsecutive || 5;
   const mk = monthKey(year, month);
-  // maxStaff再計算（autoGenerateと同一ロジック）
-  const maxStaffSc = {};
-  [...new Set(dept.shiftTypes)].forEach(k => {
-    const cd = (dept.customShiftDefs || []).find(d => d.key === k);
-    const base = cd?.baseType || k;
-    const def = base === "日勤" ? 99 : 1;
-    const saved = dept.maxStaff?.[k];
-    maxStaffSc[k] = (saved != null && !(cd && base === "日勤" && saved === 1)) ? saved : def;
-  });
   const workShiftTypes = dept.shiftTypes.filter(k => WORK.has(k) && k !== "夜勤");
   for (const s of ds) {
     // kyukoDays 逸脱ペナルティ（ルール内で解決できない場合を許容: 1日ズレごとに10,000点）
@@ -868,16 +841,11 @@ export function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
       }
     }
   }
-  // minStaff不足: Semi-Hard（超重ペナルティ）/ maxStaff超過: Soft-Medium
+  // minStaff不足
   for (let d = 1; d <= days; d++) {
     for (const [k, minC] of Object.entries(dept.minStaff || {})) {
       const actual = ds.filter(s => res[s.id]?.[d] === k).length;
-      if (actual < minC) score += actual === 0 ? minC * 1000 : (minC - actual) * 300;
-    }
-    for (const [k, maxC] of Object.entries(maxStaffSc)) {
-      if (maxC >= 99) continue;
-      const actual = ds.filter(s => res[s.id]?.[d] === k).length;
-      if (actual > maxC) score += (actual - maxC) * 150;
+      if (actual < minC) score += actual === 0 ? (minC - actual) * 30 : (minC - actual) * 10;
     }
   }
   // 公平性ペナルティ: 夜勤回数・土日出勤回数の分散（スタッフ間の不均衡を抑制）
@@ -961,11 +929,11 @@ export function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
             const predictedProb = dowRate
               ? (dowRate[shift] ?? 0)
               : (typeof trend[shift] === 'number' ? trend[shift] : 0);
-            score += (1 - predictedProb) * 30; // Excel学習はSoft: 傾向補正として軽く
+            score += (1 - predictedProb) * 100;
           } else if (LEARN_REST.has(shift)) {
             const dow6 = (dow + 6) % 7; // dowRestRateは月曜=0インデックスで格納
             const restProb = trend.dowRestRate?.[dow6] ?? null;
-            if (restProb != null) score += (1 - restProb) * 30; // 同上: 軽い傾向補正
+            if (restProb != null) score += (1 - restProb) * 100;
           }
         }
       }
@@ -1057,10 +1025,10 @@ export function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n 
       const cap = nikkinMin + (i % (range + 1));
       deptVariant = { ...dept, maxStaff: { ...dept.maxStaff, "日勤": cap } };
     }
-    const { shifts, warnings, timelineWarnings, debugReasons } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend);
+    const { shifts, warnings, timelineWarnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend);
     // スコアリングは常に元のdeptで評価（公平な比較）
     const score = scoreShifts(shifts, ds, dept, days, year, month, shiftTrend);
-    if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, debugReasons, score }; }
+    if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
   }
   // 局所探索（swap改善）: 30回試行の最良案をさらにスコア改善
