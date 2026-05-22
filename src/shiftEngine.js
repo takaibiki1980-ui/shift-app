@@ -83,8 +83,14 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   const maxConsec = dept.maxConsecutive || 5;
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
+  // ── 制約強度 Tier 定義 ────────────────────────────────────────────────────
+  // Tier1(Hard)  : 早番・遅番・夜勤 の maxStaff  → default=1, 最終保証で強制修正
+  // Tier2(Soft)  : 日勤 maxStaff / minStaff / 連続勤務 → score penalty + repair 逃がし先
+  // Tier3(快適性): 曜日偏り・好み → 軽い penalty のみ
+  // ── Tier 判定: maxStaff[k] < 99 = Hard枠（早番・遅番・夜勤）────────────────
   const maxStaff = {};
   [...new Set(dept.shiftTypes)].forEach(k => { const cd=(dept.customShiftDefs||[]).find(d=>d.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=dept.maxStaff?.[k];maxStaff[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def; });
+  const isHardMaxShift = (k) => (maxStaff[k] ?? 99) < 99; // Tier1: 早番/遅番/夜勤
   const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
   (dept.customShiftDefs||[]).forEach(cd => { if (cd.key && PRIORITY[cd.key]==null) PRIORITY[cd.key] = PRIORITY[cd.baseType]??2; });
 
@@ -748,6 +754,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             if (isBadTransition(toShift, next)) continue;
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
+            // Tier1: toShift の maxStaff を超えない（早番・遅番・夜勤は上限1が Hard）
+            const toCnt = ds.filter(sx => res[sx.id][d] === toShift).length;
+            if (toCnt >= (maxStaff[toShift] ?? 99)) continue;
             res[s.id][d] = toShift;
             debugReasons[s.id][d] = `[Soft比率修復] ${fromShift}→${toShift} (目標:${targets[toShift]} 実績:${actuals[toShift]||0})`;
             actuals[fromShift]--;
@@ -781,7 +790,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
-  // ★最終maxStaff保証: 全フェーズ後に残った超過を強制修正（日勤または休みへ振替）
+  // ★Tier1 Hard 最終保証: 全フェーズ後の 早番・遅番・夜勤 超過を強制修正（Tier2=日勤 を逃がし先に使う）
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, limit] of Object.entries(maxStaff)) {
       if (limit >= 99) continue;
@@ -799,7 +808,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           if (isBadTransition(k, next)) return false;
           return ds.filter(sx => res[sx.id][d] === k).length < (maxStaff[k] ?? 99);
         });
-        res[s.id][d] = alt || (dayTypes.includes('日勤') ? '日勤' : '休み');
+        // Tier2（日勤）を逃がし先として使うが、日勤も満員なら休みへ
+        const nikkinFallback = dayTypes.find(k => k !== shiftKey && k === '日勤' && ds.filter(sx => res[sx.id][d] === k).length < (maxStaff[k] ?? 99));
+        res[s.id][d] = alt || nikkinFallback || '休み';
         excess--;
       }
     }
