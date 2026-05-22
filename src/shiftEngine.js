@@ -403,10 +403,13 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         allowed.filter(k => k !== '日勤').forEach(shiftType => {
           const targetCount = targetShiftCounts[s.id][shiftType] || 0;
           if (!targetCount) return;
-          const pool = [...remaining];
+          // maxStaff制約: その日に既にshiftType上限に達している日は除外
+          const pool = [...remaining].filter(d => {
+            const cnt = ds.filter(sx => res[sx.id][d] === shiftType).length;
+            return cnt < (maxStaff[shiftType] ?? 99);
+          });
           const weights = pool.map(d => getShiftWeight(d, shiftType));
-          // サンプリングにスロット上限ブースト: まだ余裕のある日に偏らせる（但しランダム性維持）
-          const picked = weightedSampleN(pool, weights, targetCount);
+          const picked = weightedSampleN(pool, weights, Math.min(targetCount, pool.length));
           picked.forEach(d => {
             res[s.id][d] = shiftType;
             assignedShiftCounts[s.id][shiftType] = (assignedShiftCounts[s.id][shiftType] || 0) + 1;
@@ -421,16 +424,19 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       } else {
         // ★ratio指定なし / trendのみ / trendなし: 各日を確率サンプリングで決定
         workDays.forEach(d => {
-          const probs = {};
-          allowed.forEach(k => { probs[k] = getShiftWeight(d, k); });
-          // minStaff 不足シフトにブースト（minStaff充足優先）
           const dayCnts = {};
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
-          allowed.forEach(k => {
+          // maxStaff制約: 上限に達したシフトは選択肢から除外し、日勤等に振り分ける
+          const capAllowed = allowed.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
+          const sample = capAllowed.length ? capAllowed : allowed;
+          const probs = {};
+          sample.forEach(k => { probs[k] = getShiftWeight(d, k); });
+          // minStaff 不足シフトにブースト（minStaff充足優先）
+          sample.forEach(k => {
             const deficit = Math.max(0, (dept.minStaff[k] || 0) - (dayCnts[k] || 0));
             if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
           });
-          const pick = sampleFromProbs(probs) || allowed[0];
+          const pick = sampleFromProbs(probs) || sample[0];
           res[s.id][d] = pick;
           assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
         });
