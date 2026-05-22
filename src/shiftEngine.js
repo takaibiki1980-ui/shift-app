@@ -431,7 +431,10 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
             if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) probs[k] = 0;
           });
-          const pick = sampleFromProbs(probs) || allowed[0];
+          const pick = sampleFromProbs(probs)
+            || allowed.find(k => (dayCnts[k]||0) < (maxStaff[k]??99))
+            || allowed.find(k => k === '日勤')
+            || allowed[0];
           res[s.id][d] = pick;
           assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
         });
@@ -473,7 +476,16 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           if (!av.length) {
             const prevShift = res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
             const roleAllowed = getAllowedTypes(s);
-            const forceShift = roleAllowed.length < dayTypes.length ? roleAllowed[0] : dayTypes.find(k => { if (isBadTransition(prevShift, k)) return false; if (isBadTransition(k, nextShift)) return false; return true; }) || "遅番";
+            const forceShift = roleAllowed.length < dayTypes.length
+              ? (roleAllowed.find(k => {
+                  if (isBadTransition(prevShift,k)||isBadTransition(k,nextShift)) return false;
+                  return ds.filter(sx=>res[sx.id][d]===k).length < (maxStaff[k]??99);
+                }) || roleAllowed[0])
+              : (dayTypes.find(k => {
+                  if (isBadTransition(prevShift, k)) return false;
+                  if (isBadTransition(k, nextShift)) return false;
+                  return ds.filter(sx=>res[sx.id][d]===k).length < (maxStaff[k]??99);
+                }) || "日勤");
             res[s.id][d] = forceShift; excess--; continue;
           }
           const pick = [...av].sort((a, b) => { const dA=Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]),dB=Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if(dA!==dB)return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
@@ -851,6 +863,24 @@ export function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
     for (const [k, minC] of Object.entries(dept.minStaff || {})) {
       const actual = ds.filter(s => res[s.id]?.[d] === k).length;
       if (actual < minC) score += actual === 0 ? (minC - actual) * 30 : (minC - actual) * 10;
+    }
+  }
+  // maxStaff超過ペナルティ（bestOfN/localSearch が違反トライアルを弾けるようにする）
+  {
+    const ms = {};
+    [...new Set(dept.shiftTypes)].forEach(k => {
+      const cd = (dept.customShiftDefs||[]).find(d=>d.key===k);
+      const base = cd?.baseType || k;
+      const def = base === "日勤" ? 99 : 1;
+      const saved = dept.maxStaff?.[k];
+      ms[k] = (saved != null && !(cd && base === "日勤" && saved === 1)) ? saved : def;
+    });
+    for (let d = 1; d <= days; d++) {
+      for (const [k, limit] of Object.entries(ms)) {
+        if (limit >= 99) continue;
+        const cnt = ds.filter(s => res[s.id]?.[d] === k).length;
+        if (cnt > limit) score += (cnt - limit) * 10000;
+      }
     }
   }
   // 公平性ペナルティ: 夜勤回数・土日出勤回数の分散（スタッフ間の不均衡を抑制）
