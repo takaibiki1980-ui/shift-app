@@ -507,38 +507,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     });
   }
 
-  // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
-  const enforceMaxStaff = () => {
-    for (let d = 1; d <= days; d++) {
-      for (const [shiftKey, limit] of Object.entries(maxStaff)) {
-        const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
-        if (overStaff.length <= limit) continue;
-        const toFix = [
-          ...overStaff.filter(s => !lockedDays[s.id].has(d)),
-          ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
-        ];
-        let excess = overStaff.length - limit;
-        for (const s of toFix) {
-          if (excess <= 0) break;
-          if (lockedDays[s.id].has(d) && excess < overStaff.length) break;
-          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
-          const altShift = dayTypes.find(k => {
-            if (k === shiftKey) return false;
-            if (!getAllowedTypes(s).includes(k)) return false;
-            if (isBadTransition(prev, k)) return false;
-            if (isBadTransition(k, next)) return false;
-            const cnt = ds.filter(sx => res[sx.id][d] === k).length;
-            return cnt < (maxStaff[k] ?? 99);
-          });
-          const newShift = altShift || "休み";
-          debugReasons[s.id][d] = { technical: `[enforceMaxStaff] ${shiftKey}→${newShift} (max=${limit} actual=${overStaff.length})`, userFacing: `人数上限(${limit}人)を超えたため変更`, cause: 'maxStaff_excess', severity: 'warning' };
-          res[s.id][d] = newShift;
-          excess--;
-        }
-      }
-    }
-  };
-  enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
+  // ★enforceMaxStaff廃止: maxStaff超過はscoreShiftsのSoft-Mediumペナルティで評価
+  // Hard修復フェーズはminStaff不足のみ担当。max超過はbestOfN×30試行+スコアで解消する。
 
   // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
   const isViolation = (prev, curr) => isBadTransition(prev, curr);
@@ -564,7 +534,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
 
-  enforceMaxStaff(); // 2回目: 違反修正後に新たな超過が生じた場合も除去
+  // (enforceMaxStaff廃止: max超過はscoreShiftsペナルティに委譲)
 
   // 最低配置保証フェーズ: minStaff未満の日にスタッフを補充
   // 優先①: 他シフト勤務中のスタッフをスライド（振替）→ 休み数は変わらない
@@ -609,10 +579,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         let need = minCount - actual;
         for (const s of slideCands) {
           if (need <= 0) break;
-          if (actual >= (maxStaff[shiftKey] ?? 99)) break; // maxStaff上限に達したらスライド停止
           const fromShift = res[s.id][d];
           res[s.id][d] = shiftKey; need--; anyFixed = true;
-          debugReasons[s.id][d] = { technical: `[Hard①slide] ${fromShift}→${shiftKey} (minStaff不足 need=${minCount})`, userFacing: '最低人数を満たすため配置', cause: 'minStaff_shortage', severity: 'critical' };
+          debugReasons[s.id][d] = `[Hard①slide] ${fromShift}→${shiftKey} (minStaff不足 need=${minCount})`;
           actual++;
         }
 
@@ -644,12 +613,14 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         for (const s of restCands) {
           if (need <= 0) break;
           res[s.id][d] = shiftKey; need--; anyFixed = true;
-          debugReasons[s.id][d] = { technical: `[Hard②rest→work] 休み→${shiftKey} (minStaff不足 need=${minCount})`, userFacing: '最低人数を満たすため配置', cause: 'minStaff_shortage', severity: 'critical' };
+          debugReasons[s.id][d] = `[Hard②rest→work] 休み→${shiftKey} (minStaff不足 need=${minCount})`;
         }
       }
     }
     if (!anyFixed) break;
   }
+
+  // (enforceMaxStaff廃止: max超過はscoreShiftsペナルティに委譲)
 
   // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
   // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
@@ -776,7 +747,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
             res[s.id][d] = toShift;
-            debugReasons[s.id][d] = { technical: `[Soft比率修復] ${fromShift}→${toShift} (目標:${targets[toShift]} 実績:${actuals[toShift]||0})`, userFacing: '比率調整のため変更', cause: 'ratio_drift', severity: 'info' };
+            debugReasons[s.id][d] = `[Soft比率修復] ${fromShift}→${toShift} (目標:${targets[toShift]} 実績:${actuals[toShift]||0})`;
             actuals[fromShift]--;
             actuals[toShift] = (actuals[toShift]||0) + 1;
             converted++;
@@ -785,7 +756,6 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
-  enforceMaxStaff(); // 3回目: 補充後の超過確認
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
@@ -809,26 +779,6 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
-
-  // ★後付け判定: maxStaff超過セルに debugReasons を記録（生成ロジックは変更しない）
-  for (let d = 1; d <= days; d++) {
-    for (const [shiftKey, maxC] of Object.entries(maxStaff)) {
-      if (maxC >= 99) continue;
-      const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
-      const count = overStaff.length;
-      if (count <= maxC) continue;
-      for (const s of overStaff) {
-        if (debugReasons[s.id][d]) continue; // 既存理由(minStaff修復等)を優先して上書きしない
-        debugReasons[s.id][d] = {
-          technical: `[maxStaff超過] ${shiftKey} actual=${count} max=${maxC}`,
-          userFacing: `人数調整できず${count}人配置`,
-          cause: 'maxStaff_excess',
-          severity: 'warning'
-        };
-      }
-    }
-  }
-
   return { shifts: res, warnings, timelineWarnings, debugReasons };
 }
 

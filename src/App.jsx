@@ -2575,14 +2575,6 @@ function parseExcelPasteData(tsvText, staffList, year, month, customShiftKeys=[]
       if (dowCount >= 20) { headerRowIdx = ri; shiftStartCol = row.findIndex(c => DOW_SET.has(String(c??'').trim())); break; }
     }
     console.log("[parseExcelPasteData] FormatA headerRowIdx:", headerRowIdx, "shiftStartCol:", shiftStartCol);
-    // Align shiftStartCol with day 1's actual DOW: verify 3 consecutive DOW chars match the month
-    if (headerRowIdx >= 0) {
-      const dowSeq = Array.from({length: 3}, (_, i) => ['日','月','火','水','木','金','土'][new Date(year, month, i+1).getDay()]);
-      const hrow = rows[headerRowIdx];
-      for (let ci = shiftStartCol; ci < Math.min(shiftStartCol + 5, hrow.length - 2); ci++) {
-        if (dowSeq.every((d, k) => String(hrow[ci+k]??'').trim() === d)) { shiftStartCol = ci; break; }
-      }
-    }
     const colToDay = {};
     for (let i = 0; i < daysInMonth; i++) colToDay[shiftStartCol + i] = i + 1;
     for (let ri = (headerRowIdx >= 0 ? headerRowIdx + 1 : 0); ri < rows.length; ri++) {
@@ -2618,90 +2610,13 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
   const [unmatchedNames, setUnmatchedNames] = useState([]);
   const [parseError, setParseError] = useState('');
   const [pasting, setPasting] = useState(false);
-  const [namedOrder, setNamedOrder] = useState(null); // staff IDs in paste order from step-1
-  const [pasteStartDay, setPasteStartDay] = useState(1);
-  const [lastPasteType, setLastPasteType] = useState(''); // 'full'|'names'|'shifts'
-
-  const isShiftCell = (c) => {
-    if (!c) return false;
-    return PASTE_SHIFT_MAP[normName(String(c).trim())] != null ||
-      customShiftKeys.some(k => normName(k) === normName(String(c).trim()));
-  };
-  const parseShiftCell = (c) => {
-    if (!c) return null;
-    const n = normName(String(c).trim());
-    return PASTE_SHIFT_MAP[n] || (customShiftKeys.find(k => normName(k) === n)) || null;
-  };
 
   const process = (text) => {
     setParseError('');
-    const rows = text.trim().split(/\r?\n/).map(r => r.split('\t').map(c => String(c??'').trim()));
-    const filled = rows.filter(r => r.some(c => c));
-    if (filled.length === 0) { setParseError('データが空です。'); return; }
-
-    const DOW_CHARS = new Set(['月','火','水','木','金','土','日']);
-    const isNameLike = c => c && c.length >= 2 && !isShiftCell(c) && !/^\d+$/.test(c) && !DOW_CHARS.has(c);
-
-    const totalShiftCells = filled.reduce((s, r) => s + r.filter(isShiftCell).length, 0);
-    // Check if any cell (any column) has a recognizable staff name
-    const anyColHasMatchedName = filled.some(r => r.some(cell => isNameLike(cell) && staffList.some(s => nameMatch(cell, s.name))));
-
-    console.log('[paste detect] totalShiftCells:', totalShiftCells, 'anyColHasMatchedName:', anyColHasMatchedName, 'rows:', filled.length);
-
-    // Case 1: Names-only paste (≤2 shift cells total → treat as names)
-    if (totalShiftCells <= 2) {
-      const order = [];
-      const unmatched = [];
-      filled.forEach(r => {
-        const name = r.find(isNameLike);
-        if (!name) return;
-        const staff = staffList.find(s => nameMatch(name, s.name));
-        if (staff && !order.includes(staff.id)) order.push(staff.id);
-        else if (!staff && name.length >= 2) unmatched.push(name);
-      });
-      if (order.length > 0 || unmatched.length > 0) {
-        if (order.length > 0) setNamedOrder(order);
-        setUnmatchedNames(unmatched);
-        setLastPasteType('names');
-        if (order.length === 0) setParseError(`名前を認識しましたが、スタッフと一致しません: ${unmatched.join('、')}`);
-        return;
-      }
-    }
-
-    // Case 2: Shifts-only paste (has shifts but no matched staff name anywhere in data)
-    if (totalShiftCells > 2 && !anyColHasMatchedName) {
-      const order = namedOrder && namedOrder.length > 0 ? namedOrder : staffList.map(s => s.id);
-      const shiftRows = filled.filter(r => r.some(c => c)); // all non-empty rows
-      if (shiftRows.length > 0) {
-        const newData = {};
-        Object.entries(gridData).forEach(([id, d]) => { newData[id] = { ...d }; });
-        shiftRows.forEach((row, ri) => {
-          if (ri >= order.length) return;
-          const staffId = order[ri];
-          if (!newData[staffId]) newData[staffId] = {};
-          row.forEach((cell, ci) => {
-            const day = pasteStartDay + ci;
-            if (day < 1 || day > daysInMonth) return;
-            const sk = parseShiftCell(cell);
-            if (sk) newData[staffId][day] = sk;
-          });
-        });
-        setGridData(newData);
-        setLastPasteType('shifts');
-        if (!namedOrder) setParseError(''); // clear error, show info instead
-        return;
-      }
-    }
-
-    // Case 3: Full paste (names + shifts)
     const r = parseExcelPasteData(text, staffList, year, month, customShiftKeys);
     if (!r) { setParseError('シフトデータを読み取れませんでした。スタッフ名＋シフトの範囲を選択してCtrl+Cしてください。'); return; }
     setGridData(r.result);
     setUnmatchedNames(r.unmatched);
-    setLastPasteType('full');
-    if (r.matched.length > 0) {
-      setNamedOrder(r.matched.map(name => staffList.find(s => s.name === name)?.id).filter(Boolean));
-    }
   };
 
   const handlePasteEvent = (e) => { const text = e.clipboardData.getData('text'); if (text.trim()) { e.preventDefault(); process(text); } };
@@ -2749,33 +2664,12 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
           <button onClick={onClose} style={{background:'none',border:'none',color:'#3a8a87',cursor:'pointer',fontSize:20,lineHeight:1}}>✕</button>
         </div>
 
-        {/* Step guide */}
-        <div style={{background:'#e8f5f4',border:'1px solid #90cbc8',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#1a5a57'}}>
-          {lastPasteType === 'names'
-            ? <span style={{color:'#16a34a',fontWeight:700}}>✅ ステップ1完了: {namedOrder?.length||0}名の名前を確認しました。次に先月末を除いた <b>シフト列だけ</b>（D〜AH等）をCtrl+Cして貼り付けてください。</span>
-            : lastPasteType === 'shifts'
-            ? <span style={{color:'#2563eb',fontWeight:700}}>✅ ステップ2完了: シフトをグリッドに反映しました。確認して「適用」してください。</span>
-            : lastPasteType === 'full'
-            ? <span style={{color:'#1a3635'}}>✅ 名前＋シフトを一括読み込みしました。</span>
-            : <span><b>方法①</b> 名前列だけコピーして貼り付け → ②先月末を除くシフト列をコピーして貼り付け　　<b>方法②</b> 名前＋シフト（先月末含まず）をまとめてコピーして貼り付け</span>
-          }
-        </div>
-
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
           <button onClick={handleClickPaste} disabled={pasting}
             style={{background:'linear-gradient(135deg,#2BBFBA,#45B7D1)',color:'#fff',border:'none',borderRadius:9,padding:'8px 14px',cursor:'pointer',fontSize:13,fontWeight:800,whiteSpace:'nowrap'}}>
             {pasting ? '⏳ 読み込み中…' : '📋 クリップボードから読み込み'}
           </button>
           <span style={{fontSize:11,color:'#6ab5b2'}}>または画面にCtrl+V</span>
-          {(lastPasteType === 'names' || lastPasteType === 'shifts') && (
-            <div style={{display:'flex',alignItems:'center',gap:6,background:'#fff',border:'1px solid #90cbc8',borderRadius:8,padding:'4px 10px'}}>
-              <span style={{fontSize:11,color:'#3a8a87',fontWeight:700}}>シフト開始日:</span>
-              <button onClick={()=>setPasteStartDay(d=>Math.max(1,d-1))} style={{width:22,height:22,border:'1px solid #b8deda',borderRadius:4,background:'#d5edeb',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>−</button>
-              <span style={{fontSize:13,fontWeight:900,color:'#1a3635',minWidth:20,textAlign:'center'}}>{pasteStartDay}</span>
-              <button onClick={()=>setPasteStartDay(d=>Math.min(daysInMonth,d+1))} style={{width:22,height:22,border:'1px solid #b8deda',borderRadius:4,background:'#d5edeb',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>＋</button>
-              <span style={{fontSize:11,color:'#3a8a87'}}>日から</span>
-            </div>
-          )}
           {unmatchedNames.length > 0 && (
             <div style={{background:'#fff8e1',border:'1px solid #f59e0b',borderRadius:8,padding:'3px 10px',fontSize:11,color:'#b45309',fontWeight:700}}>
               ⚠️ 未マッチ: {unmatchedNames.join('、')}
@@ -2805,20 +2699,12 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
               </tr>
             </thead>
             <tbody>
-              {(namedOrder
-                ? [...namedOrder.map(id => staffList.find(s => s.id === id)).filter(Boolean),
-                   ...staffList.filter(s => !namedOrder.includes(s.id))]
-                : staffList
-              ).map((s, si) => {
-                const isNamed = namedOrder?.includes(s.id);
-                const namedIdx = namedOrder?.indexOf(s.id) ?? -1;
+              {staffList.map((s, si) => {
                 const staffShifts = gridData[s.id] || {};
                 return (
                   <tr key={s.id} style={{background: si%2===0 ? '#fff' : '#f7fdfc'}}>
-                    <td style={{padding:'3px 8px',border:'1px solid #b8deda',fontWeight:600,color:'#1a3635',
-                      background: isNamed ? (si%2===0 ? '#d5f0e8' : '#c8eadf') : (si%2===0 ? '#e8f5f4' : '#ddf0ee'),
+                    <td style={{padding:'3px 8px',border:'1px solid #b8deda',fontWeight:600,color:'#1a3635',background: si%2===0 ? '#e8f5f4' : '#ddf0ee',
                       position:'sticky',left:0,zIndex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:88,fontSize:11}}>
-                      {isNamed && <span style={{fontSize:9,color:'#16a34a',marginRight:3}}>#{namedIdx+1}</span>}
                       {s.name}
                     </td>
                     {days.map(d => {
@@ -3312,7 +3198,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
   );
 }
 
-function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, debugReasons = {} }) {
+function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
@@ -3331,8 +3217,6 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   const mouseStartRef = useRef(null);
   const [selAnchor, setSelAnchor] = useState(null);
   const [selCur, setSelCur] = useState(null);
-  const [reasonPopup, setReasonPopup] = useState(null); // {text, severity, x, y}
-  const SEVERITY_COLOR = { critical: '#ef4444', warning: '#f59e0b', info: '#3b82f6' };
 
   const selectedCells = useMemo(() => {
     if (!selAnchor || !selCur) return new Set();
@@ -3482,7 +3366,6 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   }, [shifts, ds, days, dept.roleShiftTypes, deptWork]);
 
   return (
-    <>
     <div>
     {roleViolationCount > 0 && (
       <div style={{background:"#fee2e2",border:"1px solid #ef4444",borderRadius:6,padding:"6px 12px",marginBottom:6,color:"#991b1b",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
@@ -3531,8 +3414,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
                   const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&type&&deptWork.has(type)&&type!=="明け"&&!_ra.includes(type);
-                  const reason=debugReasons[s.id]?.[d];
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined,position:'relative'}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{reason&&<span style={{position:'absolute',top:1,right:1,width:7,height:7,borderRadius:'50%',background:SEVERITY_COLOR[reason.severity]||'#94a3b8',opacity:0.6,cursor:'pointer',zIndex:1}} title={reason.userFacing} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setReasonPopup({text:reason.userFacing,severity:reason.severity,x:e.clientX,y:e.clientY});}} onTouchStart={e=>e.stopPropagation()} onTouchEnd={e=>{e.stopPropagation();e.preventDefault();const t=e.changedTouches[0];setReasonPopup({text:reason.userFacing,severity:reason.severity,x:t.clientX,y:t.clientY});}}/>}</td>;
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -3569,13 +3451,6 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
       </table>
     </div>
     </div>
-    {reasonPopup&&<>
-      <div style={{position:'fixed',inset:0,zIndex:999}} onClick={()=>setReasonPopup(null)} onTouchEnd={e=>{e.preventDefault();setReasonPopup(null);}}/>
-      <div style={{position:'fixed',left:Math.min(reasonPopup.x+6,window.innerWidth-196),top:Math.max(44,reasonPopup.y-52),background:'#1a3635',color:'#fff',padding:'7px 12px',borderRadius:8,fontSize:12,zIndex:1000,maxWidth:190,boxShadow:'0 4px 12px #0005',lineHeight:1.5,pointerEvents:'none',borderLeft:`3px solid ${SEVERITY_COLOR[reasonPopup.severity]||'#94a3b8'}`}}>
-        {reasonPopup.text}
-      </div>
-    </>}
-    </>
   );
 }
 
@@ -5382,7 +5257,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
-  const [lastDebugReasons, setLastDebugReasons] = useState({});
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
   const undoStackRef = useRef({}); // { [deptId]: deptShifts[] } — アンドゥ履歴（最大30ステップ）
@@ -5663,10 +5537,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         undoStackRef.current[cd.id] = [...genStack, genSnapshot].slice(-30);
         setUndoCount(undoStackRef.current[cd.id].length);
         const cs2 = allShiftsRef.current[cd.id] || {};
-        const {shifts:result, warnings, timelineWarnings, score, ratioFeedback, debugReasons: genDebugReasons} = bestOfN(cs, cd, year, month, cs2, ct, 30);
+        const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
         if (Object.keys(warnings).length > 0 || (timelineWarnings&&timelineWarnings.length>0)) setTimeout(()=>setGenerateWarnings({warnings,timelineWarnings,deptLabel:cd.label,score}),0);
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
-        setLastDebugReasons(genDebugReasons || {});
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
@@ -5745,8 +5618,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const deleteStaff = (id) => { const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
   const handleBulkKyuko = (days, mk) => { setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}}))); setBulkKyukoModal(false); };
 
-  const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); setLastDebugReasons({}); };
-  const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); setLastDebugReasons({}); };
+  const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
+  const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
 
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
   const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{console.log("[setAllShifts]","reason=dept_delete",{deptId,stack:new Error().stack});const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
@@ -5877,7 +5750,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
             </div>
           </div>}
-          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} debugReasons={lastDebugReasons}/></ZoomWrapper>
+          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
