@@ -256,10 +256,59 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     return allowed ? dayTypes.filter(k => allowed.includes(k)) : dayTypes;
   };
 
+  // ★ステップ2.5: 早番・遅番 slot-first 配置（maxStaff<99 の「役割席」シフト）
+  // 夜勤と同じ slot-first アーキテクチャ：「席へ人を配置する」介護型の核心。
+  // maxStaff≥99（日勤等）は後続 Pass B の buffer として従来通り扱う。
+  // これにより「早番2人・遅番2人」を構造的・事前的に防止する。
+  {
+    const slotFirstTypes = [...new Set(dept.shiftTypes)].filter(k =>
+      k !== '夜勤' && k !== '明け' && (maxStaff[k] ?? 99) < 99
+    );
+    for (const shiftType of slotFirstTypes) {
+      const limit      = maxStaff[shiftType];
+      const minFill    = dept.minStaff?.[shiftType] || 0;
+      const fillTarget = Math.min(limit, minFill); // min=max=1 → 1枠/日
+      if (fillTarget <= 0) continue;
+      const slotPool = ds.filter(s => getAllowedTypes(s).includes(shiftType));
+      for (let d = 1; d <= days; d++) {
+        const already = ds.filter(s => res[s.id][d] === shiftType).length;
+        const need = fillTarget - already;
+        if (need <= 0) continue;
+        const cands = slotPool.filter(s => {
+          if (lockedDays[s.id].has(d)) return false;  // 希望休・夜勤アンカー等でロック
+          if (res[s.id][d]) return false;              // 既に何か割り当て済み
+          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          if (prev === '明け') return false;
+          if (isBadTransition(prev, shiftType)) return false;
+          if (isBadTransition(shiftType, next)) return false;
+          return true;
+        }).sort((a, b) => {
+          // ①今月の担当回数が少ない人を優先（公平配分）
+          const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
+          const ub = Object.values(res[b.id]).filter(v => v === shiftType).length;
+          if (ua !== ub) return ua - ub;
+          // ②trend がある場合は当日曜の割り当て確率を加味
+          const weekday = new Date(year, month, d).getDay();
+          const tA = getTrend(a), tB = getTrend(b);
+          const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
+          const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
+          if (Math.abs(wA - wB) > 0.05) return wB - wA;
+          return Math.random() - 0.5;
+        });
+        let filled = 0;
+        for (const s of cands) {
+          if (filled >= need) break;
+          res[s.id][d] = shiftType;
+          filled++;
+        }
+      }
+    }
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
-  // 確率優先配置フェーズ（確率サンプリング主軸アーキテクチャ）
+  // 確率優先配置フェーズ（slot-first後の残スタッフへ 日勤/休み を配分）
   //  Pass A: 休み日 → dowRestRate で確率的サンプリング（30試行に多様性）
-  //  Pass B: 勤務日 → 全スタッフ統一処理（trend or deptAvg でサンプリング）
+  //  Pass B: 勤務日 → 早番/遅番配置済みスタッフを除く（主に日勤 buffer 配置）
   //  Pass C: 連続勤務超過の修正
   //  以降の enforceMaxStaff / minStaff保証 で残違反を修正
   // ═══════════════════════════════════════════════════════════════════════════
@@ -398,6 +447,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         // ★ratio指定あり: 希少シフトを確率サンプリングで日付確保 → 残りは主力シフト
         const remaining = new Set(workDays);
         allowed.filter(k => k !== '日勤').forEach(shiftType => {
+          // slot-first 済み（maxStaff<99）のシフトは Pass B では扱わない
+          if ((maxStaff[shiftType] ?? 99) < 99) return;
           const targetCount = targetShiftCounts[s.id][shiftType] || 0;
           if (!targetCount) return;
           const pool = [...remaining].filter(d => {
