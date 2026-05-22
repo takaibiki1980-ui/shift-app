@@ -507,8 +507,38 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     });
   }
 
-  // ★enforceMaxStaff廃止: maxStaff超過はscoreShiftsのSoft-Mediumペナルティで評価
-  // Hard修復フェーズはminStaff不足のみ担当。max超過はbestOfN×30試行+スコアで解消する。
+  // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
+  const enforceMaxStaff = () => {
+    for (let d = 1; d <= days; d++) {
+      for (const [shiftKey, limit] of Object.entries(maxStaff)) {
+        const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
+        if (overStaff.length <= limit) continue;
+        const toFix = [
+          ...overStaff.filter(s => !lockedDays[s.id].has(d)),
+          ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
+        ];
+        let excess = overStaff.length - limit;
+        for (const s of toFix) {
+          if (excess <= 0) break;
+          if (lockedDays[s.id].has(d) && excess < overStaff.length) break;
+          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          const altShift = dayTypes.find(k => {
+            if (k === shiftKey) return false;
+            if (!getAllowedTypes(s).includes(k)) return false;
+            if (isBadTransition(prev, k)) return false;
+            if (isBadTransition(k, next)) return false;
+            const cnt = ds.filter(sx => res[sx.id][d] === k).length;
+            return cnt < (maxStaff[k] ?? 99);
+          });
+          const newShift = altShift || "休み";
+          debugReasons[s.id][d] = { technical: `[enforceMaxStaff] ${shiftKey}→${newShift} (max=${limit} actual=${overStaff.length})`, userFacing: `人数上限(${limit}人)を超えたため変更`, cause: 'maxStaff_excess', severity: 'warning' };
+          res[s.id][d] = newShift;
+          excess--;
+        }
+      }
+    }
+  };
+  enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
 
   // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
   const isViolation = (prev, curr) => isBadTransition(prev, curr);
@@ -534,7 +564,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
 
-  // (enforceMaxStaff廃止: max超過はscoreShiftsペナルティに委譲)
+  enforceMaxStaff(); // 2回目: 違反修正後に新たな超過が生じた場合も除去
 
   // 最低配置保証フェーズ: minStaff未満の日にスタッフを補充
   // 優先①: 他シフト勤務中のスタッフをスライド（振替）→ 休み数は変わらない
@@ -755,6 +785,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+  enforceMaxStaff(); // 3回目: 補充後の超過確認
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
