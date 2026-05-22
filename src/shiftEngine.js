@@ -400,7 +400,10 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         allowed.filter(k => k !== '日勤').forEach(shiftType => {
           const targetCount = targetShiftCounts[s.id][shiftType] || 0;
           if (!targetCount) return;
-          const pool = [...remaining];
+          const pool = [...remaining].filter(d => {
+            const cnt = ds.filter(sx => res[sx.id][d] === shiftType).length;
+            return cnt < (maxStaff[shiftType] ?? 99);
+          });
           const weights = pool.map(d => getShiftWeight(d, shiftType));
           // サンプリングにスロット上限ブースト: まだ余裕のある日に偏らせる（但しランダム性維持）
           const picked = weightedSampleN(pool, weights, targetCount);
@@ -517,7 +520,6 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         let excess = overStaff.length - limit;
         for (const s of toFix) {
           if (excess <= 0) break;
-          if (lockedDays[s.id].has(d) && excess < overStaff.length) break;
           const prev = res[s.id][d - 1], next = res[s.id][d + 1];
           // 超過シフト以外で空きのある種別に振替を試みる
           const altShift = dayTypes.find(k => {
