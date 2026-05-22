@@ -83,8 +83,14 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   const maxConsec = dept.maxConsecutive || 5;
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
+  // ── 制約強度 Tier 定義 ────────────────────────────────────────────────────
+  // Tier1(Hard)  : 早番・遅番・夜勤 の maxStaff  → default=1, 最終保証で強制修正
+  // Tier2(Soft)  : 日勤 maxStaff / minStaff / 連続勤務 → score penalty + repair 逃がし先
+  // Tier3(快適性): 曜日偏り・好み → 軽い penalty のみ
+  // ── Tier 判定: maxStaff[k] < 99 = Hard枠（早番・遅番・夜勤）────────────────
   const maxStaff = {};
   [...new Set(dept.shiftTypes)].forEach(k => { const cd=(dept.customShiftDefs||[]).find(d=>d.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=dept.maxStaff?.[k];maxStaff[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def; });
+  const isHardMaxShift = (k) => (maxStaff[k] ?? 99) < 99; // Tier1: 早番/遅番/夜勤
   const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
   (dept.customShiftDefs||[]).forEach(cd => { if (cd.key && PRIORITY[cd.key]==null) PRIORITY[cd.key] = PRIORITY[cd.baseType]??2; });
 
@@ -403,10 +409,13 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         allowed.filter(k => k !== '日勤').forEach(shiftType => {
           const targetCount = targetShiftCounts[s.id][shiftType] || 0;
           if (!targetCount) return;
-          const pool = [...remaining];
+          // maxStaff制約: その日に既にshiftType上限に達している日は除外
+          const pool = [...remaining].filter(d => {
+            const cnt = ds.filter(sx => res[sx.id][d] === shiftType).length;
+            return cnt < (maxStaff[shiftType] ?? 99);
+          });
           const weights = pool.map(d => getShiftWeight(d, shiftType));
-          // サンプリングにスロット上限ブースト: まだ余裕のある日に偏らせる（但しランダム性維持）
-          const picked = weightedSampleN(pool, weights, targetCount);
+          const picked = weightedSampleN(pool, weights, Math.min(targetCount, pool.length));
           picked.forEach(d => {
             res[s.id][d] = shiftType;
             assignedShiftCounts[s.id][shiftType] = (assignedShiftCounts[s.id][shiftType] || 0) + 1;
@@ -421,16 +430,19 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       } else {
         // ★ratio指定なし / trendのみ / trendなし: 各日を確率サンプリングで決定
         workDays.forEach(d => {
-          const probs = {};
-          allowed.forEach(k => { probs[k] = getShiftWeight(d, k); });
-          // minStaff 不足シフトにブースト（minStaff充足優先）
           const dayCnts = {};
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
-          allowed.forEach(k => {
+          // maxStaff制約: 上限に達したシフトは選択肢から除外し、日勤等に振り分ける
+          const capAllowed = allowed.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
+          const sample = capAllowed.length ? capAllowed : allowed;
+          const probs = {};
+          sample.forEach(k => { probs[k] = getShiftWeight(d, k); });
+          // minStaff 不足シフトにブースト（minStaff充足優先）
+          sample.forEach(k => {
             const deficit = Math.max(0, (dept.minStaff[k] || 0) - (dayCnts[k] || 0));
             if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
           });
-          const pick = sampleFromProbs(probs) || allowed[0];
+          const pick = sampleFromProbs(probs) || sample[0];
           res[s.id][d] = pick;
           assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
         });
@@ -469,12 +481,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
           av = av.filter(k => getAllowedTypes(s).includes(k));
           { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
-          if (!av.length) {
-            const prevShift = res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
-            const roleAllowed = getAllowedTypes(s);
-            const forceShift = roleAllowed.length < dayTypes.length ? roleAllowed[0] : dayTypes.find(k => { if (isBadTransition(prevShift, k)) return false; if (isBadTransition(k, nextShift)) return false; return true; }) || "遅番";
-            res[s.id][d] = forceShift; excess--; continue;
-          }
+          if (!av.length) continue; // maxStaff上限またはisBadTransitionで振替先なし→休みのまま維持
           const pick = [...av].sort((a, b) => { const dA=Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]),dB=Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if(dA!==dB)return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
           res[s.id][d] = pick; excess--;
         }
@@ -579,6 +586,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         let need = minCount - actual;
         for (const s of slideCands) {
           if (need <= 0) break;
+          if (actual >= (maxStaff[shiftKey] ?? 99)) break; // maxStaff上限に達したらスライド停止
           const fromShift = res[s.id][d];
           res[s.id][d] = shiftKey; need--; anyFixed = true;
           debugReasons[s.id][d] = `[Hard①slide] ${fromShift}→${shiftKey} (minStaff不足 need=${minCount})`;
@@ -746,6 +754,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             if (isBadTransition(toShift, next)) continue;
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
+            // Tier1: toShift の maxStaff を超えない（早番・遅番・夜勤は上限1が Hard）
+            const toCnt = ds.filter(sx => res[sx.id][d] === toShift).length;
+            if (toCnt >= (maxStaff[toShift] ?? 99)) continue;
             res[s.id][d] = toShift;
             debugReasons[s.id][d] = `[Soft比率修復] ${fromShift}→${toShift} (目標:${targets[toShift]} 実績:${actuals[toShift]||0})`;
             actuals[fromShift]--;
@@ -779,6 +790,32 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+  // ★Tier1 Hard 最終保証: 全フェーズ後の 早番・遅番・夜勤 超過を強制修正（Tier2=日勤 を逃がし先に使う）
+  for (let d = 1; d <= days; d++) {
+    for (const [shiftKey, limit] of Object.entries(maxStaff)) {
+      if (limit >= 99) continue;
+      const over = ds.filter(s => res[s.id][d] === shiftKey);
+      if (over.length <= limit) continue;
+      let excess = over.length - limit;
+      for (const s of over) {
+        if (excess <= 0) break;
+        if (lockedDays[s.id].has(d)) continue;
+        const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+        const alt = dayTypes.find(k => {
+          if (k === shiftKey) return false;
+          if (!getAllowedTypes(s).includes(k)) return false;
+          if (isBadTransition(prev, k)) return false;
+          if (isBadTransition(k, next)) return false;
+          return ds.filter(sx => res[sx.id][d] === k).length < (maxStaff[k] ?? 99);
+        });
+        // Tier2（日勤）を逃がし先として使うが、日勤も満員なら休みへ
+        const nikkinFallback = dayTypes.find(k => k !== shiftKey && k === '日勤' && ds.filter(sx => res[sx.id][d] === k).length < (maxStaff[k] ?? 99));
+        res[s.id][d] = alt || nikkinFallback || '休み';
+        excess--;
+      }
+    }
+  }
+
   return { shifts: res, warnings, timelineWarnings, debugReasons };
 }
 
