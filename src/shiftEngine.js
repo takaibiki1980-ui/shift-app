@@ -620,7 +620,46 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     if (!anyFixed) break;
   }
 
-  // (enforceMaxStaff廃止: max超過はscoreShiftsペナルティに委譲)
+  // ★maxStaff超過Hard修復: max<99のシフトで上限を超えた場合、超過分を別シフトへ変換
+  // ロックなし・遷移OK・minStaff死守の範囲でのみ修復。代替不可なら休みへフォールバック。
+  for (let mpass = 0; mpass < 2; mpass++) {
+    for (let d = 1; d <= days; d++) {
+      for (const [shiftKey, maxC] of Object.entries(maxStaff)) {
+        if (maxC >= 99) continue;
+        const allOver = ds.filter(s => res[s.id][d] === shiftKey);
+        if (allOver.length <= maxC) continue;
+        // ロック済みスタッフは動かせない→ロック数を差し引いた余剰分だけ変換対象
+        const lockedOver = allOver.filter(s => lockedDays[s.id].has(d));
+        if (lockedOver.length >= maxC) continue; // ロックだけで既にmax超過 → 手出し不可
+        const toConvert = allOver.filter(s => !lockedDays[s.id].has(d)).slice(maxC - lockedOver.length);
+        for (const s of toConvert) {
+          if (ds.filter(sx => res[sx.id][d] === shiftKey).length <= maxC) break; // 既に解消済み
+          const prev = res[s.id][d-1], next = res[s.id][d+1];
+          const alts = dayTypes.filter(k => {
+            if (k === shiftKey) return false;
+            if (!getAllowedTypes(s).includes(k)) return false;
+            if (isBadTransition(prev, k)) return false;
+            if (isBadTransition(k, next)) return false;
+            if (ds.filter(sx => res[sx.id][d] === k).length >= (maxStaff[k] ?? 99)) return false;
+            // 元シフトのminStaffを割らないか
+            if (ds.filter(sx => res[sx.id][d] === shiftKey).length - 1 < (dept.minStaff?.[shiftKey] ?? 0)) return false;
+            return true;
+          }).sort((a, b) => {
+            const dA = Math.max(0, (dept.minStaff?.[a]||0) - ds.filter(sx => res[sx.id][d]===a).length);
+            const dB = Math.max(0, (dept.minStaff?.[b]||0) - ds.filter(sx => res[sx.id][d]===b).length);
+            return dB - dA;
+          });
+          if (alts.length > 0) {
+            res[s.id][d] = alts[0];
+            debugReasons[s.id][d] = { technical: `[maxStaff修復] ${shiftKey}→${alts[0]} (max=${maxC}超過)`, userFacing: `人数調整で${alts[0]}に変更`, cause: 'maxStaff_excess', severity: 'warning' };
+          } else if (prev !== "夜勤" && prev !== "明け" && ds.filter(sx => res[sx.id][d] === shiftKey).length - 1 >= (dept.minStaff?.[shiftKey] ?? 0)) {
+            res[s.id][d] = "休み";
+            debugReasons[s.id][d] = { technical: `[maxStaff修復→休み] ${shiftKey} (max=${maxC}超過、代替なし)`, userFacing: `人数調整で休みに変更`, cause: 'maxStaff_excess', severity: 'warning' };
+          }
+        }
+      }
+    }
+  }
 
   // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
   // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
@@ -860,7 +899,7 @@ export function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
     for (const [k, maxC] of Object.entries(maxStaffSc)) {
       if (maxC >= 99) continue;
       const actual = ds.filter(s => res[s.id]?.[d] === k).length;
-      if (actual > maxC) score += (actual - maxC) * 150;
+      if (actual > maxC) score += (actual - maxC) * 2000;
     }
   }
   // 公平性ペナルティ: 夜勤回数・土日出勤回数の分散（スタッフ間の不均衡を抑制）
