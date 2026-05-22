@@ -779,6 +779,26 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+
+  // ★後付け判定: maxStaff超過セルに debugReasons を記録（生成ロジックは変更しない）
+  for (let d = 1; d <= days; d++) {
+    for (const [shiftKey, maxC] of Object.entries(maxStaff)) {
+      if (maxC >= 99) continue;
+      const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
+      const count = overStaff.length;
+      if (count <= maxC) continue;
+      for (const s of overStaff) {
+        if (debugReasons[s.id][d]) continue; // 既存理由(minStaff修復等)を優先して上書きしない
+        debugReasons[s.id][d] = {
+          technical: `[maxStaff超過] ${shiftKey} actual=${count} max=${maxC}`,
+          userFacing: `人数調整できず${count}人配置`,
+          cause: 'maxStaff_excess',
+          severity: 'warning'
+        };
+      }
+    }
+  }
+
   return { shifts: res, warnings, timelineWarnings, debugReasons };
 }
 
