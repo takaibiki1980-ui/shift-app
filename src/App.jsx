@@ -5247,10 +5247,21 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     };
     mergeStaffKibo();
 
+    // 自動生成後など複数行のupsertが連続するとpostgres_changesが連打されるため
+    // 500msデバウンスで1回にまとめる（auto_generate直後の realtime_update 洪水を防止）
+    let reloadDebounceTimer = null;
+    const debouncedReload = () => {
+      if (reloadDebounceTimer) clearTimeout(reloadDebounceTimer);
+      reloadDebounceTimer = setTimeout(() => {
+        reloadDebounceTimer = null;
+        reloadFromRemote();
+      }, 500);
+    };
+
     const channel = supabase.channel(`shift-sync-${session.user.id}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'shift_data', filter: `user_id=eq.${session.user.id}` },
-        () => reloadFromRemote()
+        () => debouncedReload()
       )
       .subscribe();
 
@@ -5263,6 +5274,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
+      if (reloadDebounceTimer) clearTimeout(reloadDebounceTimer);
       supabase.removeChannel(channel);
       supabase.removeChannel(kiboChannel);
     };
