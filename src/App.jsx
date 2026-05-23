@@ -1326,7 +1326,16 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (!av.length) {
             const prevShift = res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
             const roleAllowed = getAllowedTypes(s);
-            const forceShift = roleAllowed.length < dayTypes.length ? roleAllowed[0] : dayTypes.find(k => { if (isBadTransition(prevShift, k)) return false; if (isBadTransition(k, nextShift)) return false; return true; }) || "遅番";
+            // maxStaff を守りつつ遷移ルール内で選択（両方NG なら maxStaff 優先・遷移妥協）
+            const forceShift = (() => {
+              const base = roleAllowed.length < dayTypes.length ? roleAllowed : dayTypes;
+              // ①遷移OK + maxStaff内
+              const best = base.find(k => !isBadTransition(prevShift,k) && !isBadTransition(k,nextShift) && ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
+              if (best) return best;
+              // ②遷移妥協でも maxStaff内（日勤を優先）
+              const safe = base.filter(k=>ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
+              return safe.find(k=>k==='日勤') || safe[0] || '日勤';
+            })();
             res[s.id][d] = forceShift; excess--; continue;
           }
           const pick = [...av].sort((a, b) => { const dA=Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]),dB=Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if(dA!==dB)return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
