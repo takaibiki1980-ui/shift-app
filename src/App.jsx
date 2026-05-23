@@ -852,6 +852,7 @@ function detectKiboNightPatterns(baseline, current, deptStaff, year, month) {
 }
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}) {
+  console.log('[AG-v7] start dept=', dept.id, 'maxStaff=', JSON.stringify(dept.maxStaff), 'minStaff=', JSON.stringify(dept.minStaff));
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
@@ -1036,6 +1037,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       for (const [shiftKey, limit] of Object.entries(maxStaff)) {
         const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
         if (overStaff.length <= limit) continue;
+        console.log(`[AG-v7] enforceMaxStaff: day=${d} shift=${shiftKey} count=${overStaff.length} limit=${limit}`);
         const toFix = [
           ...overStaff.filter(s => !lockedDays[s.id].has(d)),
           ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
@@ -1066,6 +1068,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     const slotFirstTypes = [...new Set(dept.shiftTypes)].filter(k =>
       k !== '夜勤' && k !== '明け' && (maxStaff[k] ?? 99) < 99
     );
+    console.log('[AG-v7] slotFirstTypes=', slotFirstTypes, 'maxStaff=', JSON.stringify(maxStaff));
     for (const shiftType of slotFirstTypes) {
       const limit = maxStaff[shiftType];
       if (limit <= 0) continue;
@@ -1616,6 +1619,23 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   }
 
   enforceMaxStaff(); // 4回目: 比率修復後の最終確認
+
+  // ★最終検証ログ: maxStaff違反が残っていないか確認
+  {
+    let totalViolations = 0;
+    for (let d = 1; d <= days; d++) {
+      for (const [k, limit] of Object.entries(maxStaff)) {
+        if (limit >= 99) continue;
+        const cnt = ds.filter(s => res[s.id][d] === k).length;
+        if (cnt > limit) {
+          console.error(`[AG-v7] FINAL VIOLATION: day=${d} shift=${k} cnt=${cnt} limit=${limit}`);
+          totalViolations++;
+        }
+      }
+    }
+    if (totalViolations === 0) console.log('[AG-v7] FINAL: 違反ゼロ ✓');
+    else console.error(`[AG-v7] FINAL: ${totalViolations}件の違反が残存！`);
+  }
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
