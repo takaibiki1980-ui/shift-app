@@ -1446,17 +1446,61 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     });
 
-    // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair / shouldProtectSlot 保護済み] ──
-    ds.forEach(s => {
-      for (let d = 1; d <= days; d++) {
-        if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
-        if (consecWork(s.id, d) <= maxConsec) continue;
-        if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
-        // ★Tier1保護: role-slot が上限以内なら連続勤務修正（Tier2）の対象外
-        { const sh=res[s.id][d]; if(shouldProtectSlot(sh, ds.filter(sx=>res[sx.id][d]===sh).length)) continue; }
-        res[s.id][d] = '休み';
-      }
-    });
+    // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair] ────────────────────────────
+    // 修復方針（介護型 Tier 構造に準拠）:
+    //   ① d 日が非 slot → d を休みに変換（従来通り）
+    //   ② d 日が role-slot（Tier1保護）→ Tier2（日勤層）で吸収
+    //      探索範囲 [d-maxConsec, d-1]: この範囲の1日を削除 → d での streak ≤ maxConsec
+    //      数学的根拠: t ∈ [d-maxConsec, d-1] 削除 → 新 streak = d-t ≤ maxConsec ✓
+    //
+    //      削除優先順位:
+    //        最優先: 日勤（base=日勤 のシフト）  ← 介護バッファ層、最も削除に適切
+    //        次点  : 非 slot 勤務               ← shouldProtectSlot が false のもの
+    //        禁止  : role-slot / lockedDays / 明け
+    //
+    //      Tier1 保証: shouldProtectSlot(tSh, count) が true の日は除外
+    //      副作用: 追加された休みは後続の 公休数調整 で consecWork チェック済みなため
+    //              無限 repair ループにはならない
+    {
+      let _fixedNonSlot = 0, _absorbedByTier2 = 0;
+      const _cds = dept.customShiftDefs || [];
+      // base が 日勤 かどうかを判定（isSlotManaged は除外済みだが、優先度付けのため明示チェック）
+      const _isNikkinBase = (k) => (_cds.find(c => c.key === k)?.baseType || k) === '日勤';
+      ds.forEach(s => {
+        for (let d = 1; d <= days; d++) {
+          if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
+          if (consecWork(s.id, d) <= maxConsec) continue;
+          if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
+          const sh = res[s.id][d];
+          if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) {
+            // ★Tier1保護: d 日は role-slot → 削除不可
+            // Tier2 吸収: [d-maxConsec, d-1] を走査して削除候補を優先度順で選択
+            const searchStart = Math.max(1, d - maxConsec);
+            let nikkinTarget = null;  // 日勤候補（最優先）
+            let nonSlotTarget = null; // 非 slot 候補（次点）
+            for (let t = searchStart; t < d; t++) {
+              if (lockedDays[s.id].has(t)) continue;
+              const tSh = res[s.id][t];
+              if (!deptWork.has(tSh) || tSh === '明け') continue;
+              if (shouldProtectSlot(tSh, ds.filter(sx => res[sx.id][t] === tSh).length)) continue;
+              // 日勤が見つかれば即確定（最優先）
+              if (_isNikkinBase(tSh)) { nikkinTarget = t; break; }
+              // 非 slot 勤務は候補として保存して走査続行（日勤を探す）
+              if (nonSlotTarget === null) nonSlotTarget = t;
+            }
+            const target = nikkinTarget ?? nonSlotTarget; // 日勤優先、なければ非 slot
+            if (target !== null) {
+              res[s.id][target] = '休み'; // ← Tier2（日勤層）を削除して streak を断ち切る
+              _absorbedByTier2++;
+            }
+            continue; // d 自体（role-slot）は変更しない
+          }
+          res[s.id][d] = '休み';
+          _fixedNonSlot++;
+        }
+      });
+      console.log(`[AG-Phase1] PassC: 非slot修復=${_fixedNonSlot} Tier2吸収(日勤層)=${_absorbedByTier2}`);
+    }
     // ★Phase1 diagnostic: Pass C 後の連続勤務違反残存チェック（読み取り専用・ロジック変更なし）
     // [AG-Phase1] log: total=残存違反数 slotProtected=shouldProtectSlot が守った件数（Tier1衝突）
     {
