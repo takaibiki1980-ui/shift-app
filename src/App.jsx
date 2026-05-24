@@ -1447,13 +1447,30 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
 
     // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair / shouldProtectSlot 保護済み] ──
+    // ★slot 代替修復: d 日が role-slot で削除不可の場合、ストリーク内の非 slot 日を代わりに削除
+    //   探索範囲 [d - maxConsec, d-1]: この範囲の任意の1日を削除すれば d での streak ≤ maxConsec
+    //   数学的根拠: t ∈ [d-maxConsec, d-1] を削除 → 新 streak = d-t ≤ maxConsec ✓
+    //   Tier1 保証: shouldProtectSlot で slot 日は除外 / lockedDays も除外
     ds.forEach(s => {
       for (let d = 1; d <= days; d++) {
         if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
         if (consecWork(s.id, d) <= maxConsec) continue;
         if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
-        // ★Tier1保護: role-slot が上限以内なら連続勤務修正（Tier2）の対象外
-        { const sh=res[s.id][d]; if(shouldProtectSlot(sh, ds.filter(sx=>res[sx.id][d]===sh).length)) continue; }
+        const sh = res[s.id][d];
+        if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) {
+          // ★Tier1保護: d 日は role-slot → 削除不可
+          // 代替修復: ストリーク内の削除可能な非 slot 日（日勤等）を休みに変換して streak を断ち切る
+          const searchStart = Math.max(1, d - maxConsec);
+          for (let t = searchStart; t < d; t++) {
+            if (lockedDays[s.id].has(t)) continue;
+            const tSh = res[s.id][t];
+            if (!deptWork.has(tSh) || tSh === '明け') continue;
+            if (shouldProtectSlot(tSh, ds.filter(sx => res[sx.id][t] === tSh).length)) continue;
+            res[s.id][t] = '休み'; // ← 非 slot 日を削除して streak を解消
+            break;
+          }
+          continue; // d 自体は変更しない
+        }
         res[s.id][d] = '休み';
       }
     });
