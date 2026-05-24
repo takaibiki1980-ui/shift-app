@@ -5051,6 +5051,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
+  const shiftTrendSkipSave = useRef(false); // reloadFromRemote起因のsetShiftTrend → Supabase echo loop 防止
   const lastSelfSaveTime = useRef(0); // 自分の保存完了時刻（Realtime自己ループ検知用）
   const pasteTimestamp = useRef(0); // 貼り付け時刻（貼り付け直後のRealtime上書きをブロック）
   const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
@@ -5388,7 +5389,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const recomp = computeShiftTrendFromRaw(deptRaw, latestExcRT);
               if (Object.keys(recomp).filter(k=>k!=='_months').length > 0) trend2[dId] = recomp;
             }
-            if (Object.keys(trend2).length > 0) setShiftTrend(trend2);
+            if (Object.keys(trend2).length > 0) {
+              shiftTrendSkipSave.current = true; // ★Fix3: remote reload 起因 → shiftTrend echo loop 防止
+              setShiftTrend(trend2);
+            }
           }
         }
         if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
@@ -5497,7 +5501,18 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const channel = supabase.channel(`shift-sync-${session.user.id}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'shift_data', filter: `user_id=eq.${session.user.id}` },
-        () => debouncedReload()
+        (payload) => {
+          // ★部署境界隔離: 変更された data_key を検査し、現在の year/month のシフトキーのみ reload を発火
+          // shifts_YYYY_M_deptId 形式のキーのみが対象 → staffList / depts / shiftTrend 等の
+          // 副次的な保存が realtime_update → autosave → echo loop を引き起こすのを防止
+          const changedKey = payload.new?.data_key || payload.old?.data_key || '';
+          const currentShiftPrefix = `shifts_${yearRef.current}_${monthRef.current+1}_`;
+          if (changedKey.startsWith(currentShiftPrefix)) {
+            debouncedReload();
+          }
+          // staffList / depts / shiftTrend 等の変更は reload 対象外（自己 echo 防止）
+          // 他セッションからの管理データ更新は tab-focus 時の visibility reload で捕捉する
+        }
       )
       .subscribe();
 
@@ -5905,6 +5920,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const generateTimerRef = useRef(null);
   useEffect(() => {
     if (!isInitializing.current) {
+      // ★Fix3: reloadFromRemote 起因の setShiftTrend は Supabase に書き戻さない（echo loop 防止）
+      if (shiftTrendSkipSave.current) {
+        shiftTrendSkipSave.current = false;
+        return;
+      }
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'shiftTrend', data_value:shiftTrend, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(({error})=>{ if(error) console.error('[shiftTrend save]',error); });
     }
   }, [shiftTrend]); // eslint-disable-line react-hooks/exhaustive-deps
