@@ -903,6 +903,86 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     return count <= (maxStaff[shiftKey] ?? 99);       // slot が上限以内 → 削減禁止
   };
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ★介護型エンジン 制約階層（Constraint Priority）正式定義
+  //
+  // ┌─────────────────────────────────────────────────────────────────────────┐
+  // │ Tier1 — 絶対制約（repair フェーズから削減・変更禁止）                      │
+  // │                                                                         │
+  // │  A. role-slot（役割席）                                                  │
+  // │     early shift（早番）= 「開け担当」席                                   │
+  // │     late  shift（遅番）= 「閉め担当」席                                   │
+  // │     night shift（夜勤）= 「夜間担当」席（+ 明け連鎖）                      │
+  // │     → coverage 人数ではなく「役割席」。0人は施設崩壊。                     │
+  // │     → shouldProtectSlot() が全 repair 経路の単一ガード。                  │
+  // │                                                                         │
+  // │  B. 希望休（希望ロック）                                                  │
+  // │     スタッフが申請した公休希望日。生成エンジンは絶対尊重。                   │
+  // │                                                                         │
+  // │  C. 有休（有給休暇）                                                      │
+  // │     法的権利。上書き・削除禁止。                                           │
+  // │                                                                         │
+  // │  D. 夜勤明け                                                              │
+  // │     夜勤翌日の「明け」は夜勤連鎖として固定。健康管理上削除禁止。            │
+  // │                                                                         │
+  // └─────────────────────────────────────────────────────────────────────────┘
+  //
+  // ┌─────────────────────────────────────────────────────────────────────────┐
+  // │ Tier2 — ソフト制約（repair フェーズが調整してよい範囲）                    │
+  // │                                                                         │
+  // │  a. 公休公平性（kyukoDays 目標）                                          │
+  // │     スタッフの休み日数を目標に近づける。                                   │
+  // │     → Tier1 を壊してまで達成してはいけない。                               │
+  // │                                                                         │
+  // │  b. 連続勤務制限（maxConsecutive）                                        │
+  // │     5連続勤務超過を解消。                                                  │
+  // │     → Tier1 slot を「休み」に変換して解消してはいけない。                  │
+  // │                                                                         │
+  // │  c. 比率最適化（shiftRatio / ratio修復）                                  │
+  // │     スタッフの日勤/早番/遅番比率を目標に近づける。                          │
+  // │     → Tier1 slot を削減して ratio を達成してはいけない。                   │
+  // │                                                                         │
+  // │  d. trend最適化（localSearchImprove / scoreShifts）                      │
+  // │     過去実績 trend に沿った swap 改善。                                    │
+  // │     → swap は人数保存のため Tier1 への影響なし。                           │
+  // │                                                                         │
+  // │  e. 最低配置補完（minStaff 保証）                                          │
+  // │     日勤など非 slot シフトの最低人数補完。                                  │
+  // │     → Tier1 slot を slide 元にしてはいけない。                             │
+  // │                                                                         │
+  // └─────────────────────────────────────────────────────────────────────────┘
+  //
+  // repair フェーズ 責務一覧:
+  // ┌──────────────────────┬────────────┬───────────────┬───────────────────────┐
+  // │ フェーズ              │ Tier1変更  │ shouldProtect │ 備考                  │
+  // ├──────────────────────┼────────────┼───────────────┼───────────────────────┤
+  // │ enforceMaxStaff      │ △ 超過時のみ│ 不使用（超過が│ 超過(count>max)なら削減│
+  // │                      │            │ 条件→逆方向） │ 許可。これが唯一の例外。│
+  // ├──────────────────────┼────────────┼───────────────┼───────────────────────┤
+  // │ Pass C（連続勤務修正）│ ✗ 禁止     │ ✅ 使用済み   │ L1347                 │
+  // ├──────────────────────┼────────────┼───────────────┼───────────────────────┤
+  // │ 公休 shortage 補正   │ ✗ 禁止     │ ✅ 使用済み   │ L1403                 │
+  // ├──────────────────────┼────────────┼───────────────┼───────────────────────┤
+  // │ 遷移 repair          │ ✗ 禁止     │ ✅ 使用済み   │ L1449（休み→日勤代替） │
+  // ├──────────────────────┼────────────┼───────────────┼───────────────────────┤
+  // │ minStaff 保証 slide  │ ✗ 禁止     │ ✅ 使用済み   │ L1487（スライド元除外）│
+  // ├──────────────────────┼────────────┼───────────────┼───────────────────────┤
+  // │ ratio 修復           │ ✗ 禁止     │ ✅ 使用済み   │ L1670（削減禁止）      │
+  // ├──────────────────────┼────────────┼───────────────┼───────────────────────┤
+  // │ localSearchImprove   │ ✗ 不可能   │ 不要          │ swap=人数保存、違反生成│
+  // │                      │            │               │ 不可能（構造保証）      │
+  // └──────────────────────┴────────────┴───────────────┴───────────────────────┘
+  //
+  // enforceMaxStaff の例外ルール:
+  //   count > maxStaff[slot] → 超過（違反状態）→ 削減許可（Tier1 修正方向への削減）
+  //   count ≤ maxStaff[slot] → 正常状態       → shouldProtectSlot が削減を禁止
+  //
+  // 新 repair フェーズを追加するときのルール:
+  //   res[s.id][d] を「休み」や別シフトへ変換する前に必ず:
+  //     if (shouldProtectSlot(res[s.id][d], <その日のcount>)) continue;
+  //   を挿入すること。
+  // ══════════════════════════════════════════════════════════════════════════════
+
   const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
   (dept.customShiftDefs||[]).forEach(cd => { if (cd.key && PRIORITY[cd.key]==null) PRIORITY[cd.key] = PRIORITY[cd.baseType]??2; });
 
@@ -1074,6 +1154,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     return allowed ? dayTypes.filter(k => allowed.includes(k)) : dayTypes;
   };
 
+  // enforceMaxStaff ─ [Tier1例外: count>maxStaff の超過状態のみ削減許可]
+  // 正常状態（count≤maxStaff）では発動しない → shouldProtectSlot と逆条件で安全
   // ★enforceMaxStaff: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
   const enforceMaxStaff = () => {
     for (let d = 1; d <= days; d++) {
@@ -1337,7 +1419,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     });
 
-    // ── Pass C: 連続勤務超過の修正 ────────────────────────────────────────────
+    // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair / shouldProtectSlot 保護済み] ──
     ds.forEach(s => {
       for (let d = 1; d <= days; d++) {
         if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
@@ -1349,7 +1431,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     });
 
-    // ── 公休数調整 ────────────────────────────────────────────────────────────
+    // ── 公休数調整 ─ [Tier2 repair / shortage補正は shouldProtectSlot 保護済み] ──
     ds.forEach(s => {
       const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
       const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休").length;
@@ -1427,6 +1509,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   enforceMaxStaff(); // 1回目: Pass B/C 後の超過を除去
 
+  // 遷移違反 repair ─ [Tier2 repair / shouldProtectSlot 保護済み（休み→日勤代替）]
   // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
   const isViolation = (prev, curr) => isBadTransition(prev, curr);
   for (const s of ds) {
@@ -1459,6 +1542,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   enforceMaxStaff(); // 2回目: 違反修正後の超過を除去
 
+  // minStaff 保証 ─ [Tier2 repair / slide元は shouldProtectSlot 保護済み]
   // 最低配置保証フェーズ: minStaff未満の日にスタッフを補充
   // 優先①: 他シフト勤務中のスタッフをスライド（振替）→ 休み数は変わらない
   // 優先②: 休み→勤務は公休数が目標より多い余剰スタッフのみ対象（kyukoDays死守）
@@ -1628,6 +1712,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
+  // ratio 修復 ─ [Tier2 repair / fromShift削減は shouldProtectSlot 保護済み]
   // ★比率修復パス: minStaff保証後の比率乖離を実際のシフト変換で修正する
   // minStaff slide 等で A1→A に崩れたスタッフのシフトを制約内で書き戻す
   {
