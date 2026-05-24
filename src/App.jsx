@@ -889,6 +889,20 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   // isSlotManaged: あるシフトキーが role-slot（Tier1絶対制約）か判定する共通関数
   const isSlotManaged = (shiftKey) => slotManagedTypes.has(shiftKey);
 
+  // shouldProtectSlot: Tier2 repair がそのシフトを削減してよいか判定する共通ガード
+  // 「role-slot かつ 現在の配置数が上限以内」= 削減禁止（Tier1絶対制約）
+  //   shiftKey: 削減しようとしているシフト種別
+  //   count   : 当該日の現在の配置人数
+  // 返値 true  → 削減してはいけない（protect）
+  // 返値 false → 削減してよい（proceed）
+  //
+  // 使用例:
+  //   if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) continue;
+  const shouldProtectSlot = (shiftKey, count) => {
+    if (!isSlotManaged(shiftKey)) return false;       // 日勤など非slot → 保護不要
+    return count <= (maxStaff[shiftKey] ?? 99);       // slot が上限以内 → 削減禁止
+  };
+
   const PRIORITY = { 早番:1, 遅番:1, 日勤:2 };
   (dept.customShiftDefs||[]).forEach(cd => { if (cd.key && PRIORITY[cd.key]==null) PRIORITY[cd.key] = PRIORITY[cd.baseType]??2; });
 
@@ -1329,9 +1343,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
         if (consecWork(s.id, d) <= maxConsec) continue;
         if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
-        // ★Tier1保護: role-slot（早番・遅番等）が上限以内なら連続勤務修正の対象外
-        // 介護現場では「早番0人」>「連続勤務違反」。role-slotはTier1絶対制約。
-        { const sh=res[s.id][d]; if(isSlotManaged(sh)&&ds.filter(sx=>res[sx.id][d]===sh).length<=(maxStaff[sh]??99)) continue; }
+        // ★Tier1保護: role-slot が上限以内なら連続勤務修正（Tier2）の対象外
+        { const sh=res[s.id][d]; if(shouldProtectSlot(sh, ds.filter(sx=>res[sx.id][d]===sh).length)) continue; }
         res[s.id][d] = '休み';
       }
     });
@@ -1385,10 +1398,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
             .filter(d => {
               if (res[s.id][d - 1] === "明け" || res[s.id][d + 1] === "明け") return false;
               if (!canRest(s.id, d)) return false;
-              // ★Tier1保護: role-slot（早番・遅番等）が上限以内なら公休補正の対象外
-              // 介護現場では「早番0人」>「公休公平性」。role-slotはTier1絶対制約。
+              // ★Tier1保護: role-slot が上限以内なら公休shortage補正（Tier2）の対象外
               const sh = res[s.id][d];
-              if (isSlotManaged(sh) && ds.filter(sx => res[sx.id][d] === sh).length <= (maxStaff[sh]??99)) return false;
+              if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) return false;
               return true;
             })
             .sort((a, b) => consecWork(s.id, b - 1) - consecWork(s.id, a - 1));
@@ -1432,11 +1444,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (isBadTransition(k, n)) return false;
           return cnts[k] < (maxStaff[k] ?? 99);
         });
-        // ★Tier1保護: altが見つからず"休み"にする前に、
-        // 現在のシフトがrole-slot（早番・遅番等）かつ上限以内なら
-        // "休み"ではなく日勤（非slot管理）にフォールバック。role-slotはTier1絶対制約。
+        // ★Tier1保護: altが見つからず"休み"にする前に role-slot なら日勤へフォールバック
         const curSh = res[s.id][target];
-        const isSlotProtected = isSlotManaged(curSh) && ds.filter(sx => res[sx.id][target] === curSh).length <= (maxStaff[curSh]??99);
+        const isSlotProtected = shouldProtectSlot(curSh, ds.filter(sx => res[sx.id][target] === curSh).length);
         const finalAlt = alt ?? (isSlotProtected
           ? (dayTypes.find(k => k === '日勤' && cnts[k] < (maxStaff[k] ?? 99)) || '日勤')
           : '休み');
@@ -1473,9 +1483,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           const fromMin = dept.minStaff?.[cur] ?? 0;
           const fromActual = ds.filter(sx => res[sx.id][d] === cur).length;
           if (fromActual - 1 < fromMin) return false;
-          // ★Tier1保護: role-slot（早番・遅番等）が上限以内ならスライド元にしない
-          // minStaff=0でもmaxStaff=1なら1枠を守る。role-slotはTier1絶対制約。
-          if (isSlotManaged(cur) && fromActual <= (maxStaff[cur]??99)) return false;
+          // ★Tier1保護: role-slot が上限以内ならスライド元（Tier2）にしない
+          if (shouldProtectSlot(cur, fromActual)) return false;
           return true;
         }).sort((a, b) => {
           // ★最小変更原則: 比率ターゲットのシフト中スタッフはスライドを最後に選ぶ
@@ -1657,10 +1666,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
             if (isBadTransition(toShift, next)) continue;
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
-            // ★Tier1保護: role-slot（早番・遅番等）が上限以内なら ratio修復で削減しない。
-            // 介護の早番・遅番・夜勤は「役割席」であり、ratio で消してはいけない。
-            // minStaff=0 でも maxStaff=1 なら 1枠を守る（minStaffとは別概念）。
-            if (isSlotManaged(fromShift) && fromCnt <= (maxStaff[fromShift] ?? 99)) continue;
+            // ★Tier1保護: role-slot が上限以内なら ratio修復（Tier2）で削減しない
+            if (shouldProtectSlot(fromShift, fromCnt)) continue;
             const toCnt = ds.filter(sx => res[sx.id][d] === toShift).length;
             if (toCnt >= (maxStaff[toShift] ?? 99)) continue;
             res[s.id][d] = toShift;
