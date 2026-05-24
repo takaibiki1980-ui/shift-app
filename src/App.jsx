@@ -1606,6 +1606,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
             if (isBadTransition(toShift, next)) continue;
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
+            // ★slot-first 管理シフト削減禁止: maxStaff<99（役割席シフト）が
+            // 上限以内に収まっている場合は ratio修復で削減しない。
+            // 介護の早番・遅番・夜勤は「役割席」であり、ratio で消してはいけない。
+            // minStaff=0 でも maxStaff=1 なら 1枠を守る（minStaffとは別概念）。
+            if (fromCnt <= (maxStaff[fromShift] ?? 99) && (maxStaff[fromShift] ?? 99) < 99) continue;
             const toCnt = ds.filter(sx => res[sx.id][d] === toShift).length;
             if (toCnt >= (maxStaff[toShift] ?? 99)) continue;
             res[s.id][d] = toShift;
