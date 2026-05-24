@@ -1189,11 +1189,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   // ★ステップ2.5: 早番・遅番 slot-first 配置（maxStaff<99 の「役割席」シフト）
   // 夜勤と同じ slot-first アーキテクチャ：「席へ人を配置する」介護型の核心。
   // maxStaff≥99（日勤等）は後続 Pass B の buffer として従来通り扱う。
+  // ──────────────────────────────────────────────────────────────────────────
+  // [Phase1 generation-heavy] maxConsecutive aware を cands filter に追加
+  //   「d に配置した場合の連続勤務数（前後ストリーク合算）が maxConsec を超えるなら候補外」
+  //   ・prevConsec = consecWork(s.id, d-1): d-1 までの後ろ向きストリーク（既存関数）
+  //   ・fwdConsec  = d+1 以降の確定済み前向きストリーク（inline ループ）
+  //   ・合計 prevConsec + 1(今日) + fwdConsec > maxConsec → 候補外
+  //   効果: Pass C の shouldProtectSlot 保護発動を減らし repair-heavy 依存を軽減
   {
     const slotFirstTypes = [...new Set(dept.shiftTypes)].filter(k =>
       k !== '夜勤' && isSlotManaged(k)  // 夜勤はstep1で処理済み・明けはisSlotManaged内で除外済み
     );
     console.log('[AG-v7] slotFirstTypes=', slotFirstTypes, 'maxStaff=', JSON.stringify(maxStaff));
+    let _slotMaxConsecExcluded = 0; // ★Phase1 diagnostic: maxConsec aware により除外された候補数
     for (const shiftType of slotFirstTypes) {
       const limit = maxStaff[shiftType];
       if (limit <= 0) continue;
@@ -1209,6 +1217,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (prev === '明け') return false;
           if (isBadTransition(prev, shiftType)) return false;
           if (isBadTransition(shiftType, next)) return false;
+          // ★Phase1 generation-heavy: maxConsecutive aware
+          // d に配置した結果の連続勤務数 = 後ろストリーク + 1 + 前ストリーク
+          // これが maxConsec を超える → このまま配置すると Pass C が発火する → 候補外
+          const prevConsec = consecWork(s.id, d - 1);
+          let fwdConsec = 0;
+          for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) fwdConsec++; else break; }
+          if (prevConsec + 1 + fwdConsec > maxConsec) { _slotMaxConsecExcluded++; return false; }
           return true;
         }).sort((a, b) => {
           const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
@@ -1228,6 +1243,18 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           filled++;
         }
       }
+    }
+    // ★Phase1 diagnostic: slot-first 完了後の統計ログ
+    {
+      let _unfilledSlots = 0;
+      for (const shiftType of slotFirstTypes) {
+        const limit = maxStaff[shiftType];
+        for (let d = 1; d <= days; d++) {
+          const cnt = ds.filter(s => res[s.id][d] === shiftType).length;
+          if (cnt < limit) _unfilledSlots += limit - cnt;
+        }
+      }
+      console.log(`[AG-Phase1] slot-first完了: maxConsecExcluded=${_slotMaxConsecExcluded} unfilledSlots=${_unfilledSlots}`);
     }
   }
 
@@ -1430,6 +1457,24 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         res[s.id][d] = '休み';
       }
     });
+    // ★Phase1 diagnostic: Pass C 後の連続勤務違反残存チェック（読み取り専用・ロジック変更なし）
+    // [AG-Phase1] log: total=残存違反数 slotProtected=shouldProtectSlot が守った件数（Tier1衝突）
+    {
+      let _passCViolations = 0, _passCSlotProtected = 0;
+      ds.forEach(s => {
+        for (let d = 1; d <= days; d++) {
+          if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
+          if (consecWork(s.id, d) <= maxConsec) continue;
+          _passCViolations++;
+          const sh = res[s.id][d];
+          if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) _passCSlotProtected++;
+        }
+      });
+      if (_passCViolations > 0)
+        console.warn(`[AG-Phase1] PassC後 連続違反残存: total=${_passCViolations} slotProtected=${_passCSlotProtected}`);
+      else
+        console.log('[AG-Phase1] PassC後 連続違反: ゼロ ✓');
+    }
 
     // ── 公休数調整 ─ [Tier2 repair / shortage補正は shouldProtectSlot 保護済み] ──
     ds.forEach(s => {
