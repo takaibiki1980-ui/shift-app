@@ -7210,6 +7210,269 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [AG-Minimal-Change] 診断ログ ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[AG-Minimal-Change-Phase1] Minimal Change Engine Phase 1（実適用）
+        // lowValue(dayImp<=0) かつ rollbackSafe な変更を実際に rollback して変更数を削減
+        // ★生成ロジック・repair・score変更なし。post-optimization として実装。
+        // ★shouldProtectSlot思想保持: Tier1(role-slot minStaff)絶対維持
+        // ★明け/夜勤ペア保護: orphaned 明け を生まない
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _p1_days = getDays(year, month);
+          const _p1_ds   = cs.filter(s => s.dept === cd.id);
+          const _p1_cds  = cd.customShiftDefs || [];
+          const _p1_work = buildDeptWorkTypes(_p1_cds);
+          const _p1_maxC = cd.maxConsecutive || 5;
+
+          // role-slot types (maxStaff<99) と 夜勤ベースtypes を分類
+          const _p1_maxS     = {};
+          const _p1_slotSet  = new Set(); // shouldProtectSlot 対象
+          const _p1_nightSet = new Set(); // 明け前日に必要な夜勤ベース types
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const c2   = _p1_cds.find(c3 => c3.key === k);
+            const base = c2?.baseType || k;
+            const def  = base === '日勤' ? 99 : 1;
+            const sv   = cd.maxStaff?.[k];
+            const ms   = (sv != null && !(c2 && base === '日勤' && sv === 1)) ? sv : def;
+            _p1_maxS[k] = ms;
+            if (ms < 99) _p1_slotSet.add(k);
+            if (base === '夜勤') _p1_nightSet.add(k);
+          });
+
+          const _p1_bad = (prev, curr) => {
+            if (!prev || !curr || cd.intervalThreshold != null) return false;
+            return (prev === '遅番' && (curr === '早番' || curr === '日勤')) ||
+                   (prev === '日勤' && curr === '早番');
+          };
+
+          // 連続勤務カウント（1セル上書き付き）
+          const _p1_consec = (shifts, sid, d, ovSid, ovDay, ovVal) => {
+            let c = 0;
+            for (let i = d; i >= 1; i--) {
+              const sh = (ovSid === sid && ovDay === i) ? ovVal : (shifts[sid]?.[i] ?? '');
+              if (_p1_work.has(sh)) c++; else break;
+            }
+            return c;
+          };
+
+          // 日別安定性スコア（badTrans + consecViol + slotViol + shortage）
+          const _p1_dayM = (shifts, d, ovSid, ovDay, ovVal) => {
+            let bt = 0, cv = 0, sv = 0, sh = 0;
+            for (const s of _p1_ds) {
+              const shP = (ovSid === s.id && ovDay === d-1) ? ovVal : (shifts[s.id]?.[d-1] ?? '');
+              const shC = (ovSid === s.id && ovDay === d)   ? ovVal : (shifts[s.id]?.[d] ?? '');
+              if (d > 1 && _p1_bad(shP, shC)) bt++;
+              if (_p1_work.has(shC) && shC !== '明け' && _p1_consec(shifts, s.id, d, ovSid, ovDay, ovVal) > _p1_maxC) cv++;
+            }
+            for (const [k, lim] of Object.entries(_p1_maxS)) {
+              if (lim >= 99) continue;
+              const cnt = _p1_ds.filter(s =>
+                ((ovSid === s.id && ovDay === d) ? ovVal : (shifts[s.id]?.[d] ?? '')) === k
+              ).length;
+              if (cnt > lim) sv++;
+            }
+            for (const [k, min] of Object.entries(cd.minStaff || {})) {
+              const cnt = _p1_ds.filter(s =>
+                ((ovSid === s.id && ovDay === d) ? ovVal : (shifts[s.id]?.[d] ?? '')) === k
+              ).length;
+              if (cnt < min) sh++;
+            }
+            return bt + cv + sv + sh;
+          };
+
+          // Tier1 guard: role-slot の minStaff を維持できるか
+          const _p1_tier1ok = (sid, day, revVal) => {
+            const afterVal = result[sid]?.[day] ?? '';
+            if (!_p1_slotSet.has(afterVal)) return true;
+            const min = cd.minStaff?.[afterVal] ?? 0;
+            if (min <= 0) return true;
+            const cnt = _p1_ds.filter(s =>
+              ((s.id === sid) ? (revVal ?? '') : (result[s.id]?.[day] ?? '')) === afterVal
+            ).length;
+            return cnt >= min;
+          };
+
+          // Phase1 適用前の変更数 & repair score
+          const _p1_changesBefore = (() => {
+            let n = 0;
+            for (const s of _p1_ds)
+              for (let d = 1; d <= _p1_days; d++)
+                if ((genSnapshot[s.id]?.[d] ?? '') !== (result[s.id]?.[d] ?? '')) n++;
+            return n;
+          })();
+          const _p1_repairBefore = (() => {
+            let t = 0;
+            for (let d = 1; d <= _p1_days; d++) t += _p1_dayM(result, d);
+            return t;
+          })();
+
+          // ── 候補構築: lowValue(dayImp<=0) かつ rollbackSafe(mRev<=mOrig) ──
+          // lowValue: この変更で当日の安定性が改善しなかった変更
+          // rollbackSafe: 1セル戻しても安定性が悪化しない
+          const _p1_cands = [];
+          for (const s of _p1_ds) {
+            for (let d = 1; d <= _p1_days; d++) {
+              const bv = genSnapshot[s.id]?.[d] ?? '';
+              const av = result[s.id]?.[d] ?? '';
+              if (bv === av) continue;
+              const revVal = bv || undefined;
+              // lowValue 判定（genSnapshot基準の安定性向上度）
+              const dayImp = _p1_dayM(genSnapshot, d) - _p1_dayM(result, d);
+              if (dayImp > 0) continue; // 安定性改善した高価値変更 → 保持
+              // rollbackSafe 判定（元のresult状態で評価）
+              const mOrig = _p1_dayM(result, d) + (d < _p1_days ? _p1_dayM(result, d+1) : 0);
+              const mRev  = _p1_dayM(result, d, s.id, d, revVal) +
+                            (d < _p1_days ? _p1_dayM(result, d+1, s.id, d, revVal) : 0);
+              if (mRev > mOrig) continue; // rollback不可
+              _p1_cands.push({ sid: s.id, name: s.name, day: d, before: bv, after: av, revVal });
+            }
+          }
+
+          // 日付昇順でイテレーション（前日の変更が後続に影響するため）
+          _p1_cands.sort((a, b) => a.day - b.day || a.name.localeCompare(b.name));
+
+          const _p1_applied      = [];
+          const _p1_rejected     = [];
+          const _p1_blockedTier1 = [];
+          const _p1_blockedMake  = []; // 明け/夜勤ペア保護によるブロック
+
+          for (const cand of _p1_cands) {
+            const { sid, name, day, before, after, revVal } = cand;
+
+            // 既に戻し値と一致している場合はスキップ（前の rollback の影響）
+            if ((result[sid]?.[day] ?? '') === (revVal ?? '')) continue;
+
+            // ── 明け orphan guard ──
+            // av が夜勤 → 翌日が明け → revVal が夜勤でなければ 明け が孤立する
+            if (day < _p1_days && (result[sid]?.[day+1] ?? '') === '明け' &&
+                !_p1_nightSet.has(revVal ?? '')) {
+              _p1_blockedMake.push({ name, day, before, after });
+              continue;
+            }
+            // revVal が明け → 前日が夜勤でなければ孤立する可能性（保守的にブロック）
+            if ((revVal ?? '') === '明け' && !_p1_nightSet.has(result[sid]?.[day-1] ?? '')) {
+              _p1_blockedMake.push({ name, day, before, after });
+              continue;
+            }
+
+            // ── Tier1 guard（shouldProtectSlot 思想）──
+            if (!_p1_tier1ok(sid, day, revVal)) {
+              _p1_blockedTier1.push({ name, day, before, after });
+              continue;
+            }
+
+            // ── 現在の result 状態で再評価（iterative rollback: 先行 rollback の影響を反映）──
+            const mOrig = _p1_dayM(result, day) + (day < _p1_days ? _p1_dayM(result, day+1) : 0);
+            const mRev  = _p1_dayM(result, day, sid, day, revVal) +
+                          (day < _p1_days ? _p1_dayM(result, day+1, sid, day, revVal) : 0);
+
+            if (mRev <= mOrig) {
+              // rollback 採用: result を直接更新（post-optimization）
+              if (!result[sid]) result[sid] = {};
+              result[sid][day] = revVal !== undefined ? revVal : '';
+              _p1_applied.push({ name, day, before, after });
+            } else {
+              _p1_rejected.push({ name, day, before, after });
+            }
+          }
+
+          // 適用後の変更数 & repair score
+          const _p1_changesAfter = (() => {
+            let n = 0;
+            for (const s of _p1_ds)
+              for (let d = 1; d <= _p1_days; d++)
+                if ((genSnapshot[s.id]?.[d] ?? '') !== (result[s.id]?.[d] ?? '')) n++;
+            return n;
+          })();
+          const _p1_repairAfter = (() => {
+            let t = 0;
+            for (let d = 1; d <= _p1_days; d++) t += _p1_dayM(result, d);
+            return t;
+          })();
+
+          // ── [AG-Minimal-Apply] ──
+          const _maLines = [`[AG-Minimal-Apply] dept=${cd.id}`];
+          _maLines.push(
+            `rollbackCandidates=${_p1_cands.length} rollbackApplied=${_p1_applied.length}` +
+            ` rollbackRejected=${_p1_rejected.length} blockedByTier1=${_p1_blockedTier1.length}` +
+            ` blockedByMake=${_p1_blockedMake.length}`
+          );
+          _maLines.push(`changes: before=${_p1_changesBefore} after=${_p1_changesAfter} reduced=${_p1_changesBefore - _p1_changesAfter}`);
+          _maLines.push(`repair: before=${_p1_repairBefore} after=${_p1_repairAfter} delta=${_p1_repairAfter - _p1_repairBefore}`);
+          if (_p1_applied.length > 0) {
+            _maLines.push(`meaning: ${_p1_applied.length}件の不要変更を削減`);
+          } else if (_p1_cands.length === 0) {
+            _maLines.push('meaning: 削減可能な不要変更なし');
+          } else {
+            _maLines.push(`meaning: 候補${_p1_cands.length}件のうち0件適用（再評価で全て棄却）`);
+          }
+          console.log(_maLines.join('\n'));
+
+          // ── [AG-Minimal-Apply-Staff] ──
+          const _maStLines = ['[AG-Minimal-Apply-Staff]'];
+          const _p1_bySt = {};
+          for (const c of _p1_cands) {
+            if (!_p1_bySt[c.name]) _p1_bySt[c.name] = { removable: 0, applied: 0, rejected: 0 };
+            _p1_bySt[c.name].removable++;
+          }
+          for (const c of _p1_applied)  {
+            if (!_p1_bySt[c.name]) _p1_bySt[c.name] = { removable: 0, applied: 0, rejected: 0 };
+            _p1_bySt[c.name].applied++;
+          }
+          for (const c of _p1_rejected) {
+            if (!_p1_bySt[c.name]) _p1_bySt[c.name] = { removable: 0, applied: 0, rejected: 0 };
+            _p1_bySt[c.name].rejected++;
+          }
+          const _p1StE = Object.entries(_p1_bySt).sort((a, b) => b[1].removable - a[1].removable);
+          if (_p1StE.length === 0) {
+            _maStLines.push('  rollback候補なし');
+          } else {
+            _p1StE.forEach(([n, { removable, applied, rejected }]) => {
+              _maStLines.push(`  ${n}: removable=${removable} applied=${applied} rejected=${rejected}`);
+            });
+          }
+          console.log(_maStLines.join('\n'));
+
+          // ── [AG-Minimal-Apply-Risk] ──
+          const _maRLines = ['[AG-Minimal-Apply-Risk]'];
+          let _p1_hasRisk = false;
+          if (_p1_rejected.length > 0) {
+            _p1_hasRisk = true;
+            const _rejBySt = {};
+            for (const c of _p1_rejected) {
+              if (!_rejBySt[c.name]) _rejBySt[c.name] = [];
+              _rejBySt[c.name].push(`${c.day}/${_p1_days}`);
+            }
+            _maRLines.push('rollbackFailure:');
+            Object.entries(_rejBySt).forEach(([n, days]) =>
+              _maRLines.push(`  ${days.join(' ')} ${n}: rollback時に品質悪化`)
+            );
+          }
+          if (_p1_blockedTier1.length > 0) {
+            _p1_hasRisk = true;
+            _maRLines.push('rollbackBlockedByTier1:');
+            const _t1BySt = {};
+            for (const c of _p1_blockedTier1) {
+              if (!_t1BySt[c.name]) _t1BySt[c.name] = [];
+              _t1BySt[c.name].push(`${c.day}/${_p1_days}(${c.after})`);
+            }
+            Object.entries(_t1BySt).forEach(([n, entries]) =>
+              _maRLines.push(`  ${n}: ${entries.join(' ')} role-slot保護`)
+            );
+          }
+          if (_p1_blockedMake.length > 0) {
+            _p1_hasRisk = true;
+            _maRLines.push(`rollbackBlockedByMake=${_p1_blockedMake.length}: 明け/夜勤ペア保護`);
+          }
+          if (_p1_repairAfter > _p1_repairBefore) {
+            _p1_hasRisk = true;
+            _maRLines.push(`repairDegraded: score before=${_p1_repairBefore} after=${_p1_repairAfter}(+${_p1_repairAfter - _p1_repairBefore})`);
+          }
+          if (!_p1_hasRisk) _maRLines.push('  なし ✓');
+          console.log(_maRLines.join('\n'));
+        }
+        // ══ [AG-Minimal-Change-Phase1] ここまで ══
+
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
         setAllShifts(prev => ({...prev, [cd.id]: result}));
