@@ -2340,6 +2340,226 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   }
   // ══ [AG-Pair] 診断ログ ここまで ══
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ★[AG-Pair-Effect] Pair効果分析 / Pair Stability Analysis
+  // 診断のみ・アルゴリズム変更禁止 / repair変更禁止 / pair強制禁止
+  //
+  // 手法: pair有り日 vs pair無し日 で「最終res上の安定性指標」を比較
+  //   badTrans  : その日 isBadTransition が起きたスタッフ数（遅→早 等）
+  //   consec    : その日 連続勤務超過しているスタッフ数（consecWork > maxConsec）
+  //   slotViol  : role-slot maxStaff超過シフト数
+  //   shortage  : minStaff未満シフト数
+  // ★repairロジック・trend重みは一切変更しない。最終resを観測するだけ。
+  // ══════════════════════════════════════════════════════════════════════════════
+  {
+    const _ef_cds    = dept.customShiftDefs || [];
+    const _ef_baseOf = (k) => _ef_cds.find(c => c.key === k)?.baseType || k;
+    const _ef_nightK = [...new Set(dept.shiftTypes)].filter(k =>
+      deptWork.has(k) && k !== '明け' && (k === '夜勤' || _ef_baseOf(k) === '夜勤')
+    );
+    const _ef_earlyK = [...new Set(dept.shiftTypes)].filter(k =>
+      deptWork.has(k) && k !== '明け' && (_ef_baseOf(k) === '早番' || _ef_baseOf(k) === '遅番')
+    );
+
+    // ── 日別安定性指標 計算ヘルパー ──
+    const _dayMetrics = (d) => {
+      let badTrans = 0, consec = 0, slotViol = 0, shortage = 0;
+      for (const s of ds) {
+        if (d > 1 && isBadTransition(res[s.id][d - 1], res[s.id][d])) badTrans++;
+        if (deptWork.has(res[s.id][d]) && res[s.id][d] !== '明け' && consecWork(s.id, d) > maxConsec) consec++;
+      }
+      for (const [k, limit] of Object.entries(maxStaff)) {
+        if (limit >= 99) continue;
+        if (ds.filter(s => res[s.id][d] === k).length > limit) slotViol++;
+      }
+      for (const [k, min] of Object.entries(dept.minStaff || {})) {
+        if (ds.filter(s => res[s.id][d] === k).length < min) shortage++;
+      }
+      return { badTrans, consec, slotViol, shortage };
+    };
+
+    // ── 日リストの指標平均 ──
+    const _avgM = (dayList) => {
+      if (!dayList || dayList.length === 0) return null;
+      const sum = dayList.reduce((acc, d) => {
+        const m = _dayMetrics(d);
+        return { badTrans: acc.badTrans + m.badTrans, consec: acc.consec + m.consec, slotViol: acc.slotViol + m.slotViol, shortage: acc.shortage + m.shortage };
+      }, { badTrans: 0, consec: 0, slotViol: 0, shortage: 0 });
+      const n = dayList.length;
+      return { badTrans: sum.badTrans / n, consec: sum.consec / n, slotViol: sum.slotViol / n, shortage: sum.shortage / n, n };
+    };
+
+    // ── stabilityGain: pair有り vs 無し の総合改善度 ──
+    // 「pair日の方が各指標が低い(=良い)」ほど gain が高い
+    const _stabilityGain = (pairM, noPairM) => {
+      if (!pairM || !noPairM) return 'N/A(片方サンプルなし)';
+      // 各指標: noPair - pair（正=pairの方が良い）
+      const delta = (noPairM.badTrans - pairM.badTrans)
+                  + (noPairM.consec   - pairM.consec)
+                  + (noPairM.slotViol - pairM.slotViol)
+                  + (noPairM.shortage - pairM.shortage);
+      if (delta >= 1.5) return 'high';
+      if (delta >= 0.5) return 'medium';
+      if (delta >= 0.0) return 'low';
+      return 'none(pair日が不安定)';
+    };
+
+    const _fmtM = (m) => m
+      ? `badTrans=${m.badTrans.toFixed(2)} consec=${m.consec.toFixed(2)} slotViol=${m.slotViol.toFixed(2)} shortage=${m.shortage.toFixed(2)} (n=${m.n})`
+      : 'N/A(日数不足)';
+
+    const EFFECT_THR = 0.55; // 分析対象 pair率下限
+    const PAIR_NMIN  = 3;    // pair日 最低サンプル数
+
+    // ════════════════════════════════════════
+    // [AG-Pair-Effect] 主要pair 安定性比較
+    // ════════════════════════════════════════
+    const _efLines = ['[AG-Pair-Effect]'];
+    if (_ef_nightK.length === 0 || _ef_earlyK.length === 0) {
+      _efLines.push('  ※ 夜勤/早番系シフト不足 → 効果分析スキップ');
+    } else {
+      const _analyzed = [];
+      for (const sA of ds) {
+        for (const sB of ds) {
+          if (sA.id === sB.id) continue;
+          const _pairDays   = [];
+          const _noPairDays = [];
+          for (let d = 1; d <= days; d++) {
+            if (!_ef_nightK.includes(res[sA.id][d])) continue;
+            if (_ef_earlyK.includes(res[sB.id][d])) _pairDays.push(d);
+            else _noPairDays.push(d);
+          }
+          const _total = _pairDays.length + _noPairDays.length;
+          if (_total < PAIR_NMIN || _pairDays.length < PAIR_NMIN) continue;
+          const _rate = _pairDays.length / _total;
+          if (_rate < EFFECT_THR) continue;
+
+          const _pM  = _avgM(_pairDays);
+          const _npM = _avgM(_noPairDays);
+          const _gain = _stabilityGain(_pM, _npM);
+
+          // 最多の早番シフト種別を特定（表示用）
+          const _topE = _ef_earlyK.reduce((best, k) => {
+            const cnt = _pairDays.filter(d => res[sB.id][d] === k).length;
+            return cnt > (best.cnt ?? 0) ? { k, cnt } : best;
+          }, {}).k || _ef_earlyK[0];
+
+          _analyzed.push({ aName: sA.name, bName: sB.name, topE: _topE, pn: _pairDays.length, npn: _noPairDays.length, rate: _rate, pM: _pM, npM: _npM, gain: _gain });
+        }
+      }
+      _analyzed.sort((a, b) => b.rate - a.rate);
+
+      if (_analyzed.length === 0) {
+        _efLines.push(`  なし（pair率>=${EFFECT_THR}かつpair日>=${PAIR_NMIN}の組合せなし）`);
+      } else {
+        _analyzed.slice(0, 5).forEach(({ aName, bName, topE, pn, npn, rate, pM, npM, gain }) => {
+          _efLines.push(
+            `${aName}夜勤→${bName}${topE}(pairDays=${pn} noPairDays=${npn} rate=${rate.toFixed(2)}):\n` +
+            `  pair:   ${_fmtM(pM)}\n` +
+            `  noPair: ${_fmtM(npM)}\n` +
+            `  stabilityGain=${gain}`
+          );
+        });
+      }
+    }
+    console.log(_efLines.join('\n'));
+
+    // ════════════════════════════════════════
+    // [AG-Newbie-Support] 新人支援効果分析
+    // ════════════════════════════════════════
+    const _nbLines = ['[AG-Newbie-Support]'];
+    if (_ef_nightK.length > 0 && _ef_earlyK.length > 0) {
+      const _newbies  = ds.filter(s => (getTrend(s)?._workTotal ?? 0) <  30);
+      const _veterans = ds.filter(s => (getTrend(s)?._workTotal ?? 0) >= 50);
+      if (_newbies.length === 0) {
+        _nbLines.push('  なし（新人スタッフ不在）');
+      } else {
+        _newbies.forEach(sA => {
+          const _nightDays = Array.from({ length: days }, (_, i) => i + 1)
+            .filter(d => _ef_nightK.includes(res[sA.id][d]));
+          if (_nightDays.length === 0) {
+            _nbLines.push(`  ${sA.name}(n=${getTrend(sA)?._workTotal ?? 0}): 夜勤なし → newbieLockの可能性`);
+            return;
+          }
+          // ベテランが早番にいる日 vs いない日
+          const _supDays  = _nightDays.filter(d =>  _veterans.some(v => _ef_earlyK.includes(res[v.id][d])));
+          const _noSupDays = _nightDays.filter(d => !_veterans.some(v => _ef_earlyK.includes(res[v.id][d])));
+          const _supM  = _avgM(_supDays);
+          const _noSupM = _avgM(_noSupDays);
+          const _gain  = _stabilityGain(_supM, _noSupM);
+          const _vetNames = _veterans
+            .filter(v => _supDays.some(d => _ef_earlyK.includes(res[v.id][d])))
+            .map(v => v.name).join(',');
+          _nbLines.push(
+            `新人${sA.name}(n=${getTrend(sA)?._workTotal ?? 0}) 夜勤${_nightDays.length}日 [ベテラン有=${_supDays.length}日/無=${_noSupDays.length}日]\n` +
+            `  support担当=[${_vetNames || 'なし'}]\n` +
+            `  ベテランあり: ${_fmtM(_supM)}\n` +
+            `  ベテランなし: ${_fmtM(_noSupM)}\n` +
+            `  supportEffect=${_gain}`
+          );
+        });
+      }
+    } else {
+      _nbLines.push('  ※ 夜勤/早番系シフト不足 → 新人支援分析スキップ');
+    }
+    console.log(_nbLines.join('\n'));
+
+    // ════════════════════════════════════════
+    // [AG-NightCore] night-core集中影響分析
+    // 同日共起 vs 単独 の安定性 + 負荷トレードオフ
+    // ════════════════════════════════════════
+    const _ncLines = ['[AG-NightCore]'];
+    if (_ef_nightK.length > 0) {
+      const _ncStaff = ds.filter(s => {
+        const tr = getTrend(s);
+        if (!tr || (tr._workTotal ?? 0) < 10) return false;
+        return [...new Set(dept.shiftTypes)]
+          .filter(k => deptWork.has(k) && k !== '明け' && _ef_baseOf(k) !== '日勤')
+          .reduce((sum, k) => sum + (tr[k] ?? 0), 0) >= 0.45;
+      });
+      _ncLines.push(`nightCoreスタッフ(trend_n>=10, 非日勤率>=0.45): [${_ncStaff.map(s => s.name).join(',') || 'なし'}]`);
+      if (_ncStaff.length < 2) {
+        _ncLines.push('  night-core 2人以上必要（不足）');
+      } else {
+        let _hasPair = false;
+        for (let i = 0; i < _ncStaff.length; i++) {
+          for (let j = i + 1; j < _ncStaff.length; j++) {
+            const sA = _ncStaff[i], sB = _ncStaff[j];
+            const _bothDays   = [];
+            const _singleDays = [];
+            for (let d = 1; d <= days; d++) {
+              if (!_ef_nightK.includes(res[sA.id][d])) continue;
+              if (_ef_nightK.includes(res[sB.id][d])) _bothDays.push(d);
+              else _singleDays.push(d);
+            }
+            if (_bothDays.length + _singleDays.length < 3) continue;
+            _hasPair = true;
+            const _bothM    = _avgM(_bothDays);
+            const _singleM  = _avgM(_singleDays);
+            const _ncGain   = _stabilityGain(_bothM, _singleM);
+            const _loadA    = Array.from({ length: days }, (_, k) => k + 1).filter(d => _ef_nightK.includes(res[sA.id][d])).length;
+            const _loadB    = Array.from({ length: days }, (_, k) => k + 1).filter(d => _ef_nightK.includes(res[sB.id][d])).length;
+            const _coRate   = (_bothDays.length + _singleDays.length) > 0
+              ? _bothDays.length / (_bothDays.length + _singleDays.length) : 0;
+            _ncLines.push(
+              `${sA.name}&${sB.name} 同日夜勤=${_bothDays.length}日/単独=${_singleDays.length}日 co=${_coRate.toFixed(2)}:\n` +
+              `  co:     ${_fmtM(_bothM)}\n` +
+              `  single: ${_fmtM(_singleM)}\n` +
+              `  stability=${_ncGain}` +
+              ` veteranLoad=${sA.name}:${_loadA}日/${sB.name}:${_loadB}日` +
+              ` diversificationRisk=${_coRate >= 0.60 ? 'high' : _coRate >= 0.40 ? 'medium' : 'low'}`
+            );
+          }
+        }
+        if (!_hasPair) _ncLines.push('  夜勤サンプル不足（3日未満）');
+      }
+    } else {
+      _ncLines.push('  ※ 夜勤系シフト不足 → nightCore分析スキップ');
+    }
+    console.log(_ncLines.join('\n'));
+  }
+  // ══ [AG-Pair-Effect] 診断ログ ここまで ══
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
