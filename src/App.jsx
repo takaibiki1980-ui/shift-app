@@ -7062,6 +7062,153 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [AG-Change-Efficiency] 診断ログ ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[AG-Minimal-Change] Minimal Change Engine Phase 0 診断
+        // 「各変更を1つだけ戻したとき品質は悪化するか」を軽量シミュレーション
+        // rollbackSafe → 不要変更候補 / rollbackDanger → 必須変更
+        // ★生成ロジック・repair・score変更なし（read-only診断）
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _mc_days = getDays(year, month);
+          const _mc_ds   = cs.filter(s => s.dept === cd.id);
+          const _mc_cds  = cd.customShiftDefs || [];
+          const _mc_bOf  = (k) => _mc_cds.find(c => c.key === k)?.baseType || k;
+          const _mc_work = buildDeptWorkTypes(_mc_cds);
+          const _mc_maxC = cd.maxConsecutive || 5;
+          const _mc_maxS = {};
+          [...new Set(cd.shiftTypes)].forEach(k => {
+            const c2 = _mc_cds.find(d2 => d2.key === k);
+            const base = c2?.baseType || k;
+            const def  = base === '日勤' ? 99 : 1;
+            const sv   = cd.maxStaff?.[k];
+            _mc_maxS[k] = (sv != null && !(c2 && base === '日勤' && sv === 1)) ? sv : def;
+          });
+          const _mc_bad = (prev, curr) => {
+            if (!prev || !curr || cd.intervalThreshold != null) return false;
+            return (prev === '遅番' && (curr === '早番' || curr === '日勤')) ||
+                   (prev === '日勤' && curr === '早番');
+          };
+
+          // ── 連続勤務カウント（1セル上書き付き）──
+          const _mc_consec = (shifts, sid, d, ovSid, ovDay, ovVal) => {
+            let c = 0;
+            for (let i = d; i >= 1; i--) {
+              const sh = (ovSid === sid && ovDay === i) ? ovVal : shifts[sid]?.[i];
+              if (_mc_work.has(sh)) c++; else break;
+            }
+            return c;
+          };
+
+          // ── 日別安定性スコア（1セル上書き付き rollback シミュレーション）──
+          const _mc_dayM = (shifts, d, ovSid, ovDay, ovVal) => {
+            let bt = 0, cs2 = 0, sv = 0, sh = 0;
+            for (const s of _mc_ds) {
+              const shP = (ovSid === s.id && ovDay === d-1) ? ovVal : shifts[s.id]?.[d-1];
+              const shC = (ovSid === s.id && ovDay === d)   ? ovVal : shifts[s.id]?.[d];
+              if (d > 1 && _mc_bad(shP, shC)) bt++;
+              if (_mc_work.has(shC) && shC !== '明け' && _mc_consec(shifts, s.id, d, ovSid, ovDay, ovVal) > _mc_maxC) cs2++;
+            }
+            for (const [k, lim] of Object.entries(_mc_maxS)) {
+              if (lim >= 99) continue;
+              const cnt = _mc_ds.filter(s => {
+                const sh = (ovSid === s.id && ovDay === d) ? ovVal : shifts[s.id]?.[d];
+                return sh === k;
+              }).length;
+              if (cnt > lim) sv++;
+            }
+            for (const [k, min] of Object.entries(cd.minStaff || {})) {
+              const cnt = _mc_ds.filter(s => {
+                const sh = (ovSid === s.id && ovDay === d) ? ovVal : shifts[s.id]?.[d];
+                return sh === k;
+              }).length;
+              if (cnt < min) sh++;
+            }
+            return bt + cs2 + sv + sh;
+          };
+
+          // ── 各変更セルの rollback 安全性テスト ──
+          const _mc_list = []; // { name, day, before, after, rollbackSafe }
+          for (const s of _mc_ds) {
+            for (let d = 1; d <= _mc_days; d++) {
+              const bv = genSnapshot[s.id]?.[d] ?? '';
+              const av = result[s.id]?.[d] ?? '';
+              if (bv === av) continue;
+              const revVal = bv || undefined; // 戻す値（空なら undefined=未配置）
+              // 影響日: d（変更日）と d+1（翌日遷移）を比較
+              const mOrig = _mc_dayM(result, d) + (d < _mc_days ? _mc_dayM(result, d+1) : 0);
+              const mRev  = _mc_dayM(result, d, s.id, d, revVal) +
+                            (d < _mc_days ? _mc_dayM(result, d+1, s.id, d, revVal) : 0);
+              // rollbackSafe: 戻しても安定性が悪化しない
+              _mc_list.push({ name: s.name, day: d, before: bv, after: av, rollbackSafe: mRev <= mOrig });
+            }
+          }
+
+          const _rbSafe   = _mc_list.filter(c => c.rollbackSafe).length;
+          const _rbDanger = _mc_list.filter(c => !c.rollbackSafe).length;
+          const _total    = _mc_list.length;
+          const _remRate  = _total > 0 ? _rbSafe / _total : 0;
+          const _minPoss  = _rbDanger; // 必須変更数 = minimal possible changes
+          const _overRep  = _remRate >= 0.5 ? 'high' : _remRate >= 0.3 ? 'medium' : 'low';
+
+          // ── スタッフ別集計 ──
+          const _mcSt = {};
+          for (const c of _mc_list) {
+            if (!_mcSt[c.name]) _mcSt[c.name] = { changed: 0, removable: 0, required: 0 };
+            _mcSt[c.name].changed++;
+            if (c.rollbackSafe) _mcSt[c.name].removable++;
+            else                _mcSt[c.name].required++;
+          }
+          const _mcStE = Object.entries(_mcSt).sort((a, b) => b[1].changed - a[1].changed);
+
+          // ── [AG-Minimal-Change] ──
+          const _mcLines = [`[AG-Minimal-Change] dept=${cd.id}`];
+          _mcLines.push(`changes=${_total} minimalPossible=${_minPoss} rollbackSafe=${_rbSafe} rollbackDanger=${_rbDanger}`);
+          _mcLines.push(`overRepairScore=${_overRep}(removableRate=${_remRate.toFixed(2)})`);
+          // localSearchNoise 推定: rollbackSafe変更 ≈ localSearch 微改善スワップの上限
+          _mcLines.push(`localSearchNoise≈${_rbSafe}(rollbackSafe変更数 = 不要変更の上限推定)`);
+          if (_total === 0) _mcLines.push('  変更なし（既存シフト完全保持）');
+          console.log(_mcLines.join('\n'));
+
+          // ── [AG-Minimal-Change-Staff] ──
+          const _mcStLines = ['[AG-Minimal-Change-Staff]'];
+          if (_mcStE.length === 0) {
+            _mcStLines.push('  変更なし');
+          } else {
+            _mcStE.forEach(([name, { changed, removable, required }]) => {
+              const remR = changed > 0 ? removable / changed : 0;
+              _mcStLines.push(`  ${name}: changed=${changed} removable=${removable} required=${required} rate=${remR.toFixed(2)}`);
+            });
+          }
+          console.log(_mcStLines.join('\n'));
+
+          // ── [AG-Minimal-Change-Risk] ──
+          const _rLines = ['[AG-Minimal-Change-Risk]'];
+          let _hasRisk = false;
+          // ① 特定スタッフが変更吸収役（変更多 & removableRate 高）
+          const OVER_THR = 0.55;
+          const _overMod = _mcStE.filter(([, { changed, removable }]) =>
+            changed >= 5 && changed > 0 && removable / changed >= OVER_THR
+          );
+          if (_overMod.length > 0) {
+            _hasRisk = true;
+            _rLines.push(`overModified(removableRate>=${OVER_THR}):\n` +
+              _overMod.map(([n, v]) => `  ${n}: removable=${v.removable}/${v.changed}(rate=${(v.removable/v.changed).toFixed(2)})`).join('\n'));
+          }
+          // ② localSearch noise が多い
+          if (_rbSafe >= 10 && _total > 0) {
+            _hasRisk = true;
+            _rLines.push(`localSearchNoise≈${_rbSafe}: rollbackSafe変更が多い → localSearch揺れ疑い`);
+          }
+          // ③ overRepair=high
+          if (_overRep === 'high') {
+            _hasRisk = true;
+            _rLines.push(`overRepair=HIGH: ${_rbSafe}/${_total}変更が不要変更候補`);
+          }
+          if (!_hasRisk && _total > 0) _rLines.push('  なし ✓');
+          if (_total === 0) { _rLines.length = 1; _rLines.push('  変更なし'); }
+          console.log(_rLines.join('\n'));
+        }
+        // ══ [AG-Minimal-Change] 診断ログ ここまで ══
 
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
