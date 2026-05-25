@@ -5739,6 +5739,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
   const shiftTrendSkipSave = useRef(false); // reloadFromRemote起因のsetShiftTrend → Supabase echo loop 防止
+  const exceptionMonthsSkipSave = useRef(false); // ★Fix W-1: reloadFromRemote起因 echo loop 防止
+  const portalSettingsSkipSave = useRef(false);   // ★Fix W-1: reloadFromRemote起因 echo loop 防止
+  const allFloorSettingsSkipSave = useRef(false);  // ★Fix W-1: 初期load起因 echo loop 防止
   const lastSelfSaveTime = useRef(0); // 自分の保存完了時刻（Realtime自己ループ検知用）
   const pasteTimestamp = useRef(0); // 貼り付け時刻（貼り付け直後のRealtime上書きをブロック）
   const deptsSkipSave = useRef(false); // depts: DB由来のsetを識別してupsertをスキップ
@@ -5747,6 +5750,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const pendingDeptsRef = useRef(null); // 保存中に届いた新しいdepts（完了後に再保存）
   const pendingStaffListRef = useRef(null); // 保存中に届いた新しいstaffList
   const dbInitialized = useRef(false); // 初回DB読込完了フラグ（二重保護）
+  const dirtyDeptIdsRef = useRef(new Set()); // ★Fix W-2: 未保存部署の追跡（emergencySave多部署対応）
   const reloadFromRemoteRef = useRef(null); // reloadFromRemote関数への参照（catch節から呼び出し用）
   const activeCellRef = useRef(null); // { staffId, day, time } 現在編集中のセル（Realtime上書き保護用）
   const [dbLoading, setDbLoading] = useState(true);
@@ -5953,16 +5957,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             if (Object.keys(trend).length > 0) setShiftTrend(trend);
           }
         }
-        if (byKey['allFloorSettings']) setAllFloorSettings(byKey['allFloorSettings']);
+        if (byKey['allFloorSettings']) { allFloorSettingsSkipSave.current = true; setAllFloorSettings(byKey['allFloorSettings']); } // ★Fix W-1
         if (byKey['events_data']) setAllEvents(byKey['events_data']);
         const latestStaffList = byKey['staffList'] || staffList;
         const latestExceptionMonths = filterExpiredExceptions(byKey['exceptionMonths'] || []);
-        if (byKey['exceptionMonths']) setExceptionMonths(latestExceptionMonths);
+        if (byKey['exceptionMonths']) { exceptionMonthsSkipSave.current = true; setExceptionMonths(latestExceptionMonths); } // ★Fix W-1
         allDBDataRef.current = byKey; // DBキャッシュを初期化
         exceptionMonthsRef.current = latestExceptionMonths;
         const learned = computeLearnedTrend(byKey, latestStaffList, latestExceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
-        if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
+        if (byKey['portalSettings']) { portalSettingsSkipSave.current = true; setPortalSettings(byKey['portalSettings']); } // ★Fix W-1
         const shiftPrefix = `shifts_${now.getFullYear()}_${now.getMonth()+1}_`;
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
@@ -6082,8 +6086,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             }
           }
         }
-        if (byKey['portalSettings']) setPortalSettings(byKey['portalSettings']);
-        if (byKey['exceptionMonths']) setExceptionMonths(latestExcRT);
+        if (byKey['portalSettings']) { portalSettingsSkipSave.current = true; setPortalSettings(byKey['portalSettings']); } // ★Fix W-1
+        if (byKey['exceptionMonths']) { exceptionMonthsSkipSave.current = true; setExceptionMonths(latestExcRT); } // ★Fix W-1
         allDBDataRef.current = {...allDBDataRef.current, ...byKey}; // DBキャッシュを更新
         exceptionMonthsRef.current = latestExcRT;
         const latestStaffListRT = byKey['staffList'] || staffList;
@@ -6095,6 +6099,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
           console.log("[setAllShifts]", "reason=realtime_update", { year: yearRef.current, month: monthRef.current+1, activeDeptId: activeDeptIdRef.current, keys: deptShiftEntries.map(([k])=>k), stack: new Error().stack });
+          // ★Fix W-3: RT適用時のundo stack リセット
+          // 「RT更新前の古いundo履歴」でundoするとRT変更が消滅するリスクを防止
+          // RT適用がseq不一致でキャンセルされる場合（ユーザー編集中）は、undo stackは保持する
+          const willApplyRT = userEditSeq.current === seqAtStart;
+          if (willApplyRT) {
+            for (const [k] of deptShiftEntries) {
+              const dId = k.slice(shiftPrefix.length);
+              undoStackRef.current[dId] = []; // RT適用部署のundo履歴をリセット
+            }
+            setUndoCount(0);
+          }
           setAllShifts(prev => {
             // updater実行時に再チェック（fetch後に編集があればキャンセル）
             if (userEditSeq.current !== seqAtStart) return prev;
@@ -6246,21 +6261,35 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => {
     if (isInitializing.current) return;
     // クリーンアップ（月切替前）: 旧月の未保存データをSupabaseへ緊急保存
+    // ★Fix W-2: activeDeptId 単独 → dirtyDeptIdsRef 全部署へ拡張（多部署同時編集対応）
     // closureで旧year/monthを参照 → allShiftsRef.currentも旧月データ
     const emergencySave = () => {
-      if (saveStatusRef.current !== 'unsaved') return;
       if (!dbInitialized.current) return;
-      const deptId = activeDeptIdRef.current;
-      const emergencyKey = `shifts_${year}_${month+1}_${deptId}`;
-      const emergencyData = allShiftsRef.current[deptId] || {};
+      // dirty部署がなく、saveStatus も 'saved' なら保存不要
+      const dirtyIds = new Set(dirtyDeptIdsRef.current);
+      if (dirtyIds.size === 0 && saveStatusRef.current !== 'unsaved') return;
+      // saveStatusが'unsaved'なら activeDeptId も保存対象に含める（dirtyに漏れがある場合の安全網）
+      if (saveStatusRef.current === 'unsaved') dirtyIds.add(activeDeptIdRef.current);
       try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current)); } catch {}
-      supabase.from('shift_data').upsert(
-        { user_id:session.user.id, data_key:emergencyKey, data_value:emergencyData, updated_at:new Date().toISOString() },
-        { onConflict:'user_id,data_key' }
-      ).then(({ error }) => {
-        if (!error) { setSaveStatus('saved'); console.log('[save] 月切替前緊急保存OK:', emergencyKey); }
-        else { console.error('[save] 月切替前緊急保存失敗:', error); }
-      });
+      console.log('[save] 月切替前緊急保存（対象部署）:', [...dirtyIds].join(','));
+      let savedCount = 0;
+      for (const deptId of dirtyIds) {
+        const emergencyKey = `shifts_${year}_${month+1}_${deptId}`;
+        const emergencyData = allShiftsRef.current[deptId] || {};
+        supabase.from('shift_data').upsert(
+          { user_id:session.user.id, data_key:emergencyKey, data_value:emergencyData, updated_at:new Date().toISOString() },
+          { onConflict:'user_id,data_key' }
+        ).then(({ error }) => {
+          if (!error) {
+            dirtyDeptIdsRef.current.delete(deptId);
+            savedCount++;
+            if (savedCount === dirtyIds.size) { setSaveStatus('saved'); }
+            console.log('[save] 月切替前緊急保存OK:', emergencyKey);
+          } else {
+            console.error('[save] 月切替前緊急保存失敗:', emergencyKey, error);
+          }
+        });
+      }
     };
     // ★防衛1: リクエストIDをインクリメント（古いfetchの結果を破棄するため）
     const reqId = ++fetchReqIdRef.current;
@@ -6334,6 +6363,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     // ★防衛C: 部署IDをクロージャでキャプチャ（タイマー発火時に部署が変わっても正しい部署に保存）
     const closureDeptId = activeDeptIdRef.current;
+    dirtyDeptIdsRef.current.add(closureDeptId); // ★Fix W-2: dirty追跡（緊急保存の多部署対応）
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
       // ★防衛3: 保存直前に年月一致検証（クロージャの年月 vs 現在の画面の年月）
@@ -6367,6 +6397,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current = 0;
         lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
+        dirtyDeptIdsRef.current.delete(currentDeptId); // ★Fix W-2: 保存成功 → dirty解除
         setSaveStatus("saved");
         console.log("[save] Supabase保存OK:", key);
         // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
@@ -6617,6 +6648,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [shiftTrend]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isInitializing.current) {
+      // ★Fix W-1: reloadFromRemote/初期load起因の setExceptionMonths は Supabase に書き戻さない
+      if (exceptionMonthsSkipSave.current) { exceptionMonthsSkipSave.current = false; return; }
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'exceptionMonths', data_value:exceptionMonths, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
       // 例外月変更時: DBデータとExcelデータ両方を再計算
       if (Object.keys(excelRawMonths).length > 0) {
@@ -6642,6 +6675,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [excelRawMonths, saveExcelRawMonths, session.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (isInitializing.current || dbLoading) return;
+    // ★Fix W-1: reloadFromRemote/初期load起因の setPortalSettings は Supabase に書き戻さない
+    if (portalSettingsSkipSave.current) { portalSettingsSkipSave.current = false; return; }
     supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'portalSettings', data_value:portalSettings, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{}).catch(()=>{});
   }, [portalSettings]); // eslint-disable-line react-hooks/exhaustive-deps
   const [ctxMenu, setCtxMenu] = useState(null);
@@ -6652,6 +6687,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const floorSettings = allFloorSettings[activeDeptId] || DEFAULT_FLOOR_SETTINGS;
   useEffect(() => {
     try{localStorage.setItem("shiftNavi_allFloorSettings",JSON.stringify(allFloorSettings));}catch{}
+    // ★Fix W-1: 初期load起因の setAllFloorSettings は Supabase に書き戻さない
+    if (allFloorSettingsSkipSave.current) { allFloorSettingsSkipSave.current = false; return; }
     if(!isInitializing.current){supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'allFloorSettings',data_value:allFloorSettings,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});}
   }, [allFloorSettings]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -6979,6 +7016,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const restoreDeptId = activeDeptIdRef.current;
           console.log("[setAllShifts]", "reason=history_restore", { year, month: month+1, activeDeptId: restoreDeptId, keys: Object.keys(restoredData||{}), stack: new Error().stack });
           setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
+          // ★Fix W-3: 復元後のundo履歴をリセット（復元前の状態へ戻るundoを防止）
+          // 復元を「新しい基準状態」として扱う → 復元前への逆行undoを不可能にする
+          undoStackRef.current[restoreDeptId] = [];
+          setUndoCount(0);
           setSaveStatus('saved');
         }}
       />}
