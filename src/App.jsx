@@ -7283,16 +7283,18 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             return bt + cv + sv + sh;
           };
 
-          // Tier1 guard: role-slot の minStaff を維持できるか
+          // Tier1 guard（包括版）: cd.minStaff 全エントリを確認（slotSet外も保護）
+          // ★旧実装は _p1_slotSet（maxStaff<99）のみ確認していた → minStaff-only エントリが漏れる恐れ
+          // ★修正: cd.minStaff を直接走査し、全 shiftKey の minStaff を維持できるか確認
           const _p1_tier1ok = (sid, day, revVal) => {
-            const afterVal = result[sid]?.[day] ?? '';
-            if (!_p1_slotSet.has(afterVal)) return true;
-            const min = cd.minStaff?.[afterVal] ?? 0;
-            if (min <= 0) return true;
-            const cnt = _p1_ds.filter(s =>
-              ((s.id === sid) ? (revVal ?? '') : (result[s.id]?.[day] ?? '')) === afterVal
-            ).length;
-            return cnt >= min;
+            for (const [k, min] of Object.entries(cd.minStaff || {})) {
+              if (min <= 0) continue;
+              const cnt = _p1_ds.filter(s =>
+                ((s.id === sid) ? (revVal ?? '') : (result[s.id]?.[day] ?? '')) === k
+              ).length;
+              if (cnt < min) return false; // このrollbackでminStaff違反が発生する
+            }
+            return true;
           };
 
           // Phase1 適用前の変更数 & repair score
@@ -7345,22 +7347,41 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             // 既に戻し値と一致している場合はスキップ（前の rollback の影響）
             if ((result[sid]?.[day] ?? '') === (revVal ?? '')) continue;
 
+            // ── [AG-Minimal-Rollback-Step] per-step minStaff 影響集計 ──
+            // minStaff に影響する変更のみ、または APPLIED 以外の決定のみログ出力
+            const _stp = {};
+            for (const [k, mn] of Object.entries(cd.minStaff || {})) {
+              if (mn <= 0) continue;
+              const bCnt = _p1_ds.filter(s => (result[s.id]?.[day] ?? '') === k).length;
+              const aCnt = _p1_ds.filter(s => ((s.id === sid) ? (revVal ?? '') : (result[s.id]?.[day] ?? '')) === k).length;
+              if (bCnt !== aCnt || aCnt < mn) _stp[k] = { bCnt, aCnt, mn, viol: aCnt < mn };
+            }
+            const _logStep = (dec) => {
+              if (!Object.keys(_stp).length && dec === 'APPLIED') return; // 無害な採用 → silent
+              const ln = [`[AG-Minimal-Rollback-Step] d${day}/${_p1_days} ${name}: ${after||'休み'}→${before||'休み'} → ${dec}`];
+              Object.entries(_stp).forEach(([k, v]) =>
+                ln.push(`  ${k}: beforeCount=${v.bCnt} afterCount=${v.aCnt} min=${v.mn}${v.viol ? ' ⚠blockedByMinStaff' : ''}`)
+              );
+              console.log(ln.join('\n'));
+            };
+
             // ── 明け orphan guard ──
-            // av が夜勤 → 翌日が明け → revVal が夜勤でなければ 明け が孤立する
             if (day < _p1_days && (result[sid]?.[day+1] ?? '') === '明け' &&
                 !_p1_nightSet.has(revVal ?? '')) {
               _p1_blockedMake.push({ name, day, before, after });
+              _logStep('BLOCKED_MAKE');
               continue;
             }
-            // revVal が明け → 前日が夜勤でなければ孤立する可能性（保守的にブロック）
             if ((revVal ?? '') === '明け' && !_p1_nightSet.has(result[sid]?.[day-1] ?? '')) {
               _p1_blockedMake.push({ name, day, before, after });
+              _logStep('BLOCKED_MAKE');
               continue;
             }
 
-            // ── Tier1 guard（shouldProtectSlot 思想）──
+            // ── Tier1 guard（包括版: cd.minStaff 全エントリ確認）──
             if (!_p1_tier1ok(sid, day, revVal)) {
               _p1_blockedTier1.push({ name, day, before, after });
+              _logStep('BLOCKED_TIER1');
               continue;
             }
 
@@ -7370,13 +7391,38 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                           (day < _p1_days ? _p1_dayM(result, day+1, sid, day, revVal) : 0);
 
             if (mRev <= mOrig) {
-              // rollback 採用: result を直接更新（post-optimization）
               if (!result[sid]) result[sid] = {};
               result[sid][day] = revVal !== undefined ? revVal : '';
               _p1_applied.push({ name, day, before, after });
+              _logStep('APPLIED');
             } else {
               _p1_rejected.push({ name, day, before, after });
+              _logStep('REJECTED');
             }
+          }
+
+          // ── [AG-Minimal-Final-Audit] rollback完了後の minStaff 全日再監査 ──
+          // FINAL violation集計は bestOfN 内（Phase1 前）で実行済み → Phase1後の不足を独立監査
+          {
+            const _fa_lines = ['[AG-Minimal-Final-Audit] post-Phase1 minStaff 全日再監査'];
+            let _fa_viol = 0;
+            for (let d = 1; d <= _p1_days; d++) {
+              for (const [k, min] of Object.entries(cd.minStaff || {})) {
+                if (min <= 0) continue;
+                const cnt = _p1_ds.filter(s => (result[s.id]?.[d] ?? '') === k).length;
+                if (cnt < min) {
+                  _fa_viol++;
+                  _fa_lines.push(`  ⚠ d${d}/${_p1_days}: ${k} actual=${cnt} min=${min} violation=TRUE`);
+                }
+              }
+            }
+            if (_fa_viol === 0) {
+              _fa_lines.push(`  全日・全shift: minStaff維持 ✓ (Phase1 rollback ${_p1_applied.length}件適用後)`);
+            } else {
+              _fa_lines.push(`  合計 ${_fa_viol}件の minStaff violation 検出 ⚠`);
+              _fa_lines.push('  → 原因特定: 上記 [AG-Minimal-Rollback-Step] ログを確認');
+            }
+            console.log(_fa_lines.join('\n'));
           }
 
           // 適用後の変更数 & repair score
@@ -7649,6 +7695,39 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           console.log(_ccRLines.join('\n'));
         }
         // ══ [AG-Change-Cost] ここまで ══
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★ post-Phase1 警告再計算 & モーダル表示
+        // 確定バグ修正:
+        //   ① warnings は bestOfN 内（Phase1 前）で計算 → Phase1 rollback 後の不足が未反映
+        //   ② setGenerateWarnings が未呼出 → 警告モーダルが一度も表示されていなかった
+        // → Phase1 完了後の最終 result から minStaff 違反を再計算して表示する
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _pw_days = getDays(year, month);
+          const _pw_ds   = cs.filter(s => s.dept === cd.id);
+          const _finalWarnings = {};
+          for (const [shiftKey, minCount] of Object.entries(cd.minStaff || {})) {
+            if (minCount <= 0) continue;
+            for (let d = 1; d <= _pw_days; d++) {
+              const actual = _pw_ds.filter(s => (result[s.id]?.[d] ?? '') === shiftKey).length;
+              if (actual < minCount) {
+                if (!_finalWarnings[shiftKey]) _finalWarnings[shiftKey] = { days: 0, maxShort: 0 };
+                _finalWarnings[shiftKey].days++;
+                _finalWarnings[shiftKey].maxShort = Math.max(
+                  _finalWarnings[shiftKey].maxShort, minCount - actual
+                );
+              }
+            }
+          }
+          // Phase1 後の実際の result で警告表示（元の warnings は Phase1 前）
+          const _displayWarnings = Object.keys(_finalWarnings).length > 0
+            ? _finalWarnings   // Phase1後に不足あり → 最新を表示
+            : warnings;        // Phase1後も不足なし → 元警告（bestOfN由来）を使用
+          if (Object.keys(_displayWarnings).length > 0) {
+            setGenerateWarnings({ warnings: _displayWarnings, deptLabel: cd.label, score, timelineWarnings });
+          }
+        }
 
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
