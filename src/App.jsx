@@ -7759,6 +7759,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [AG-Change-Cost] ここまで ══
 
+        // Warning Accuracy 解析へ共有: post-Phase1 で決定した _displayWarnings
+        let _displayWarningsBuf = warnings; // フォールバック(phase1ブロック内で上書き)
+
         // ══════════════════════════════════════════════════════════════════════════
         // ★ post-Phase1 警告再計算 & モーダル表示
         // 確定バグ修正:
@@ -7787,10 +7790,162 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const _displayWarnings = Object.keys(_finalWarnings).length > 0
             ? _finalWarnings   // Phase1後に不足あり → 最新を表示
             : warnings;        // Phase1後も不足なし → 元警告（bestOfN由来）を使用
+          _displayWarningsBuf = _displayWarnings; // ★ Warning Accuracy へ共有
           if (Object.keys(_displayWarnings).length > 0) {
             setGenerateWarnings({ warnings: _displayWarnings, deptLabel: cd.label, score, timelineWarnings });
           }
         }
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Warning-Accuracy] Warning Accuracy Analysis（警告精度分析）
+        // _displayWarningsBuf（モーダル表示警告）vs 最終 result の実 violations を比較
+        // TP/FP/FN・precision・recall で警告の信頼性を定量評価
+        // ★診断のみ。warningロジック変更・autoGenerate変更・repair変更なし。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _wa_days = getDays(year, month);
+          const _wa_ds   = cs.filter(s => s.dept === cd.id);
+          const _wa_cds  = cd.customShiftDefs || [];
+          const _wa_work = buildDeptWorkTypes(_wa_cds);
+          const _wa_maxC = cd.maxConsecutive || 5;
+
+          // ── 実際の violations を最終 result から計算 ──
+
+          // 1. shortage per shiftKey → Set<day>（ground truth）
+          const _wa_actShor = {}; // { [shiftKey]: Set<day> }
+          for (const [k, min] of Object.entries(cd.minStaff || {})) {
+            if (min <= 0) continue;
+            for (let d = 1; d <= _wa_days; d++) {
+              const cnt = _wa_ds.filter(s => (result[s.id]?.[d] ?? '') === k).length;
+              if (cnt < min) {
+                if (!_wa_actShor[k]) _wa_actShor[k] = new Set();
+                _wa_actShor[k].add(d);
+              }
+            }
+          }
+
+          // 2. badTransition（警告未実装 → 全件 FN 候補）
+          const _wa_badFn = (p, c) => {
+            if (!p || !c || cd.intervalThreshold != null) return false;
+            return (p === '遅番' && (c === '早番' || c === '日勤')) ||
+                   (p === '日勤' && c === '早番');
+          };
+          let _wa_btCount = 0;
+          for (const s of _wa_ds)
+            for (let d = 2; d <= _wa_days; d++)
+              if (_wa_badFn(result[s.id]?.[d-1] ?? '', result[s.id]?.[d] ?? '')) _wa_btCount++;
+
+          // 3. consecViolation（警告未実装 → 全件 FN 候補）
+          let _wa_ccCount = 0;
+          for (const s of _wa_ds) {
+            let _wc = 0;
+            for (let d = 1; d <= _wa_days; d++) {
+              const sh = result[s.id]?.[d] ?? '';
+              if (_wa_work.has(sh) && sh !== '明け') { _wc++; if (_wc > _wa_maxC) _wa_ccCount++; }
+              else _wc = 0;
+            }
+          }
+
+          // ── TP / FP / FN 計算（shortage warning のみ実装済み）──
+          const _wa_warnedKeys = new Set(Object.keys(_displayWarningsBuf));
+          const _wa_actualKeys = new Set(Object.keys(_wa_actShor));
+
+          let _wa_tp = 0, _wa_fp = 0, _wa_fn_shor = 0;
+          for (const k of new Set([..._wa_warnedKeys, ..._wa_actualKeys])) {
+            const w = _wa_warnedKeys.has(k), a = _wa_actualKeys.has(k);
+            if (w && a) _wa_tp++;
+            else if (w)  _wa_fp++;
+            else         _wa_fn_shor++;
+          }
+          // 警告未実装 violation は FN 扱い（種別として1カウント）
+          const _wa_fn = _wa_fn_shor + (_wa_btCount > 0 ? 1 : 0) + (_wa_ccCount > 0 ? 1 : 0);
+
+          const _wa_prec = (_wa_tp + _wa_fp > 0) ? _wa_tp / (_wa_tp + _wa_fp) : 1.0;
+          const _wa_rec  = (_wa_tp + _wa_fn > 0) ? _wa_tp / (_wa_tp + _wa_fn) : 1.0;
+
+          // Warning fatigue: 総警告日数 / 月日数
+          const _wa_warnDays = Object.values(_displayWarningsBuf)
+            .reduce((s, v) => s + (v?.days ?? 0), 0);
+          const _wa_wPD = _wa_days > 0 ? _wa_warnDays / _wa_days : 0;
+          const _wa_fat = _wa_wPD >= 0.5 ? 'high' : _wa_wPD >= 0.2 ? 'medium' : 'low';
+
+          // ── [Warning-Accuracy] ──
+          const _waLines = [`[Warning-Accuracy] dept=${cd.id}`];
+          _waLines.push(`warnings=${_wa_warnedKeys.size}(types) totalWarnDays=${_wa_warnDays}`);
+          _waLines.push(`truePositive=${_wa_tp} falsePositive=${_wa_fp} falseNegative=${_wa_fn}`);
+          _waLines.push(`precision=${_wa_prec.toFixed(2)} recall=${_wa_rec.toFixed(2)}`);
+          _waLines.push(`warningFatigue=${_wa_fat}(warnPerDay=${_wa_wPD.toFixed(2)})`);
+          if (_wa_btCount > 0) _waLines.push(`note: badTransition=${_wa_btCount}件 → 警告未実装(FN)`);
+          if (_wa_ccCount > 0) _waLines.push(`note: consecViolation=${_wa_ccCount}件 → 警告未実装(FN)`);
+          if (_wa_warnedKeys.size === 0 && _wa_actualKeys.size === 0 && !_wa_btCount && !_wa_ccCount)
+            _waLines.push('  violations: なし ✓ 警告不要');
+          console.log(_waLines.join('\n'));
+
+          // ── [Warning-Accuracy-ByType] ──
+          const _waByLines = ['[Warning-Accuracy-ByType]'];
+          for (const k of new Set([..._wa_warnedKeys, ..._wa_actualKeys])) {
+            const w = _wa_warnedKeys.has(k), a = _wa_actualKeys.has(k);
+            const tp = (w && a) ? 1 : 0, fp = (w && !a) ? 1 : 0, fn = (!w && a) ? 1 : 0;
+            const prec = (tp + fp > 0) ? tp / (tp + fp) : 1.0;
+            const rec  = (tp + fn > 0) ? tp / (tp + fn) : 1.0;
+            const days = _wa_actShor[k] ? [..._wa_actShor[k]].sort((a,b)=>a-b).slice(0,5) : [];
+            _waByLines.push(
+              `  shortage.${k}: TP=${tp} FP=${fp} FN=${fn}` +
+              ` precision=${prec.toFixed(2)} recall=${rec.toFixed(2)}` +
+              (fn && days.length ? ` actualDays=d${days.join('/')}` : '')
+            );
+          }
+          if (_wa_btCount > 0)
+            _waByLines.push(`  badTransition: FN=${_wa_btCount}件 precision=N/A recall=0.00（警告未実装）`);
+          if (_wa_ccCount > 0)
+            _waByLines.push(`  consecViolation: FN=${_wa_ccCount}件 precision=N/A recall=0.00（警告未実装）`);
+          if (!_waByLines.some(l => l.startsWith('  shortage') || l.startsWith('  bad') || l.startsWith('  consec')))
+            _waByLines.push('  violations: なし ✓');
+          console.log(_waByLines.join('\n'));
+
+          // ── [Warning-Accuracy-Risk] ──
+          const _waRLines = ['[Warning-Accuracy-Risk]'];
+          let _wa_hasRisk = false;
+
+          // ① FN shortage（最重要: 警告なしで実不足）
+          const _wa_fnShorKeys = [..._wa_actualKeys].filter(k => !_wa_warnedKeys.has(k));
+          if (_wa_fnShorKeys.length > 0) {
+            _wa_hasRisk = true;
+            _waRLines.push('falseNegative(shortage警告なし & 実不足):');
+            _wa_fnShorKeys.forEach(k => {
+              const days = [..._wa_actShor[k]].sort((a,b)=>a-b).slice(0, 5);
+              _waRLines.push(`  ${k}: d${days.join('/')}/${_wa_days} 警告未表示 ⚠`);
+            });
+          }
+
+          // ② FP shortage（不要警告）
+          const _wa_fpKeys = [..._wa_warnedKeys].filter(k => !_wa_actualKeys.has(k));
+          if (_wa_fpKeys.length > 0) {
+            _wa_hasRisk = true;
+            _waRLines.push('falsePositive(警告表示 & 実不足なし):');
+            _wa_fpKeys.forEach(k => _waRLines.push(`  ${k}: 警告表示 → 最終result で実不足なし`));
+          }
+
+          // ③ warning fatigue
+          if (_wa_fat !== 'low') {
+            _wa_hasRisk = true;
+            _waRLines.push(`warningFatigue=${_wa_fat}: warnPerDay=${_wa_wPD.toFixed(2)} → 警告疲れリスク`);
+          }
+
+          // ④ 警告未実装 violations（管理者に非表示の問題）
+          if (_wa_btCount > 0) {
+            _wa_hasRisk = true;
+            _waRLines.push(`badTransition(警告なし): ${_wa_btCount}件 → 管理者に非表示 ⚠`);
+          }
+          if (_wa_ccCount > 0) {
+            _wa_hasRisk = true;
+            _waRLines.push(`consecViolation(警告なし): ${_wa_ccCount}件 → 管理者に非表示 ⚠`);
+          }
+
+          if (!_wa_hasRisk) _waRLines.push('  なし ✓');
+          console.log(_waRLines.join('\n'));
+        }
+        // ══ [Warning-Accuracy] ここまで ══
 
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
