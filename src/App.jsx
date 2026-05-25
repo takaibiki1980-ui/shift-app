@@ -2155,6 +2155,191 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   }
   // ══ [AG-Trend-Risk] 診断ログ ここまで ══
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ★[AG-Pair] Pair/Combination Trend診断（診断のみ・アルゴリズム変更禁止）
+  //
+  // 目的: 「誰が誰と組むか」の暗黙知・組み合わせ文化を可視化する。
+  //   ① night→early pair: A夜勤日にB早番/遅番系が入る共起率
+  //   ② early→明け 共起: A早番日にB明けが同日にいる率
+  //   ③ newbie-support: 新人(n<30)夜勤時にベテラン(n>=50)早番の共起率
+  //   ④ [AG-Pair-Risk]: 固定pair危険度 / nightCore同士共起
+  // ★pair制約・pair補正・pairスコア・pair優先生成は実装しない
+  // ★prevShifts=前月実績（1ヶ月分のみ）、gen=今回生成結果
+  // ══════════════════════════════════════════════════════════════════════════════
+  {
+    const _pcds = dept.customShiftDefs || [];
+    const _pBaseOf = (k) => _pcds.find(c => c.key === k)?.baseType || k;
+
+    // ── シフトカテゴリ ──
+    const _pNightKeys = [...new Set(dept.shiftTypes)].filter(k =>
+      deptWork.has(k) && k !== '明け' && (k === '夜勤' || _pBaseOf(k) === '夜勤')
+    );
+    const _pEarlyKeys = [...new Set(dept.shiftTypes)].filter(k =>
+      deptWork.has(k) && k !== '明け' && (_pBaseOf(k) === '早番' || _pBaseOf(k) === '遅番')
+    );
+
+    const PAIR_N_MIN  = 3;    // A 役割の最低サンプル日数（不足 → スキップ）
+    const PAIR_SHOW   = 0.55; // 表示閾値（gen率がこれ以上のみ出力）
+    const PAIR_RISK   = 0.80; // 固定pair危険閾値
+    const AVOID_SHOW  = 0.60; // 早番→明け共起 表示閾値
+    const AVOID_RISK  = 0.85; // 早番→明け共起 危険閾値
+    const NC_CO_RISK  = 0.40; // nightCore同士同日共起 危険閾値
+
+    // ── 前月データ有効性チェック ──
+    // prevShifts: { [staffId]: { [day(str|num)]: shiftType } }
+    const _prevDayNums = Object.values(prevShifts || {})
+      .flatMap(dMap => Object.keys(dMap || {}).map(Number))
+      .filter(n => n > 0 && !isNaN(n));
+    const _prevDays = _prevDayNums.length > 0 ? Math.max(..._prevDayNums) : 0;
+    const hasPrev = _prevDays >= 14; // 前月データが14日以上あれば診断に使う
+
+    // ── pair率計算ヘルパー ──
+    // shifts: res (res[id][d]) or prevShifts (prevShifts[id][d])
+    // aId/bId: staffId, aRoles: string[], bRoles: string[]
+    // 返値: { rate, n } or null（サンプル不足）
+    const _calcPair = (shifts, totalDays, aId, aRoles, bId, bRoles) => {
+      let aDays = 0, co = 0;
+      for (let d = 1; d <= totalDays; d++) {
+        if (aRoles.includes(shifts[aId]?.[d])) {
+          aDays++;
+          if (bRoles.includes(shifts[bId]?.[d])) co++;
+        }
+      }
+      return aDays >= PAIR_N_MIN ? { rate: co / aDays, n: aDays, co } : null;
+    };
+
+    const _fmtR = (r) => r ? `${r.rate.toFixed(2)}(n=${r.n})` : 'N/A';
+
+    // ── ① night→early pair ──
+    const _nightEarlyPairs = [];
+    if (_pNightKeys.length > 0 && _pEarlyKeys.length > 0) {
+      for (const sA of ds) {
+        for (const sB of ds) {
+          if (sA.id === sB.id) continue;
+          const _genR = _calcPair(res, days, sA.id, _pNightKeys, sB.id, _pEarlyKeys);
+          if (!_genR || _genR.rate < PAIR_SHOW) continue;
+          const _prevR = hasPrev ? _calcPair(prevShifts, _prevDays, sA.id, _pNightKeys, sB.id, _pEarlyKeys) : null;
+          // 具体的な早番/遅番シフトを特定（最多のもの）
+          const _topEarly = _pEarlyKeys.reduce((best, k) => {
+            const cnt = Array.from({ length: days }, (_, i) => i + 1)
+              .filter(d => _pNightKeys.includes(res[sA.id][d]) && res[sB.id][d] === k).length;
+            return cnt > (best.cnt ?? 0) ? { k, cnt } : best;
+          }, {}).k || _pEarlyKeys[0];
+          _nightEarlyPairs.push({ aName: sA.name, bName: sB.name, topEarly: _topEarly, genR: _genR, prevR: _prevR });
+        }
+      }
+      _nightEarlyPairs.sort((x, y) => y.genR.rate - x.genR.rate);
+    }
+
+    // ── ② early→明け 共起（A早番日にB明けが同日にいる率） ──
+    const _earlyAkePairs = [];
+    if (_pEarlyKeys.length > 0) {
+      for (const sA of ds) {
+        for (const sB of ds) {
+          if (sA.id === sB.id) continue;
+          const _genR = _calcPair(res, days, sA.id, _pEarlyKeys, sB.id, ['明け']);
+          if (!_genR || _genR.rate < AVOID_SHOW) continue;
+          const _prevR = hasPrev ? _calcPair(prevShifts, _prevDays, sA.id, _pEarlyKeys, sB.id, ['明け']) : null;
+          _earlyAkePairs.push({ aName: sA.name, bName: sB.name, genR: _genR, prevR: _prevR });
+        }
+      }
+      _earlyAkePairs.sort((x, y) => y.genR.rate - x.genR.rate);
+    }
+
+    // ── ③ newbie-support pair（新人夜勤時にベテラン早番） ──
+    const _newbieSupportPairs = [];
+    if (_pNightKeys.length > 0 && _pEarlyKeys.length > 0) {
+      const _newbies  = ds.filter(s => (getTrend(s)?._workTotal ?? 0) <  30); // 新人: n<30
+      const _veterans = ds.filter(s => (getTrend(s)?._workTotal ?? 0) >= 50); // ベテラン: n>=50
+      for (const sA of _newbies) {
+        for (const sB of _veterans) {
+          if (sA.id === sB.id) continue;
+          const _genR = _calcPair(res, days, sA.id, _pNightKeys, sB.id, _pEarlyKeys);
+          if (!_genR) continue; // サンプル不足も含め全て出力（新人夜勤自体が少ない）
+          const _prevR = hasPrev ? _calcPair(prevShifts, _prevDays, sA.id, _pNightKeys, sB.id, _pEarlyKeys) : null;
+          _newbieSupportPairs.push({ aName: sA.name, bName: sB.name, genR: _genR, prevR: _prevR });
+        }
+      }
+      _newbieSupportPairs.sort((x, y) => (y.genR?.rate ?? 0) - (x.genR?.rate ?? 0));
+    }
+
+    // ── [AG-Pair] 出力 ──
+    const _pLines = ['[AG-Pair]'];
+    if (_pNightKeys.length === 0 || _pEarlyKeys.length === 0) {
+      _pLines.push(`  ※ 夜勤系(${_pNightKeys.length}) or 早番系(${_pEarlyKeys.length})シフト不足 → pair診断スキップ`);
+    } else {
+      // ① night→early
+      _pLines.push(`night→early pair(gen>=${PAIR_SHOW}):`);
+      if (_nightEarlyPairs.length === 0) {
+        _pLines.push('  なし（pair率がしきい値以下 = pair依存低め）');
+      } else {
+        _nightEarlyPairs.slice(0, 8).forEach(({ aName, bName, topEarly, genR, prevR }) =>
+          _pLines.push(`  ${aName}夜勤→${bName}${topEarly}: gen=${genR.rate.toFixed(2)}(${genR.co}/${genR.n}日) prev=${_fmtR(prevR)}`));
+      }
+      // ② early→明け
+      _pLines.push(`early→明け共起(gen>=${AVOID_SHOW}):`);
+      if (_earlyAkePairs.length === 0) {
+        _pLines.push('  なし');
+      } else {
+        _earlyAkePairs.slice(0, 8).forEach(({ aName, bName, genR, prevR }) =>
+          _pLines.push(`  ${aName}早番時→${bName}明け: gen=${genR.rate.toFixed(2)}(${genR.co}/${genR.n}日) prev=${_fmtR(prevR)}`));
+      }
+      // ③ newbie-support
+      _pLines.push('newbie-support(新人夜勤→ベテラン早番):');
+      if (_newbieSupportPairs.length === 0) {
+        _pLines.push('  なし（新人夜勤なし / ベテランn>=50不足 / サンプル不足）');
+      } else {
+        _newbieSupportPairs.slice(0, 5).forEach(({ aName, bName, genR, prevR }) =>
+          _pLines.push(`  新人${aName}夜勤→ベテラン${bName}早番系: gen=${genR ? genR.rate.toFixed(2) + `(${genR.co}/${genR.n}日)` : 'n<3'} prev=${_fmtR(prevR)}`));
+      }
+    }
+    console.log(_pLines.join('\n'));
+
+    // ── [AG-Pair-Risk] 固定化危険度 + nightCore同士共起 ──
+    const _prLines = ['[AG-Pair-Risk]'];
+    // high pair（gen率 >= PAIR_RISK）
+    const _highPairItems = _nightEarlyPairs
+      .filter(({ genR }) => genR.rate >= PAIR_RISK)
+      .map(({ aName, bName, topEarly, genR }) =>
+        `  ${aName}夜勤→${bName}${topEarly}: ${(genR.rate * 100).toFixed(0)}%(${genR.co}/${genR.n}日) ★属人化注意`);
+    _prLines.push(`highPair(>=${PAIR_RISK}):\n` + (_highPairItems.length > 0 ? _highPairItems.join('\n') : '  なし'));
+    // high avoid（早番→明け gen率 >= AVOID_RISK）
+    const _highAvoidItems = _earlyAkePairs
+      .filter(({ genR }) => genR.rate >= AVOID_RISK)
+      .map(({ aName, bName, genR }) =>
+        `  ${aName}早番時→${bName}明け: ${(genR.rate * 100).toFixed(0)}%(${genR.co}/${genR.n}日)`);
+    _prLines.push(`highAvoid(早番→明け>=${AVOID_RISK}):\n` + (_highAvoidItems.length > 0 ? _highAvoidItems.join('\n') : '  なし'));
+    // nightCore同士の同日夜勤共起
+    if (_pNightKeys.length > 0) {
+      const _ncItems = [];
+      const _ncStaff = ds.filter(s => {
+        const tr = getTrend(s);
+        if (!tr || (tr._workTotal ?? 0) < 10) return false;
+        return [...new Set(dept.shiftTypes)]
+          .filter(k => deptWork.has(k) && k !== '明け' && _pBaseOf(k) !== '日勤')
+          .reduce((sum, k) => sum + (tr[k] ?? 0), 0) >= 0.45;
+      });
+      for (let i = 0; i < _ncStaff.length; i++) {
+        for (let j = i + 1; j < _ncStaff.length; j++) {
+          const sA = _ncStaff[i], sB = _ncStaff[j];
+          let _aDays = 0, _both = 0;
+          for (let d = 1; d <= days; d++) {
+            if (_pNightKeys.includes(res[sA.id][d])) {
+              _aDays++;
+              if (_pNightKeys.includes(res[sB.id][d])) _both++;
+            }
+          }
+          if (_aDays >= PAIR_N_MIN && _both / _aDays >= NC_CO_RISK) {
+            _ncItems.push(`  ${sA.name}&${sB.name}同日夜勤: ${(_both/_aDays).toFixed(2)}(${_both}/${_aDays}日)`);
+          }
+        }
+      }
+      _prLines.push(`nightCore同士同日共起(>=${NC_CO_RISK}):\n` + (_ncItems.length > 0 ? _ncItems.join('\n') : '  なし'));
+    }
+    console.log(_prLines.join('\n'));
+  }
+  // ══ [AG-Pair] 診断ログ ここまで ══
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
