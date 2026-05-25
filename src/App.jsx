@@ -1979,6 +1979,182 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   }
   // ══ [AG-Trend] 診断ログ ここまで ══
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ★[AG-Trend-Risk] Trend固定化リスク診断（診断のみ・アルゴリズム変更禁止）
+  //
+  // 目的: 「学習しすぎ」による固定化リスクを5軸で観測する。
+  //   ① fixedShift   : 同一勤務固定化（trend率 >= 0.40）
+  //   ② fixedDow     : 曜日固定化（dowShiftRate 特定曜日 >= 0.75）
+  //   ③ pairBias     : pair固定化（A夜勤時にB早番の共起率）
+  //   ④ newbieLock   : 新人育成停止（trend_n<30 かつ 日勤gen率>=0.70）
+  //   ⑤ veteranLoad  : ベテラン過負荷（night-core の夜勤gen率>=0.35）
+  // ★自動補正・trend減衰・pair制御等は実装しない
+  // ══════════════════════════════════════════════════════════════════════════════
+  {
+    const _rcds = dept.customShiftDefs || [];
+    const _rBaseOf = (k) => _rcds.find(c => c.key === k)?.baseType || k;
+    const _rWorkTypes = [...new Set(dept.shiftTypes)].filter(k => deptWork.has(k) && k !== '明け');
+
+    // ── 生成結果から各スタッフの勤務集計 ──
+    const _rStaffData = ds.map(s => {
+      const trend = getTrend(s);
+      const hasTrend = !!(trend && (trend._workTotal ?? 0) > 0);
+      const workTotal = trend?._workTotal ?? 0;
+
+      // 生成: 全日のシフト
+      const genByDay = {};
+      for (let d = 1; d <= days; d++) genByDay[d] = res[s.id][d];
+
+      // 生成: 勤務日ベース比率
+      const _genCounts = Object.fromEntries(_rWorkTypes.map(k => [k, 0]));
+      let _genWork = 0;
+      for (let d = 1; d <= days; d++) {
+        const sh = genByDay[d];
+        if (Object.prototype.hasOwnProperty.call(_genCounts, sh)) { _genCounts[sh]++; _genWork++; }
+      }
+      const genRate = Object.fromEntries(_rWorkTypes.map(k => [k, _genWork > 0 ? _genCounts[k] / _genWork : 0]));
+
+      // 生成: 曜日別勤務カウント（dow=0:日 〜 6:土）
+      const genDowCounts = Array.from({ length: 7 }, () => ({}));
+      const genDowWorkTotal = Array(7).fill(0);
+      for (let d = 1; d <= days; d++) {
+        const sh = genByDay[d];
+        const dow = new Date(year, month, d).getDay();
+        if (Object.prototype.hasOwnProperty.call(_genCounts, sh)) {
+          genDowCounts[dow][sh] = (genDowCounts[dow][sh] || 0) + 1;
+          genDowWorkTotal[dow]++;
+        }
+      }
+      const genDowRate = genDowCounts.map((cnts, i) =>
+        Object.fromEntries(_rWorkTypes.map(k => [k, genDowWorkTotal[i] > 0 ? (cnts[k] || 0) / genDowWorkTotal[i] : 0]))
+      );
+
+      // roleGuess（night-core / day-buffer / balanced）
+      const _baseRates = hasTrend
+        ? Object.fromEntries(_rWorkTypes.map(k => [k, trend[k] ?? 0]))
+        : genRate;
+      const _nightRate = _rWorkTypes.filter(k => _rBaseOf(k) !== '日勤').reduce((s, k) => s + (_baseRates[k] ?? 0), 0);
+      const _dayRate   = _rWorkTypes.filter(k => _rBaseOf(k) === '日勤').reduce((s, k) => s + (_baseRates[k] ?? 0), 0);
+      const roleGuess  = _nightRate >= 0.45 ? 'night-core' : _dayRate >= 0.70 ? 'day-buffer' : 'balanced';
+
+      return { s, trend, hasTrend, workTotal, genRate, genByDay, genDowRate, roleGuess };
+    });
+
+    const DOW_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
+
+    // ── ① fixedShift: 同一勤務固定化（trend率 >= 0.40） ──
+    // trend で最大比率を持つシフトが 0.40 以上 → 固定化疑い
+    const FIXED_SHIFT_THR = 0.40;
+    const _fixedShiftItems = [];
+    _rStaffData.forEach(({ s, trend, hasTrend, genRate, workTotal }) => {
+      if (!hasTrend) return; // trend未学習は対象外（別途newbieLockで診断）
+      const topShift = _rWorkTypes.reduce((best, k) => (trend[k] ?? 0) > (trend[best] ?? 0) ? k : best, _rWorkTypes[0]);
+      const topRate  = trend[topShift] ?? 0;
+      if (topRate >= FIXED_SHIFT_THR) {
+        const diff = genRate[topShift] - topRate;
+        _fixedShiftItems.push(`  ${s.name}: trend_${topShift}=${topRate.toFixed(2)} gen=${genRate[topShift].toFixed(2)} diff=${diff >= 0 ? '+' : ''}${diff.toFixed(2)} n=${workTotal}`);
+      }
+    });
+
+    // ── ② fixedDow: 曜日固定化（dowShiftRate 特定曜日 >= 0.75） ──
+    // trend の dowShiftRate[dow][shiftType] >= 0.75 → その曜日のシフトが固定化
+    const FIXED_DOW_THR = 0.75;
+    const _fixedDowItems = [];
+    _rStaffData.forEach(({ s, trend, hasTrend, genDowRate }) => {
+      if (!hasTrend || !trend.dowShiftRate) return;
+      for (let dow = 0; dow < 7; dow++) {
+        const tDow = trend.dowShiftRate[dow];
+        if (!tDow) continue;
+        for (const k of _rWorkTypes) {
+          const tRate = tDow[k] ?? 0;
+          if (tRate >= FIXED_DOW_THR) {
+            const gRate = genDowRate[dow][k] ?? 0;
+            _fixedDowItems.push(`  ${s.name}: ${DOW_LABELS[dow]}曜_${k}=trend${tRate.toFixed(2)} gen${gRate.toFixed(2)}`);
+          }
+        }
+      }
+    });
+
+    // ── ③ pairBias: pair固定化（生成結果ベース）──
+    // 夜勤担当Aの日に、早番/遅番担当Bの共起率を計算
+    // slot管理シフト（夜勤含む）の組み合わせのみ診断
+    const PAIR_BIAS_THR = 0.65;
+    const _pairBiasItems = [];
+    {
+      // slotManagedTypes のうち 夜勤系 と 早番/遅番系 を特定
+      const _nightKeys  = [...new Set(dept.shiftTypes)].filter(k => {
+        if (!deptWork.has(k) || k === '明け') return false;
+        return k === '夜勤' || _rBaseOf(k) === '夜勤';
+      });
+      const _earlyKeys  = [...new Set(dept.shiftTypes)].filter(k => {
+        if (!deptWork.has(k) || k === '明け') return false;
+        const base = _rBaseOf(k);
+        return base === '早番' || base === '遅番';
+      });
+      if (_nightKeys.length > 0 && _earlyKeys.length > 0) {
+        for (const sA of ds) {
+          // sA が夜勤を担当した日一覧
+          const nightDays = [];
+          for (let d = 1; d <= days; d++) {
+            if (_nightKeys.includes(res[sA.id][d])) nightDays.push(d);
+          }
+          if (nightDays.length < 3) continue; // サンプル少なすぎ → スキップ
+          for (const sB of ds) {
+            if (sA.id === sB.id) continue;
+            // sA夜勤日に sB が早番/遅番の共起カウント
+            const coOccur = nightDays.filter(d => _earlyKeys.includes(res[sB.id][d])).length;
+            const rate = coOccur / nightDays.length;
+            if (rate >= PAIR_BIAS_THR) {
+              const bShift = _earlyKeys.find(k => {
+                const cnt = nightDays.filter(d => res[sB.id][d] === k).length;
+                return cnt / nightDays.length >= PAIR_BIAS_THR;
+              }) || '早番/遅番';
+              _pairBiasItems.push(`  ${sA.name}夜勤時→${sB.name}${bShift}: ${(rate * 100).toFixed(0)}% (${coOccur}/${nightDays.length}日)`);
+            }
+          }
+        }
+      }
+    }
+
+    // ── ④ newbieLock: 新人育成停止（trend_n<30 かつ 日勤gen率>=0.70） ──
+    const NEWBIE_N_THR  = 30;  // 学習サンプル数が少ない = 新人・新規
+    const NEWBIE_DAY_THR = 0.70;
+    const _newbieLockItems = [];
+    _rStaffData.forEach(({ s, workTotal, genRate }) => {
+      const _genDayRate = _rWorkTypes.filter(k => _rBaseOf(k) === '日勤').reduce((sum, k) => sum + genRate[k], 0);
+      if (workTotal < NEWBIE_N_THR && _genDayRate >= NEWBIE_DAY_THR) {
+        _newbieLockItems.push(`  ${s.name}: 日勤=${_genDayRate.toFixed(2)} trend_n=${workTotal}`);
+      }
+    });
+
+    // ── ⑤ veteranLoad: ベテラン過負荷（night-core の夜勤gen率>=0.35） ──
+    const VETERAN_NIGHT_THR = 0.35;
+    const _veteranLoadItems = [];
+    _rStaffData.forEach(({ s, roleGuess, genRate, workTotal }) => {
+      if (roleGuess !== 'night-core') return;
+      const _nightGenRate = _rWorkTypes.filter(k => k === '夜勤' || _rBaseOf(k) === '夜勤').reduce((sum, k) => sum + genRate[k], 0);
+      if (_nightGenRate >= VETERAN_NIGHT_THR) {
+        _veteranLoadItems.push(`  ${s.name}: 夜勤gen=${_nightGenRate.toFixed(2)} trend_n=${workTotal}`);
+      }
+    });
+
+    // ── 出力 ──
+    const _rLines = [];
+    _rLines.push('[AG-Trend-Risk]');
+    _rLines.push(`fixedShift(trend>=${FIXED_SHIFT_THR}):\n` +
+      (_fixedShiftItems.length > 0 ? _fixedShiftItems.join('\n') : '  なし'));
+    _rLines.push(`fixedDow(dowRate>=${FIXED_DOW_THR}):\n` +
+      (_fixedDowItems.length > 0 ? _fixedDowItems.join('\n') : '  なし'));
+    _rLines.push(`pairBias(共起>=${PAIR_BIAS_THR}):\n` +
+      (_pairBiasItems.length > 0 ? _pairBiasItems.join('\n') : '  なし'));
+    _rLines.push(`newbieLock(n<${NEWBIE_N_THR} & 日勤>=${NEWBIE_DAY_THR}):\n` +
+      (_newbieLockItems.length > 0 ? _newbieLockItems.join('\n') : '  なし'));
+    _rLines.push(`veteranLoad(夜勤gen>=${VETERAN_NIGHT_THR}):\n` +
+      (_veteranLoadItems.length > 0 ? _veteranLoadItems.join('\n') : '  なし'));
+    console.log(_rLines.join('\n'));
+  }
+  // ══ [AG-Trend-Risk] 診断ログ ここまで ══
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
