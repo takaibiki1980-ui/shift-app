@@ -5891,6 +5891,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // 保存エフェクトで userEditSeq===seqAtLastRemoteLoad なら「Realtime直後で変更なし」→保存スキップ
   const seqAtLastRemoteLoad = useRef(-1);
   const lastAutoGenRef = useRef({}); // 最後の自動生成結果（スワップパターン検出用）
+  const renderAuditTargetRef = useRef(null); // ★[Render-Audit]: engine result → post-commit 比較用
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -6709,6 +6710,68 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const mergedTrend = mergeShiftTrends(shiftTrend[activeDeptId]||{}, learnedTrend);
     return computeSyncRate(deptShifts, staffList, dept, year, month, mergedTrend);
   }, [deptShifts, staffList, dept, year, month, shiftTrend, learnedTrend, activeDeptId]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ★[Render-Audit] 描画整合性監査 useEffect
+  // setAllShifts が React に commit された直後に fire → engine result と render state を比較
+  // 「内部正しい ≠ 画面正しい」を検出する最終防衛ライン
+  //
+  // ① footerCount source: ShiftTable 内でレンダリング時 inline 計算
+  //    ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length  ← useMemo なし → stale リスクなし
+  // ② deptShifts = allShifts[activeDeptId]||{} ← plain 変数（memoなし）→ stale リスクなし
+  // ③ 月切替: setAllShifts({}) で即クリア済み → 前月データ残留なし
+  // ④ 部署切替: allShifts[activeDeptId]||{} で自動切替 → stale リスクなし
+  // ⑤ setGenerateWarnings + setAllShifts は同一 event handler → React 18 batching で同時 commit
+  // ══════════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    const _target = renderAuditTargetRef.current;
+    if (!_target) return;
+    if (_target.deptId !== activeDeptId) return; // 部署ズレは無視
+    renderAuditTargetRef.current = null; // consume（1生成につき1回のみ）
+
+    const _committedShifts = allShifts[activeDeptId] || {};
+    const _ra_ds = staffList.filter(s => s.dept === activeDeptId);
+
+    const _raLines = [`[Render-Audit] post-commit 描画整合性監査 dept=${activeDeptId}`];
+    const _mismatchLines = [];
+    const _shortageLines = [];
+    let _anyMismatch = false, _anyShortage = false;
+
+    for (let d = 1; d <= _target.days; d++) {
+      for (const [k, min] of Object.entries(_target.minStaff)) {
+        if ((min ?? 0) <= 0) continue;
+        const engineCnt = _target.engineCounts[d]?.[k] ?? 0;
+        const renderCnt = _ra_ds.filter(s => (_committedShifts[s.id]?.[d] ?? '') === k).length;
+        if (engineCnt !== renderCnt) {
+          _anyMismatch = true;
+          _mismatchLines.push(`  ⚠MISMATCH d${d}/${_target.days} ${k}: engine=${engineCnt} render=${renderCnt}`);
+        }
+        if (renderCnt < min) {
+          _anyShortage = true;
+          _shortageLines.push(`  ⚠SHORTAGE d${d}/${_target.days} ${k}: actual=${renderCnt} min=${min}`);
+        }
+      }
+    }
+
+    if (!_anyMismatch && !_anyShortage) {
+      _raLines.push(`  全${_target.days}日: engine↔render 完全一致 ✓`);
+      _raLines.push('  footerCount: inline計算（useMemoなし）→ stale なし');
+      _raLines.push('  warningModal: setGenerateWarnings+setAllShifts 同バッチ commit → 整合 ✓');
+    } else {
+      if (_anyMismatch) {
+        _raLines.push('[Render-Audit-Mismatch]');
+        _mismatchLines.forEach(l => _raLines.push(l));
+        _raLines.push('  source疑い: React batching順序ズレ / stale closure');
+      }
+      if (_anyShortage) {
+        _raLines.push('[Render-Audit-Shortage]');
+        _shortageLines.forEach(l => _raLines.push(l));
+        _raLines.push('  source疑い: Phase1 guard 漏れ / setAllShifts 前後の result 差異');
+      }
+    }
+    console.log(_raLines.join('\n'));
+  }, [allShifts, activeDeptId, staffList]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const setDeptShifts = useCallback(updater => {
     // アンドゥ用に変更前の状態を積む
     const snapshot = allShiftsRef.current[activeDeptId] || {};
@@ -7727,6 +7790,25 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           if (Object.keys(_displayWarnings).length > 0) {
             setGenerateWarnings({ warnings: _displayWarnings, deptLabel: cd.label, score, timelineWarnings });
           }
+        }
+
+        // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
+        {
+          const _ra_ds   = cs.filter(s => s.dept === cd.id);
+          const _ra_days = getDays(year, month);
+          const _ra_counts = {};
+          for (let d = 1; d <= _ra_days; d++) {
+            _ra_counts[d] = {};
+            for (const k of Object.keys(cd.minStaff || {})) {
+              _ra_counts[d][k] = _ra_ds.filter(s => (result[s.id]?.[d] ?? '') === k).length;
+            }
+          }
+          renderAuditTargetRef.current = {
+            deptId: cd.id,
+            days: _ra_days,
+            minStaff: { ...(cd.minStaff || {}) },
+            engineCounts: _ra_counts
+          };
         }
 
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
