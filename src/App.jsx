@@ -6893,7 +6893,176 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [AG-Diff] 差分ログ ここまで ══
 
-        if (Object.keys(warnings).length > 0 || (timelineWarnings&&timelineWarnings.length>0)) setTimeout(()=>setGenerateWarnings({warnings,timelineWarnings,deptLabel:cd.label,score}),0);
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[AG-Change-Efficiency] AI変更効率分析（Change Efficiency Analysis）
+        // 「少ない変更で高い安定性を得られたか」を診断
+        // ★生成ロジック・repair・score・trend重みは一切変更しない（read-only診断）
+        //
+        // 手法: genSnapshot(before) と result(after) の日別安定性指標を比較
+        //   badTrans / consec / slotViol / shortage の総和減少量 = repairReduced
+        //   efficiency = repairReduced / totalChanges
+        //   セル別 dayImprovement で high-impact / low-value を分類
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _ef_days = getDays(year, month);
+          const _ef_ds   = cs.filter(s => s.dept === cd.id);
+          const _ef_cds  = cd.customShiftDefs || [];
+          const _ef_bOf  = (k) => _ef_cds.find(c => c.key === k)?.baseType || k;
+          const _ef_work = buildDeptWorkTypes(_ef_cds); // モジュールレベル関数
+          const _ef_mc   = cd.maxConsecutive || 5;
+
+          // ── maxStaff 再構築 ──
+          const _ef_maxS = {};
+          [...new Set(cd.shiftTypes)].forEach(k => {
+            const c2 = _ef_cds.find(d => d.key === k);
+            const base = c2?.baseType || k;
+            const def  = base === '日勤' ? 99 : 1;
+            const sv   = cd.maxStaff?.[k];
+            _ef_maxS[k] = (sv != null && !(c2 && base === '日勤' && sv === 1)) ? sv : def;
+          });
+
+          // ── badTransition 簡易実装（interval部署は遷移チェック省略）──
+          const _ef_bad = (prev, curr) => {
+            if (!prev || !curr || cd.intervalThreshold != null) return false;
+            return (prev === '遅番' && (curr === '早番' || curr === '日勤')) ||
+                   (prev === '日勤' && curr === '早番');
+          };
+
+          // ── 連続勤務カウント（指定shifts上で day d まで遡る）──
+          const _ef_consec = (shifts, sid, d) => {
+            let c = 0;
+            for (let i = d; i >= 1; i--) { if (_ef_work.has(shifts[sid]?.[i])) c++; else break; }
+            return c;
+          };
+
+          // ── 日別安定性指標 ──
+          const _ef_dayM = (shifts, d) => {
+            let bt = 0, cs2 = 0, sv = 0, sh = 0;
+            for (const s of _ef_ds) {
+              if (d > 1 && _ef_bad(shifts[s.id]?.[d-1], shifts[s.id]?.[d])) bt++;
+              const sh_ = shifts[s.id]?.[d];
+              if (_ef_work.has(sh_) && sh_ !== '明け' && _ef_consec(shifts, s.id, d) > _ef_mc) cs2++;
+            }
+            for (const [k, lim] of Object.entries(_ef_maxS)) {
+              if (lim >= 99) continue;
+              if (_ef_ds.filter(s => shifts[s.id]?.[d] === k).length > lim) sv++;
+            }
+            for (const [k, min] of Object.entries(cd.minStaff || {})) {
+              if (_ef_ds.filter(s => shifts[s.id]?.[d] === k).length < min) sh++;
+            }
+            return bt + cs2 + sv + sh; // 全指標の合計（低いほど安定）
+          };
+
+          // ── 全日集計 ──
+          const _ef_totM = (shifts) => {
+            let bt = 0, cs3 = 0, sv2 = 0, sh2 = 0;
+            for (let d = 1; d <= _ef_days; d++) {
+              for (const s of _ef_ds) {
+                if (d > 1 && _ef_bad(shifts[s.id]?.[d-1], shifts[s.id]?.[d])) bt++;
+                const sh_ = shifts[s.id]?.[d];
+                if (_ef_work.has(sh_) && sh_ !== '明け' && _ef_consec(shifts, s.id, d) > _ef_mc) cs3++;
+              }
+              for (const [k, lim] of Object.entries(_ef_maxS)) {
+                if (lim >= 99) continue;
+                if (_ef_ds.filter(s => shifts[s.id]?.[d] === k).length > lim) sv2++;
+              }
+              for (const [k, min] of Object.entries(cd.minStaff || {})) {
+                if (_ef_ds.filter(s => shifts[s.id]?.[d] === k).length < min) sh2++;
+              }
+            }
+            return { bt, cs: cs3, sv: sv2, sh: sh2, total: bt + cs3 + sv2 + sh2 };
+          };
+
+          const _mBef = _ef_totM(genSnapshot);
+          const _mAft = _ef_totM(result);
+          const _repairReduced = _mBef.total - _mAft.total;
+
+          // ── セル別 dayImprovement → high-impact / low-value 分類 ──
+          let _totalCh = 0;
+          const _staffEff = {}; // { name: { changed, hi, lo } }
+          for (const s of _ef_ds) {
+            for (let d = 1; d <= _ef_days; d++) {
+              const bv = genSnapshot[s.id]?.[d] ?? '';
+              const av = result[s.id]?.[d] ?? '';
+              if (bv === av) continue;
+              _totalCh++;
+              const dayImp = _ef_dayM(genSnapshot, d) - _ef_dayM(result, d);
+              if (!_staffEff[s.name]) _staffEff[s.name] = { changed: 0, hi: 0, lo: 0 };
+              _staffEff[s.name].changed++;
+              if (dayImp > 0) _staffEff[s.name].hi++;
+              else            _staffEff[s.name].lo++;
+            }
+          }
+          const _hiTotal = Object.values(_staffEff).reduce((sum, v) => sum + v.hi, 0);
+          const _loTotal = _totalCh - _hiTotal;
+          const _efficiency = _totalCh > 0 ? _repairReduced / _totalCh : 0;
+
+          // slot / pair stability gain ラベル
+          const _slotDelta = _mBef.sv - _mAft.sv;
+          const _pairDelta = _mBef.bt - _mAft.bt;
+          const _gainLbl   = (d) => d >= 3 ? 'high' : d >= 1 ? 'medium' : 'low';
+
+          // ── [AG-Change-Efficiency] ──
+          const _efLines = [`[AG-Change-Efficiency] dept=${cd.id}`];
+          _efLines.push(`changes=${_totalCh} repairReduced=${_repairReduced} efficiency=${_efficiency.toFixed(2)}`);
+          _efLines.push(`before: badTrans=${_mBef.bt} consec=${_mBef.cs} slotViol=${_mBef.sv} shortage=${_mBef.sh} (total=${_mBef.total})`);
+          _efLines.push(`after:  badTrans=${_mAft.bt} consec=${_mAft.cs} slotViol=${_mAft.sv} shortage=${_mAft.sh} (total=${_mAft.total})`);
+          _efLines.push(`highImpactChanges=${_hiTotal} lowValueChanges=${_loTotal}`);
+          _efLines.push(`slotStabilityGain=${_gainLbl(_slotDelta)} pairStabilityGain=${_gainLbl(_pairDelta)}`);
+          // 効率ランク
+          const _effRank = _efficiency >= 0.5 ? '✓ high（少ない変更で大きな改善）'
+                         : _efficiency >= 0.2 ? 'medium'
+                         : _totalCh === 0     ? '- 変更なし'
+                         : 'low（変更量の割に改善が少ない）';
+          _efLines.push(`efficiencyRank=${_effRank}`);
+          console.log(_efLines.join('\n'));
+
+          // ── [AG-Change-Efficiency-Staff] ──
+          const _efStLines = ['[AG-Change-Efficiency-Staff]'];
+          const _stEntries = Object.entries(_staffEff).sort((a, b) => b[1].changed - a[1].changed);
+          const HEAVY_THR  = Math.ceil(_ef_days * 0.5);
+          if (_stEntries.length === 0) {
+            _efStLines.push('  変更なし');
+          } else {
+            _stEntries.forEach(([name, { changed, hi, lo }]) => {
+              const impRate = changed > 0 ? hi / changed : 0;
+              const imp     = impRate >= 0.6 ? 'high' : impRate >= 0.3 ? 'medium' : 'low';
+              const flag    = changed >= HEAVY_THR && imp === 'low' ? ' ★変更過多疑い' : '';
+              _efStLines.push(`  ${name}: changed=${changed} impact=${imp}(hi=${hi}/lo=${lo})${flag}`);
+            });
+          }
+          console.log(_efStLines.join('\n'));
+
+          // ── [AG-Change-Risk] ──
+          const _riskLines = ['[AG-Change-Risk]'];
+          let _hasRisk = false;
+
+          // ① 変更過多 + 効果低
+          const _overChange = _stEntries.filter(([, { changed, hi }]) =>
+            changed >= HEAVY_THR && (changed > 0 ? hi / changed : 0) < 0.3
+          );
+          if (_overChange.length > 0) {
+            _hasRisk = true;
+            _riskLines.push('overChange(変更多/効果低):\n' +
+              _overChange.map(([n, v]) => `  ${n}: ${v.changed}changes impact=${v.changed > 0 ? (v.hi/v.changed).toFixed(2) : '0.00'}`).join('\n'));
+          }
+          // ② repair-heavy（大量変更なのに改善が小さい）
+          if (_totalCh >= 20 && _repairReduced <= 3) {
+            _hasRisk = true;
+            _riskLines.push(`repairHeavy:\n  changes=${_totalCh} repairReduced=${_repairReduced} → 大量変更の割に改善が少ない`);
+          }
+          // ③ 高効率（正の診断）
+          if (_efficiency >= 0.5 && _totalCh > 0) {
+            _riskLines.push(`highEfficiency: efficiency=${_efficiency.toFixed(2)} ✓ 少ない変更で大きな改善`);
+          }
+
+          if (!_hasRisk && _efficiency < 0.5 && _totalCh > 0) _riskLines.push('  なし ✓');
+          if (_totalCh === 0) _riskLines.push('  変更なし（既存シフト完全保持）');
+          console.log(_riskLines.join('\n'));
+        }
+        // ══ [AG-Change-Efficiency] 診断ログ ここまで ══
+
+
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
         setAllShifts(prev => ({...prev, [cd.id]: result}));
