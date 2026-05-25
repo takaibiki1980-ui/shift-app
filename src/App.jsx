@@ -7210,6 +7210,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [AG-Minimal-Change] 診断ログ ここまで ══
 
+        // Phase1 で採用した rollback 一覧を Cost Analysis へ共有（{} スコープ越え）
+        let _p1AppliedBuf = []; // { before, after } — Phase1 内で上書きされる
+
         // ══════════════════════════════════════════════════════════════════════════
         // ★[AG-Minimal-Change-Phase1] Minimal Change Engine Phase 1（実適用）
         // lowValue(dayImp<=0) かつ rollbackSafe な変更を実際に rollback して変更数を削減
@@ -7470,8 +7473,182 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
           if (!_p1_hasRisk) _maRLines.push('  なし ✓');
           console.log(_maRLines.join('\n'));
+
+          // Phase1 採用 rollback を外部共有（Cost Analysis で利用）
+          _p1AppliedBuf = _p1_applied.map(c => ({ before: c.before, after: c.after }));
         }
         // ══ [AG-Minimal-Change-Phase1] ここまで ══
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[AG-Change-Cost] Change Cost Analysis（変更負荷分析）
+        // 変更数ではなく「現場負荷コスト」で変更の重さを可視化
+        // ★診断のみ。生成ロジック・repair・score・trend 変更なし。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _cc_days = getDays(year, month);
+          const _cc_ds   = cs.filter(s => s.dept === cd.id);
+          const _cc_cds  = cd.customShiftDefs || [];
+
+          // baseType 解決（空・未定義 → '休み' 扱い）
+          const _cc_base = (v) => {
+            if (!v || v === '') return '休み';
+            const c2 = _cc_cds.find(c3 => c3.key === v);
+            return c2?.baseType || v;
+          };
+
+          // 仮定義 change cost（介護現場の申し送り・覚え直し・混乱負荷）
+          // 低cost=1: 日勤↔早番, 日勤↔遅番
+          // 中cost=2: 休み↔日勤, 早番↔遅番, 休み↔早番/遅番
+          // 高cost=4: 夜勤↔日勤/早番/遅番
+          // 最高cost=5: 休み↔夜勤, 明け関連
+          const _cc_cost = (from, to) => {
+            const bf = _cc_base(from);
+            const bt = _cc_base(to);
+            if (bf === bt) return 0;
+            if (bf === '明け' || bt === '明け') return 5;
+            if ((bf === '休み' && bt === '夜勤') || (bf === '夜勤' && bt === '休み')) return 5;
+            if (bf === '夜勤' || bt === '夜勤') return 4;
+            if ((bf === '休み' && bt === '日勤') || (bf === '日勤' && bt === '休み')) return 2;
+            if ((bf === '早番' && bt === '遅番') || (bf === '遅番' && bt === '早番')) return 2;
+            if (bf === '休み' || bt === '休み') return 2;
+            return 1; // 日勤↔早番/遅番
+          };
+
+          // 夜勤 baseType set
+          const _cc_nightSet = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const c2 = _cc_cds.find(c3 => c3.key === k);
+            if ((c2?.baseType || k) === '夜勤') _cc_nightSet.add(k);
+          });
+
+          // trend 参照（新人判定用）
+          const _cc_getTrend = (name) => {
+            const key = Object.keys(ct)
+              .filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+
+          // genSnapshot → result (Phase1後) の全変更を収集
+          const _cc_changes = [];
+          for (const s of _cc_ds) {
+            const _t = _cc_getTrend(s.name);
+            const _wTotal = _t?._workTotal ?? 0;
+            const isNewbie = _wTotal < 30;
+            for (let d = 1; d <= _cc_days; d++) {
+              const frm = genSnapshot[s.id]?.[d] ?? '';
+              const to  = result[s.id]?.[d] ?? '';
+              if (frm === to) continue;
+              const cost = _cc_cost(frm, to);
+              const isHighCost = cost >= 4;
+              const isNightChange = _cc_nightSet.has(frm) || _cc_nightSet.has(to);
+              _cc_changes.push({ sid: s.id, name: s.name, day: d, from: frm, to, cost, isHighCost, isNightChange, isNewbie });
+            }
+          }
+
+          const _cc_total     = _cc_changes.length;
+          const _cc_totalCost = _cc_changes.reduce((s, c) => s + c.cost, 0);
+          const _cc_avgCost   = _cc_total > 0 ? _cc_totalCost / _cc_total : 0;
+          const _cc_highCount = _cc_changes.filter(c => c.isHighCost).length;
+          const _cc_lowCount  = _cc_changes.filter(c => c.cost <= 1).length;
+
+          // Phase1 rollback による cost 削減量
+          const _cc_costSaved = _p1AppliedBuf.reduce((s, c) => s + _cc_cost(c.before, c.after), 0);
+          const _cc_costBefore = _cc_totalCost + _cc_costSaved; // Phase1 前の想定コスト
+
+          // スタッフ別集計
+          const _cc_bySt = {};
+          for (const c of _cc_changes) {
+            if (!_cc_bySt[c.name])
+              _cc_bySt[c.name] = { name: c.name, changes: 0, cost: 0, highCost: 0, nightChanges: 0, isNewbie: c.isNewbie };
+            _cc_bySt[c.name].changes++;
+            _cc_bySt[c.name].cost += c.cost;
+            if (c.isHighCost)    _cc_bySt[c.name].highCost++;
+            if (c.isNightChange) _cc_bySt[c.name].nightChanges++;
+          }
+          const _cc_stEntries = Object.values(_cc_bySt).sort((a, b) => b.cost - a.cost);
+
+          // ── [AG-Change-Cost] ──
+          const _ccLines = [`[AG-Change-Cost] dept=${cd.id}`];
+          _ccLines.push(`changes=${_cc_total} totalCost=${_cc_totalCost} avgCost=${_cc_avgCost.toFixed(2)}`);
+          _ccLines.push(`highCostChanges=${_cc_highCount} lowCostChanges=${_cc_lowCount}`);
+          if (_cc_costSaved > 0) {
+            _ccLines.push(`costReducedByMinimal=${_cc_costSaved}(before=${_cc_costBefore} after=${_cc_totalCost})`);
+          } else {
+            _ccLines.push('costReducedByMinimal=0');
+          }
+          // highCost 変更の内訳（上位10件）
+          const _cc_highItems = _cc_changes.filter(c => c.isHighCost).slice(0, 10);
+          if (_cc_highItems.length > 0) {
+            _ccLines.push('highCostDetail(top10):');
+            _cc_highItems.forEach(c =>
+              _ccLines.push(`  ${c.name} d${c.day}: ${c.from || '休み'}→${c.to || '休み'} cost=${c.cost}`)
+            );
+          }
+          if (_cc_total === 0) _ccLines.push('  変更なし');
+          console.log(_ccLines.join('\n'));
+
+          // ── [AG-Change-Cost-Staff] ──
+          const _ccStLines = ['[AG-Change-Cost-Staff]'];
+          const HIGH_AVG_THR = 2.5;
+          if (_cc_stEntries.length === 0) {
+            _ccStLines.push('  変更なし');
+          } else {
+            _cc_stEntries.forEach(({ name, changes, cost, highCost, nightChanges, isNewbie }) => {
+              const avg = changes > 0 ? cost / changes : 0;
+              const heavy = avg >= HIGH_AVG_THR ? ' ★高負荷' : '';
+              const nb    = isNewbie ? '(新人)' : '';
+              let line = `  ${name}${nb}: changes=${changes} cost=${cost} avg=${avg.toFixed(2)}${heavy}`;
+              if (highCost > 0)     line += ` highCost=${highCost}`;
+              if (nightChanges > 0) line += ` nightChange=${nightChanges}`;
+              _ccStLines.push(line);
+            });
+          }
+          console.log(_ccStLines.join('\n'));
+
+          // ── [AG-Change-Cost-Risk] ──
+          const _ccRLines = ['[AG-Change-Cost-Risk]'];
+          let _cc_hasRisk = false;
+          if (_cc_total === 0) {
+            _ccRLines.push('  変更なし');
+          } else {
+            // ① highBurden: 平均コストが高く総コストも重いスタッフ
+            const _ccHeavy = _cc_stEntries.filter(v => v.changes > 0 && (v.cost / v.changes) >= HIGH_AVG_THR && v.cost >= 8);
+            if (_ccHeavy.length > 0) {
+              _cc_hasRisk = true;
+              _ccRLines.push('highBurden(avgCost≥2.5 & totalCost≥8):');
+              _ccHeavy.forEach(v => _ccRLines.push(
+                `  ${v.name}: cost=${v.cost} avg=${(v.cost / v.changes).toFixed(2)}`
+              ));
+            }
+            // ② newbieHeavy: 新人への高コスト変更集中
+            const _ccNewbie = _cc_stEntries.filter(v => v.isNewbie && v.highCost >= 2);
+            if (_ccNewbie.length > 0) {
+              _cc_hasRisk = true;
+              _ccRLines.push('newbieHeavy(新人 & highCost≥2):');
+              _ccNewbie.forEach(v => _ccRLines.push(
+                `  新人${v.name}: highCost=${v.highCost} cost=${v.cost}`
+              ));
+            }
+            // ③ nightCoreOverload: 夜勤変更集中（3件以上）
+            const _ccNight = _cc_stEntries.filter(v => v.nightChanges >= 3);
+            if (_ccNight.length > 0) {
+              _cc_hasRisk = true;
+              _ccRLines.push('nightCoreOverload(夜勤変更≥3):');
+              _ccNight.forEach(v => _ccRLines.push(
+                `  ${v.name}: 夜勤変更=${v.nightChanges} cost=${v.cost}`
+              ));
+            }
+            // ④ 全体の平均コストが高い
+            if (_cc_avgCost >= 2.5) {
+              _cc_hasRisk = true;
+              _ccRLines.push(`avgCostHigh: ${_cc_avgCost.toFixed(2)} ≥ 2.5 → 全体的に重変更が多い`);
+            }
+            if (!_cc_hasRisk) _ccRLines.push('  なし ✓');
+          }
+          console.log(_ccRLines.join('\n'));
+        }
+        // ══ [AG-Change-Cost] ここまで ══
 
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
