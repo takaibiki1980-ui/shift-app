@@ -6759,6 +6759,140 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         setUndoCount(undoStackRef.current[cd.id].length);
         const cs2 = allShiftsRef.current[cd.id] || {};
         const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[AG-Diff] Generation Diff View（診断・透明性ログ）
+        // 生成前(genSnapshot) vs 生成後(result) の差分を4軸で可視化
+        // 自動生成の透明性を高め、管理者が安心して確認できるようにする
+        // ★undo構造・autosave・realtimeには一切影響しない（read-only診断）
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _b = genSnapshot; // before: { [staffId]: { [day]: shift } }
+          const _a = result;      // after:  { [staffId]: { [day]: shift } }
+          const _ds = cs.filter(s => s.dept === cd.id);
+          const _days = getDays(year, month);
+          const _cds = cd.customShiftDefs || [];
+          const _bOf = (k) => _cds.find(c => c.key === k)?.baseType || k;
+          // getTrend for diff risk (uses ct = merged trend for this dept)
+          const _getTrend = (name) => {
+            const key = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+          // role-slot types (同定義)
+          const _slotTypes = [...new Set(cd.shiftTypes)].filter(k => {
+            if (k === '明け') return false;
+            if (_bOf(k) === '日勤') return false;
+            const ms = cd.maxStaff?.[k]; return ms != null && ms < 99;
+          });
+
+          // ── 差分集計 ──
+          const _byDay   = {};   // { [day]: [{ name, before, after }] }
+          const _byStaff = {};   // { [name]: { count, nightDelta } }
+          const _slotDelta = Object.fromEntries(_slotTypes.map(k => [k, 0]));
+
+          for (const s of _ds) {
+            let _cnt = 0, _nBef = 0, _nAft = 0;
+            for (let d = 1; d <= _days; d++) {
+              const bv = _b[s.id]?.[d] ?? '';
+              const av = _a[s.id]?.[d] ?? '';
+              if (bv === av) continue;
+              _cnt++;
+              if (!_byDay[d]) _byDay[d] = [];
+              _byDay[d].push({ name: s.name, before: bv || '空', after: av || '空' });
+              // role-slot delta（月全体での増減集計）
+              if (_slotTypes.includes(bv)) _slotDelta[bv]--;
+              if (_slotTypes.includes(av)) _slotDelta[av]++;
+              // 夜勤系 delta（risk診断用）
+              if (bv === '夜勤' || _bOf(bv) === '夜勤') _nBef++;
+              if (av === '夜勤' || _bOf(av) === '夜勤') _nAft++;
+            }
+            if (_cnt > 0) _byStaff[s.name] = { count: _cnt, nightDelta: _nAft - _nBef };
+          }
+          const _total = Object.values(_byStaff).reduce((sum, v) => sum + v.count, 0);
+
+          // ── [AG-Diff] セル変更一覧 ──
+          const _dLines = [`[AG-Diff] dept=${cd.id} total=${_total}セル変更(/${_ds.length}人×${_days}日)`];
+          const _sortDays = Object.keys(_byDay).map(Number).sort((a, b) => a - b);
+          if (_sortDays.length === 0) {
+            _dLines.push('  変更なし（既存シフトを完全保持）');
+          } else {
+            // 表示上限: 変更数が多い日はまとめる（コンソール爆発防止）
+            const SHOW_LIMIT = 20; // 上位20日分まで表示
+            _sortDays.slice(0, SHOW_LIMIT).forEach(d => {
+              _dLines.push(`  ${month+1}/${d}:`);
+              _byDay[d].forEach(({ name, before, after }) => _dLines.push(`    ${name}: ${before}→${after}`));
+            });
+            if (_sortDays.length > SHOW_LIMIT) _dLines.push(`  ...他${_sortDays.length - SHOW_LIMIT}日（省略）`);
+          }
+          console.log(_dLines.join('\n'));
+
+          // ── [AG-Diff-Slot] role-slot 変動（月全体） ──
+          const _sLines = ['[AG-Diff-Slot]'];
+          if (_slotTypes.length === 0) {
+            _sLines.push('  role-slotなし（全シフトbuffer型）');
+          } else {
+            _slotTypes.forEach(k => {
+              const d = _slotDelta[k];
+              _sLines.push(`  ${k}: ${d > 0 ? '+' : ''}${d}`);
+            });
+          }
+          console.log(_sLines.join('\n'));
+
+          // ── [AG-Diff-Staff] スタッフ別変更数 ──
+          const _stEntries = Object.entries(_byStaff).sort((a, b) => b[1].count - a[1].count);
+          const _stLines = ['[AG-Diff-Staff]'];
+          if (_stEntries.length === 0) {
+            _stLines.push('  変更なし');
+          } else {
+            const HEAVY_THR = Math.ceil(_days * 0.5); // 日数の50%以上 = 多い
+            _stEntries.forEach(([name, { count }]) => {
+              _stLines.push(`  ${name}: changed=${count}${count >= HEAVY_THR ? ' ★多い' : ''}`);
+            });
+          }
+          console.log(_stLines.join('\n'));
+
+          // ── [AG-Diff-Risk] 危険変更診断 ──
+          const _rLines = ['[AG-Diff-Risk]'];
+          let _hasRisk = false;
+          const HEAVY_THR2 = Math.ceil(_days * 0.5);
+          const NEWBIE_THR = Math.ceil(_days * 0.4);
+
+          // ① 大量変更スタッフ
+          const _heavy = _stEntries.filter(([, v]) => v.count >= HEAVY_THR2);
+          if (_heavy.length > 0) {
+            _hasRisk = true;
+            _rLines.push(`大量変更(≥${HEAVY_THR2}日):\n` + _heavy.map(([n, v]) => `  ${n}: ${v.count}セル`).join('\n'));
+          }
+          // ② night-core への夜勤大幅変動
+          const _ncRisk = _stEntries.filter(([name, { nightDelta }]) => {
+            if (Math.abs(nightDelta) < 3) return false;
+            const tr = _getTrend(name);
+            if (!tr || (tr._workTotal ?? 0) < 10) return false;
+            const ncRate = [...new Set(cd.shiftTypes)]
+              .filter(k => k !== '明け' && _bOf(k) !== '日勤')
+              .reduce((sum, k) => sum + (tr[k] ?? 0), 0);
+            return ncRate >= 0.45;
+          });
+          if (_ncRisk.length > 0) {
+            _hasRisk = true;
+            _rLines.push(`night-core夜勤変動(|Δ|≥3):\n` + _ncRisk.map(([n, v]) => `  ${n}: 夜勤${v.nightDelta >= 0 ? '+' : ''}${v.nightDelta}`).join('\n'));
+          }
+          // ③ 新人変更過多
+          const _newbieRisk = _stEntries.filter(([name, { count }]) => {
+            if (count < NEWBIE_THR) return false;
+            const tr = _getTrend(name);
+            return (tr?._workTotal ?? 0) < 30;
+          });
+          if (_newbieRisk.length > 0) {
+            _hasRisk = true;
+            _rLines.push(`新人変更過多(n<30 & ≥${NEWBIE_THR}日):\n` + _newbieRisk.map(([n, v]) => `  ${n}: changed=${v.count}`).join('\n'));
+          }
+
+          if (!_hasRisk) _rLines.push('  なし ✓');
+          console.log(_rLines.join('\n'));
+        }
+        // ══ [AG-Diff] 差分ログ ここまで ══
+
         if (Object.keys(warnings).length > 0 || (timelineWarnings&&timelineWarnings.length>0)) setTimeout(()=>setGenerateWarnings({warnings,timelineWarnings,deptLabel:cd.label,score}),0);
         lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
