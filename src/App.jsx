@@ -1873,6 +1873,112 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     else console.error(`[AG-v7] FINAL: ${totalViolations}件の違反が残存！`);
   }
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // ★[AG-Trend] Trend学習実効性検証ログ（診断のみ・アルゴリズム変更禁止）
+  //
+  // 目的: shiftTrend / dowShiftRate が生成結果へ実際に反映されているかを可視化。
+  //   ① per-staff: trend率 vs 生成結果率 vs diff を出力
+  //   ② roleGuess: night-core / day-buffer / balanced の診断分類（保存・学習なし）
+  //   ③ summary: ロールグループ別 avgDayRate
+  //   ④ diag: 新規スタッフ不利・trend固定化・fallback正常性チェック
+  // ══════════════════════════════════════════════════════════════════════════════
+  {
+    const _cds = dept.customShiftDefs || [];
+    const _baseOf = (k) => _cds.find(c => c.key === k)?.baseType || k;
+    // 診断対象: 勤務種別のみ（明けは夜勤連鎖で自動配置のため除外）
+    const _workTypes = [...new Set(dept.shiftTypes)].filter(k => deptWork.has(k) && k !== '明け');
+
+    const _staffStats = ds.map(s => {
+      const trend = getTrend(s);
+      const hasTrend = !!(trend && (trend._workTotal ?? 0) > 0);
+
+      // ── 生成結果の勤務種別カウント・比率 ──
+      const _genCounts = Object.fromEntries(_workTypes.map(k => [k, 0]));
+      let _genWorkTotal = 0;
+      for (let d = 1; d <= days; d++) {
+        const sh = res[s.id][d];
+        if (Object.prototype.hasOwnProperty.call(_genCounts, sh)) { _genCounts[sh]++; _genWorkTotal++; }
+      }
+      const genRate = Object.fromEntries(_workTypes.map(k => [k, _genWorkTotal > 0 ? _genCounts[k] / _genWorkTotal : 0]));
+
+      // ── trend学習率（shiftTrend由来）──
+      const trendRate = Object.fromEntries(_workTypes.map(k => [k, hasTrend ? (trend[k] ?? 0) : null]));
+
+      // ── diff（生成 - trend）──
+      const diff = Object.fromEntries(_workTypes.map(k => [k, trendRate[k] != null ? genRate[k] - trendRate[k] : null]));
+
+      // ── roleGuess（診断のみ・保存禁止・学習禁止）──
+      // trendベース優先、trend未学習はgenベースで推定
+      const _baseRates = hasTrend ? trendRate : genRate;
+      // night-core判定: 日勤base以外の勤務（夜勤・早番・遅番系）の合計率
+      const _nightSlotRate = _workTypes
+        .filter(k => _baseOf(k) !== '日勤')
+        .reduce((sum, k) => sum + (_baseRates[k] ?? 0), 0);
+      // day-buffer判定: 日勤base系の合計率
+      const _dayBaseRate = _workTypes
+        .filter(k => _baseOf(k) === '日勤')
+        .reduce((sum, k) => sum + (_baseRates[k] ?? 0), 0);
+
+      let roleGuess;
+      if (_nightSlotRate >= 0.45) roleGuess = 'night-core';
+      else if (_dayBaseRate >= 0.70) roleGuess = 'day-buffer';
+      else roleGuess = 'balanced';
+      if (!hasTrend) roleGuess += '(no-trend)';
+
+      // サマリー用: 生成結果の日勤base率
+      const genDayRate = _workTypes
+        .filter(k => _baseOf(k) === '日勤')
+        .reduce((sum, k) => sum + genRate[k], 0);
+
+      return { s, hasTrend, trendRate, genRate, diff, roleGuess, genDayRate, workTotal: trend?._workTotal ?? 0 };
+    });
+
+    // ── per-staff ログ ──
+    const _fmt  = (v) => v != null ? v.toFixed(2) : 'N/A';
+    const _fmtD = (v) => v != null ? (v >= 0 ? '+' : '') + v.toFixed(2) : 'N/A';
+    _staffStats.forEach(({ s, hasTrend, trendRate, genRate, diff, roleGuess, workTotal }) => {
+      const _tStr = _workTypes.map(k => `${k}=${_fmt(trendRate[k])}`).join(' ');
+      const _gStr = _workTypes.map(k => `${k}=${_fmt(genRate[k])}`).join(' ');
+      const _dStr = _workTypes.map(k => `${k}=${_fmtD(diff[k])}`).join(' ');
+      console.log(
+        `[AG-Trend] staff=${s.name} roleGuess=${roleGuess} trend_n=${workTotal}\n` +
+        `  trend:  ${_tStr}\n` +
+        `  gen:    ${_gStr}\n` +
+        `  diff:   ${_dStr}`
+      );
+    });
+
+    // ── [AG-Trend-Summary]: ロールグループ別 avgDayRate ──
+    const _groups = { 'night-core': [], 'day-buffer': [], 'balanced': [] };
+    _staffStats.forEach(({ roleGuess, genDayRate }) => {
+      const _g = roleGuess.replace('(no-trend)', '');
+      if (_groups[_g]) _groups[_g].push(genDayRate);
+    });
+    const _summaryStr = Object.entries(_groups)
+      .filter(([, arr]) => arr.length > 0)
+      .map(([role, arr]) => `  ${role}(n=${arr.length}): avgDayRate=${(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2)}`)
+      .join('\n');
+    console.log(`[AG-Trend-Summary]\n${_summaryStr}`);
+
+    // ── [AG-Trend-Diag]: 新規・固定化・fallback 診断 ──
+    // ① 新規スタッフ（trend未学習）→ 生成で不利になっていないか
+    const _noTrendNames = _staffStats.filter(({ hasTrend }) => !hasTrend).map(({ s }) => s.name);
+    // ② trend固定化疑い（全差分が ±0.05 未満 → trend通りに固定化されすぎている可能性）
+    const _highConformNames = _staffStats
+      .filter(({ hasTrend, diff }) => hasTrend && Object.values(diff).every(v => v != null && Math.abs(v) < 0.05))
+      .map(({ s }) => s.name);
+    // ③ trend有/無の日勤率比較
+    const _avgDR = (arr) => arr.length > 0 ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : 'N/A';
+    const _noTrendDayRates  = _staffStats.filter(({ hasTrend }) => !hasTrend).map(({ genDayRate }) => genDayRate);
+    const _hasTrendDayRates = _staffStats.filter(({ hasTrend }) =>  hasTrend).map(({ genDayRate }) => genDayRate);
+    console.log(
+      `[AG-Trend-Diag] noTrend=${_noTrendNames.length}人[${_noTrendNames.join(',')||'なし'}]` +
+      ` highConform=${_highConformNames.length}人[${_highConformNames.join(',')||'なし'}]` +
+      ` genDayRate: hasTrend=${_avgDR(_hasTrendDayRates)} noTrend=${_avgDR(_noTrendDayRates)}`
+    );
+  }
+  // ══ [AG-Trend] 診断ログ ここまで ══
+
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
