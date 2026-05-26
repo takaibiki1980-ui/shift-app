@@ -8926,6 +8926,398 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Memory-Snapshot / NextMonth-State / Recovery / Memory-Risk / Continuity] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Temporal-Decision-Fatigue / Adaptation / Dependency / Recovery / Stability / Summary]
+        // Temporal Decision Layer Preparation（時間軸判断レイヤ準備）
+        // - 「Temporal Engineなら、観測した状態をどう判断するか」を仮想提案として算出
+        // - temporalDecisionSuggestion（read-only / 適用禁止 / 保存禁止 / 生成反映禁止）
+        // ★診断のみ。autoGenerate変更禁止・repair変更禁止・score変更禁止
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _tdl_days = getDays(year, month);
+          const _tdl_ds   = cs.filter(s => s.dept === cd.id);
+          const _tdl_cds  = cd.customShiftDefs || [];
+
+          // 夜勤 baseType set
+          const _tdl_nightSet = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _tdc = _tdl_cds.find(c2 => c2.key === k);
+            if ((_tdc?.baseType || k) === '夜勤') _tdl_nightSet.add(k);
+          });
+
+          // trend lookup
+          const _tdl_getTrend = (name) => {
+            const key = Object.keys(ct)
+              .filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+
+          // 疲労ウェイト（既定義と同じ）
+          const _tdl_fw = (sh) => {
+            if (_tdl_nightSet.has(sh)) return 3;
+            if (sh === '明け') return 2;
+            if (sh === '早番' || sh === '遅番') return 1;
+            return 0;
+          };
+          const _tdl_trans = (prev, curr) => {
+            if (_tdl_nightSet.has(prev) && curr === '明け') return 2;
+            if (prev === '明け' && curr === '早番')         return 3;
+            if (_tdl_nightSet.has(prev) && curr === '早番') return 2;
+            return 0;
+          };
+
+          // ── temporalDecisionSnapshot 一括算出（全6 Layer 共用）──
+          const _tdl_snap = {}; // { [name]: state }
+          const _tdl_half = Math.ceil(_tdl_days / 2);
+          const _tdl_ncAvg = (() => {
+            let sum = 0;
+            for (const s of _tdl_ds) {
+              let nc = 0;
+              for (let d = 1; d <= _tdl_days; d++)
+                if (_tdl_nightSet.has(result[s.id]?.[d] ?? '')) nc++;
+              sum += nc;
+            }
+            return _tdl_ds.length > 0 ? sum / _tdl_ds.length : 0;
+          })();
+
+          for (const s of _tdl_ds) {
+            const trend   = _tdl_getTrend(s.name);
+            const wkTotal = trend?._workTotal ?? 0;
+            const isNewbie = wkTotal < 30;
+
+            let totalFatigue = 0, earlyHalfF = 0, lateHalfF = 0, tailFatigue = 0;
+            let nightCnt = 0, restCnt = 0, earlyShiftCnt = 0, lateShiftCnt = 0;
+            const tailN = Math.min(7, _tdl_days);
+
+            for (let d = 1; d <= _tdl_days; d++) {
+              const sh   = result[s.id]?.[d]   ?? '';
+              const prev = result[s.id]?.[d-1]  ?? '';
+              const fw   = _tdl_fw(sh) + (d > 1 ? _tdl_trans(prev, sh) : 0);
+              totalFatigue += fw;
+              d <= _tdl_half ? (earlyHalfF += fw) : (lateHalfF += fw);
+              if (d > _tdl_days - tailN) tailFatigue += fw;
+              if (_tdl_nightSet.has(sh)) nightCnt++;
+              else if (['休み','希望休','有休'].includes(sh)) restCnt++;
+              else if (sh === '早番') earlyShiftCnt++;
+              else if (sh === '遅番') lateShiftCnt++;
+            }
+
+            const fatigueCarryOver = tailFatigue >= tailN * 3.0 ? 'high'
+              : tailFatigue >= tailN * 1.5 ? 'medium' : 'low';
+            const burnoutAccumulation = totalFatigue >= _tdl_days * 2.0 ? 'high'
+              : totalFatigue >= _tdl_days * 1.2 ? 'medium' : 'low';
+            const recoveryDebt = restCnt < _tdl_days * 0.25 * 0.7 ? 'high'
+              : restCnt < _tdl_days * 0.25 ? 'medium' : 'low';
+            const isNightCore = nightCnt >= Math.max(6, _tdl_ncAvg * 1.8);
+            const burnoutTrend = lateHalfF > earlyHalfF * 1.4 && lateHalfF >= 8 ? 'up' : 'stable';
+
+            const stage = (() => {
+              if (nightCnt >= 3) return wkTotal >= 100 ? 5 : 4;
+              if (nightCnt >= 1) return 3;
+              if (lateShiftCnt >= 1) return 2;
+              if (earlyShiftCnt >= 1) return 1;
+              return 0;
+            })();
+
+            _tdl_snap[s.name] = {
+              isNewbie, wkTotal, stage,
+              totalFatigue, earlyHalfF, lateHalfF, tailFatigue,
+              nightCnt, restCnt, earlyShiftCnt, lateShiftCnt,
+              fatigueCarryOver, burnoutAccumulation, recoveryDebt,
+              isNightCore, burnoutTrend,
+            };
+          }
+
+          // 夜勤ペア共起（Dependency / Stability 用）
+          const _tdl_pairCnt = {};
+          for (let d = 1; d <= _tdl_days; d++) {
+            const nst = _tdl_ds.filter(s => _tdl_nightSet.has(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nst.length; i++)
+              for (let j = i + 1; j < nst.length; j++) {
+                const key = [nst[i].name, nst[j].name].sort().join('↔');
+                _tdl_pairCnt[key] = (_tdl_pairCnt[key] || 0) + 1;
+              }
+          }
+          // 各スタッフ最多共起パートナー
+          const _tdl_pairMax = {};
+          for (const [pair, cnt] of Object.entries(_tdl_pairCnt)) {
+            const [nmA, nmB] = pair.split('↔');
+            for (const [nm, partner] of [[nmA, nmB], [nmB, nmA]]) {
+              if (!_tdl_pairMax[nm] || _tdl_pairMax[nm].cnt < cnt)
+                _tdl_pairMax[nm] = { partner, cnt };
+            }
+          }
+
+          // intervention カウンタ（[Summary] 用）
+          let _tdl_fatInt = 0, _tdl_adaInt = 0, _tdl_depInt = 0, _tdl_recInt = 0;
+
+          // ────────────────────────────────────────────────────────────────
+          // Layer 1: [Temporal-Decision-Fatigue]
+          // 疲労状態への仮想判断候補
+          // ────────────────────────────────────────────────────────────────
+          {
+            const _tdf = [`[Temporal-Decision-Fatigue] dept=${cd.id} (suggestion only / not applied)`];
+            let _tdf_any = false;
+
+            for (const s of _tdl_ds) {
+              const st = _tdl_snap[s.name];
+              if (!st) continue;
+              const sug = [];
+
+              if (st.fatigueCarryOver === 'high') {
+                sug.push('夜勤抑制候補 (carry-overリスク高)');
+                sug.push('回復日追加候補');
+              } else if (st.fatigueCarryOver === 'medium') {
+                sug.push('高コスト変更回避候補');
+              }
+              if (st.burnoutAccumulation === 'high') {
+                sug.push('月全体の夜勤負担軽減候補');
+                sug.push('休日パターン見直し候補');
+              } else if (st.burnoutAccumulation === 'medium') {
+                sug.push('高コスト変更回避候補');
+              }
+              if (st.burnoutTrend === 'up') {
+                sug.push('後半シフト密度緩和候補');
+              }
+              if (st.isNightCore && st.fatigueCarryOver !== 'low') {
+                sug.push('nightCore役割分散候補');
+              }
+
+              if (sug.length > 0) {
+                _tdf_any = true;
+                _tdl_fatInt++;
+                const nb = st.isNewbie ? '(新人)' : '';
+                _tdf.push(`  ${s.name}${nb}: fatigueCarryOver=${st.fatigueCarryOver} burnout=${st.burnoutAccumulation}`);
+                sug.forEach(sg => _tdf.push(`    → ${sg}`));
+              }
+            }
+            if (!_tdf_any) _tdf.push('  fatigue intervention: なし ✓');
+            console.log(_tdf.join('\n'));
+          }
+
+          // ────────────────────────────────────────────────────────────────
+          // Layer 2: [Temporal-Decision-Adaptation]
+          // 新人・適応中スタッフへの仮想判断候補
+          // ────────────────────────────────────────────────────────────────
+          {
+            const _tda = [`[Temporal-Decision-Adaptation] dept=${cd.id} (suggestion only / not applied)`];
+            let _tda_any = false;
+
+            for (const s of _tdl_ds) {
+              const st = _tdl_snap[s.name];
+              if (!st) continue;
+              if (!st.isNewbie && st.wkTotal >= 80) continue; // ベテランは除外
+              const sug = [];
+
+              if (st.stage === 0) {
+                sug.push('早番体験機会追加候補 (日勤中心→段階移行)');
+              } else if (st.stage === 1) {
+                sug.push('早番継続維持候補');
+                sug.push('遅番導入検討候補 (次段階準備)');
+              } else if (st.stage === 2) {
+                sug.push('遅番パターン安定化候補');
+                sug.push('夜勤導入保留候補 (遅番慣熟優先)');
+              } else if (st.stage === 3) {
+                sug.push('夜勤ペア体験継続候補');
+                sug.push('夜勤単独保留候補 (準備段階)');
+              } else if (st.stage === 4) {
+                sug.push('夜勤独立化候補 (適応進行中)');
+                if (st.burnoutAccumulation !== 'low') sug.push('適応負荷監視候補');
+              }
+              // 停滞検知（新人 & stage < 3 & wkTotal < 10）
+              if (st.isNewbie && st.stage < 3 && st.wkTotal < 10) {
+                sug.push('育成ペース見直し候補 (段階停滞の可能性)');
+              }
+
+              if (sug.length > 0) {
+                _tda_any = true;
+                _tdl_adaInt++;
+                const nb = st.isNewbie ? '(新人)' : '(成長中)';
+                _tda.push(`  ${s.name}${nb}: stage=${st.stage} wkTotal=${st.wkTotal}`);
+                sug.forEach(sg => _tda.push(`    → ${sg}`));
+              }
+            }
+            if (!_tda_any) _tda.push('  adaptation intervention: なし ✓');
+            console.log(_tda.join('\n'));
+          }
+
+          // ────────────────────────────────────────────────────────────────
+          // Layer 3: [Temporal-Decision-Dependency]
+          // supportDependency / pairDependency への仮想判断候補
+          // ────────────────────────────────────────────────────────────────
+          {
+            const _tdd = [`[Temporal-Decision-Dependency] dept=${cd.id} (suggestion only / not applied)`];
+            let _tdd_any = false;
+
+            // pair固定化（月の 40% 以上の共起）
+            for (const [pair, cnt] of Object.entries(_tdl_pairCnt)) {
+              if (cnt < _tdl_days * 0.4) continue;
+              const pairRate = (cnt / _tdl_days * 100).toFixed(0);
+              const [nmA, nmB] = pair.split('↔');
+              const stA = _tdl_snap[nmA], stB = _tdl_snap[nmB];
+              const sug = [];
+              // 両者がベテランなら分散候補、片方が新人なら維持候補
+              if (stA?.isNewbie || stB?.isNewbie) {
+                sug.push('support継続候補 (新人育成のため)');
+                sug.push('段階的独立化候補 (育成進行に応じて)');
+              } else {
+                sug.push('gradual separation候補 (pair固定化緩和)');
+                sug.push('別ペア夜勤体験機会追加候補');
+              }
+              _tdd_any = true;
+              _tdl_depInt++;
+              _tdd.push(`  ${pair}: 共起=${cnt}回/${_tdl_days}日(${pairRate}%)`);
+              sug.forEach(sg => _tdd.push(`    → ${sg}`));
+            }
+
+            // nightCore 依存（avg * 2.0 以上）
+            for (const s of _tdl_ds) {
+              const st = _tdl_snap[s.name];
+              if (!st || st.nightCnt < Math.max(6, _tdl_ncAvg * 2.0)) continue;
+              const sug = [
+                '夜勤担当分散候補 (nightCore依存緩和)',
+                '他スタッフへの夜勤体験機会付与候補',
+              ];
+              if (!_tdd.some(l => l.includes(s.name))) {
+                _tdd_any = true;
+                _tdl_depInt++;
+                _tdd.push(`  ${s.name}: 夜勤=${st.nightCnt}回 (nightCore依存 avg=${_tdl_ncAvg.toFixed(1)})`);
+                sug.forEach(sg => _tdd.push(`    → ${sg}`));
+              }
+            }
+
+            if (!_tdd_any) _tdd.push('  dependency intervention: なし ✓');
+            console.log(_tdd.join('\n'));
+          }
+
+          // ────────────────────────────────────────────────────────────────
+          // Layer 4: [Temporal-Decision-Recovery]
+          // 回復不足状態への仮想判断候補
+          // ────────────────────────────────────────────────────────────────
+          {
+            const _tdr = [`[Temporal-Decision-Recovery] dept=${cd.id} (suggestion only / not applied)`];
+            let _tdr_any = false;
+
+            for (const s of _tdl_ds) {
+              const st = _tdl_snap[s.name];
+              if (!st) continue;
+              const sug = [];
+
+              if (st.recoveryDebt === 'high') {
+                sug.push('連続夜勤ブロック候補 (回復日確保優先)');
+                sug.push('休日日勤化回避候補');
+                sug.push('高負荷連続勤務抑制候補');
+              } else if (st.recoveryDebt === 'medium') {
+                sug.push('休日パターン最適化候補');
+              }
+              // 後半疲労増加 + 回復不足 → 重複リスク
+              if (st.burnoutTrend === 'up' && st.recoveryDebt !== 'low') {
+                sug.push('月末集中回避候補 (burnoutTrend=up & recoveryDebt複合)');
+              }
+              // tailFatigue 高 = 月末に疲労が集中
+              if (st.tailFatigue >= Math.min(7, _tdl_days) * 3.0 && st.restCnt < 4) {
+                sug.push('月末連続休日挿入候補 (tail疲労ピーク)');
+              }
+
+              if (sug.length > 0) {
+                _tdr_any = true;
+                _tdl_recInt++;
+                const nb = st.isNewbie ? '(新人)' : '';
+                _tdr.push(`  ${s.name}${nb}: recoveryDebt=${st.recoveryDebt} rest=${st.restCnt}日 tailFatigue=${st.tailFatigue}`);
+                sug.forEach(sg => _tdr.push(`    → ${sg}`));
+              }
+            }
+            if (!_tdr_any) _tdr.push('  recovery intervention: なし ✓');
+            console.log(_tdr.join('\n'));
+          }
+
+          // ────────────────────────────────────────────────────────────────
+          // Layer 5: [Temporal-Decision-Stability]
+          // 組織全体への仮想介入候補
+          // ────────────────────────────────────────────────────────────────
+          {
+            const _tds = [`[Temporal-Decision-Stability] dept=${cd.id} (suggestion only / not applied)`];
+
+            // nightCoreRisk: nightCore 担当が 2 名以下
+            const _tds_nc = _tdl_ds.filter(s => _tdl_snap[s.name]?.isNightCore);
+            if (_tds_nc.length <= 2 && _tds_nc.length > 0) {
+              _tds.push(`nightCoreRisk(担当${_tds_nc.length}名: ${_tds_nc.map(s=>s.name).join(',')}):`);
+              _tds.push('    → 夜勤分散候補: 担当者数増加を検討');
+              _tds.push('    → nightCore以外への夜勤体験機会付与候補');
+            }
+
+            // burnoutRisk: burnoutAccumulation=high が複数
+            const _tds_bo = _tdl_ds.filter(s => _tdl_snap[s.name]?.burnoutAccumulation === 'high');
+            if (_tds_bo.length >= 1) {
+              _tds.push(`burnoutRisk(${_tds_bo.map(s=>s.name).join(',')}):`);
+              _tds.push('    → 翌月高コスト変更回避候補');
+              _tds.push('    → シフト負荷分散候補');
+            }
+
+            // newbieRetentionRisk: 新人 & 過負荷
+            const _tds_nb = _tdl_ds.filter(s => {
+              const st = _tdl_snap[s.name];
+              return st?.isNewbie && (st.burnoutAccumulation !== 'low' || st.recoveryDebt !== 'low');
+            });
+            if (_tds_nb.length >= 1) {
+              _tds.push(`newbieRetentionRisk(${_tds_nb.map(s=>s.name).join(',')}):`);
+              _tds.push('    → support継続候補');
+              _tds.push('    → 育成負荷段階化候補 (急激な夜勤導入を保留)');
+            }
+
+            // pairDependencyRisk: 強固ペア
+            const _tds_sp = Object.entries(_tdl_pairCnt)
+              .filter(([, c]) => c >= _tdl_days * 0.4);
+            if (_tds_sp.length >= 1) {
+              _tds.push('pairDependencyRisk:');
+              _tds_sp.slice(0, 3).forEach(([pair, cnt]) =>
+                _tds.push(`    → ${pair}(${cnt}回) 固定ペア緩和候補: gradual separation`)
+              );
+            }
+
+            // recoveryDebt 組織全体
+            const _tds_rd = _tdl_ds.filter(s => _tdl_snap[s.name]?.recoveryDebt === 'high');
+            if (_tds_rd.length >= Math.ceil(_tdl_ds.length * 0.3)) {
+              _tds.push('休日不足(組織全体):');
+              _tds.push('    → 月間休日目標の見直し候補');
+              _tds.push('    → 有休・希望休の計画的付与候補');
+            }
+
+            if (_tds.length === 1) _tds.push('  stability intervention: なし ✓');
+            console.log(_tds.join('\n'));
+          }
+
+          // ────────────────────────────────────────────────────────────────
+          // [Temporal-Decision-Summary]
+          // 介入候補の集計 + 総合 Temporal Pressure
+          // ────────────────────────────────────────────────────────────────
+          {
+            const totalInt = _tdl_fatInt + _tdl_adaInt + _tdl_depInt + _tdl_recInt;
+            const overallTemporalPressure = totalInt >= 5 ? 'high'
+              : totalInt >= 2 ? 'medium' : 'low';
+
+            const _sum = [`[Temporal-Decision-Summary] dept=${cd.id}`];
+            _sum.push(`fatigueIntervention=${_tdl_fatInt} adaptationIntervention=${_tdl_adaInt} dependencyIntervention=${_tdl_depInt} recoveryIntervention=${_tdl_recInt}`);
+            _sum.push(`totalIntervention=${totalInt} overallTemporalPressure=${overallTemporalPressure}`);
+
+            // 最頻介入の特定
+            const _intMap = [
+              { label: 'fatigue',     count: _tdl_fatInt },
+              { label: 'adaptation',  count: _tdl_adaInt },
+              { label: 'dependency',  count: _tdl_depInt },
+              { label: 'recovery',    count: _tdl_recInt },
+            ].sort((a, b) => b.count - a.count);
+            if (_intMap[0].count > 0)
+              _sum.push(`topIntervention: ${_intMap[0].label}(${_intMap[0].count}件)`);
+
+            if (totalInt === 0) _sum.push('  temporal decision: 介入不要 ✓');
+            else _sum.push('  ★ suggestion only — 実際のシフトへは一切反映しない');
+            console.log(_sum.join('\n'));
+          }
+        }
+        // ══ [Temporal-Decision-Fatigue / Adaptation / Dependency / Recovery / Stability / Summary] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
