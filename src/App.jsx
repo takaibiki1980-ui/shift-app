@@ -1021,12 +1021,21 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
   const consecRest = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   const consecRestFwd = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   const intervalThreshold = dept.intervalThreshold ?? null;
+  // ★[Fix-NightSeq] 夜勤系 shift set: baseType=夜勤 の全 shift key（明け前日バリデーション用）
+  const _agNightSet = new Set(
+    [...new Set(dept.shiftTypes || [])].filter(k => {
+      const _cd = (dept.customShiftDefs || []).find(d => d.key === k);
+      return (_cd?.baseType || k) === '夜勤';
+    })
+  );
   const isBadTransition = (prev, curr) => {
     if (!prev || !curr) return false;
     // ★インターバル特例部署（栄養科等）: 時間インターバルのみで判定、文字ルールは不使用
     if (intervalThreshold != null) return shiftIntervalHours(prev, curr, dept) < intervalThreshold;
-    // ★通常部署（介護職等）: 現場防衛のため3パターンを完全禁止
+    // ★通常部署（介護職等）: 現場防衛のため4パターンを完全禁止
     //   遅番→早番（11時間）、遅番→日勤（12.5時間）、日勤→早番（13.5時間）
+    //   ★[Fix-NightSeq] 明けの前日は必ず夜勤系（明け = 夜勤状態の継続）
+    if (curr === '明け' && !_agNightSet.has(prev)) return true;
     return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
   };
   const canRest = (id, d) => {
@@ -1168,8 +1177,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
         ];
         let excess = overStaff.length - limit;
+        // ★[Fix-NightSeq] 夜勤系列整合性: shiftKey が夜勤ベースか事前判定
+        const _em_isNight = ((_agNightSet.has(shiftKey)) ||
+          ((dept.customShiftDefs || []).find(c => c.key === shiftKey)?.baseType || shiftKey) === '夜勤');
         for (const s of toFix) {
           if (excess <= 0) break;
+          // ★[Fix-NightSeq] 夜勤系列 atomic 保護:
+          //   夜勤セルを変更しようとするとき、翌日=明け かつ 翌日がロック済み
+          //   → 系列を壊せない → このスタッフは enforceMaxStaff でスキップ
+          if (_em_isNight && d + 1 <= days && (res[s.id][d + 1] ?? '') === '明け'
+              && lockedDays[s.id].has(d + 1)) {
+            console.log(`[Night-Sequence-EnforceMax] d${d} ${s.name}: 翌日d${d+1}明けがロック済 → スキップ`);
+            continue;
+          }
           const prev = res[s.id][d - 1], next = res[s.id][d + 1];
           const altShift = dayTypes.find(k => {
             if (k === shiftKey) return false;
@@ -1180,18 +1200,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
             return cnt < (maxStaff[k] ?? 99);
           });
           res[s.id][d] = altShift || "休み";
-          // ★[Night-Sequence-EnforceMax] read-only: 夜勤削除→翌日明け孤立検出（診断のみ）
-          {
-            const _em_cds  = dept.customShiftDefs || [];
-            const _em_nc   = _em_cds.find(c => c.key === shiftKey);
-            const _em_base = _em_nc?.baseType || shiftKey;
-            const _em_next = d + 1 <= days ? (res[s.id][d + 1] ?? '') : '';
-            if (_em_base === '夜勤' && _em_next === '明け') {
-              console.warn(
-                `[Night-Sequence-EnforceMax] d${d} ${s.name}: ${shiftKey}→${res[s.id][d]}` +
-                ` 翌日d${d+1}=明け 未修正 ⚠ orphaned明け生成`
-              );
-            }
+          // ★[Fix-NightSeq] 夜勤系列カスケード:
+          //   夜勤→明け の系列において夜勤を変更した → 翌日の明けも休みに変換
+          //   （明け = 夜勤後状態。夜勤がなければ明けは存在できない）
+          if (_em_isNight && d + 1 <= days && (res[s.id][d + 1] ?? '') === '明け'
+              && !lockedDays[s.id].has(d + 1)) {
+            console.log(`[Night-Sequence-EnforceMax] d${d} ${s.name}: ${shiftKey}→${res[s.id][d]} cascade d${d+1}明け→休み ✓`);
+            res[s.id][d + 1] = '休み';
           }
           excess--;
         }
@@ -7515,18 +7530,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             // 既に戻し値と一致している場合はスキップ（前の rollback の影響）
             if ((result[sid]?.[day] ?? '') === (revVal ?? '')) continue;
 
-            // ★[Night-Sequence-DetectOrphan] read-only: guard③ 欠如ケース検出
-            // result[day]=明け かつ result[day-1]∈nightSet かつ revVal≠明け
-            // → Phase1 がこのまま続行すると 夜勤の翌日の明け を日勤等へ置換 → 夜勤孤立発生
-            // ※ 修正なし。診断のみ。guard③ 追加は別タスク。
-            if ((result[sid]?.[day] ?? '') === '明け' &&
-                day > 1 && _p1_nightSet.has(result[sid]?.[day-1] ?? '')) {
-              console.log(
-                `[Night-Sequence-DetectOrphan] Phase1: ${name} d${day}/${_p1_days}` +
-                ` result[${day}]=明け→${revVal||'(未設定)'} 前日d${day-1}=${result[sid]?.[day-1]||''}(夜勤系)` +
-                ` ← guard③欠如: 夜勤後明け削除候補 ⚠ (この行が出力された場合は夜勤孤立が発生する)`
-              );
-            }
+            // [Night-Sequence-DetectOrphan] → guard③ 実装済み（明け orphan guard 内）
 
             // ── [AG-Minimal-Rollback-Step] per-step minStaff 影響集計 ──
             // minStaff に影響する変更のみ、または APPLIED 以外の決定のみログ出力
@@ -7546,16 +7550,28 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               console.log(ln.join('\n'));
             };
 
-            // ── 明け orphan guard ──
+            // ── 明け orphan guard（guard① / guard② / guard③） ──
+            // guard①: revVal∉nightSet かつ 翌日=明け → BLOCK（夜勤→非夜勤で翌日明けが孤立）
             if (day < _p1_days && (result[sid]?.[day+1] ?? '') === '明け' &&
                 !_p1_nightSet.has(revVal ?? '')) {
               _p1_blockedMake.push({ name, day, before, after });
               _logStep('BLOCKED_MAKE');
               continue;
             }
+            // guard②: revVal=明け かつ 前日∉nightSet → BLOCK（夜勤なしで明けに戻すと孤立）
             if ((revVal ?? '') === '明け' && !_p1_nightSet.has(result[sid]?.[day-1] ?? '')) {
               _p1_blockedMake.push({ name, day, before, after });
               _logStep('BLOCKED_MAKE');
+              continue;
+            }
+            // guard③[Fix-NightSeq]: result[day]=明け かつ 前日∈nightSet かつ revVal≠明け → BLOCK
+            //   （夜勤後の明けセルを別シフトへ置換 → 夜勤が孤立する）
+            if ((result[sid]?.[day] ?? '') === '明け' &&
+                day > 1 && _p1_nightSet.has(result[sid]?.[day-1] ?? '') &&
+                (revVal ?? '') !== '明け') {
+              _p1_blockedMake.push({ name, day, before, after });
+              _logStep('BLOCKED_MAKE');
+              console.log(`[Night-Sequence-DetectOrphan] guard③ BLOCKED: ${name} d${day}/${_p1_days} 明け→${revVal||'休み'} 前日d${day-1}=${result[sid]?.[day-1]||''}(夜勤系) ✓`);
               continue;
             }
 
@@ -7764,12 +7780,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
           // guard 非対称性 監査
           _nstLines.push('');
-          _nstLines.push('[Night-Sequence-GuardAudit] Phase1 明け orphan guard 非対称性:');
+          _nstLines.push('[Night-Sequence-GuardAudit] Phase1 明け orphan guard（全guard実装済み）:');
           _nstLines.push('  guard①(実装済み): revVal∉nightSet & result[day+1]=明け → BLOCKED_MAKE ✓ (夜勤→非夜勤 を防ぐ)');
           _nstLines.push('  guard②(実装済み): revVal=明け & result[day-1]∉nightSet → BLOCKED_MAKE ✓ (孤立明けへの戻しを防ぐ)');
-          _nstLines.push('  guard③(未実装)  : result[day]=明け & result[day-1]∈nightSet & revVal≠明け → 未ブロック ⚠');
-          _nstLines.push('    ↑このケース: Phase1 が夜勤の翌日の明けを日勤等へ rollback → 夜勤孤立を生成する可能性');
-          _nstLines.push('    ↑対策: 修正は別タスク。今回は診断のみ。');
+          _nstLines.push('  guard③(実装済み): result[day]=明け & result[day-1]∈nightSet & revVal≠明け → BLOCKED_MAKE ✓ [Fix-NightSeq]');
           console.log(_nstLines.join('\n'));
         }
 
