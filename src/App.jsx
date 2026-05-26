@@ -8630,6 +8630,302 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-CarryOver / Adaptation / State-Drift / Stability] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Temporal-Memory-Snapshot / NextMonth-State / Recovery / Memory-Risk / Continuity]
+        // Temporal Memory Bridge（時間状態ブリッジ）
+        // - 「月末状態」→「翌月初期状態」を read-only simulation で橋渡し
+        // - temporalMemorySnapshot（仮想/local-only / 保存禁止 / 生成反映禁止）
+        // ★診断のみ。shift生成変更禁止・repair変更禁止・score変更禁止・trend変更禁止
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _tmb_days = getDays(year, month);
+          const _tmb_ds   = cs.filter(s => s.dept === cd.id);
+          const _tmb_cds  = cd.customShiftDefs || [];
+
+          // 夜勤 baseType set
+          const _tmb_nightSet = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _tmc = _tmb_cds.find(c2 => c2.key === k);
+            if ((_tmc?.baseType || k) === '夜勤') _tmb_nightSet.add(k);
+          });
+
+          // trend lookup
+          const _tmb_getTrend = (name) => {
+            const key = Object.keys(ct)
+              .filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+
+          // 疲労ウェイト（既定義と同じ）
+          const _tmb_fw = (sh) => {
+            if (_tmb_nightSet.has(sh)) return 3;
+            if (sh === '明け') return 2;
+            if (sh === '早番' || sh === '遅番') return 1;
+            return 0;
+          };
+          const _tmb_trans = (prev, curr) => {
+            if (_tmb_nightSet.has(prev) && curr === '明け') return 2;
+            if (prev === '明け' && curr === '早番')         return 3;
+            if (_tmb_nightSet.has(prev) && curr === '早番') return 2;
+            return 0;
+          };
+
+          // ── temporalMemorySnapshot 一括算出（全5 Layer 共用）──
+          const _tmb_snapshot = {}; // { [name]: { ... } }
+          const half = Math.ceil(_tmb_days / 2);
+          const _tmb_ncAvg = (() => {
+            let sum = 0;
+            for (const s of _tmb_ds) {
+              let nc = 0;
+              for (let d = 1; d <= _tmb_days; d++)
+                if (_tmb_nightSet.has(result[s.id]?.[d] ?? '')) nc++;
+              sum += nc;
+            }
+            return _tmb_ds.length > 0 ? sum / _tmb_ds.length : 0;
+          })();
+
+          for (const s of _tmb_ds) {
+            const trend    = _tmb_getTrend(s.name);
+            const wkTotal  = trend?._workTotal ?? 0;
+            const isNewbie = wkTotal < 30;
+
+            let totalFatigue = 0, earlyHalfF = 0, lateHalfF = 0;
+            let nightCnt = 0, restCnt = 0;
+            let tailFatigue = 0;
+            const tailN = Math.min(7, _tmb_days);
+
+            for (let d = 1; d <= _tmb_days; d++) {
+              const sh   = result[s.id]?.[d]   ?? '';
+              const prev = result[s.id]?.[d-1]  ?? '';
+              const fw   = _tmb_fw(sh) + (d > 1 ? _tmb_trans(prev, sh) : 0);
+              totalFatigue += fw;
+              d <= half ? (earlyHalfF += fw) : (lateHalfF += fw);
+              if (_tmb_nightSet.has(sh)) nightCnt++;
+              else if (['休み','希望休','有休'].includes(sh)) restCnt++;
+              if (d > _tmb_days - tailN) tailFatigue += fw;
+            }
+
+            const fatigueCarryOver = tailFatigue >= tailN * 3.0 ? 'high'
+              : tailFatigue >= tailN * 1.5 ? 'medium' : 'low';
+            const burnoutAccumulation = totalFatigue >= _tmb_days * 2.0 ? 'high'
+              : totalFatigue >= _tmb_days * 1.2 ? 'medium' : 'low';
+            const recoveryDebt = restCnt < _tmb_days * 0.25 * 0.7 ? 'high'
+              : restCnt < _tmb_days * 0.25 ? 'medium' : 'low';
+            const nightAdaptation = nightCnt > 0
+              ? (nightCnt >= Math.max(6, _tmb_ncAvg * 1.8) ? 'intense' : 'moderate')
+              : 'low';
+
+            // adaptation stage (0-5)
+            const stage = (() => {
+              if (nightCnt >= 3) return wkTotal >= 100 ? 5 : 4;
+              if (nightCnt >= 1) return 3;
+              const earlyShifts = [...Array(_tmb_days)].filter((_, i) => result[s.id]?.[i+1] === '早番').length;
+              const lateShifts  = [...Array(_tmb_days)].filter((_, i) => result[s.id]?.[i+1] === '遅番').length;
+              if (lateShifts >= 1) return 2;
+              if (earlyShifts >= 1) return 1;
+              return 0;
+            })();
+
+            _tmb_snapshot[s.name] = {
+              isNewbie, wkTotal, stage,
+              totalFatigue, earlyHalfF, lateHalfF, tailFatigue, nightCnt, restCnt,
+              fatigueCarryOver, burnoutAccumulation, recoveryDebt, nightAdaptation
+            };
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 1: [Temporal-Memory-Snapshot]
+          // 月末時点の「持ち越される状態」を抽出
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _tms1 = [`[Temporal-Memory-Snapshot] dept=${cd.id} (read-only / not persisted)`];
+            let _tms1_any = false;
+
+            for (const s of _tmb_ds) {
+              const st = _tmb_snapshot[s.name];
+              if (!st) continue;
+              const items = [];
+              if (st.fatigueCarryOver !== 'low') items.push(`fatigueCarryOver=${st.fatigueCarryOver}`);
+              if (st.burnoutAccumulation !== 'low') items.push(`burnoutAccumulation=${st.burnoutAccumulation}`);
+              if (st.recoveryDebt !== 'low') items.push(`recoveryDebt=${st.recoveryDebt}`);
+              if (st.nightAdaptation === 'intense') items.push('nightAdaptation=intense');
+              if (items.length > 0) {
+                _tms1_any = true;
+                _tms1.push(`  ${s.name}${st.isNewbie ? '(新人)' : ''}: ${items.join(' ')}`);
+              }
+            }
+            if (!_tms1_any) _tms1.push('  memory snapshot: 持ち越しなし ✓');
+            console.log(_tms1.join('\n'));
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 2: [Temporal-NextMonth-State]
+          // 翌月初期状態シミュレーション
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _tms2 = [`[Temporal-NextMonth-State] dept=${cd.id} (simulated)`];
+            let _tms2_any = false;
+
+            for (const s of _tmb_ds) {
+              const st = _tmb_snapshot[s.name];
+              if (!st) continue;
+              // 持ち越しあり、または新人の場合のみ表示
+              if (st.fatigueCarryOver === 'low' && st.burnoutAccumulation === 'low'
+                && st.recoveryDebt === 'low' && !st.isNewbie) continue;
+
+              const initF = st.fatigueCarryOver === 'high' ? 'high'
+                : st.fatigueCarryOver === 'medium' ? 'medium' : 'low';
+              const recD = st.recoveryDebt === 'high' ? ' + recoveryDebt' : '';
+              const nt   = st.nightAdaptation;
+
+              _tms2.push(`  ${s.name}: initialFatigue=${initF}${recD} nightTolerance=${nt} stage=${st.stage}`);
+              _tms2_any = true;
+            }
+            if (!_tms2_any) _tms2.push('  next-month state: 初期状態=neutral ✓');
+            console.log(_tms2.join('\n'));
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 3: [Temporal-Recovery]
+          // 回復しやすい状態 / 残留しやすい状態を分類
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _tms3 = [`[Temporal-Recovery] dept=${cd.id} (simulated)`];
+
+            const _tms3_fast = [];     // 回復しやすい
+            const _tms3_persist = []; // 残留しやすい
+
+            for (const s of _tmb_ds) {
+              const st = _tmb_snapshot[s.name];
+              if (!st) continue;
+
+              // fatigueCarryOver のみで、他が低い → fast recovery
+              if (st.fatigueCarryOver === 'high' && st.burnoutAccumulation === 'low'
+                && st.recoveryDebt === 'low') {
+                _tms3_fast.push(`  ${s.name}: fatigueDecay=fast (spike-only)`);
+              } else if (st.fatigueCarryOver === 'high' || st.burnoutAccumulation !== 'low'
+                || st.recoveryDebt !== 'low') {
+                // 複数持ち越し → 残留
+                const residuals = [];
+                if (st.burnoutAccumulation !== 'low') residuals.push(`burnoutResidual=${st.burnoutAccumulation}`);
+                if (st.recoveryDebt !== 'low') residuals.push(`recoveryCarry=${st.recoveryDebt}`);
+                if (st.nightAdaptation === 'intense') residuals.push('nightLoad=persist');
+                if (residuals.length > 0)
+                  _tms3_persist.push(`  ${s.name}: ${residuals.join(' ')}`);
+              }
+            }
+
+            if (_tms3_fast.length > 0) {
+              _tms3.push('fatigueDecay=fast(回復可能):');
+              _tms3_fast.forEach(l => _tms3.push(l));
+            }
+            if (_tms3_persist.length > 0) {
+              _tms3.push('stateResidual=persist(残留):');
+              _tms3_persist.forEach(l => _tms3.push(l));
+            }
+            if (_tms3_fast.length === 0 && _tms3_persist.length === 0)
+              _tms3.push('  recovery pattern: neutral ✓');
+
+            console.log(_tms3.join('\n'));
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 4: [Temporal-Memory-Risk]
+          // 翌月へ危険を持ち越す兆候
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _tms4 = [`[Temporal-Memory-Risk] dept=${cd.id} (simulated)`];
+            const _tms4_risks = { burnout: [], recoveryDebt: [], nightCore: [], newbie: [], pair: [] };
+
+            // burnoutCarryOver
+            for (const s of _tmb_ds) {
+              const st = _tmb_snapshot[s.name];
+              if (st?.burnoutAccumulation === 'high') _tms4_risks.burnout.push(s.name);
+            }
+
+            // recoveryDebtAccumulation
+            for (const s of _tmb_ds) {
+              const st = _tmb_snapshot[s.name];
+              if (st?.recoveryDebt === 'high') _tms4_risks.recoveryDebt.push(s.name);
+            }
+
+            // nightCoreChronicLoad
+            for (const s of _tmb_ds) {
+              const st = _tmb_snapshot[s.name];
+              if (st?.nightCnt >= Math.max(6, _tmb_ncAvg * 2.0)) _tms4_risks.nightCore.push(s.name);
+            }
+
+            // newbieStagnation（stage < 3 かつ isNewbie）
+            for (const s of _tmb_ds) {
+              const st = _tmb_snapshot[s.name];
+              if (st?.isNewbie && st.stage < 3 && st.wkTotal < 10) _tms4_risks.newbie.push(`${s.name}(stage=${st.stage})`);
+            }
+
+            // pairDependencyPersistence（ペア共起 >= 40%）
+            const _tms4_pairCnt = {};
+            for (let d = 1; d <= _tmb_days; d++) {
+              const nst = _tmb_ds.filter(s => _tmb_nightSet.has(result[s.id]?.[d] ?? ''));
+              for (let i = 0; i < nst.length; i++)
+                for (let j = i + 1; j < nst.length; j++) {
+                  const key = [nst[i].name, nst[j].name].sort().join('→');
+                  _tms4_pairCnt[key] = (_tms4_pairCnt[key] || 0) + 1;
+                }
+            }
+            for (const [pair, cnt] of Object.entries(_tms4_pairCnt))
+              if (cnt >= _tmb_days * 0.4) _tms4_risks.pair.push(`${pair}(${cnt}回)`);
+
+            if (_tms4_risks.burnout.length > 0)
+              _tms4.push(`burnoutCarryOver: ${_tms4_risks.burnout.join(', ')}`);
+            if (_tms4_risks.recoveryDebt.length > 0)
+              _tms4.push(`recoveryDebtCarry: ${_tms4_risks.recoveryDebt.join(', ')}`);
+            if (_tms4_risks.nightCore.length > 0)
+              _tms4.push(`nightCoreChronicLoad: ${_tms4_risks.nightCore.join(', ')}`);
+            if (_tms4_risks.newbie.length > 0)
+              _tms4.push(`newbieStagnation: ${_tms4_risks.newbie.join(', ')}`);
+            if (_tms4_risks.pair.length > 0)
+              _tms4.push(`pairDependencyPersistence: ${_tms4_risks.pair.join(', ')}`);
+            if (Object.values(_tms4_risks).every(v => v.length === 0))
+              _tms4.push('  memory risk: なし ✓');
+
+            console.log(_tms4.join('\n'));
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 5: [Temporal-Continuity]
+          // 「来月へ持ち越される安定性」を簡易数値化
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _tms5_stable = [];
+            const _tms5_risk   = [];
+
+            for (const s of _tmb_ds) {
+              const st = _tmb_snapshot[s.name];
+              if (!st) continue;
+
+              const riskScore = (st.fatigueCarryOver === 'high' ? 2 : st.fatigueCarryOver === 'medium' ? 1 : 0)
+                              + (st.burnoutAccumulation === 'high' ? 2 : st.burnoutAccumulation === 'medium' ? 1 : 0)
+                              + (st.recoveryDebt === 'high' ? 2 : st.recoveryDebt === 'medium' ? 1 : 0);
+
+              if (riskScore >= 3) _tms5_risk.push(s.name);
+              else _tms5_stable.push(s.name);
+            }
+
+            const overallContinuity = _tms5_risk.length >= Math.ceil(_tmb_ds.length * 0.3) ? 'low'
+              : _tms5_risk.length >= 1 ? 'medium' : 'high';
+
+            const _tms5 = [`[Temporal-Continuity] dept=${cd.id} overallContinuity=${overallContinuity}`];
+            _tms5.push(`stableCarry=${_tms5_stable.length}人 riskCarry=${_tms5_risk.length}人`);
+            if (_tms5_stable.length > 0)
+              _tms5.push(`stable: ${_tms5_stable.slice(0, 8).join(', ')}${_tms5_stable.length > 8 ? ' ...' : ''}`);
+            if (_tms5_risk.length > 0)
+              _tms5.push(`risk: ${_tms5_risk.join(', ')}`);
+
+            console.log(_tms5.join('\n'));
+          }
+        }
+        // ══ [Temporal-Memory-Snapshot / NextMonth-State / Recovery / Memory-Risk / Continuity] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
