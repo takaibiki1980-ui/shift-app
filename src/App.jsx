@@ -6824,7 +6824,72 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
 
         // ══════════════════════════════════════════════════════════════════════════
-        // ★[AG-Diff] Generation Diff View（診断・透明性ログ）
+        // ★[Night-Sequence-Audit] 明け孤立 4段階トレース
+        // genSnapshot / bestOfN / Phase1 / final — どの段階で発生したかを特定
+        // ★診断のみ。生成ロジック変更なし。Phase1変更なし。
+        // ══════════════════════════════════════════════════════════════════════════
+        let _nsePreBuf  = []; // bestOfN後 明け孤立リスト（Phase1前比較用）
+        let _nseSnapBuf = []; // genSnapshot 明け孤立リスト（import/manual edit 由来検出用）
+        {
+          const _nse_ds   = cs.filter(s => s.dept === cd.id);
+          const _nse_days = getDays(year, month);
+          const _nse_cds  = cd.customShiftDefs || [];
+          const _nse_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _nc = _nse_cds.find(c2 => c2.key === k);
+            if ((_nc?.baseType || k) === '夜勤') _nse_nset.add(k);
+          });
+
+          // ① genSnapshot スキャン（生成前 / import or manual edit 由来）
+          for (const s of _nse_ds) {
+            for (let d = 2; d <= _nse_days; d++) {
+              const sh   = genSnapshot[s.id]?.[d]   ?? '';
+              const prev = genSnapshot[s.id]?.[d-1]  ?? '';
+              if (sh === '明け' && !_nse_nset.has(prev))
+                _nseSnapBuf.push({ sid: s.id, name: s.name, day: d, prevShift: prev });
+            }
+          }
+
+          // ② bestOfN result スキャン（autoGenerate + repair + localSearch 後 / Phase1前）
+          for (const s of _nse_ds) {
+            for (let d = 2; d <= _nse_days; d++) {
+              const sh   = result[s.id]?.[d]   ?? '';
+              const prev = result[s.id]?.[d-1]  ?? '';
+              if (sh === '明け' && !_nse_nset.has(prev))
+                _nsePreBuf.push({ sid: s.id, name: s.name, day: d, prevShift: prev });
+            }
+          }
+
+          // ── log ──
+          const _nseLines = [`[Night-Sequence-Audit] dept=${cd.id} 明け孤立スキャン`];
+          if (_nseSnapBuf.length > 0) {
+            _nseLines.push(`genSnapshot 明け孤立(${_nseSnapBuf.length}件) ← import/manual edit 由来の可能性:`);
+            _nseSnapBuf.forEach(v =>
+              _nseLines.push(`  ${v.name} d${v.day}: 前日=${v.prevShift||'(未設定)'}→明け ⚠`)
+            );
+          } else {
+            _nseLines.push('genSnapshot 明け孤立: なし ✓');
+          }
+          if (_nsePreBuf.length > 0) {
+            const _nseNewGen  = _nsePreBuf.filter(v2 => !_nseSnapBuf.some(v1 => v1.sid === v2.sid && v1.day === v2.day));
+            const _nsePersist = _nsePreBuf.filter(v2 =>  _nseSnapBuf.some(v1 => v1.sid === v2.sid && v1.day === v2.day));
+            if (_nseNewGen.length > 0) {
+              _nseLines.push(`bestOfN 明け孤立 新規(${_nseNewGen.length}件) ← autoGenerate/repair/localSearch 由来 ⚠:`);
+              _nseNewGen.forEach(v =>
+                _nseLines.push(`  ${v.name} d${v.day}: 前日=${v.prevShift||'(未設定)'}→明け`)
+              );
+            }
+            if (_nsePersist.length > 0) {
+              _nseLines.push(`bestOfN後も持続(${_nsePersist.length}件 ← genSnapshot由来が未修正):`);
+              _nsePersist.forEach(v =>
+                _nseLines.push(`  ${v.name} d${v.day}: 前日=${v.prevShift||'(未設定)'}→明け`)
+              );
+            }
+          } else {
+            _nseLines.push('bestOfN result 明け孤立: なし ✓');
+          }
+          console.log(_nseLines.join('\n'));
+        }
         // 生成前(genSnapshot) vs 生成後(result) の差分を4軸で可視化
         // 自動生成の透明性を高め、管理者が安心して確認できるようにする
         // ★undo構造・autosave・realtimeには一切影響しない（read-only診断）
@@ -7410,6 +7475,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             // 既に戻し値と一致している場合はスキップ（前の rollback の影響）
             if ((result[sid]?.[day] ?? '') === (revVal ?? '')) continue;
 
+            // ★[Night-Sequence-DetectOrphan] read-only: guard③ 欠如ケース検出
+            // result[day]=明け かつ result[day-1]∈nightSet かつ revVal≠明け
+            // → Phase1 がこのまま続行すると 夜勤の翌日の明け を日勤等へ置換 → 夜勤孤立発生
+            // ※ 修正なし。診断のみ。guard③ 追加は別タスク。
+            if ((result[sid]?.[day] ?? '') === '明け' &&
+                day > 1 && _p1_nightSet.has(result[sid]?.[day-1] ?? '')) {
+              console.log(
+                `[Night-Sequence-DetectOrphan] Phase1: ${name} d${day}/${_p1_days}` +
+                ` result[${day}]=明け→${revVal||'(未設定)'} 前日d${day-1}=${result[sid]?.[day-1]||''}(夜勤系)` +
+                ` ← guard③欠如: 夜勤後明け削除候補 ⚠ (この行が出力された場合は夜勤孤立が発生する)`
+              );
+            }
+
             // ── [AG-Minimal-Rollback-Step] per-step minStaff 影響集計 ──
             // minStaff に影響する変更のみ、または APPLIED 以外の決定のみログ出力
             const _stp = {};
@@ -7587,6 +7665,73 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           _p1AppliedBuf = _p1_applied.map(c => ({ before: c.before, after: c.after }));
         }
         // ══ [AG-Minimal-Change-Phase1] ここまで ══
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Night-Sequence-Trace] Phase1前後 明け孤立 比較 + guard非対称性監査
+        // ★診断のみ。修正なし。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _nst_ds   = cs.filter(s => s.dept === cd.id);
+          const _nst_days = getDays(year, month);
+          const _nst_cds  = cd.customShiftDefs || [];
+          const _nst_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _nc = _nst_cds.find(c2 => c2.key === k);
+            if ((_nc?.baseType || k) === '夜勤') _nst_nset.add(k);
+          });
+
+          // Phase1後スキャン
+          const _nstPost = [];
+          for (const s of _nst_ds) {
+            for (let d = 2; d <= _nst_days; d++) {
+              const sh   = result[s.id]?.[d]   ?? '';
+              const prev = result[s.id]?.[d-1]  ?? '';
+              if (sh === '明け' && !_nst_nset.has(prev))
+                _nstPost.push({ sid: s.id, name: s.name, day: d, prevShift: prev });
+            }
+          }
+
+          // 新規発生（Phase1起因）
+          const _nstNew = _nstPost.filter(v2 =>
+            !_nsePreBuf.some(v1 => v1.sid === v2.sid && v1.day === v2.day)
+          );
+          // Phase1で解消
+          const _nstFixed = _nsePreBuf.filter(v1 =>
+            !_nstPost.some(v2 => v2.sid === v1.sid && v2.day === v1.day)
+          );
+
+          const _nstLines = [`[Night-Sequence-Trace] dept=${cd.id}`];
+          if (_nstNew.length === 0 && _nstPost.length === 0) {
+            _nstLines.push('Phase1前後: 明け孤立なし ✓');
+          } else {
+            if (_nstNew.length > 0) {
+              _nstLines.push(`★ Phase1により明け孤立 新規発生(${_nstNew.length}件) ← Phase1 rollback が発生源 ⚠`);
+              _nstNew.forEach(v => {
+                _nstLines.push(`  ${v.name} d${v.day}: 前日=${v.prevShift||'(未設定)'}→明け`);
+                _nstLines.push(`    genSnapshot[${v.day-1}]=${genSnapshot[v.sid]?.[v.day-1]||''} genSnapshot[${v.day}]=${genSnapshot[v.sid]?.[v.day]||''}`);
+              });
+            }
+            if (_nstFixed.length > 0) {
+              _nstLines.push(`Phase1により解消(${_nstFixed.length}件) ✓:`);
+              _nstFixed.forEach(v => _nstLines.push(`  ${v.name} d${v.day}`));
+            }
+            if (_nstPost.length > 0 && _nstNew.length === 0) {
+              _nstLines.push(`Phase1前から持続(${_nstPost.length}件) → bestOfN段階が発生源:`);
+              _nstPost.forEach(v =>
+                _nstLines.push(`  ${v.name} d${v.day}: 前日=${v.prevShift||'(未設定)'}→明け`)
+              );
+            }
+          }
+          // guard 非対称性 監査
+          _nstLines.push('');
+          _nstLines.push('[Night-Sequence-GuardAudit] Phase1 明け orphan guard 非対称性:');
+          _nstLines.push('  guard①(実装済み): revVal∉nightSet & result[day+1]=明け → BLOCKED_MAKE ✓ (夜勤→非夜勤 を防ぐ)');
+          _nstLines.push('  guard②(実装済み): revVal=明け & result[day-1]∉nightSet → BLOCKED_MAKE ✓ (孤立明けへの戻しを防ぐ)');
+          _nstLines.push('  guard③(未実装)  : result[day]=明け & result[day-1]∈nightSet & revVal≠明け → 未ブロック ⚠');
+          _nstLines.push('    ↑このケース: Phase1 が夜勤の翌日の明けを日勤等へ rollback → 夜勤孤立を生成する可能性');
+          _nstLines.push('    ↑対策: 修正は別タスク。今回は診断のみ。');
+          console.log(_nstLines.join('\n'));
+        }
 
         // ══════════════════════════════════════════════════════════════════════════
         // ★[AG-Change-Cost] Change Cost Analysis（変更負荷分析）
