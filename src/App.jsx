@@ -9761,6 +9761,268 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Shift-Sequence-Audit / Sequence-Integrity / Sequence-Fatigue / Sequence-Drift / Sequence-Dependency] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Temporal-Decision-Priority / Decision-Pressure-Map /
+        //    Temporal-Decision-Simulation / Intervention-Conflict /
+        //    Temporal-Intervention-Stability]
+        // Temporal Decision Priority + Decision Simulation
+        // - Temporal Engine が存在した場合の介入優先順位を仮想算出。
+        // - 完全 read-only。suggestion only。shift変更禁止・DB保存禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _dp_days  = getDays(year, month);
+          const _dp_ds    = cs.filter(s => s.dept === cd.id);
+          const _dp_cds   = cd.customShiftDefs || [];
+          const _dp_half  = Math.ceil(_dp_days / 2);
+
+          // ── 夜勤系 set ──
+          const _dp_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _nc = _dp_cds.find(c => c.key === k);
+            if ((_nc?.baseType || k) === '夜勤') _dp_nset.add(k);
+          });
+          const _dp_isNight = (sh) => _dp_nset.has(sh);
+          const _dp_isRest  = (sh) => ['休み', '希望休', '有休'].includes(sh);
+          const _dp_isWork  = (sh) => !!(sh && !_dp_isRest(sh) && sh !== '明け' && sh !== '');
+
+          // ── 疲労重み ──
+          const _dp_fw = (sh) => _dp_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+
+          // ── trend lookup ──
+          const _dp_trend = (name) => {
+            const key = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+
+          // ── per-staff state + sequence counts ──
+          const _dp_state = {};
+          for (const s of _dp_ds) {
+            const trend = _dp_trend(s.name);
+            const isNewbie = (trend?._workTotal ?? 0) < 30;
+            const tailN = Math.min(7, _dp_days);
+            let totalF = 0, tailF = 0, earlyHF = 0, lateHF = 0, nightCnt = 0, restCnt = 0;
+            let safeSeq = 0, critSeq = 0, dangerSeq = 0, lateEarlySeq = 0;
+            for (let d = 1; d <= _dp_days; d++) {
+              const sh = result[s.id]?.[d] ?? '', prev = result[s.id]?.[d-1] ?? '', next = result[s.id]?.[d+1] ?? '';
+              const fw = _dp_fw(sh);
+              totalF += fw;
+              if (d > _dp_days - tailN) tailF += fw;
+              d <= _dp_half ? (earlyHF += fw) : (lateHF += fw);
+              if (_dp_isNight(sh)) nightCnt++;
+              if (_dp_isRest(sh))  restCnt++;
+              // sequence at 明け day
+              if (sh === '明け' && _dp_isNight(prev)) {
+                if (_dp_isRest(next) || !next)          safeSeq++;
+                else if (next === '早番')               critSeq++;
+                else if (_dp_isWork(next))              dangerSeq++;
+                else                                    safeSeq++;
+              }
+              if (sh === '早番' && d > 1 && prev === '遅番') lateEarlySeq++;
+            }
+            const fatigueCarryOver    = tailF   >= tailN * 3.0         ? 'high' : tailF   >= tailN * 1.5         ? 'medium' : 'low';
+            const burnoutAccumulation = totalF  >= _dp_days * 2.0      ? 'high' : totalF  >= _dp_days * 1.2      ? 'medium' : 'low';
+            const recoveryDebt        = restCnt < _dp_days * 0.25 * 0.7 ? 'high' : restCnt < _dp_days * 0.25    ? 'medium' : 'low';
+            const nightRate = nightCnt / _dp_days;
+            const trendNight = trend?._nightRate ?? trend?.['夜勤'] ?? 0;
+            const nightDiff  = Math.abs(nightRate - trendNight);
+            const nightAdaptation     = nightDiff < 0.05 ? 'high' : nightDiff < 0.15 ? 'medium' : 'low';
+            const seqScore = critSeq * 3 + dangerSeq * 2 + lateEarlySeq;
+            const sequenceFatigue     = seqScore >= 6 ? 'high' : seqScore >= 3 ? 'medium' : 'low';
+            const driftRisk           = lateHF > earlyHF * 1.3 ? 'high' : lateHF > earlyHF * 1.1 ? 'medium' : 'low';
+            _dp_state[s.name] = {
+              isNewbie, fatigueCarryOver, burnoutAccumulation, recoveryDebt,
+              nightAdaptation, nightCnt, restCnt, driftRisk, sequenceFatigue,
+              seqScore, critSeq, dangerSeq, safeSeq, lateEarlySeq
+            };
+          }
+
+          // ── 夜勤ペア共起 ──
+          const _dp_pairs = {};
+          for (let d = 1; d <= _dp_days; d++) {
+            const nw = _dp_ds.filter(s => _dp_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const k = [nw[i].name, nw[j].name].sort().join('×');
+                _dp_pairs[k] = (_dp_pairs[k] || 0) + 1;
+              }
+          }
+          const _dp_strongPairs = Object.entries(_dp_pairs)
+            .filter(([, cnt]) => cnt >= _dp_days * 0.4)
+            .map(([key, cnt]) => ({ key, cnt }));
+
+          // ── per-staff pressure levels ──
+          const _dpW = (v) => v === 'high' ? 2 : v === 'medium' ? 1 : 0;
+          const _dp_pressureOf = (name) => {
+            const st = _dp_state[name]; if (!st) return {};
+            const p = {};
+            if (st.burnoutAccumulation !== 'low')   p.burnout         = st.burnoutAccumulation;
+            if (st.recoveryDebt !== 'low')          p.recoveryDebt    = st.recoveryDebt;
+            if (st.fatigueCarryOver !== 'low')      p.fatigueCarryOver= st.fatigueCarryOver;
+            if (st.sequenceFatigue !== 'low')       p.sequenceFatigue = st.sequenceFatigue;
+            if (st.driftRisk !== 'low')             p.driftRisk       = st.driftRisk;
+            if (st.nightAdaptation === 'low' && st.nightCnt > 0) p.nightAdaptation = 'low';
+            if (st.isNewbie)                        p.newbieInProgress = 'medium';
+            if (_dp_strongPairs.some(p2 => p2.key.includes(name))) p.pairFixation = 'medium';
+            return p;
+          };
+
+          // ── Layer 1: [Temporal-Decision-Priority] ──
+          {
+            let burnoutCrit=0, recDebt=0, seqFatH=0, driftH=0, newbieStag=0, nightOverload=0;
+            for (const s of _dp_ds) {
+              const st = _dp_state[s.name]; if (!st) continue;
+              if (st.burnoutAccumulation === 'high') burnoutCrit++;
+              if (st.recoveryDebt === 'high')        recDebt++;
+              if (st.sequenceFatigue === 'high')     seqFatH++;
+              if (st.driftRisk === 'high')           driftH++;
+              if (st.isNewbie && st.burnoutAccumulation !== 'low') newbieStag++;
+              if (st.nightCnt > _dp_days * 0.3)     nightOverload++;
+            }
+            const pairFix = _dp_strongPairs.length;
+            const critW = burnoutCrit * 2 + recDebt, highW = seqFatH + driftH + nightOverload, medW = newbieStag + pairFix;
+            const total = critW * 3 + highW * 2 + medW;
+            const overall = total >= 10 ? 'high' : total >= 4 ? 'medium' : 'low';
+            const _dp1 = [`[Temporal-Decision-Priority] dept=${cd.id} (suggestion only / not applied)`];
+            if (critW > 0) {
+              _dp1.push('  critical:');
+              if (burnoutCrit > 0) _dp1.push(`    burnoutRisk=${burnoutCrit}名`);
+              if (recDebt > 0)     _dp1.push(`    recoveryDebt=${recDebt}名`);
+            }
+            if (highW > 0) {
+              _dp1.push('  high:');
+              if (seqFatH > 0)     _dp1.push(`    sequenceFatigue=${seqFatH}名`);
+              if (driftH > 0)      _dp1.push(`    sequenceDrift=${driftH}名`);
+              if (nightOverload>0) _dp1.push(`    nightCoreLoad=${nightOverload}名`);
+            }
+            if (medW > 0) {
+              _dp1.push('  medium:');
+              if (newbieStag > 0)  _dp1.push(`    newbieStagnation=${newbieStag}名`);
+              if (pairFix > 0)     _dp1.push(`    pairFixation=${pairFix}ペア`);
+            }
+            if (critW + highW + medW === 0) _dp1.push('  介入優先事項なし ✓');
+            _dp1.push(`  overallTemporalPressure=${overall}`);
+            console.log(_dp1.join('\n'));
+          }
+
+          // ── Layer 2: [Decision-Pressure-Map] ──
+          {
+            const _dp2 = [`[Decision-Pressure-Map] dept=${cd.id}`];
+            for (const s of _dp_ds) {
+              const p = _dp_pressureOf(s.name);
+              const entries = Object.entries(p);
+              if (!entries.length) { _dp2.push(`  ${s.name}: 圧力なし ✓`); continue; }
+              const top = entries.some(([,v]) => v === 'high') ? 'HIGH'
+                        : entries.some(([,v]) => v === 'medium') ? 'MEDIUM' : 'LOW';
+              _dp2.push(`  ${s.name} [${top}]:`);
+              for (const [k, v] of entries) _dp2.push(`    ${k}=${v}`);
+            }
+            console.log(_dp2.join('\n'));
+          }
+
+          // ── Layer 3: [Temporal-Decision-Simulation] ──
+          {
+            const _dp3 = [`[Temporal-Decision-Simulation] dept=${cd.id} (suggestion only / not applied)`];
+            for (const s of _dp_ds) {
+              const st = _dp_state[s.name]; if (!st) continue;
+              const sugg = [];
+              if (st.burnoutAccumulation === 'high')    sugg.push('夜勤分散候補（burnout高）');
+              if (st.recoveryDebt === 'high')           sugg.push('recovery優先候補（休日不足）');
+              if (st.fatigueCarryOver === 'high')       sugg.push('月初休み付与候補（疲労持越し）');
+              if (st.critSeq > 0)                       sugg.push(`高疲労系列回避候補（夜明早=${st.critSeq}件）`);
+              if (st.dangerSeq > 0)                     sugg.push(`danger系列改善候補（夜明日等=${st.dangerSeq}件）`);
+              if (st.isNewbie && st.nightAdaptation==='low') sugg.push('夜勤導入保留候補（新人適応低）');
+              if (st.isNewbie && st.nightAdaptation!=='low') sugg.push('support継続候補（新人適応中）');
+              if (st.driftRisk === 'high')              sugg.push('後半夜勤分散候補（drift高）');
+              if (st.nightCnt > _dp_days * 0.35)       sugg.push('nightCore集中緩和候補');
+              const inPair = _dp_strongPairs.some(p => p.key.includes(s.name));
+              if (inPair && st.burnoutAccumulation !== 'high') sugg.push('gradual pair分離候補（依存緩和）');
+              if (inPair && st.burnoutAccumulation === 'high') sugg.push('pair維持候補（burnout中は分離リスク）');
+              if (!sugg.length) _dp3.push(`  ${s.name}: suggestion=なし ✓`);
+              else { _dp3.push(`  ${s.name}:`); sugg.forEach(sg => _dp3.push(`    - ${sg}`)); }
+            }
+            console.log(_dp3.join('\n'));
+          }
+
+          // ── Layer 4: [Intervention-Conflict] ──
+          {
+            const _dp4 = [`[Intervention-Conflict] dept=${cd.id} (conflict simulation only)`];
+            const nightOverloadStaff = _dp_ds.filter(s => (_dp_state[s.name]?.nightCnt ?? 0) > _dp_days * 0.3);
+            const burnoutHighStaff   = _dp_ds.filter(s => _dp_state[s.name]?.burnoutAccumulation === 'high');
+            const newbiesOnNight     = _dp_ds.filter(s => _dp_state[s.name]?.isNewbie && (_dp_state[s.name]?.nightCnt ?? 0) > 0);
+
+            // Conflict: nightCore分散 vs safeSequence
+            if (nightOverloadStaff.length > 0) {
+              const avgN = (_dp_ds.reduce((a, s) => a + (_dp_state[s.name]?.nightCnt ?? 0), 0) / Math.max(_dp_ds.length, 1)).toFixed(1);
+              _dp4.push(`  nightCore分散候補: ${nightOverloadStaff.map(s=>s.name).join(', ')} (部署avg=${avgN}回/月)`);
+              _dp4.push(`    → conflict risk: 分散でsafeSequence(夜勤→明け→休み)が一時的に変動の可能性`);
+            }
+            // Conflict: pair分離 vs support安定
+            if (_dp_strongPairs.length > 0) {
+              const nbInPair = _dp_strongPairs.some(p => p.key.split('×').some(n => _dp_state[n]?.isNewbie));
+              _dp4.push(`  pair分離候補: ${_dp_strongPairs.map(p=>p.key).join(', ')}`);
+              _dp4.push(`    → conflict risk ${nbInPair ? 'HIGH⚠: 新人含む → 支援安定性低下リスク' : 'LOW: 新人なし → 段階的分離は可能'}`);
+            }
+            // Conflict: newbie育成 vs safeSequence
+            if (newbiesOnNight.length > 0) {
+              _dp4.push(`  新人夜勤導入中: ${newbiesOnNight.map(s=>s.name).join(', ')}`);
+              _dp4.push(`    → conflict risk: 過度な夜勤は criticalSeq(夜明早)生成リスク → sequence安全と競合の可能性`);
+            }
+            // Conflict: burnout軽減 vs nightCore確保
+            if (burnoutHighStaff.length > 0 && nightOverloadStaff.length > 0) {
+              _dp4.push(`  burnout対策 vs nightCore確保:`);
+              _dp4.push(`    ${burnoutHighStaff.map(s=>s.name).join(', ')} 夜勤削減 ↔ 夜勤席確保の競合⚠`);
+            }
+            if (_dp4.length === 1) _dp4.push('  競合リスクなし ✓');
+            console.log(_dp4.join('\n'));
+          }
+
+          // ── Layer 5: [Temporal-Intervention-Stability] ──
+          {
+            const _dp5 = [`[Temporal-Intervention-Stability] dept=${cd.id}`];
+            const totalPressure = _dp_ds.reduce((acc, s) => {
+              return acc + Object.values(_dp_pressureOf(s.name)).reduce((a, v) => a + _dpW(v), 0);
+            }, 0);
+            const overallStab = totalPressure <= _dp_ds.length ? 'stable'
+              : totalPressure <= _dp_ds.length * 2 ? 'moderate' : 'unstable';
+            // orphan明け count (sequence integrity check)
+            const totalOrphan = _dp_ds.reduce((acc, s) => {
+              let n = 0;
+              for (let d = 2; d <= _dp_days; d++) {
+                if ((result[s.id]?.[d] ?? '') === '明け' && !_dp_isNight(result[s.id]?.[d-1] ?? '')) n++;
+              }
+              return acc + n;
+            }, 0);
+            const totalSafeSeq = _dp_ds.reduce((acc, s) => acc + (_dp_state[s.name]?.safeSeq ?? 0), 0);
+            _dp5.push(`  overallStability=${overallStab} (pressure=${totalPressure}/${_dp_ds.length * 3})`);
+            _dp5.push(`  sequenceIntegrity=${totalOrphan === 0 ? 'intact ✓' : `brokenAke=${totalOrphan}⚠`}`);
+            _dp5.push(`  safeSequenceTotal=${totalSafeSeq}件`);
+            const safe5 = [], avoid5 = [];
+            // pair分離: safe if no newbies + stable
+            if (_dp_strongPairs.length > 0) {
+              const nbInPair = _dp_strongPairs.some(p => p.key.split('×').some(n => _dp_state[n]?.isNewbie));
+              if (!nbInPair && overallStab !== 'unstable') safe5.push(`pairDependency緩和 (新人なし + stability=${overallStab})`);
+              else                                          avoid5.push(`pair分離 (hasNewbie=${nbInPair} stability=${overallStab})`);
+            }
+            // burnout relief: safe if sequence intact
+            if (totalPressure > _dp_ds.length) {
+              if (totalOrphan === 0) safe5.push(`burnout軽減 (sequence intact → 安全に介入可能)`);
+              else                   avoid5.push(`burnout軽減 (sequence broken中 → 先にsequence修正を)`);
+            }
+            // newbie: avoid rushing
+            const newbies5 = _dp_ds.filter(s => _dp_state[s.name]?.isNewbie);
+            if (newbies5.length > 0) avoid5.push(`新人夜勤加速 (${newbies5.map(s=>s.name).join(', ')} 適応継続中)`);
+            // safe sequence stable → avoid large-scale change
+            if (totalSafeSeq > _dp_ds.length * 2) avoid5.push(`大規模シフト変更 (safeSequence=${totalSafeSeq}件 安定中 → 破壊リスク)`);
+            if (safe5.length)  { _dp5.push('  safeToIntervene:');   safe5.forEach(x => _dp5.push(`    - ${x}`)); }
+            if (avoid5.length) { _dp5.push('  avoidIntervention:'); avoid5.forEach(x => _dp5.push(`    - ${x}`)); }
+            if (!safe5.length && !avoid5.length) _dp5.push('  安定状態 → 現時点での介入不要 ✓');
+            console.log(_dp5.join('\n'));
+          }
+        }
+        // ══ [Temporal-Decision-Priority / Decision-Pressure-Map / Temporal-Decision-Simulation /
+        //    Intervention-Conflict / Temporal-Intervention-Stability] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
