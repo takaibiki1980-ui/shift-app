@@ -1180,6 +1180,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
             return cnt < (maxStaff[k] ?? 99);
           });
           res[s.id][d] = altShift || "休み";
+          // ★[Night-Sequence-EnforceMax] read-only: 夜勤削除→翌日明け孤立検出（診断のみ）
+          {
+            const _em_cds  = dept.customShiftDefs || [];
+            const _em_nc   = _em_cds.find(c => c.key === shiftKey);
+            const _em_base = _em_nc?.baseType || shiftKey;
+            const _em_next = d + 1 <= days ? (res[s.id][d + 1] ?? '') : '';
+            if (_em_base === '夜勤' && _em_next === '明け') {
+              console.warn(
+                `[Night-Sequence-EnforceMax] d${d} ${s.name}: ${shiftKey}→${res[s.id][d]}` +
+                ` 翌日d${d+1}=明け 未修正 ⚠ orphaned明け生成`
+              );
+            }
+          }
           excess--;
         }
       }
@@ -1871,6 +1884,33 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
     if (totalViolations === 0) console.log('[AG-v7] FINAL: 違反ゼロ ✓');
     else console.error(`[AG-v7] FINAL: ${totalViolations}件の違反が残存！`);
+  }
+
+  // ★[Night-Sequence-Final] read-only: autoGenerate完了後の明け孤立数スキャン（診断のみ）
+  {
+    const _nf_cds   = dept.customShiftDefs || [];
+    const _nf_nset  = new Set();
+    [...new Set(dept.shiftTypes || [])].forEach(k => {
+      const _nc = _nf_cds.find(c => c.key === k);
+      if ((_nc?.baseType || k) === '夜勤') _nf_nset.add(k);
+    });
+    let _nf_orphans = 0;
+    const _nf_list  = [];
+    for (const s of ds) {
+      for (let d = 2; d <= days; d++) {
+        const sh   = res[s.id][d] ?? '';
+        const prev = res[s.id][d - 1] ?? '';
+        if (sh === '明け' && !_nf_nset.has(prev)) {
+          _nf_orphans++;
+          _nf_list.push(`${s.name} d${d}(prev=${prev || '空'})`);
+        }
+      }
+    }
+    if (_nf_orphans === 0) {
+      console.log('[Night-Sequence-Final] 明け孤立ゼロ ✓');
+    } else {
+      console.warn(`[Night-Sequence-Final] 明け孤立=${_nf_orphans}件 ⚠`, _nf_list.join(' / '));
+    }
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
