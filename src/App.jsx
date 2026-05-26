@@ -7947,6 +7947,374 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Warning-Accuracy] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Warning-Severity / Fatigue-Pattern / Forecast-Simulation]
+        // 時間軸エンジン前準備レイヤ（Temporal Engine Entry Layer）
+        // - 未来状態を「観測できるようにする」（生成・最適化は行わない）
+        // - staffState 概念の準備（read-only derived / 保存なし）
+        // ★診断のみ。autoGenerate変更禁止・repair変更禁止・score変更禁止・trend変更禁止
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _tl_days = getDays(year, month);
+          const _tl_ds   = cs.filter(s => s.dept === cd.id);
+          const _tl_cds  = cd.customShiftDefs || [];
+          const _tl_work = buildDeptWorkTypes(_tl_cds);
+
+          // 夜勤ベース types（明け前日に必要なもの）
+          const _tl_nightSet = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _tlc = _tl_cds.find(c2 => c2.key === k);
+            if ((_tlc?.baseType || k) === '夜勤') _tl_nightSet.add(k);
+          });
+
+          // コスト関数（[AG-Change-Cost] と同定義）
+          const _tl_base = (v) => { const _tlc = _tl_cds.find(c2 => c2.key === v); return _tlc?.baseType || v; };
+          const _tl_cost = (from, to) => {
+            const bf = _tl_base(from), bt = _tl_base(to);
+            if (bf === bt) return 0;
+            if (bf === '明け' || bt === '明け') return 5;
+            if ((bf === '休み' && bt === '夜勤') || (bf === '夜勤' && bt === '休み')) return 5;
+            if (bf === '夜勤' || bt === '夜勤') return 4;
+            if ((bf === '休み' && bt === '日勤') || (bf === '日勤' && bt === '休み')) return 2;
+            if ((bf === '早番' && bt === '遅番') || (bf === '遅番' && bt === '早番')) return 2;
+            if (bf === '休み' || bt === '休み') return 2;
+            return 1;
+          };
+
+          // trend lookup（ct = mergeShiftTrends 済み）
+          const _tl_getTrend = (name) => {
+            const key = Object.keys(ct)
+              .filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+
+          // genSnapshot → result 全変更（コスト込み）
+          const _tl_changes = [];
+          for (const s of _tl_ds) {
+            for (let d = 1; d <= _tl_days; d++) {
+              const frm = genSnapshot[s.id]?.[d] ?? '';
+              const to  = result[s.id]?.[d]  ?? '';
+              if (frm !== to)
+                _tl_changes.push({ name: s.name, sid: s.id, day: d, from: frm, to, cost: _tl_cost(frm, to) });
+            }
+          }
+
+          // ────────────────────────────────────────────────────────────────────
+          // Layer 1: [Warning-Severity]
+          // ────────────────────────────────────────────────────────────────────
+          {
+            const _ws_items = []; // { level, key, days?, info? }
+
+            // CRITICAL: 実 minStaff 不足
+            for (const [k, min] of Object.entries(cd.minStaff || {})) {
+              if (min <= 0) continue;
+              const shorDays = [];
+              for (let d = 1; d <= _tl_days; d++) {
+                const cnt = _tl_ds.filter(s => (result[s.id]?.[d] ?? '') === k).length;
+                if (cnt < min) shorDays.push(d);
+              }
+              if (shorDays.length > 0)
+                _ws_items.push({ level: 'critical', key: `shortage.${k}`, days: shorDays.slice(0, 5) });
+            }
+
+            // CRITICAL: 明け孤立（前日が夜勤でない）
+            for (const s of _tl_ds)
+              for (let d = 2; d <= _tl_days; d++)
+                if ((result[s.id]?.[d] ?? '') === '明け' && !_tl_nightSet.has(result[s.id]?.[d-1] ?? ''))
+                  _ws_items.push({ level: 'critical', key: `明け孤立.${s.name}`, days: [d] });
+
+            // CRITICAL: 夜勤孤立（翌日が明けでない）
+            for (const s of _tl_ds)
+              for (let d = 1; d < _tl_days; d++)
+                if (_tl_nightSet.has(result[s.id]?.[d] ?? '') && (result[s.id]?.[d+1] ?? '') !== '明け')
+                  _ws_items.push({ level: 'critical', key: `夜勤孤立.${s.name}`, days: [d] });
+
+            // HIGH: 夜勤→明け→早番 疲労集中（3日窓）
+            for (const s of _tl_ds)
+              for (let d = 1; d <= _tl_days - 2; d++) {
+                const s0 = result[s.id]?.[d]   ?? '';
+                const s1 = result[s.id]?.[d+1] ?? '';
+                const s2 = result[s.id]?.[d+2] ?? '';
+                if (_tl_nightSet.has(s0) && s1 === '明け' && s2 === '早番')
+                  _ws_items.push({ level: 'high', key: `fatigue集中.${s.name}`, days: [d, d+1, d+2] });
+              }
+
+            // HIGH: nightCore偏重（夜勤数 ≥ avg*1.8 かつ ≥ 6）
+            const _ws_nc = {};
+            for (const s of _tl_ds) {
+              _ws_nc[s.name] = 0;
+              for (let d = 1; d <= _tl_days; d++)
+                if (_tl_nightSet.has(result[s.id]?.[d] ?? '')) _ws_nc[s.name]++;
+            }
+            const _ws_ncAvg = _tl_ds.length > 0
+              ? Object.values(_ws_nc).reduce((a, b) => a + b, 0) / _tl_ds.length : 0;
+            for (const s of _tl_ds)
+              if (_ws_nc[s.name] >= Math.max(6, _ws_ncAvg * 1.8))
+                _ws_items.push({ level: 'high', key: `nightCore偏重.${s.name}`, info: `夜勤=${_ws_nc[s.name]}` });
+
+            // HIGH: 高コスト変更集中（個人に cost>=4 が 3件以上）
+            const _ws_hc = {};
+            for (const c of _tl_changes)
+              if (c.cost >= 4) _ws_hc[c.name] = (_ws_hc[c.name] || 0) + 1;
+            for (const [nm, cnt] of Object.entries(_ws_hc))
+              if (cnt >= 3)
+                _ws_items.push({ level: 'high', key: `高コスト変更集中.${nm}`, info: `highCost=${cnt}` });
+
+            // MEDIUM: warningFatigue
+            const _ws_wDays = Object.values(_displayWarningsBuf || {})
+              .reduce((s, v) => s + (v?.days ?? 0), 0);
+            const _ws_wPD = _tl_days > 0 ? _ws_wDays / _tl_days : 0;
+            if (_ws_wPD >= 0.5)
+              _ws_items.push({ level: 'medium', key: 'warningFatigue.high', info: `warnPerDay=${_ws_wPD.toFixed(2)}` });
+            else if (_ws_wPD >= 0.2)
+              _ws_items.push({ level: 'medium', key: 'warningFatigue.medium', info: `warnPerDay=${_ws_wPD.toFixed(2)}` });
+
+            // LOW: 変更量多（10件以上）
+            if (_tl_changes.length >= 10)
+              _ws_items.push({ level: 'low', key: '変更量多', info: `changes=${_tl_changes.length}` });
+
+            // ── log ──
+            const _wsCnt = { critical: 0, high: 0, medium: 0, low: 0 };
+            _ws_items.forEach(i => { _wsCnt[i.level] = (_wsCnt[i.level] || 0) + 1; });
+            const _wsLines = [`[Warning-Severity] dept=${cd.id}`];
+            _wsLines.push(`critical=${_wsCnt.critical} high=${_wsCnt.high} medium=${_wsCnt.medium} low=${_wsCnt.low}`);
+            const _wsCrit = _ws_items.filter(i => i.level === 'critical');
+            const _wsHigh = _ws_items.filter(i => i.level === 'high');
+            if (_wsCrit.length > 0) {
+              _wsLines.push('topCritical:');
+              _wsCrit.slice(0, 5).forEach(i => {
+                const dStr = i.days ? ` d${i.days.join('/')}/${_tl_days}` : '';
+                _wsLines.push(`  ${i.key}${dStr}${i.info ? ' ' + i.info : ''}`);
+              });
+            }
+            if (_wsHigh.length > 0) {
+              _wsLines.push('topHigh:');
+              _wsHigh.slice(0, 5).forEach(i => {
+                const dStr = i.days ? ` d${i.days.slice(0, 2).join('/')}/${_tl_days}` : '';
+                _wsLines.push(`  ${i.key}${dStr}${i.info ? ' ' + i.info : ''}`);
+              });
+            }
+            if (_ws_items.length === 0) _wsLines.push('  severity issues: なし ✓');
+            console.log(_wsLines.join('\n'));
+          }
+
+          // ────────────────────────────────────────────────────────────────────
+          // Layer 2: [Fatigue-Pattern]
+          // ────────────────────────────────────────────────────────────────────
+          {
+            // 疲労ウェイト（staffState: fatigue 前身）
+            const _fp_w = (sh) => {
+              if (_tl_nightSet.has(sh)) return 3;
+              if (sh === '明け') return 2;
+              if (sh === '早番' || sh === '遅番') return 1;
+              return 0;
+            };
+            const _fp_trans = (prev, curr) => {
+              if (_tl_nightSet.has(prev) && curr === '明け') return 2;  // 夜勤→明け
+              if (prev === '明け' && curr === '早番')         return 3;  // 明け→早番（危険）
+              if (_tl_nightSet.has(prev) && curr === '早番') return 2;  // 夜勤→早番
+              return 0;
+            };
+
+            const _fp_all = [];
+            for (const s of _tl_ds) {
+              const trend    = _tl_getTrend(s.name);
+              const isNewbie = (trend?._workTotal ?? 0) < 30;
+              let fatigueScore = 0;
+              const spikes = []; // { startDay, endDay, pattern }
+
+              for (let d = 1; d <= _tl_days; d++) {
+                const sh   = result[s.id]?.[d]   ?? '';
+                const prev = result[s.id]?.[d-1]  ?? '';
+                fatigueScore += _fp_w(sh) + (d > 1 ? _fp_trans(prev, sh) : 0);
+                // 3日窓 spike
+                if (d >= 3) {
+                  const s0 = result[s.id]?.[d-2] ?? '';
+                  const s1 = result[s.id]?.[d-1] ?? '';
+                  const s2 = result[s.id]?.[d]   ?? '';
+                  if (_tl_nightSet.has(s0) && s1 === '明け' && s2 === '早番')
+                    spikes.push({ startDay: d-2, endDay: d, pattern: '夜勤→明け→早番' });
+                  else if (_tl_nightSet.has(s0) && s1 === '明け' && _tl_nightSet.has(s2))
+                    spikes.push({ startDay: d-2, endDay: d, pattern: '夜勤→明け→夜勤' });
+                }
+              }
+              const nightCnt = [...Array(_tl_days)]
+                .filter((_, i) => _tl_nightSet.has(result[s.id]?.[i+1] ?? '')).length;
+              const adaptLoad = isNewbie
+                ? (fatigueScore >= 20 ? 'high' : fatigueScore >= 12 ? 'medium' : 'low') : null;
+              _fp_all.push({ name: s.name, fatigueScore, spikes, nightCnt, isNewbie, adaptLoad });
+            }
+
+            const _fp_avg  = _fp_all.length > 0
+              ? _fp_all.reduce((s, x) => s + x.fatigueScore, 0) / _fp_all.length : 0;
+            const _fp_ncAv = _fp_all.length > 0
+              ? _fp_all.reduce((s, x) => s + x.nightCnt, 0) / _fp_all.length : 0;
+
+            // ── [Fatigue-Pattern] ──
+            const _fpLines = [`[Fatigue-Pattern] dept=${cd.id} avgFatigue=${_fp_avg.toFixed(1)}`];
+            const _fp_hiF = _fp_all
+              .filter(x => x.fatigueScore > _fp_avg * 1.5 || x.spikes.length > 0)
+              .sort((a, b) => b.fatigueScore - a.fatigueScore);
+            if (_fp_hiF.length > 0) {
+              _fpLines.push('高疲労スタッフ:');
+              _fp_hiF.slice(0, 6).forEach(x => {
+                const isNC = x.nightCnt >= Math.max(6, _fp_ncAv * 1.8);
+                const tag  = [isNC ? '(nightCore)' : '', x.isNewbie ? '(新人)' : ''].filter(Boolean).join('');
+                _fpLines.push(`  ${x.name}${tag}: fatigueScore=${x.fatigueScore}`);
+                x.spikes.slice(0, 3).forEach(sp =>
+                  _fpLines.push(`    spike d${sp.startDay}-d${sp.endDay}: ${sp.pattern}`)
+                );
+                if (x.adaptLoad) _fpLines.push(`    adaptationLoad=${x.adaptLoad}`);
+              });
+            }
+            const _fp_nbs = _fp_all.filter(x => x.isNewbie);
+            if (_fp_nbs.length > 0) {
+              _fpLines.push('newbie(n<30):');
+              _fp_nbs.forEach(x => {
+                const isNC = x.nightCnt >= Math.max(6, _fp_ncAv * 1.8);
+                _fpLines.push(`  ${x.name}: fatigueScore=${x.fatigueScore} adaptationLoad=${x.adaptLoad} nightCore=${isNC}`);
+              });
+            }
+            const _fp_ncs = _fp_all.filter(x => x.nightCnt >= Math.max(6, _fp_ncAv * 1.8));
+            if (_fp_ncs.length > 0) {
+              _fpLines.push('nightCore(夜勤集中):');
+              _fp_ncs.forEach(x =>
+                _fpLines.push(`  ${x.name}: 夜勤=${x.nightCnt}回 fatigueScore=${x.fatigueScore}`)
+              );
+            }
+            if (_fp_hiF.length === 0 && _fp_nbs.length === 0 && _fp_ncs.length === 0)
+              _fpLines.push('  疲労集中なし ✓');
+            console.log(_fpLines.join('\n'));
+
+            // ── [Fatigue-Pattern-StaffState] staffState候補（read-only / 保存なし）──
+            const _fpStLines = ['[Fatigue-Pattern-StaffState] (read-only / not persisted)'];
+            [..._fp_all]
+              .sort((a, b) => b.fatigueScore - a.fatigueScore)
+              .slice(0, 8)
+              .forEach(x => {
+                const isNC      = x.nightCnt >= Math.max(6, _fp_ncAv * 1.8);
+                const burnout   = x.fatigueScore >= 25 ? 'high' : x.fatigueScore >= 15 ? 'medium' : 'low';
+                const nightTol  = isNC ? 'low' : x.nightCnt >= 3 ? 'medium' : 'high';
+                const suppNeed  = x.isNewbie ? 'high' : x.spikes.length >= 2 ? 'medium' : 'low';
+                const changeRes = x.spikes.length >= 2 ? 'low' : x.fatigueScore >= 15 ? 'medium' : 'high';
+                _fpStLines.push(
+                  `  ${x.name}: fatigue=${x.fatigueScore} burnoutRisk=${burnout}` +
+                  ` nightTolerance=${nightTol} supportNeed=${suppNeed} changeResistance=${changeRes}`
+                );
+              });
+            console.log(_fpStLines.join('\n'));
+          }
+
+          // ────────────────────────────────────────────────────────────────────
+          // Layer 3: [Forecast-Simulation]
+          // ────────────────────────────────────────────────────────────────────
+          {
+            const _fs_half = Math.ceil(_tl_days / 2);
+
+            // ① nightCore 月末集中（後半の夜勤が前半より 2回以上多い）
+            const _fs_nightME = {};
+            for (const s of _tl_ds) {
+              let early = 0, late = 0;
+              for (let d = 1; d <= _tl_days; d++)
+                _tl_nightSet.has(result[s.id]?.[d] ?? '')
+                  ? (d <= _fs_half ? early++ : late++) : null;
+              if (late > early + 2) _fs_nightME[s.name] = { early, late };
+            }
+
+            // ② fatigue累積（後半ウェイト > 前半ウェイト * 1.4 かつ lateFatigue >= 8）
+            const _fs_fatCum = {};
+            for (const s of _tl_ds) {
+              let earlyF = 0, lateF = 0;
+              for (let d = 1; d <= _tl_days; d++) {
+                const sh = result[s.id]?.[d] ?? '';
+                const w  = _tl_nightSet.has(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+                d <= _fs_half ? (earlyF += w) : (lateF += w);
+              }
+              if (lateF > earlyF * 1.4 && lateF >= 8)
+                _fs_fatCum[s.name] = { earlyFatigue: earlyF, lateFatigue: lateF };
+            }
+
+            // ③ 新人適応リスク（夜勤数 >= 2 の新人）
+            const _fs_newbie = {};
+            for (const s of _tl_ds) {
+              const trend = _tl_getTrend(s.name);
+              if ((trend?._workTotal ?? 0) >= 30) continue;
+              let nc = 0;
+              for (let d = 1; d <= _tl_days; d++)
+                if (_tl_nightSet.has(result[s.id]?.[d] ?? '')) nc++;
+              const ar = nc >= 4 ? 'high' : nc >= 2 ? 'medium' : 'low';
+              if (ar !== 'low') _fs_newbie[s.name] = { nightCount: nc, adaptRisk: ar };
+            }
+
+            // ④ pair固定化（夜勤ペア共起 >= 4日）
+            const _fs_pairCnt = {};
+            for (let d = 1; d <= _tl_days; d++) {
+              const nst = _tl_ds.filter(s => _tl_nightSet.has(result[s.id]?.[d] ?? ''));
+              for (let i = 0; i < nst.length; i++)
+                for (let j = i + 1; j < nst.length; j++) {
+                  const key = [nst[i].name, nst[j].name].sort().join('→');
+                  _fs_pairCnt[key] = (_fs_pairCnt[key] || 0) + 1;
+                }
+            }
+            const _fs_pairFix = Object.entries(_fs_pairCnt)
+              .filter(([, cnt]) => cnt >= 4)
+              .sort(([, a], [, b]) => b - a);
+
+            // ⑤ warning増加傾向（前半 vs 後半 shortage 日数）
+            let _fs_wE = 0, _fs_wL = 0;
+            for (const [k, min] of Object.entries(cd.minStaff || {})) {
+              if (min <= 0) continue;
+              for (let d = 1; d <= _tl_days; d++) {
+                const cnt = _tl_ds.filter(s => (result[s.id]?.[d] ?? '') === k).length;
+                if (cnt < min) d <= _fs_half ? _fs_wE++ : _fs_wL++;
+              }
+            }
+            const _fs_wTrend = _fs_wL > _fs_wE ? 'increasing' : _fs_wL < _fs_wE ? 'decreasing' : 'stable';
+
+            // monthEndRisk 総合判定
+            const _fs_risks = [];
+            if (Object.keys(_fs_nightME).length > 0) _fs_risks.push('nightCore');
+            if (Object.keys(_fs_fatCum).length > 0)  _fs_risks.push('fatigueCumulation');
+            if (Object.keys(_fs_newbie).length > 0)   _fs_risks.push('newbieAdaptation');
+            if (_fs_pairFix.length > 0)                _fs_risks.push('pairFixation');
+            if (_fs_wTrend === 'increasing')            _fs_risks.push('warningIncrease');
+            const _fs_mer = _fs_risks.length >= 3 ? 'high' : _fs_risks.length >= 1 ? 'medium' : 'low';
+
+            // ── log ──
+            const _fsLines = [`[Forecast-Simulation] dept=${cd.id} monthEndRisk=${_fs_mer}`];
+            _fsLines.push(`riskFactors: ${_fs_risks.length > 0 ? _fs_risks.join(', ') : 'なし'}`);
+            _fsLines.push(`warningTrend: early=${_fs_wE} late=${_fs_wL} → ${_fs_wTrend}`);
+            if (Object.keys(_fs_nightME).length > 0) {
+              _fsLines.push('nightCore(月末集中):');
+              Object.entries(_fs_nightME).forEach(([nm, v]) =>
+                _fsLines.push(`  ${nm}: early夜勤=${v.early} late夜勤=${v.late} → 後半集中 ⚠`)
+              );
+            }
+            if (Object.keys(_fs_fatCum).length > 0) {
+              _fsLines.push('fatigueCumulation(後半疲労累積):');
+              Object.entries(_fs_fatCum).forEach(([nm, v]) =>
+                _fsLines.push(`  ${nm}: earlyFatigue=${v.earlyFatigue} lateFatigue=${v.lateFatigue} ⚠`)
+              );
+            }
+            if (Object.keys(_fs_newbie).length > 0) {
+              _fsLines.push('newbie(適応リスク):');
+              Object.entries(_fs_newbie).forEach(([nm, v]) =>
+                _fsLines.push(`  ${nm}: 夜勤=${v.nightCount}回 adaptRisk=${v.adaptRisk}`)
+              );
+            }
+            if (_fs_pairFix.length > 0) {
+              _fsLines.push('pairFixation(夜勤pair固定化):');
+              _fs_pairFix.slice(0, 4).forEach(([pair, cnt]) =>
+                _fsLines.push(`  ${pair}: ${cnt}回共起/${_tl_days}日`)
+              );
+            }
+            if (_fs_mer === 'low') _fsLines.push('  forecast risk: なし ✓');
+            console.log(_fsLines.join('\n'));
+          }
+        }
+        // ══ [Warning-Severity / Fatigue-Pattern / Forecast-Simulation] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
