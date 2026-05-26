@@ -9517,6 +9517,250 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Decision-Fatigue / Adaptation / Dependency / Recovery / Stability / Summary] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Shift-Sequence-Audit / Sequence-Integrity / Sequence-Fatigue /
+        //    Sequence-Drift / Sequence-Dependency]
+        // Shift Sequence Audit + Sequence Fatigue Model
+        // - 勤務を「系列」として観測。state-transition / 系列疲労 / ドリフトを診断。
+        // - 完全 read-only。autoGenerate変更禁止・repair変更禁止・score変更禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _sq_days  = getDays(year, month);
+          const _sq_ds    = cs.filter(s => s.dept === cd.id);
+          const _sq_cds   = cd.customShiftDefs || [];
+          const _sq_half  = Math.ceil(_sq_days / 2);
+
+          // ── 夜勤系 set ──
+          const _sq_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _nc = _sq_cds.find(c => c.key === k);
+            if ((_nc?.baseType || k) === '夜勤') _sq_nset.add(k);
+          });
+          const _sq_isNight = (sh) => _sq_nset.has(sh);
+          const _sq_isRest  = (sh) => ['休み', '希望休', '有休'].includes(sh);
+          const _sq_isWork  = (sh) => !!(sh && !_sq_isRest(sh) && sh !== '明け' && sh !== '');
+
+          // ── pattern カウンタ定義 ──
+          // safe     : 夜勤→明け→休み
+          // warning  : 遅番→早番 / 明け→勤務(孤立系列後)
+          // danger   : 夜勤→明け→早番 / 夜勤→明け→日勤系 / 夜勤→早番(明けなし)
+          // broken   : 孤立明け(前日非夜勤) / 夜勤→日勤(明けスキップ)
+          const _sqZ = () => ({ nightAkeRest:0, nightAkeEarly:0, nightAkeDay:0,
+                                lateToEarly:0, nightToEarly:0, nightNoAke:0,
+                                orphanAke:0, akeToWork:0 });
+          const _sq_total = _sqZ();
+          const _sq_hf    = [_sqZ(), _sqZ()]; // [前半, 後半]
+          const _sq_staff = {};
+          for (const s of _sq_ds) _sq_staff[s.name] = _sqZ();
+
+          const _sq_inc = (key, name, half) => {
+            _sq_total[key]++;
+            if (_sq_staff[name]) _sq_staff[name][key]++;
+            _sq_hf[half][key]++;
+          };
+
+          // ── 全スタッフ全日スキャン（単一責任: 各パターンを1箇所でカウント）──
+          for (const s of _sq_ds) {
+            for (let d = 1; d <= _sq_days; d++) {
+              const sh   = result[s.id]?.[d]   ?? '';
+              const prev = result[s.id]?.[d-1]  ?? '';
+              const next = result[s.id]?.[d+1]  ?? '';
+              const half = d <= _sq_half ? 0 : 1;
+
+              // ★明け day: 夜勤系列の分岐 or 孤立明け
+              if (sh === '明け') {
+                if (!_sq_isNight(prev)) {
+                  _sq_inc('orphanAke', s.name, half);
+                  if (d < _sq_days && _sq_isWork(next)) _sq_inc('akeToWork', s.name, half);
+                } else {
+                  // 夜勤→明け→? で 3-gram 分岐
+                  if (_sq_isRest(next))           _sq_inc('nightAkeRest',   s.name, half);
+                  else if (next === '早番')        _sq_inc('nightAkeEarly',  s.name, half);
+                  else if (_sq_isWork(next))       _sq_inc('nightAkeDay',    s.name, half);
+                  else /* 月末明け→空 = safe扱い */ _sq_inc('nightAkeRest',   s.name, half);
+                }
+              }
+
+              // ★夜勤 day: 翌日が明けでない場合（月末除く）
+              if (_sq_isNight(sh) && d < _sq_days) {
+                if (next === '早番')        _sq_inc('nightToEarly', s.name, half);
+                else if (_sq_isWork(next))  _sq_inc('nightNoAke',   s.name, half);
+              }
+
+              // ★早番 day: 前日が遅番（遅番→早番）
+              if (sh === '早番' && d > 1 && prev === '遅番')
+                _sq_inc('lateToEarly', s.name, half);
+            }
+          }
+
+          // ── Layer 1: [Shift-Sequence-Audit] ──
+          {
+            const _sa = [
+              `[Shift-Sequence-Audit] dept=${cd.id}`,
+              `safeSequence:`,
+              `  夜勤→明け→休み = ${_sq_total.nightAkeRest}件`,
+              `highFatigueSequence:`,
+              `  夜勤→明け→早番 = ${_sq_total.nightAkeEarly}件${_sq_total.nightAkeEarly > 0 ? ' ⚠' : ' ✓'}`,
+              `  夜勤→明け→日勤系 = ${_sq_total.nightAkeDay}件${_sq_total.nightAkeDay > 0 ? ' ⚠' : ' ✓'}`,
+              `  夜勤→早番(明けなし) = ${_sq_total.nightToEarly}件${_sq_total.nightToEarly > 0 ? ' ⚠' : ' ✓'}`,
+              `  遅番→早番 = ${_sq_total.lateToEarly}件${_sq_total.lateToEarly > 0 ? ' ⚠' : ''}`,
+              `brokenSequence:`,
+              `  孤立明け(前日非夜勤) = ${_sq_total.orphanAke}件${_sq_total.orphanAke === 0 ? ' ✓' : ' ⚠ BROKEN'}`,
+              `  夜勤→日勤(明けスキップ) = ${_sq_total.nightNoAke}件${_sq_total.nightNoAke === 0 ? ' ✓' : ' ⚠ BROKEN'}`,
+              `  明け→勤務(孤立系後) = ${_sq_total.akeToWork}件${_sq_total.akeToWork === 0 ? ' ✓' : ' ⚠'}`,
+            ];
+            console.log(_sa.join('\n'));
+          }
+
+          // ── Layer 2: [Sequence-Integrity] ──
+          {
+            const stable  = _sq_total.nightAkeRest;
+            const warning = _sq_total.lateToEarly + _sq_total.akeToWork;
+            const danger  = _sq_total.nightAkeEarly + _sq_total.nightAkeDay + _sq_total.nightToEarly;
+            const broken  = _sq_total.orphanAke + _sq_total.nightNoAke;
+            const total   = stable + warning + danger + broken;
+            const stableRate = total > 0 ? (stable / (stable + broken + danger) * 100).toFixed(0) : 'N/A';
+            const _si = [
+              `[Sequence-Integrity] dept=${cd.id}  stableRate=${stableRate}%`,
+              `  stable  (夜勤→明け→休み):  ${stable}`,
+              `  warning (遅番→早番 等):     ${warning}${warning > 0 ? ' ⚠' : ''}`,
+              `  danger  (高疲労系列):        ${danger}${danger > 0 ? ' ⚠' : ' ✓'}`,
+              `  broken  (系列破綻):          ${broken}${broken === 0 ? ' ✓' : ' ⚠⚠'}`,
+            ];
+            console.log(_si.join('\n'));
+          }
+
+          // ── Layer 3: [Sequence-Fatigue] per-staff ──
+          {
+            const _sf = [`[Sequence-Fatigue] dept=${cd.id}`];
+            // スコア: critical=critical3(nightAkeEarly)*3 + high(nightAkeDay+nightToEarly)*2 + medium(lateToEarly)*1
+            const _sq_scored = _sq_ds.map(s => {
+              const p = _sq_staff[s.name] || _sqZ();
+              const score = p.nightAkeEarly * 3 + (p.nightAkeDay + p.nightToEarly) * 2 + p.lateToEarly * 1;
+              return { name: s.name, p, score };
+            }).sort((a, b) => b.score - a.score);
+
+            for (const { name, p, score } of _sq_scored) {
+              if (score === 0 && p.nightAkeRest === 0) continue; // 夜勤ゼロスタッフは省略
+              const level = score >= 6 ? 'CRITICAL ⚠⚠' : score >= 3 ? 'HIGH ⚠' : score >= 1 ? 'MEDIUM' : 'OK';
+              _sf.push(
+                `  ${name}: safeSeq=${p.nightAkeRest} dangerSeq=${p.nightAkeEarly + p.nightAkeDay} ` +
+                `criticalSeq=${p.nightAkeEarly}(夜明早) score=${score} [${level}]`
+              );
+              // criticalListトップ3
+              if (p.nightAkeEarly > 0) {
+                let cnt = 0;
+                for (let d = 2; d < _sq_days && cnt < 3; d++) {
+                  const s = _sq_ds.find(x => x.name === name);
+                  if (!s) break;
+                  const prev = result[s.id]?.[d-1] ?? '', sh = result[s.id]?.[d] ?? '', next = result[s.id]?.[d+1] ?? '';
+                  if (_sq_isNight(prev) && sh === '明け' && next === '早番') {
+                    _sf.push(`    d${d-1}-d${d+1}: ${prev}→${sh}→${next}`);
+                    cnt++;
+                  }
+                }
+              }
+            }
+            if (_sq_scored.every(x => x.score === 0)) _sf.push('  全スタッフ 系列疲労ゼロ ✓');
+            console.log(_sf.join('\n'));
+          }
+
+          // ── Layer 4: [Sequence-Drift] ──
+          {
+            const f = _sq_hf[0], b = _sq_hf[1];
+            const fHigh  = f.nightAkeEarly + f.nightAkeDay + f.nightToEarly;
+            const bHigh  = b.nightAkeEarly + b.nightAkeDay + b.nightToEarly;
+            const fBrk   = f.orphanAke + f.nightNoAke;
+            const bBrk   = b.orphanAke + b.nightNoAke;
+            const driftHigh = bHigh - fHigh;
+            const _sd = [
+              `[Sequence-Drift] dept=${cd.id}  (前半=d1-d${_sq_half} / 後半=d${_sq_half+1}-d${_sq_days})`,
+              `  safeSequence:     前半=${f.nightAkeRest} → 後半=${b.nightAkeRest}` +
+                (b.nightAkeRest < f.nightAkeRest ? ' ↓ 減少⚠' : ' ✓'),
+              `  highFatigue:      前半=${fHigh} → 後半=${bHigh}` +
+                (driftHigh > 2 ? ' ↑ 増加⚠' : driftHigh > 0 ? ' ↑ やや増加' : ' 安定✓'),
+              `  brokenSequence:   前半=${fBrk} → 後半=${bBrk}` +
+                (bBrk > 0 ? ' ⚠⚠' : fBrk > 0 ? ' 後半改善✓' : ' ✓'),
+              `  lateToEarly:      前半=${f.lateToEarly} → 後半=${b.lateToEarly}` +
+                (b.lateToEarly > f.lateToEarly ? ' ↑ 後半増加⚠' : ''),
+            ];
+            if (driftHigh > 2) _sd.push('  ⚠ 後半に高疲労系列が集中 → 月末疲労蓄積の疑い');
+            if (b.nightAkeRest < f.nightAkeRest * 0.7) _sd.push('  ⚠ 後半に安全系列が激減 → 夜勤配置の偏り疑い');
+            console.log(_sd.join('\n'));
+          }
+
+          // ── Layer 5: [Sequence-Dependency] ──
+          {
+            // 夜勤ペア毎の系列安全率（同日夜勤ペアを抽出）
+            const _sp_pairs = {}; // { "A×B": { safeCount, totalNights } }
+            for (let d = 1; d <= _sq_days; d++) {
+              const nightW = _sq_ds.filter(s => _sq_isNight(result[s.id]?.[d] ?? ''));
+              if (nightW.length < 2) continue;
+              for (let i = 0; i < nightW.length; i++) {
+                for (let j = i + 1; j < nightW.length; j++) {
+                  const key = [nightW[i].name, nightW[j].name].sort().join('×');
+                  if (!_sp_pairs[key]) _sp_pairs[key] = { safeCount: 0, total: 0 };
+                  _sp_pairs[key].total++;
+                  // ペア両者とも 夜勤→明け→休み ならsafe
+                  const iA = result[nightW[i].id]?.[d+1] === '明け' && _sq_isRest(result[nightW[i].id]?.[d+2] ?? '');
+                  const iB = result[nightW[j].id]?.[d+1] === '明け' && _sq_isRest(result[nightW[j].id]?.[d+2] ?? '');
+                  if (iA && iB) _sp_pairs[key].safeCount++;
+                }
+              }
+            }
+            // 単独夜勤スタッフの安全率
+            const _sp_solo = {}; // { name: { safe, total } }
+            for (const s of _sq_ds) {
+              for (let d = 1; d < _sq_days; d++) {
+                if (!_sq_isNight(result[s.id]?.[d] ?? '')) continue;
+                const nightCnt = _sq_ds.filter(sx => _sq_isNight(result[sx.id]?.[d] ?? '')).length;
+                if (nightCnt > 1) continue; // ペアのある日は除く
+                if (!_sp_solo[s.name]) _sp_solo[s.name] = { safe: 0, total: 0 };
+                _sp_solo[s.name].total++;
+                if (result[s.id]?.[d+1] === '明け' && _sq_isRest(result[s.id]?.[d+2] ?? ''))
+                  _sp_solo[s.name].safe++;
+              }
+            }
+            const _sdep = [`[Sequence-Dependency] dept=${cd.id}`];
+            const pairEntries = Object.entries(_sp_pairs).sort((a, b) => b[1].total - a[1].total);
+            if (pairEntries.length === 0) {
+              _sdep.push('  夜勤ペアなし（全夜勤が単独配置）');
+            } else {
+              _sdep.push('  夜勤ペア別 safeSequenceRate:');
+              for (const [key, { safeCount, total }] of pairEntries) {
+                const rate = total > 0 ? (safeCount / total * 100).toFixed(0) : '-';
+                _sdep.push(`    ${key}: safe=${safeCount}/${total} (${rate}%)`);
+              }
+            }
+            const soloEntries = Object.entries(_sp_solo).sort((a, b) => b[1].total - a[1].total);
+            if (soloEntries.length > 0) {
+              _sdep.push('  単独夜勤 safeSequenceRate:');
+              for (const [name, { safe, total }] of soloEntries) {
+                const rate = total > 0 ? (safe / total * 100).toFixed(0) : '-';
+                _sdep.push(`    ${name}: safe=${safe}/${total} (${rate}%)`);
+              }
+            }
+            // overall safeSequenceRate: paired vs solo
+            const totalPairNights = pairEntries.reduce((s, [, v]) => s + v.total, 0);
+            const totalPairSafe   = pairEntries.reduce((s, [, v]) => s + v.safeCount, 0);
+            const totalSoloNights = soloEntries.reduce((s, [, v]) => s + v.total, 0);
+            const totalSoloSafe   = soloEntries.reduce((s, [, v]) => s + v.safe, 0);
+            if (totalPairNights > 0 || totalSoloNights > 0) {
+              const pRate = totalPairNights > 0 ? (totalPairSafe / totalPairNights * 100).toFixed(0) : '-';
+              const sRate = totalSoloNights > 0 ? (totalSoloSafe  / totalSoloNights * 100).toFixed(0) : '-';
+              _sdep.push(`  サマリ: ペア夜勤safeRate=${pRate}%  単独夜勤safeRate=${sRate}%`);
+              if (totalPairNights > 0 && totalSoloNights > 0) {
+                const pDiff = parseInt(pRate, 10) - parseInt(sRate, 10);
+                if (pDiff > 15)  _sdep.push('  → ペア依存で系列安定化している可能性 ⚠');
+                else if (pDiff < -10) _sdep.push('  → 単独配置の方が安全 (ペアが疲労を誘発?)');
+                else                _sdep.push('  → ペア有無による差異は小さい ✓');
+              }
+            }
+            console.log(_sdep.join('\n'));
+          }
+        }
+        // ══ [Shift-Sequence-Audit / Sequence-Integrity / Sequence-Fatigue / Sequence-Drift / Sequence-Dependency] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
