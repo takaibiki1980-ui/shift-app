@@ -8315,6 +8315,321 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Warning-Severity / Fatigue-Pattern / Forecast-Simulation] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Temporal-CarryOver / Temporal-Adaptation / Temporal-State-Drift / Temporal-Stability]
+        // Temporal State Persistence Preparation（時間状態永続化準備）
+        // - 「人の状態が月をまたぐ」概念を read-only simulation で観測
+        // - staffTemporalState（仮想/local-only / DB保存禁止 / 生成反映禁止 / Supabase禁止）
+        // ★診断のみ。shift生成変更禁止・repair変更禁止・score変更禁止・trend変更禁止
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _ts_days = getDays(year, month);
+          const _ts_ds   = cs.filter(s => s.dept === cd.id);
+          const _ts_cds  = cd.customShiftDefs || [];
+
+          // 夜勤 baseType set
+          const _ts_nightSet = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _tsc = _ts_cds.find(c2 => c2.key === k);
+            if ((_tsc?.baseType || k) === '夜勤') _ts_nightSet.add(k);
+          });
+
+          // trend lookup（ct = mergeShiftTrends 済み / 生成変更なし）
+          const _ts_getTrend = (name) => {
+            const key = Object.keys(ct)
+              .filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+
+          // 疲労ウェイト（Fatigue-Pattern と同定義）
+          const _ts_fw = (sh) => {
+            if (_ts_nightSet.has(sh)) return 3;
+            if (sh === '明け') return 2;
+            if (sh === '早番' || sh === '遅番') return 1;
+            return 0;
+          };
+          const _ts_trans = (prev, curr) => {
+            if (_ts_nightSet.has(prev) && curr === '明け') return 2;
+            if (prev === '明け' && curr === '早番')         return 3;
+            if (_ts_nightSet.has(prev) && curr === '早番') return 2;
+            return 0;
+          };
+
+          // ── staffTemporalState 一括算出（全4 Layer 共用）──
+          const _ts_stateMap = {}; // { [name]: state }
+          for (const s of _ts_ds) {
+            const trend    = _ts_getTrend(s.name);
+            const wkTotal  = trend?._workTotal ?? 0;
+            const isNewbie = wkTotal < 30;
+            const half     = Math.ceil(_ts_days / 2);
+
+            let totalFatigue = 0, earlyHalfF = 0, lateHalfF = 0;
+            let nightCnt = 0, dayShiftCnt = 0, earlyShiftCnt = 0, lateShiftCnt = 0, restCnt = 0;
+
+            for (let d = 1; d <= _ts_days; d++) {
+              const sh   = result[s.id]?.[d]   ?? '';
+              const prev = result[s.id]?.[d-1]  ?? '';
+              const fw   = _ts_fw(sh) + (d > 1 ? _ts_trans(prev, sh) : 0);
+              totalFatigue += fw;
+              d <= half ? (earlyHalfF += fw) : (lateHalfF += fw);
+              if (_ts_nightSet.has(sh))                         nightCnt++;
+              else if (sh === '日勤')                            dayShiftCnt++;
+              else if (sh === '早番')                            earlyShiftCnt++;
+              else if (sh === '遅番')                            lateShiftCnt++;
+              else if (['休み','希望休','有休'].includes(sh))   restCnt++;
+            }
+
+            // 月末7日間の疲労（carry-over 推定用）
+            const tailN = Math.min(7, _ts_days);
+            let tailFatigue = 0;
+            for (let d = _ts_days - tailN + 1; d <= _ts_days; d++) {
+              const sh   = result[s.id]?.[d]   ?? '';
+              const prev = result[s.id]?.[d-1]  ?? '';
+              tailFatigue += _ts_fw(sh) + (d > 1 ? _ts_trans(prev, sh) : 0);
+            }
+
+            // fatigueCarryOver: 月末7日の疲労密度
+            const fatigueCarryOver = tailFatigue >= tailN * 3.0 ? 'high'
+              : tailFatigue >= tailN * 1.5 ? 'medium' : 'low';
+
+            // recoveryDebt: 月間休日が期待最低 (days*0.25) を下回るか
+            const expectedRest = _ts_days * 0.25;
+            const recoveryDebt = restCnt < expectedRest * 0.7 ? 'high'
+              : restCnt < expectedRest ? 'medium' : 'low';
+
+            // nightAdaptation: trend上の夜勤比率と今月の乖離
+            const trendNR = trend?.['夜勤'] ?? 0;
+            const thisNR  = _ts_days > 0 ? nightCnt / _ts_days : 0;
+            const nightDiff = Math.abs(thisNR - trendNR);
+            const nightAdaptation = nightDiff < 0.05 ? 'high' : nightDiff < 0.15 ? 'medium' : 'low';
+
+            // burnoutAccumulation: 月全体の疲労密度
+            const burnoutAccumulation = totalFatigue >= _ts_days * 2.0 ? 'high'
+              : totalFatigue >= _ts_days * 1.2 ? 'medium' : 'low';
+
+            // scheduleStability: シフト種類の集中度（エントロピー低=安定パターン）
+            const _tsTot = nightCnt + dayShiftCnt + earlyShiftCnt + lateShiftCnt;
+            const shiftEntropy = (() => {
+              if (_tsTot === 0) return 0;
+              const ps = [nightCnt, dayShiftCnt, earlyShiftCnt, lateShiftCnt]
+                .map(v => v / _tsTot).filter(v => v > 0);
+              return -ps.reduce((s2, v) => s2 + v * Math.log(v), 0);
+            })();
+            const scheduleStability = shiftEntropy < 0.8 ? 'high' : shiftEntropy < 1.4 ? 'medium' : 'low';
+
+            // changeTolerance: 総疲労が低い = 変更余力あり
+            const changeTolerance = totalFatigue < _ts_days * 0.8 ? 'high'
+              : totalFatigue < _ts_days * 1.5 ? 'medium' : 'low';
+
+            _ts_stateMap[s.name] = {
+              isNewbie, wkTotal,
+              totalFatigue, earlyHalfF, lateHalfF, tailFatigue,
+              nightCnt, dayShiftCnt, earlyShiftCnt, lateShiftCnt, restCnt,
+              fatigueCarryOver, recoveryDebt, nightAdaptation,
+              burnoutAccumulation, scheduleStability, changeTolerance,
+            };
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 1: [Temporal-CarryOver]
+          // 月末キャリーオーバー推定（翌月への持ち越しリスク）
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _coLines = [`[Temporal-CarryOver] dept=${cd.id} (read-only / not persisted)`];
+            _coLines.push('staffTemporalState — 月末キャリーオーバー推定:');
+            let _co_any = false;
+
+            for (const s of _ts_ds) {
+              const st = _ts_stateMap[s.name];
+              if (!st) continue;
+              const items = [];
+              if (st.fatigueCarryOver !== 'low')                       items.push(`fatigueCarryOver=${st.fatigueCarryOver}`);
+              if (st.recoveryDebt !== 'low')                           items.push(`recoveryDebt=${st.recoveryDebt}`);
+              if (st.burnoutAccumulation !== 'low')                    items.push(`burnoutAccumulation=${st.burnoutAccumulation}`);
+              if (st.nightCnt > 0 && st.nightAdaptation === 'low')    items.push('nightAdaptation=low');
+              if (items.length > 0) {
+                _co_any = true;
+                _coLines.push(`  ${s.name}${st.isNewbie ? '(新人)' : ''}: ${items.join(' ')}`);
+                _coLines.push(`    tailFatigue(末${Math.min(7, _ts_days)}日)=${st.tailFatigue} restDays=${st.restCnt}`);
+              }
+            }
+            if (!_co_any) _coLines.push('  carry-over リスク: なし ✓');
+            console.log(_coLines.join('\n'));
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 2: [Temporal-Adaptation]
+          // 適応軌跡（stage 0=日勤中心 → 5=独立運用）
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _ad_stage = (st) => {
+              const { nightCnt: nc, earlyShiftCnt: es, lateShiftCnt: ls, wkTotal: wk } = st;
+              if (wk >= 100 && nc >= 2)
+                return { stage: 5, label: '独立運用', progress: 1.0 };
+              if (nc >= 3)
+                return { stage: 4, label: '夜勤適応中', progress: Math.min(0.99, wk / 100) };
+              if (nc >= 1)
+                return { stage: 3, label: '夜勤準備', progress: Math.min(0.99, 0.5 + nc / 6) };
+              if (ls >= 1)
+                return { stage: 2, label: '遅番導入', progress: Math.min(0.99, 0.3 + ls / Math.max(1, _ts_days * 0.25) * 0.3) };
+              if (es >= 1)
+                return { stage: 1, label: '早番導入', progress: Math.min(0.99, 0.1 + es / Math.max(1, _ts_days * 0.2) * 0.2) };
+              return { stage: 0, label: '日勤中心', progress: Math.min(0.99, wk < 10 ? wk / 10 : 0.5) };
+            };
+
+            const _adLines = [`[Temporal-Adaptation] dept=${cd.id} (read-only / not persisted)`];
+            _adLines.push('適応ステージ（0=日勤中心 → 5=独立運用）:');
+            let _ad_any = false;
+
+            for (const s of _ts_ds) {
+              const st = _ts_stateMap[s.name];
+              if (!st) continue;
+              if (!st.isNewbie && st.wkTotal >= 80) continue; // ベテランは省略
+              const { stage, label, progress } = _ad_stage(st);
+              const nb = st.isNewbie ? '(新人)' : '(成長中)';
+              _adLines.push(`  ${s.name}${nb}: stage=${stage} [${label}] adaptationProgress=${progress.toFixed(2)} nightTolerance=${st.nightAdaptation}`);
+              _adLines.push(`    wkTotal=${st.wkTotal} 夜勤=${st.nightCnt} 早番=${st.earlyShiftCnt} 遅番=${st.lateShiftCnt}`);
+              _ad_any = true;
+            }
+            if (!_ad_any) _adLines.push('  適応追跡対象者なし（全員 stage=5 または wkTotal>=80 ✓）');
+            console.log(_adLines.join('\n'));
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 3: [Temporal-State-Drift]
+          // 状態悪化の兆候検出（drift = 方向性のある状態変化）
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _sd_ncAvg = _ts_ds.length > 0
+              ? _ts_ds.reduce((s, x) => s + (_ts_stateMap[x.name]?.nightCnt ?? 0), 0) / _ts_ds.length : 0;
+
+            // 夜勤ペア共起カウント（supportDependency 判定用）
+            const _sd_pairCnt = {};
+            for (let d = 1; d <= _ts_days; d++) {
+              const nst = _ts_ds.filter(s => _ts_nightSet.has(result[s.id]?.[d] ?? ''));
+              for (let i = 0; i < nst.length; i++)
+                for (let j = i + 1; j < nst.length; j++) {
+                  const key = [nst[i].name, nst[j].name].sort().join('→');
+                  _sd_pairCnt[key] = (_sd_pairCnt[key] || 0) + 1;
+                }
+            }
+            // 各スタッフの最多共起パートナー
+            const _sd_pairMax = {};
+            for (const [pair, cnt] of Object.entries(_sd_pairCnt)) {
+              const [nmA, nmB] = pair.split('→');
+              for (const [nm, partner] of [[nmA, nmB], [nmB, nmA]]) {
+                if (!_sd_pairMax[nm] || _sd_pairMax[nm].cnt < cnt)
+                  _sd_pairMax[nm] = { partner, cnt };
+              }
+            }
+
+            const _sdLines = [`[Temporal-State-Drift] dept=${cd.id} (read-only / not persisted)`];
+            let _sd_any = false;
+
+            for (const s of _ts_ds) {
+              const st = _ts_stateMap[s.name];
+              if (!st) continue;
+              const drifts = [];
+
+              // burnoutTrend: 後半疲労が前半より 40% 以上重い
+              const burnoutTrend = st.lateHalfF > st.earlyHalfF * 1.4 && st.lateHalfF >= 8 ? 'up'
+                : st.earlyHalfF > st.lateHalfF * 1.4 && st.earlyHalfF >= 8 ? 'down' : 'stable';
+              if (burnoutTrend === 'up')
+                drifts.push(`burnoutTrend=up(early=${st.earlyHalfF} late=${st.lateHalfF})`);
+
+              // recoveryDebt 高
+              if (st.recoveryDebt === 'high') drifts.push(`recoveryDebt=high(rest=${st.restCnt}日)`);
+
+              // nightCoreDependency: avg * 2.0 以上
+              if (st.nightCnt >= Math.max(6, _sd_ncAvg * 2.0))
+                drifts.push(`nightCoreDependency(夜勤=${st.nightCnt}回 avg=${_sd_ncAvg.toFixed(1)})`);
+
+              // supportDependency 固定化: ペア共起が月の 40% 以上
+              const pd = _sd_pairMax[s.name];
+              if (pd && pd.cnt >= _ts_days * 0.4 && st.nightCnt >= 3)
+                drifts.push(`supportDependency=fixating(${pd.partner}と${pd.cnt}回共起)`);
+
+              if (drifts.length > 0) {
+                _sd_any = true;
+                _sdLines.push(`  ${s.name}${st.isNewbie ? '(新人)' : ''}:`);
+                drifts.forEach(d2 => _sdLines.push(`    ${d2}`));
+              }
+            }
+            if (!_sd_any) _sdLines.push('  state drift: なし ✓');
+            console.log(_sdLines.join('\n'));
+          }
+
+          // ──────────────────────────────────────────────────────────────────
+          // Layer 4: [Temporal-Stability]
+          // 長期安定性プロジェクション（このまま続くとどうなるか）
+          // ──────────────────────────────────────────────────────────────────
+          {
+            const _stb_ncAvg = _ts_ds.length > 0
+              ? _ts_ds.reduce((s, x) => s + (_ts_stateMap[x.name]?.nightCnt ?? 0), 0) / _ts_ds.length : 0;
+
+            // nightCoreRisk: 夜勤担当が 1 名 → 単一障害点
+            const _stb_nightCores = _ts_ds.filter(s => {
+              const st = _ts_stateMap[s.name];
+              return st && st.nightCnt >= Math.max(6, _stb_ncAvg * 1.8);
+            });
+            const nightCoreRisk = _stb_nightCores.length === 1 ? 'high'
+              : _stb_nightCores.length <= 2 ? 'medium' : 'low';
+
+            // burnoutRisk: burnoutAccumulation=high のスタッフ数
+            const _stb_burnHigh = _ts_ds.filter(s => _ts_stateMap[s.name]?.burnoutAccumulation === 'high');
+            const burnoutRisk = _stb_burnHigh.length >= 3 ? 'high'
+              : _stb_burnHigh.length >= 1 ? 'medium' : 'low';
+
+            // newbieRetentionRisk: 新人 & (burnoutAccumulation=high or recoveryDebt=high)
+            const _stb_nbRisk = _ts_ds.filter(s => {
+              const st = _ts_stateMap[s.name];
+              return st?.isNewbie && (st.burnoutAccumulation === 'high' || st.recoveryDebt === 'high');
+            });
+            const newbieRetentionRisk = _stb_nbRisk.length >= 2 ? 'high'
+              : _stb_nbRisk.length >= 1 ? 'medium' : 'low';
+
+            // pairDependencyRisk: 夜勤ペア共起 >= 月の 40%
+            const _stb_pairCnt = {};
+            for (let d = 1; d <= _ts_days; d++) {
+              const nst = _ts_ds.filter(s => _ts_nightSet.has(result[s.id]?.[d] ?? ''));
+              for (let i = 0; i < nst.length; i++)
+                for (let j = i + 1; j < nst.length; j++) {
+                  const key = [nst[i].name, nst[j].name].sort().join('→');
+                  _stb_pairCnt[key] = (_stb_pairCnt[key] || 0) + 1;
+                }
+            }
+            const _stb_strongPairs = Object.entries(_stb_pairCnt)
+              .filter(([, cnt]) => cnt >= _ts_days * 0.4);
+            const pairDependencyRisk = _stb_strongPairs.length >= 2 ? 'high'
+              : _stb_strongPairs.length >= 1 ? 'medium' : 'low';
+
+            // overallStability
+            const _riskW = (r) => r === 'high' ? 2 : r === 'medium' ? 1 : 0;
+            const totalRisk = _riskW(nightCoreRisk) + _riskW(burnoutRisk)
+                            + _riskW(newbieRetentionRisk) + _riskW(pairDependencyRisk);
+            const overallStability = totalRisk >= 4 ? 'low' : totalRisk >= 2 ? 'medium' : 'high';
+
+            const _stbLines = [`[Temporal-Stability] dept=${cd.id} overallStability=${overallStability}`];
+            _stbLines.push(`nightCoreRisk=${nightCoreRisk} burnoutRisk=${burnoutRisk} newbieRetentionRisk=${newbieRetentionRisk} pairDependencyRisk=${pairDependencyRisk}`);
+            if (_stb_nightCores.length > 0)
+              _stbLines.push(`nightCore担当(${_stb_nightCores.length}名): ${_stb_nightCores.map(s => s.name).join(', ')}`);
+            if (_stb_burnHigh.length > 0)
+              _stbLines.push(`burnoutHigh: ${_stb_burnHigh.map(s => s.name).join(', ')}`);
+            if (_stb_nbRisk.length > 0)
+              _stbLines.push(`newbieAtRisk: ${_stb_nbRisk.map(s => s.name).join(', ')}`);
+            if (_stb_strongPairs.length > 0) {
+              _stbLines.push('strongPairs(月40%以上共起):');
+              _stb_strongPairs.slice(0, 4).forEach(([pair, cnt]) =>
+                _stbLines.push(`  ${pair}: ${cnt}回/${_ts_days}日(${(cnt / _ts_days * 100).toFixed(0)}%)`)
+              );
+            }
+            if (overallStability === 'high') _stbLines.push('  stability: 良好 ✓');
+            console.log(_stbLines.join('\n'));
+          }
+        }
+        // ══ [Temporal-CarryOver / Adaptation / State-Drift / Stability] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
