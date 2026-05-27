@@ -10858,6 +10858,381 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // ══ [Why-UI-Preview / Reason-Card / Timeline-View /
         //    Severity-Badge / Explanation-Summary / UI-Readability-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[WhatIf-Sandbox / Intervention-Impact / Sequence-Stability-Impact /
+        //    Burnout-Recovery-Sim / Dependency-Change-Sim / Intervention-Cost]
+        // Temporal What-if Sandbox — read-only 未来介入シミュレーション
+        // - 実 shift 変更なし。simulationResult のみ使用。result 直接変更禁止。
+        // - DB保存禁止。autoGenerate変更禁止。本番反映禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _wi_days  = getDays(year, month);
+          const _wi_ds    = cs.filter(s => s.dept === cd.id);
+          const _wi_cds   = cd.customShiftDefs || [];
+          const _wi_minSt = cd.minStaff || {};
+          const _wi_tailN = Math.min(7, _wi_days);
+
+          // ── shift classification helpers ──
+          const _wi_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _wi_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _wi_nset.add(k);
+          });
+          const _wi_isNight = sh => _wi_nset.has(sh);
+          const _wi_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _wi_isWork  = sh => !!(sh && !_wi_isRest(sh) && sh !== '明け' && sh !== '');
+          const _wi_fw      = sh => _wi_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _wi_boOrd   = { low: 0, medium: 1, high: 2 };
+
+          // ── per-staff metrics from a shift map (read-only, never modifies result) ──
+          const _wi_metric = (shiftMap) => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, dSq=0, leSq=0;
+            for (let d = 1; d <= _wi_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _wi_fw(sh);
+              if (d > _wi_days - _wi_tailN) tlF += _wi_fw(sh);
+              if (_wi_isNight(sh)) nCnt++;
+              if (_wi_isRest(sh))  rCnt++;
+              if (sh === '明け' && _wi_isNight(pv)) {
+                if (_wi_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_wi_isWork(nx))    dSq++;
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = totF >= _wi_days*2.0 ? 'high' : totF >= _wi_days*1.2 ? 'medium' : 'low';
+            const co = tlF  >= _wi_tailN*3.0 ? 'high' : tlF  >= _wi_tailN*1.5 ? 'medium' : 'low';
+            const rd = rCnt < _wi_days*0.25*0.7 ? 'high' : rCnt < _wi_days*0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, dSq, leSq, bo, co, rd };
+          };
+
+          // ── shortage risk: days where night coverage falls below minStaff after intervention ──
+          const _wi_shortage = (staffId, simMap) => {
+            let cnt = 0;
+            for (let d = 1; d <= _wi_days; d++) {
+              const orig = result[staffId]?.[d] ?? '';
+              const sim  = simMap[d] ?? '';
+              if (orig !== sim && _wi_isNight(orig) && !_wi_isNight(sim)) {
+                const minN = _wi_minSt[orig] ?? 1;
+                const othN = _wi_ds.filter(x => x.id !== staffId && (result[x.id]?.[d] ?? '') === orig).length;
+                if (othN < minN) cnt++;
+              }
+            }
+            return cnt;
+          };
+
+          // ── trend lookup ──
+          const _wi_trd = (name) => {
+            const k = Object.keys(ct)
+              .filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── pair co-occurrence: fixed pairs = ≥40% of days sharing a night shift ──
+          const _wi_pco = {};
+          for (let d = 1; d <= _wi_days; d++) {
+            const nw = _wi_ds.filter(s => _wi_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _wi_pco[pk] = (_wi_pco[pk] || 0) + 1;
+              }
+          }
+          const _wi_fixedPairs = Object.entries(_wi_pco)
+            .filter(([, n]) => n >= _wi_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── cost/benefit estimator (pure function, no side effects) ──
+          const _wi_cost = ({ beforeM: bm, afterM: am, shortageRisk: sr }) => {
+            const lev = { high: 3, medium: 2, low: 1 };
+            const boDelta = lev[bm.bo] - lev[am.bo]; // positive = burnout improved
+            const coDelta = lev[bm.co] - lev[am.co]; // positive = fatigue improved
+            const sqLoss  = Math.max(0, bm.sSq - am.sSq);
+            const cqGain  = Math.max(0, am.cSq - bm.cSq);
+            const benefit = Math.max(0, boDelta) * 2 + Math.max(0, coDelta);
+            const cost    = sqLoss * 2 + cqGain * 3 + (sr || 0) * 2;
+            const net     = benefit - cost;
+            const netLabel = net >= 3 ? 'highPositive' : net >= 1 ? 'lowPositive'
+                           : net === 0 ? 'neutral' : net >= -2 ? 'lowNegative' : 'highNegative';
+            return { benefit, cost, net, netLabel, boDelta, coDelta, sqLoss, cqGain };
+          };
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Build intervention candidates per staff (sandbox only — result 不変)
+          // ─────────────────────────────────────────────────────────────────────
+          // _wi_ivs: { staffName, type, day, shiftLabel, cascaded, reason,
+          //            beforeM, afterM, simMap, shortageRisk }
+          const _wi_ivs = [];
+
+          for (const s of _wi_ds) {
+            const origMap = result[s.id] || {};
+            const bM = _wi_metric(origMap);
+            const tr = _wi_trd(s.name);
+            const wk = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+
+            // [A] 夜勤-1: burnout高 / fatigueCarryOver高 / 新人夜勤保護
+            if (bM.nCnt >= 1 && (bM.bo === 'high' || bM.co === 'high' || fy < 1.5)) {
+              let tD = null;
+              for (let d = _wi_days; d >= 1; d--) {
+                if (_wi_isNight(origMap[d] ?? '')) { tD = d; break; }
+              }
+              if (tD !== null) {
+                const sm = { ...origMap };
+                const origSh = sm[tD];
+                sm[tD] = '休み';
+                let cascaded = false;
+                if ((sm[tD + 1] ?? '') === '明け') { sm[tD + 1] = '休み'; cascaded = true; }
+                const aM = _wi_metric(sm);
+                const sr = _wi_shortage(s.id, sm);
+                _wi_ivs.push({
+                  staffName: s.name, type: 'nightReduce', day: tD,
+                  shiftLabel: `${origSh}→休み${cascaded ? ` +d${tD+1}明け→休み` : ''}`,
+                  cascaded,
+                  reason: bM.bo === 'high' ? 'burnout高' : fy < 1.5 ? '新人夜勤保護' : 'fatigueCarryOver高',
+                  beforeM: bM, afterM: aM, simMap: { ...sm }, shortageRisk: sr
+                });
+              }
+            }
+
+            // [B] recovery休追加: burnout高 — 月末側に勤務日を1日休みへ
+            if (bM.bo === 'high') {
+              let tD2 = null;
+              const start2 = Math.max(1, _wi_days - 9);
+              for (let d = _wi_days; d >= start2; d--) {
+                const sh = origMap[d] ?? '';
+                if (_wi_isWork(sh)) { tD2 = d; break; }
+              }
+              if (tD2 !== null && !_wi_ivs.find(x => x.staffName === s.name && x.type === 'recoveryAdd')) {
+                const sm2 = { ...origMap };
+                const origSh2 = sm2[tD2] ?? '';
+                sm2[tD2] = '休み';
+                const aM2 = _wi_metric(sm2);
+                const sr2 = _wi_shortage(s.id, sm2);
+                _wi_ivs.push({
+                  staffName: s.name, type: 'recoveryAdd', day: tD2,
+                  shiftLabel: `${origSh2}→休み`, cascaded: false,
+                  reason: 'burnout高→月末回復休確保',
+                  beforeM: bM, afterM: aM2, simMap: { ...sm2 }, shortageRisk: sr2
+                });
+              }
+            }
+
+            // [C] 遅番→早番抑制: lateEarlySeq 発生時に最初の危険遷移を日勤へ変換
+            if (bM.leSq >= 1) {
+              let tD3 = null;
+              for (let d = 2; d <= _wi_days; d++) {
+                if ((origMap[d] ?? '') === '早番' && (origMap[d-1] ?? '') === '遅番') { tD3 = d; break; }
+              }
+              if (tD3 !== null && !_wi_ivs.find(x => x.staffName === s.name && x.type === 'lateEarlySuppress')) {
+                const sm3 = { ...origMap };
+                sm3[tD3] = '日勤';
+                const aM3 = _wi_metric(sm3);
+                const sr3 = _wi_shortage(s.id, sm3);
+                _wi_ivs.push({
+                  staffName: s.name, type: 'lateEarlySuppress', day: tD3,
+                  shiftLabel: `d${tD3} 早番→日勤`, cascaded: false,
+                  reason: '遅番→早番 危険遷移除去',
+                  beforeM: bM, afterM: aM3, simMap: { ...sm3 }, shortageRisk: sr3
+                });
+              }
+            }
+          }
+
+          // ── pair separation simulations ──
+          const _wi_pairSims = [];
+          for (const pair of _wi_fixedPairs) {
+            const [n1, n2] = pair;
+            const s1 = _wi_ds.find(s => s.name === n1);
+            const s2 = _wi_ds.find(s => s.name === n2);
+            if (!s1 || !s2) continue;
+            const shared = [];
+            for (let d = 1; d <= _wi_days; d++) {
+              if (_wi_isNight(result[s1.id]?.[d] ?? '') && _wi_isNight(result[s2.id]?.[d] ?? ''))
+                shared.push(d);
+            }
+            if (!shared.length) continue;
+            const tD = shared[0];
+            const sm = { ...(result[s2.id] || {}) };
+            const origSh = sm[tD] ?? '';
+            sm[tD] = '休み';
+            if ((sm[tD + 1] ?? '') === '明け') sm[tD + 1] = '休み';
+            const bM = _wi_metric(result[s2.id] || {});
+            const aM = _wi_metric(sm);
+            const sr = _wi_shortage(s2.id, sm);
+            _wi_pairSims.push({ pair, tD, origSh, beforeM: bM, afterM: aM, shortageRisk: sr, sharedN: shared.length });
+          }
+
+          // ── Layer 1: [WhatIf-Sandbox] ──
+          {
+            const _l1 = [`[WhatIf-Sandbox] dept=${cd.id}  (read-only / 実shift変更なし ✓)`];
+            _l1.push(`  介入候補: ${_wi_ivs.length}件  固定ペア分離候補: ${_wi_pairSims.length}組`);
+            if (_wi_ivs.length === 0 && _wi_pairSims.length === 0) {
+              _l1.push('  ✓ 介入候補なし（現在の状態は安定）');
+            } else {
+              for (const iv of _wi_ivs) {
+                _l1.push(`  ─── ${iv.staffName} ▸ ${iv.type} ───`);
+                _l1.push(`    reason:     ${iv.reason}`);
+                _l1.push(`    simulation: d${iv.day} ${iv.shiftLabel}`);
+                _l1.push(`    実適用:     なし ✓  (simulationResult のみ)`);
+              }
+              for (const ps of _wi_pairSims) {
+                _l1.push(`  ─── ${ps.pair.join('×')} ペア分離 ───`);
+                _l1.push(`    simulation: d${ps.tD} ${ps.pair[1]} ${ps.origSh}→休み`);
+                _l1.push(`    共有夜勤:   ${ps.sharedN}回`);
+                _l1.push(`    実適用:     なし ✓  (simulationResult のみ)`);
+              }
+            }
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Intervention-Impact] ──
+          {
+            const _l2 = [`[Intervention-Impact] dept=${cd.id}`];
+            for (const iv of _wi_ivs) {
+              const { beforeM: bm, afterM: am, shortageRisk: sr } = iv;
+              _l2.push(`  ${iv.staffName} ${iv.type}:`);
+              const improve = [], worsen = [];
+              if (bm.bo !== am.bo && _wi_boOrd[am.bo] < _wi_boOrd[bm.bo])
+                improve.push(`burnoutRisk: ${bm.bo} → ${am.bo} ✓`);
+              if (bm.co !== am.co && _wi_boOrd[am.co] < _wi_boOrd[bm.co])
+                improve.push(`fatigueCarryOver: ${bm.co} → ${am.co} ✓`);
+              if (bm.rd !== am.rd && _wi_boOrd[am.rd] < _wi_boOrd[bm.rd])
+                improve.push(`recoveryDebt: ${bm.rd} → ${am.rd} ✓`);
+              const sqD = am.sSq - bm.sSq;
+              if (sqD < 0)  worsen.push(`safeSequence: ${sqD}`);
+              const cqD = am.cSq - bm.cSq;
+              if (cqD > 0)  worsen.push(`criticalSequence: +${cqD} ⚠`);
+              if (sr > 0)   worsen.push(`shortageRisk: +${sr} ⚠`);
+              if (improve.length === 0 && worsen.length === 0) {
+                _l2.push(`    (変化なし)`);
+              } else {
+                if (improve.length) { _l2.push(`    改善:`); improve.forEach(x => _l2.push(`      ${x}`)); }
+                if (worsen.length)  { _l2.push(`    悪化:`); worsen.forEach(x  => _l2.push(`      ${x}`)); }
+              }
+            }
+            if (_wi_ivs.length === 0) _l2.push('  分析対象なし（介入候補なし）');
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Sequence-Stability-Impact] ──
+          {
+            const _l3 = [`[Sequence-Stability-Impact] dept=${cd.id}`];
+            for (const iv of _wi_ivs) {
+              const { beforeM: bm, afterM: am } = iv;
+              _l3.push(`  ${iv.staffName} ${iv.type}:`);
+              _l3.push(`    before: safeSeq=${bm.sSq}  criticalSeq=${bm.cSq}  dangerSeq=${bm.dSq}  lateEarlySeq=${bm.leSq}`);
+              _l3.push(`    after:  safeSeq=${am.sSq}  criticalSeq=${am.cSq}  dangerSeq=${am.dSq}  lateEarlySeq=${am.leSq}`);
+              const broken  = am.cSq > bm.cSq;
+              const improved = am.sSq > bm.sSq || am.cSq < bm.cSq || am.leSq < bm.leSq;
+              const neutral  = am.sSq===bm.sSq && am.cSq===bm.cSq && am.dSq===bm.dSq && am.leSq===bm.leSq;
+              _l3.push(`    stability: ${broken ? '悪化 ⚠' : improved ? '改善 ✓' : neutral ? '変化なし ✓' : '部分低下'}`);
+            }
+            if (_wi_ivs.length === 0) _l3.push('  分析対象なし');
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Burnout-Recovery-Sim] ──
+          {
+            const _l4 = [`[Burnout-Recovery-Sim] dept=${cd.id}`];
+            for (const iv of _wi_ivs) {
+              const { beforeM: bm, afterM: am } = iv;
+              _l4.push(`  ${iv.staffName}:`);
+              const boChg = bm.bo !== am.bo;
+              const coChg = bm.co !== am.co;
+              if (!boChg && !coChg) { _l4.push(`    疲労回復効果なし（変化なし）`); continue; }
+              if (boChg) _l4.push(`    burnout: ${bm.bo} → ${am.bo}${am.bo === 'low' ? ' ✓' : ''}`);
+              if (coChg) _l4.push(`    fatigueCarryOver: ${bm.co} → ${am.co}${am.co === 'low' ? ' ✓' : ''}`);
+              const totDelta = bm.totF - am.totF;
+              _l4.push(`    疲労スコア削減: ${totDelta > 0 ? '-' + totDelta : '0'} pt`);
+              if (am.bo === 'low' && am.co === 'low') _l4.push(`    → 翌月への疲労持越しリスク解消 ✓`);
+              else if (am.bo === 'medium')            _l4.push(`    → 疲労軽減済（medium維持）`);
+            }
+            if (_wi_ivs.length === 0) _l4.push('  分析対象なし');
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Dependency-Change-Sim] ──
+          {
+            const _l5 = [`[Dependency-Change-Sim] dept=${cd.id}`];
+            if (_wi_fixedPairs.length === 0) {
+              _l5.push('  固定ペアなし（依存関係なし）✓');
+            } else {
+              _l5.push(`  現在の固定ペア（夜勤共存≥40%の組合せ）:`);
+              for (const pair of _wi_fixedPairs) {
+                const pk = pair.slice().sort().join('×');
+                _l5.push(`    ${pk}: ${_wi_pco[pk] || 0}回共存 / ${_wi_days}日中`);
+              }
+            }
+            for (const ps of _wi_pairSims) {
+              const { beforeM: bm, afterM: am, shortageRisk: sr } = ps;
+              _l5.push(`  ─── ${ps.pair.join('×')} 分離シミュレーション ─────`);
+              _l5.push(`    共有夜勤 ${ps.sharedN}回 → d${ps.tD} ${ps.pair[1]}を分離`);
+              const improve2 = [], worsen2 = [];
+              improve2.push(`pairFixation依存緩和（連続同一夜勤から1回分離）`);
+              if (_wi_boOrd[am.bo] < _wi_boOrd[bm.bo])
+                improve2.push(`${ps.pair[1]} burnout: ${bm.bo} → ${am.bo} ✓`);
+              if (sr > 0)       worsen2.push(`supportNeed: +${sr}（夜勤補填が必要）⚠`);
+              if (am.sSq < bm.sSq) worsen2.push(`safeSequence: ${bm.sSq} → ${am.sSq} ⚠`);
+              if (improve2.length) { _l5.push(`    改善:`); improve2.forEach(x => _l5.push(`      ${x}`)); }
+              if (worsen2.length)  { _l5.push(`    悪化:`); worsen2.forEach(x  => _l5.push(`      ${x}`)); }
+              if (!improve2.length && !worsen2.length) _l5.push(`    変化なし`);
+            }
+            if (_wi_pairSims.length === 0 && _wi_fixedPairs.length > 0)
+              _l5.push('  (固定ペアに共有夜勤なし → 分離シミュレーション不要)');
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Intervention-Cost] ──
+          {
+            const _l6 = [`[Intervention-Cost] dept=${cd.id}`];
+            // precompute cost for each intervention candidate
+            const _wi_costTable = _wi_ivs.map(iv => ({ ...iv, ..._wi_cost(iv) }));
+
+            for (const ce of _wi_costTable) {
+              _l6.push(`  ${ce.staffName} ${ce.type}:`);
+              _l6.push(`    benefit: burnoutΔ=${ce.boDelta>=0?'+'+ce.boDelta:ce.boDelta}  fatigueΔ=${ce.coDelta>=0?'+'+ce.coDelta:ce.coDelta}  → benefit=${ce.benefit}`);
+              _l6.push(`    cost:    seqLoss=${ce.sqLoss>0?'-'+ce.sqLoss:0}  criticalSeqGain=${ce.cqGain>0?'+'+ce.cqGain:0}  shortage=${ce.shortageRisk>0?'-'+ce.shortageRisk:0}  → cost=${ce.cost}`);
+              _l6.push(`    netImpact: ${ce.net >= 0 ? '+' : ''}${ce.net} → ${ce.netLabel}`);
+            }
+
+            // Cost-efficiency ranking (best net first)
+            const _wi_ranked = [..._wi_costTable].sort((a, b) => b.net - a.net);
+            _l6.push(`  ── コスト効率ランキング ──`);
+            if (_wi_ranked.length === 0) {
+              _l6.push('  (介入候補なし)');
+            } else {
+              _wi_ranked.forEach((x, i) => {
+                const icon = x.net >= 3 ? '🟢' : x.net >= 1 ? '🔵' : x.net === 0 ? '🟡' : x.net >= -2 ? '🟠' : '🔴';
+                _l6.push(`  ${i + 1}. ${icon} ${x.staffName} (${x.type}) net=${x.net >= 0 ? '+' : ''}${x.net} [${x.netLabel}]`);
+              });
+            }
+
+            // Facility-level diagnostic
+            const _wi_best    = _wi_ranked[0];
+            const _wi_hasConflict = _wi_costTable.some(x => x.boDelta > 0 && x.sqLoss > 0);
+            const _wi_fragile     = _wi_costTable.some(x => x.sqLoss > 0 && x.beforeM.sSq <= 2);
+            const _wi_needsIntv   = _wi_ranked.length > 0 && _wi_ranked[0].net >= 1;
+            const _wi_newbieProt  = _wi_ivs.filter(iv => iv.reason.includes('新人')).length > 0;
+            const _wi_pairRisky   = _wi_pairSims.some(ps => ps.shortageRisk > 0);
+
+            _l6.push(`  ── 施設状態診断 ──`);
+            _l6.push(`  介入必要度:              ${_wi_ivs.length === 0 ? '安定 ✓' : _wi_needsIntv ? '介入推奨 ⚠' : '介入検討（効果小）'}`);
+            _l6.push(`  最優先介入:              ${_wi_best ? `${_wi_best.staffName}(${_wi_best.type}) net=${_wi_best.net >= 0 ? '+' : ''}${_wi_best.net}` : 'なし'}`);
+            _l6.push(`  burnout vs sequence 競合: ${_wi_hasConflict ? 'あり ⚠（burnout改善でsequence低下）' : 'なし ✓'}`);
+            _l6.push(`  safeSequence fragility:  ${_wi_fragile ? '脆弱（≤2件状態で介入するとsequence消失リスク）' : '安定 ✓'}`);
+            _l6.push(`  nightCore 分散可能性:    ${_wi_fixedPairs.length > 0 ? `固定ペア${_wi_fixedPairs.length}組（分離でsupport崩壊リスクあり）` : '固定ペアなし（分散済）✓'}`);
+            _l6.push(`  pairDependency 緩和有効: ${_wi_pairRisky ? '要注意（shortage発生リスクあり）' : _wi_pairSims.length > 0 ? '有効（shortage発生なし）✓' : '対象なし'}`);
+            _l6.push(`  新人保護・nightCore 両立: ${_wi_newbieProt ? '新人保護介入あり（単独適用で両立可）' : '新人保護対象なし'}`);
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [WhatIf-Sandbox / Intervention-Impact / Sequence-Stability-Impact /
+        //    Burnout-Recovery-Sim / Dependency-Change-Sim / Intervention-Cost] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
