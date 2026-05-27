@@ -10253,6 +10253,296 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Staff-Readiness-Derived / Readiness-Classification / Readiness-Audit / Readiness-Temporal] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[ShiftExplanationMeta / Explanation-Event / Explanation-Timeline /
+        //    Explanation-Grouping / Explanation-Severity / Explanation-UIFlow]
+        // Explainable Scheduling Layer — 判断理由の構造化メタ情報
+        // - 各スタッフの配置理由を説明可能構造として統合する。
+        // - 完全 read-only。LLM自動生成禁止・shift変更禁止・DB保存禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _xe_days  = getDays(year, month);
+          const _xe_ds    = cs.filter(s => s.dept === cd.id);
+          const _xe_cds   = cd.customShiftDefs || [];
+          const _xe_tailN = Math.min(7, _xe_days);
+          const _xe_third = Math.ceil(_xe_days / 3);
+
+          // 夜勤 set
+          const _xe_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _nc = _xe_cds.find(c => c.key === k);
+            if ((_nc?.baseType || k) === '夜勤') _xe_nset.add(k);
+          });
+          const _xe_isNight = (sh) => _xe_nset.has(sh);
+          const _xe_isRest  = (sh) => ['休み', '希望休', '有休'].includes(sh);
+          const _xe_isWork  = (sh) => !!(sh && !_xe_isRest(sh) && sh !== '明け' && sh !== '');
+          const _xe_fw      = (sh) => _xe_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+
+          // trend lookup
+          const _xe_trend = (name) => {
+            const key = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+
+          // ── 夜勤ペア共起 ──
+          const _xe_pairCnt = {};
+          for (let d = 1; d <= _xe_days; d++) {
+            const nw = _xe_ds.filter(s => _xe_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const k = [nw[i].name, nw[j].name].sort().join('×');
+                _xe_pairCnt[k] = (_xe_pairCnt[k] || 0) + 1;
+              }
+          }
+          const _xe_strongPairs = Object.entries(_xe_pairCnt)
+            .filter(([, n]) => n >= _xe_days * 0.4)
+            .map(([key]) => key.split('×'));
+
+          // ── per-staff state recompute (compact) ──
+          const _xe_state = {};
+          for (const s of _xe_ds) {
+            const trend = _xe_trend(s.name);
+            const wkTotal = trend?._workTotal ?? 0;
+            const isNewbie = wkTotal < 30;
+            let totalF = 0, tailF = 0, nightCnt = 0, restCnt = 0;
+            let safeSeq = 0, critSeq = 0, dangerSeq = 0, lateEarlySeq = 0;
+            // per-period sequence counts [early, mid, late]
+            const pSeq = [{ safe:0, crit:0, danger:0, warn:0 }, { safe:0, crit:0, danger:0, warn:0 }, { safe:0, crit:0, danger:0, warn:0 }];
+            for (let d = 1; d <= _xe_days; d++) {
+              const sh = result[s.id]?.[d] ?? '', prev = result[s.id]?.[d-1] ?? '', next = result[s.id]?.[d+1] ?? '';
+              const pi = d <= _xe_third ? 0 : d <= _xe_third * 2 ? 1 : 2;
+              totalF += _xe_fw(sh);
+              if (d > _xe_days - _xe_tailN) tailF += _xe_fw(sh);
+              if (_xe_isNight(sh)) nightCnt++;
+              if (_xe_isRest(sh))  restCnt++;
+              if (sh === '明け' && _xe_isNight(prev)) {
+                if (_xe_isRest(next) || !next) { safeSeq++;   pSeq[pi].safe++; }
+                else if (next === '早番')        { critSeq++;   pSeq[pi].crit++; }
+                else if (_xe_isWork(next))       { dangerSeq++; pSeq[pi].danger++; }
+                else                             { safeSeq++;   pSeq[pi].safe++; }
+              }
+              if (sh === '早番' && d > 1 && prev === '遅番') { lateEarlySeq++; pSeq[pi].warn++; }
+            }
+            const burnout  = totalF >= _xe_days * 2.0 ? 'high' : totalF >= _xe_days * 1.2 ? 'medium' : 'low';
+            const carryOver= tailF  >= _xe_tailN * 3.0 ? 'high' : tailF >= _xe_tailN * 1.5 ? 'medium' : 'low';
+            const recDebt  = restCnt < _xe_days * 0.25 * 0.7 ? 'high' : restCnt < _xe_days * 0.25 ? 'medium' : 'low';
+            const fy = s.facilityYears ?? (isNewbie ? 0.3 : Math.min(5, wkTotal / 30 * 0.5 + 0.5));
+            const fl = s.floorYears ?? (isNewbie ? 0.2 : 1.5);
+            const nightRdy = (fy < 0.5 || fl < 0.2) ? 'low' : (burnout === 'high' || fy < 1.5 || fl < 0.5) ? 'medium' : 'high';
+            const lateRdy  = (fy < 0.5 || fl < 0.2) ? 'low' : (fy < 1.0 || fl < 0.5) ? 'medium' : 'high';
+            const relocRisk= (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const supNeed  = (fl < 0.3 || fy < 0.3) ? 'high' : (fl < 0.8 || fy < 0.8) ? 'medium' : 'low';
+            const aStage   = fl < 0.1 ? 0 : fl < 0.3 ? 1 : fl < 0.8 ? 2 : fl < 1.5 ? 3 : fl < 3.0 ? 4 : 5;
+            const seqScore = critSeq * 3 + dangerSeq * 2 + lateEarlySeq;
+            const seqFat   = seqScore >= 6 ? 'high' : seqScore >= 3 ? 'medium' : 'low';
+            const pairKey  = _xe_strongPairs.find(p => p.includes(s.name));
+            _xe_state[s.name] = {
+              isNewbie, nightCnt, restCnt, safeSeq, critSeq, dangerSeq, lateEarlySeq,
+              burnout, carryOver, recDebt, nightRdy, lateRdy, relocRisk, supNeed,
+              aStage, seqFat, pSeq, pairKey: pairKey ? pairKey.join('×') : null,
+              fy, fl, nightOk: !!s.nightOk
+            };
+          }
+
+          // ── 説明文テンプレート（reason → Japanese text） ──
+          const _xe_txt = {
+            'readiness.nightReadiness.low':      '現在のフロア経験が不足しており、夜勤での単独判断リスクが高いため',
+            'readiness.nightReadiness.medium':   '夜勤適応度は向上中ですが、まだ支援が必要な段階のため',
+            'readiness.nightReadiness.high':     '夜勤経験・フロア適応ともに安定しており、コア夜勤担当として適切',
+            'relocation.relocRisk.high':         '施設経験は豊富ですが、現フロアへの異動から間もないため安全を優先',
+            'relocation.relocRisk.medium':       'フロア適応が進行中のため、夜勤配置を段階的に拡大中',
+            'adaptation.aStage.1':               '施設・フロアへの適応が初期段階にあり、日勤中心で経験を積む期間',
+            'adaptation.aStage.2':               'フロア適応の第2段階として、早番・遅番を中心に配置',
+            'burnout.burnout.high':              '今月の疲労密度が高く、バーンアウト予防のため休日確保を優先',
+            'fatigue.carryOver.high':            '月末に疲労が蓄積しており、翌月初の配置に注意が必要',
+            'fatigue.recDebt.high':              '今月の休日数が基準を下回っており、回復負債が発生中',
+            'sequence.safeSeq':                  '夜勤→明け→休みの安全系列が維持されており、系列品質が良好',
+            'sequence.critSeq':                  '夜勤→明け→早番という高疲労系列が発生。次月は回避が望ましい',
+            'dependency.pairKey':                '特定スタッフとの夜勤ペアが継続中。安定支援として機能している可能性',
+            'protection.seqIntact':              '系列整合性が保たれており、安全シフトパターンが実現されている',
+          };
+          const _xe_t = (key) => _xe_txt[key] || `（${key}）`;
+
+          // ── Layer 1: [ShiftExplanationMeta] 構造構築 ──
+          const _xe_meta = {};
+          for (const s of _xe_ds) {
+            const st = _xe_state[s.name]; if (!st) continue;
+            const reasons = [];
+            // readiness
+            reasons.push({ group:'readiness',  type:'nightReadiness', level:st.nightRdy,   source:st.fy < 0.5 ? 'facilityYears' : 'floorYears' });
+            if (st.relocRisk !== 'low') reasons.push({ group:'relocation', type:'relocRisk',    level:st.relocRisk, source:'floorYears' });
+            if (st.supNeed !== 'low')   reasons.push({ group:'adaptation', type:'supportNeed',  level:st.supNeed,   source:'floorYears/facilityYears' });
+            if (st.aStage <= 2)         reasons.push({ group:'adaptation', type:'adaptationStage', level:'medium', source:'floorYears', detail:`stage=${st.aStage}` });
+            // burnout / fatigue
+            if (st.burnout !== 'low')   reasons.push({ group:'burnout',    type:'burnoutAccumulation', level:st.burnout,   source:'totalFatigue' });
+            if (st.carryOver !== 'low') reasons.push({ group:'fatigue',    type:'fatigueCarryOver',    level:st.carryOver, source:'tailFatigue' });
+            if (st.recDebt !== 'low')   reasons.push({ group:'fatigue',    type:'recoveryDebt',        level:st.recDebt,   source:'restCount' });
+            // sequence
+            if (st.safeSeq > 0)         reasons.push({ group:'sequence',   type:'safeSequence',    level:'positive', source:'nightAkeRest', detail:`${st.safeSeq}件` });
+            if (st.critSeq > 0)         reasons.push({ group:'sequence',   type:'criticalSequence',level:'high',     source:'nightAkeEarly', detail:`${st.critSeq}件` });
+            // dependency
+            if (st.pairKey)             reasons.push({ group:'dependency', type:'pairFixation',    level:'medium',   source:'nightPairCooccurrence', detail:st.pairKey });
+            // protection
+            reasons.push({ group:'protection', type:'seqIntegrity', level: st.critSeq + st.dangerSeq === 0 ? 'intact' : 'partial', source:'brokenSeqCount' });
+
+            // Events
+            const events = [];
+            if (st.nightRdy === 'low' && st.nightCnt <= 2)   events.push({ type:'nightAvoided',           reason:`nightReadiness=low`, detail:`実績${st.nightCnt}回` });
+            if (st.relocRisk === 'high' && st.nightCnt <= 2) events.push({ type:'relocProtected',          reason:`relocationRisk=high`, detail:'フロア適応優先' });
+            if (st.supNeed === 'high')                        events.push({ type:'supportPairMaintained',   reason:`supportNeed=high`, detail:'ペアによる支援継続' });
+            if (st.safeSeq > 0)                               events.push({ type:'safeSequenceProtected',   reason:`safeSeq=${st.safeSeq}`, detail:'夜明休 系列維持' });
+            if (st.burnout === 'high')                        events.push({ type:'nightReadinessReduced',   reason:`burnoutAccumulation=high`, detail:'疲弊による夜勤適応度低下' });
+            if (st.critSeq > 0)                               events.push({ type:'criticalSequenceDetected',reason:`critSeq=${st.critSeq}`, detail:'夜明早パターン' });
+            if (st.aStage <= 2 && st.nightCnt === 0)         events.push({ type:'adaptationProtected',     reason:`floorYears<0.3`, detail:'夜勤配置を保留中' });
+
+            // Timeline (3期)
+            const periods = ['前期','中期','後期'];
+            const timeline = periods.map((label, i) => {
+              const p = st.pSeq[i];
+              const entries = [];
+              if (p.safe > 0)   entries.push(`夜明休=${p.safe}件(safe)`);
+              if (p.crit > 0)   entries.push(`夜明早=${p.crit}件(critical)⚠`);
+              if (p.danger > 0) entries.push(`夜明日系=${p.danger}件(danger)⚠`);
+              if (p.warn > 0)   entries.push(`遅→早=${p.warn}件(warning)`);
+              if (!entries.length) entries.push('目立つ系列なし');
+              return { period: label, days: i === 0 ? `d1-d${_xe_third}` : i === 1 ? `d${_xe_third+1}-d${_xe_third*2}` : `d${_xe_third*2+1}-d${_xe_days}`, detail: entries };
+            });
+
+            _xe_meta[s.name] = { reasons, events, timeline };
+          }
+
+          // ── Layer 1 log: [ShiftExplanationMeta] ──
+          {
+            const _xm = [`[ShiftExplanationMeta] dept=${cd.id} (explanation structure / not applied)`];
+            for (const s of _xe_ds) {
+              const m = _xe_meta[s.name]; if (!m) continue;
+              const st = _xe_state[s.name];
+              _xm.push(`  ${s.name}: reasons=${m.reasons.length}件 events=${m.events.length}件`);
+              _xm.push(`    nightRdy=${st.nightRdy} burnout=${st.burnout} reloc=${st.relocRisk} seqFat=${st.seqFat}`);
+            }
+            console.log(_xm.join('\n'));
+          }
+
+          // ── Layer 2: [Explanation-Event] ──
+          {
+            const _xe2 = [`[Explanation-Event] dept=${cd.id}`];
+            for (const s of _xe_ds) {
+              const m = _xe_meta[s.name]; if (!m) continue;
+              if (!m.events.length) { _xe2.push(`  ${s.name}: イベントなし ✓`); continue; }
+              _xe2.push(`  ${s.name}:`);
+              for (const ev of m.events)
+                _xe2.push(`    ${ev.type}: reason=${ev.reason} [${ev.detail}]`);
+            }
+            console.log(_xe2.join('\n'));
+          }
+
+          // ── Layer 3: [Explanation-Timeline] ──
+          {
+            const _xe3 = [`[Explanation-Timeline] dept=${cd.id}`];
+            for (const s of _xe_ds) {
+              const m = _xe_meta[s.name]; if (!m) continue;
+              const st = _xe_state[s.name];
+              const hasSeq = st.pSeq.some(p => p.safe + p.crit + p.danger + p.warn > 0);
+              if (!hasSeq) { _xe3.push(`  ${s.name}: 夜勤系列なし（日勤中心）`); continue; }
+              _xe3.push(`  ${s.name}:`);
+              for (const t of m.timeline)
+                _xe3.push(`    ${t.period}(${t.days}): ${t.detail.join(' / ')}`);
+            }
+            console.log(_xe3.join('\n'));
+          }
+
+          // ── Layer 4: [Explanation-Grouping] ──
+          {
+            const _xe4 = [`[Explanation-Grouping] dept=${cd.id}`];
+            const GROUP_ORDER = ['readiness','relocation','adaptation','burnout','fatigue','sequence','dependency','protection'];
+            for (const s of _xe_ds) {
+              const m = _xe_meta[s.name]; if (!m) continue;
+              const byGroup = {};
+              for (const r of m.reasons) {
+                if (!byGroup[r.group]) byGroup[r.group] = [];
+                byGroup[r.group].push(`${r.type}=${r.level}${r.detail ? `(${r.detail})` : ''}`);
+              }
+              const hasIssue = m.reasons.some(r => ['high','low','medium'].includes(r.level) && r.group !== 'protection');
+              _xe4.push(`  ${s.name}${hasIssue ? ' [要注意]' : ' ✓'}:`);
+              for (const g of GROUP_ORDER) {
+                if (byGroup[g]) _xe4.push(`    ${g}: ${byGroup[g].join(' / ')}`);
+              }
+            }
+            console.log(_xe4.join('\n'));
+          }
+
+          // ── Layer 5: [Explanation-Severity] ──
+          {
+            const _xe5 = [`[Explanation-Severity] dept=${cd.id}`];
+            const _xe_sev = (r) => {
+              if (r.group === 'burnout' && r.level === 'high')                    return 'critical';
+              if (r.type === 'criticalSequence' && r.level === 'high')            return 'critical';
+              if (r.type === 'nightReadiness'   && r.level === 'low')             return 'high';
+              if (r.type === 'recoveryDebt'     && r.level === 'high')            return 'high';
+              if (r.type === 'relocRisk'        && r.level === 'high')            return 'high';
+              if (r.type === 'fatigueCarryOver' && r.level === 'high')            return 'high';
+              if (r.level === 'medium')                                            return 'medium';
+              if (r.group === 'protection' || r.level === 'positive')             return 'info';
+              return 'low';
+            };
+            let deptCritical = 0, deptHigh = 0;
+            for (const s of _xe_ds) {
+              const m = _xe_meta[s.name]; if (!m) continue;
+              const bySev = { critical:[], high:[], medium:[], low:[], info:[] };
+              for (const r of m.reasons) bySev[_xe_sev(r)].push(`${r.type}(${r.level})`);
+              deptCritical += bySev.critical.length;
+              deptHigh     += bySev.high.length;
+              const top = bySev.critical.length ? 'CRITICAL⚠⚠' : bySev.high.length ? 'HIGH⚠' : bySev.medium.length ? 'MEDIUM' : 'OK';
+              _xe5.push(`  ${s.name} [${top}]:`);
+              if (bySev.critical.length) _xe5.push(`    critical: ${bySev.critical.join(', ')}`);
+              if (bySev.high.length)     _xe5.push(`    high:     ${bySev.high.join(', ')}`);
+              if (bySev.medium.length)   _xe5.push(`    medium:   ${bySev.medium.join(', ')}`);
+              if (bySev.info.length)     _xe5.push(`    info:     ${bySev.info.join(', ')}`);
+            }
+            _xe5.push(`  dept合計: critical=${deptCritical} high=${deptHigh}`);
+            console.log(_xe5.join('\n'));
+          }
+
+          // ── Layer 6: [Explanation-UIFlow] Future UI 前提構造確認 ──
+          {
+            const _xe6 = [`[Explanation-UIFlow] dept=${cd.id} (future "why?" UI readiness check)`];
+            _xe6.push('  構造確認:');
+            _xe6.push(`    ShiftExplanationMeta: ${_xe_ds.filter(s => _xe_meta[s.name]).length}名分構築済み ✓`);
+            _xe6.push(`    reasons[]: 説明理由オブジェクト (group/type/level/source/detail)`);
+            _xe6.push(`    events[]:  状態イベント (type/reason/detail)`);
+            _xe6.push(`    timeline[]: 3期(前期/中期/後期)系列サマリ`);
+
+            // Natural language preview per staff (3名まで)
+            _xe6.push('  自然文サンプル（将来UI用プレビュー）:');
+            const previewCount = Math.min(3, _xe_ds.length);
+            for (let i = 0; i < previewCount; i++) {
+              const s = _xe_ds[i];
+              const st = _xe_state[s.name]; const m = _xe_meta[s.name];
+              if (!st || !m) continue;
+              const lines = [];
+              if (st.relocRisk === 'high')
+                lines.push(`${s.name}さんは施設経験は豊富ですが、現在のフロアへの異動から間もないため、安全優先で夜勤配置を抑制しています。`);
+              else if (st.nightRdy === 'low')
+                lines.push(`${s.name}さんは現在のフロア経験が${st.fl.toFixed(1)}年と短く、夜勤での単独判断リスクを考慮しています。`);
+              else if (st.nightRdy === 'high' && st.nightCnt >= 3)
+                lines.push(`${s.name}さんは夜勤適応度が高く、コア夜勤担当として月${st.nightCnt}回の配置となっています。`);
+              else if (st.burnout === 'high')
+                lines.push(`${s.name}さんは今月の疲労蓄積が高く、バーンアウト予防のため休日確保を優先した配置になっています。`);
+              else
+                lines.push(`${s.name}さんは現在の配置条件（readiness=${st.nightRdy}/burnout=${st.burnout}）に整合した配置です。`);
+              if (st.pairKey) lines.push(`  ペア: ${st.pairKey} との夜勤ペアが継続中（支援構造として機能）。`);
+              _xe6.push(`  ▸ ${lines.join('\n    ')}`);
+            }
+            _xe6.push('');
+            _xe6.push('  → UI実装時: ShiftExplanationMeta から reasons/events/timeline を取得して表示');
+            _xe6.push('  → LLMは説明文の自然化のみ担当。shift変更・状態変更は行わない。');
+            console.log(_xe6.join('\n'));
+          }
+        }
+        // ══ [ShiftExplanationMeta / Explanation-Event / Explanation-Timeline /
+        //    Explanation-Grouping / Explanation-Severity / Explanation-UIFlow] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
