@@ -13649,6 +13649,668 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Growth-Layer-Balance / Burnout-Concentration-Analysis /
         //    Support-Network-Stability / Organization-Stability-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        //    [Organization-Future-Projection / NightCore-Collapse-Forecast /
+        //    Burnout-Chain-Forecast / Support-Succession-Forecast /
+        //    Growth-Pipeline-Forecast / Organization-Sustainability-Audit]
+        // Temporal Organization Forecast — Human Organization Future Timeline System (read-only)
+        // - 「今の組織構造」から「3〜6ヶ月後の状態」を時間軸で予測する。
+        // - nightCore崩壊・burnout連鎖・support断絶・育成空洞化を先行検出。
+        // - 実shift変更禁止。autoGenerate変更禁止。DB保存禁止。persistence禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _of_days  = getDays(year, month);
+          const _of_ds    = cs.filter(s => s.dept === cd.id);
+          const _of_cds   = cd.customShiftDefs || [];
+          const _of_tailN = Math.min(7, _of_days);
+
+          // ── helpers ──
+          const _of_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _of_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _of_nset.add(k);
+          });
+          const _of_isNight = sh => _of_nset.has(sh);
+          const _of_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _of_isWork  = sh => !!(sh && !_of_isRest(sh) && sh !== '明け' && sh !== '');
+          const _of_fw      = sh => _of_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _of_boOf    = totF => totF >= _of_days * 2.0 ? 'high' : totF >= _of_days * 1.2 ? 'medium' : 'low';
+
+          // ── trend lookup ──
+          const _of_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics ──
+          const _of_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, leSq=0;
+            for (let d = 1; d <= _of_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _of_fw(sh);
+              if (d > _of_days - _of_tailN) tlF += _of_fw(sh);
+              if (_of_isNight(sh)) nCnt++;
+              if (_of_isRest(sh))  rCnt++;
+              if (sh === '明け' && _of_isNight(pv)) {
+                if (_of_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_of_isWork(nx))    { /* dSq */ }
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _of_boOf(totF);
+            const co = tlF >= _of_tailN * 3.0 ? 'high' : tlF >= _of_tailN * 1.5 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, leSq, bo, co };
+          };
+
+          // ── stage model ──
+          const _of_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _OF_STAGE_NAMES = ['日勤中心','floor適応中','遅番安定化','夜勤準備','夜勤適応中','独立運用'];
+          const _OF_RANGES      = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _of_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _OF_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+
+          // night ladder
+          const _of_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasPair) => {
+            if (!nightOk)                                    return 0;
+            if (stage >= 5 && bo !== 'high')                 return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')   return 4;
+            if (nCnt >= 1)                                   return 3;
+            if (stage >= 3 && progress >= 0.6 && hasPair)   return 2;
+            if (stage >= 2 && fl >= 0.5)                     return 1;
+            return 0;
+          };
+
+          // ── pair co-occurrence ──
+          const _of_pco = {};
+          for (let d = 1; d <= _of_days; d++) {
+            const nw = _of_ds.filter(s => _of_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _of_pco[pk] = (_of_pco[pk] || 0) + 1;
+              }
+          }
+          const _of_fixedPairs = Object.entries(_of_pco)
+            .filter(([, n]) => n >= _of_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── per-staff full state ──
+          const _of_st = {};
+          for (const s of _of_ds) {
+            const m    = _of_metric(result[s.id] || {});
+            const tr   = _of_trd(s.name);
+            const wk   = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy   = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl   = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr   = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _of_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _of_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _of_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _of_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _of_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, isNew, ...m };
+          }
+          const _of_arr = _of_ds.map(s => _of_st[s.name]).filter(Boolean);
+
+          // ── pair dependency ──
+          const _of_pairs = [];
+          for (const pair of _of_fixedPairs) {
+            const [n1, n2] = pair;
+            const s1 = _of_st[n1], s2 = _of_st[n2];
+            if (!s1 || !s2) continue;
+            const pk   = pair.slice().sort().join('×');
+            const cnt  = _of_pco[pk] || 0;
+            const rate = cnt / _of_days;
+            const [giver, receiver, gSt, rSt] = s1.stage >= s2.stage
+              ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+            let depType;
+            if (rSt.stage <= 2 && rSt.fl >= 1.5)                          depType = 'overProtection';
+            else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3) depType = 'fixationRisk';
+            else if (rSt.stage >= 4 && gSt.stage >= 4)                    depType = 'stablePair';
+            else                                                            depType = 'healthySupport';
+            _of_pairs.push({ pair, pk, cnt, rate, giver, receiver, gSt, rSt, depType });
+          }
+
+          // ──────────────────────────────────────────────────────────────────────
+          // Future projection helpers:
+          //  - fl growth rate: ~0.1/month (conservative linear estimate)
+          //  - fy growth rate: 1/12 per month (fixed)
+          //  - burnout trend: co=high → bo escalates; sSq>0 → stabilizes
+          //  - nCnt: stage3→4 transition adds first night after progress≥0.6
+          //  - Forecast horizons: 1, 3, 6 months ahead
+          // ──────────────────────────────────────────────────────────────────────
+          const _OF_HORIZONS = [[1,'1ヶ月後'],[3,'3ヶ月後'],[6,'6ヶ月後']];
+          const _OF_FL_GROWTH = 0.08; // fl units per month (typical)
+
+          // Estimate future fl/fy at +t months
+          const _of_futureFl = (fl, t) => fl + _OF_FL_GROWTH * t;
+          const _of_futureFy = (fy, t) => fy + t / 12;
+
+          // Estimate future burnout: co=high escalates, recovery reduces
+          const _of_futureBoStr = (bo, co, sSq, cSq, t) => {
+            const boOrd = { low: 0, medium: 1, high: 2 };
+            let v = boOrd[bo];
+            // Each month of co=high without safe sequence pushes burnout up
+            if (co === 'high' && cSq > 0)        v = Math.min(2, v + Math.floor(t / 2));
+            else if (co === 'high' && sSq > 0)   v = Math.min(2, v + Math.floor(t / 3));
+            else if (bo === 'high' && sSq > 0)   v = Math.max(0, v - Math.floor(t / 2));
+            else if (bo === 'medium' && sSq > 0) v = Math.max(0, v - Math.floor(t / 3));
+            v = Math.max(0, Math.min(2, v));
+            return ['low','medium','high'][v];
+          };
+
+          // Estimate future nCnt: night-ready staff gain nights as stage advances
+          const _of_futureNcnt = (st, t) => {
+            const futFl  = _of_futureFl(st.fl, t);
+            const futFy  = _of_futureFy(st.fy, t);
+            const futRr  = (futFy >= 2 && futFl < 0.5) ? 'high' : (futFy >= 1 && futFl < 0.3) ? 'medium' : 'low';
+            const futStg = _of_stageOf(futFy, futFl, st.nCnt, futRr);
+            // Night count estimate: starts when stage≥4 and nightOk
+            if (!st.nightOk) return 0;
+            if (futStg >= 5) return Math.max(st.nCnt, 3);
+            if (futStg >= 4) return Math.max(st.nCnt, 1);
+            if (futStg === 3 && st.progress >= 0.6 && st.hasPair) return Math.max(st.nCnt, 1);
+            return st.nCnt;
+          };
+
+          // Future stage & ladder projection per staff
+          const _of_futureState = (st, t) => {
+            const futFl  = _of_futureFl(st.fl, t);
+            const futFy  = _of_futureFy(st.fy, t);
+            const futBo  = _of_futureBoStr(st.bo, st.co, st.sSq, st.cSq, t);
+            const futNc  = _of_futureNcnt(st, t);
+            const futRr  = (futFy >= 2 && futFl < 0.5) ? 'high' : (futFy >= 1 && futFl < 0.3) ? 'medium' : 'low';
+            const futStg = _of_stageOf(futFy, futFl, futNc, futRr);
+            const futPrg = _of_progOf(futStg, futFl, st.sSq, st.cSq, futBo, st.co, st.leSq);
+            const futLad = _of_ladderOf(futStg, futFl, futNc, futBo, futPrg, st.nightOk, st.hasPair);
+            return { fl: futFl, fy: futFy, bo: futBo, nCnt: futNc, stage: futStg, progress: futPrg, ladder: futLad };
+          };
+
+          // ── Layer 1: [Organization-Future-Projection] ──
+          {
+            const _l1 = [`[Organization-Future-Projection] dept=${cd.id}`];
+            _l1.push(`  ── 組織未来時間構造予測（1/3/6ヶ月後シミュレーション） ──`);
+
+            for (const [t, label] of _OF_HORIZONS) {
+              _l1.push(`  ─── ${label} ───`);
+              const futStates = _of_arr.map(st => ({
+                name: st.s.name, curr: st, fut: _of_futureState(st, t)
+              }));
+
+              // Zone counts
+              const zones = {
+                '新人層(stage0-1)':   futStates.filter(e => e.fut.stage <= 1).length,
+                '遅番安定〜夜勤準備': futStates.filter(e => e.fut.stage === 2 || e.fut.stage === 3).length,
+                '夜勤適応(stage4)':   futStates.filter(e => e.fut.stage === 4).length,
+                'nightCore(ladder≥4)': futStates.filter(e => e.fut.ladder >= 4).length,
+                'burnout high':       futStates.filter(e => e.fut.bo === 'high').length,
+              };
+              for (const [z, n] of Object.entries(zones)) {
+                const flag = z === 'burnout high' && n >= 2 ? ' ⚠' : z === '新人層(stage0-1)' && n === 0 ? ' △' : '';
+                _l1.push(`    ${z}: ${n}名${flag}`);
+              }
+
+              // Notable individual transitions
+              for (const e of futStates) {
+                if (e.fut.stage !== e.curr.stage)
+                  _l1.push(`    ▶ ${e.name}: stage${e.curr.stage}→${e.fut.stage}（${_OF_STAGE_NAMES[e.curr.stage]}→${_OF_STAGE_NAMES[e.fut.stage]}）`);
+                if (e.fut.ladder !== e.curr.ladder && e.curr.nightOk)
+                  _l1.push(`    ▶ ${e.name}: ladder${e.curr.ladder}→${e.fut.ladder}`);
+                if (e.fut.bo !== e.curr.bo) {
+                  const up = ['low','medium','high'].indexOf(e.fut.bo) > ['low','medium','high'].indexOf(e.curr.bo);
+                  _l1.push(`    ${up ? '⚠' : '✓'} ${e.name}: burnout ${e.curr.bo}→${e.fut.bo}`);
+                }
+              }
+
+              // NightCore viability
+              const futCore = futStates.filter(e => e.fut.ladder >= 4).length;
+              if (futCore === 0)
+                _l1.push(`    ⚠ ${label}: nightCore消滅 — 夜勤運用不可能`);
+              else if (futCore === 1)
+                _l1.push(`    △ ${label}: nightCore=1名 — 欠員で即崩壊リスク`);
+            }
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [NightCore-Collapse-Forecast] ──
+          {
+            const _l2 = [`[NightCore-Collapse-Forecast] dept=${cd.id}`];
+            _l2.push(`  ── nightCore崩壊予測（burnoutトレンド・後継不足・急速昇格） ──`);
+
+            const coreStaff = _of_arr.filter(st => st.ladder >= 4);
+            const supportNight = _of_arr.filter(st => st.ladder === 2 || st.ladder === 3);
+
+            if (!coreStaff.length) {
+              _l2.push(`  nightCore現在ゼロ — 夜勤体制未構築`);
+            } else {
+              _l2.push(`  現nightCore: ${coreStaff.map(st => st.s.name).join(', ')}（${coreStaff.length}名）`);
+              _l2.push(`  現support夜勤層: ${supportNight.length}名  後継バッファ: ${supportNight.length > 0 ? '✓' : '⚠ なし'}`);
+
+              // Per-core burnout trajectory
+              for (const st of coreStaff) {
+                const traces = _OF_HORIZONS.map(([t, label]) => {
+                  const fs = _of_futureState(st, t);
+                  return { t, label, bo: fs.bo, ladder: fs.ladder };
+                });
+                const boTrend = traces.some(e => e.bo === 'high') ? 'escalating'
+                  : traces.some(e => e.bo === 'medium') ? 'rising' : 'stable';
+                const willDrop = traces.some(e => e.ladder < 4);
+                _l2.push(`  ▌${st.s.name}  現bo=${st.bo}  burnoutTrend=${boTrend}${boTrend !== 'stable' ? ' ⚠' : ''}`);
+                _l2.push(`    ${traces.map(e => `[${e.label}:bo=${e.bo} lad=${e.ladder}]`).join(' → ')}`);
+                if (willDrop)
+                  _l2.push(`    ⚠ nightCore脱落予測: burnout蓄積で夜勤不能になる可能性`);
+              }
+
+              // Successor pipeline
+              const nearReadyCandidates = _of_arr.filter(st =>
+                st.ladder <= 3 && st.ladder >= 1 && st.stage >= 3 && st.nightOk && st.bo !== 'high'
+              );
+              _l2.push(`  ── 後継候補（ladder1-3・stage≥3・nightOk） ──`);
+              if (!nearReadyCandidates.length) {
+                _l2.push(`  後継候補ゼロ ⚠ — nightCore脱落時に即空洞化`);
+              } else {
+                for (const st of nearReadyCandidates) {
+                  // Months to nightCore estimate
+                  let monthsToCore = null;
+                  for (const t of [1, 2, 3, 4, 5, 6]) {
+                    const fs = _of_futureState(st, t);
+                    if (fs.ladder >= 4) { monthsToCore = t; break; }
+                  }
+                  _l2.push(`    ${st.s.name}: 現ladder=${st.ladder}  stage=${st.stage}  bo=${st.bo}`);
+                  _l2.push(`      nightCore到達予測: ${monthsToCore !== null ? `≈${monthsToCore}ヶ月後` : '6ヶ月以内に困難'}`);
+                }
+              }
+
+              // Collapse risk verdict
+              const coreBoHigh = coreStaff.filter(st => st.bo === 'high').length;
+              const futureCoreAt3 = _of_arr.filter(st => _of_futureState(st, 3).ladder >= 4).length;
+              const collapseRisk = coreBoHigh >= coreStaff.length ? 'critical'
+                : coreBoHigh > 0 && nearReadyCandidates.length === 0 ? 'high'
+                : futureCoreAt3 < coreStaff.length && nearReadyCandidates.length === 0 ? 'medium'
+                : futureCoreAt3 >= coreStaff.length ? 'low'
+                : 'medium';
+              _l2.push(`  ── nightCore崩壊リスク予測 ──`);
+              _l2.push(`  collapseRisk: ${collapseRisk}${collapseRisk !== 'low' ? ' ⚠' : ' ✓'}`);
+              if (collapseRisk === 'critical') _l2.push(`  ⚠⚠ 緊急: 現nightCore全員疲弊 — 即時シフト負荷軽減が必要`);
+              if (collapseRisk === 'high')     _l2.push(`  ⚠ high: nightCore burnout + 後継なし — 3ヶ月以内の危機`);
+              if (collapseRisk === 'medium')   _l2.push(`  △ medium: 後継育成を加速しないと6ヶ月後にリスク`);
+              if (collapseRisk === 'low')      _l2.push(`  ✓ low: 後継パイプライン健全`);
+            }
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Burnout-Chain-Forecast] ──
+          {
+            const _l3 = [`[Burnout-Chain-Forecast] dept=${cd.id}`];
+            _l3.push(`  ── burnout連鎖予測（層間伝播・recovery不足・再発リスク） ──`);
+
+            // Identify high-risk staff now
+            const highNow    = _of_arr.filter(st => st.bo === 'high');
+            const medNow     = _of_arr.filter(st => st.bo === 'medium');
+            const supportG   = [...new Set(_of_pairs.map(p => p.giver))].map(n => _of_st[n]).filter(Boolean);
+            const nightC     = _of_arr.filter(st => st.ladder >= 4);
+
+            _l3.push(`  現状: high=${highNow.length}名  medium=${medNow.length}名`);
+
+            // Project each horizon
+            for (const [t, label] of _OF_HORIZONS) {
+              const futAll = _of_arr.map(st => ({
+                name: st.s.name, futBo: _of_futureBoStr(st.bo, st.co, st.sSq, st.cSq, t),
+                currBo: st.bo, isCore: st.ladder >= 4, isSupport: supportG.some(sg => sg.s.name === st.s.name)
+              }));
+              const fHigh = futAll.filter(e => e.futBo === 'high').length;
+              const fMed  = futAll.filter(e => e.futBo === 'medium').length;
+              const coreHigh = futAll.filter(e => e.isCore && e.futBo === 'high').length;
+              const suppHigh = futAll.filter(e => e.isSupport && e.futBo === 'high').length;
+              const escalated = futAll.filter(e => e.futBo !== e.currBo &&
+                ['low','medium','high'].indexOf(e.futBo) > ['low','medium','high'].indexOf(e.currBo));
+              const recovered = futAll.filter(e => e.futBo !== e.currBo &&
+                ['low','medium','high'].indexOf(e.futBo) < ['low','medium','high'].indexOf(e.currBo));
+              _l3.push(`  ─── ${label} ─── high=${fHigh}名  medium=${fMed}名`);
+              if (escalated.length)
+                _l3.push(`    ⚠ 悪化予測: ${escalated.map(e => `${e.name}(${e.currBo}→${e.futBo})`).join(', ')}`);
+              if (recovered.length)
+                _l3.push(`    ✓ 改善予測: ${recovered.map(e => `${e.name}(${e.currBo}→${e.futBo})`).join(', ')}`);
+              if (coreHigh >= 2) _l3.push(`    ⚠⚠ nightCore burnout×${coreHigh}: 夜勤体制崩壊リスク`);
+              else if (coreHigh === 1) _l3.push(`    ⚠ nightCore burnout×1: 夜勤カバー不安定`);
+              if (suppHigh >= 1) _l3.push(`    ⚠ support役burnout×${suppHigh}: 育成支援機能停止リスク`);
+            }
+
+            // Chain risk assessment
+            const chainTriggers = [];
+            if (highNow.length >= 1 && supportG.some(sg => sg.bo === 'high'))
+              chainTriggers.push('nightCore疲弊→support代替→support burnout連鎖');
+            if (highNow.length >= 1 && _of_arr.filter(st => st.nCnt > 0 && st.bo !== 'high').length <= 1)
+              chainTriggers.push('夜勤人員不足→残存者へ集中→連鎖burnout');
+            if (medNow.length >= 2 && medNow.some(st => st.co === 'high'))
+              chainTriggers.push('medium×複数+co=high→来月high転化リスク');
+
+            const futHigh3 = _of_arr.filter(st => _of_futureBoStr(st.bo, st.co, st.sSq, st.cSq, 3) === 'high').length;
+            const chainLevel = chainTriggers.length >= 2 || futHigh3 >= 3 ? 'high'
+              : chainTriggers.length >= 1 || futHigh3 >= 2 ? 'medium' : 'low';
+            _l3.push(`  ── burnout連鎖リスク ──`);
+            _l3.push(`  連鎖リスク: ${chainLevel}${chainLevel !== 'low' ? ' ⚠' : ' ✓'}`);
+            if (chainTriggers.length)
+              for (const t of chainTriggers) _l3.push(`    △ ${t}`);
+            if (chainLevel === 'low') _l3.push(`  ✓ burnout連鎖: 現時点でリスクなし`);
+
+            // Recovery capacity
+            const recoveryCapacity = _of_arr.filter(st => st.bo !== 'high' && st.co !== 'high'
+              && st.rCnt >= _of_days * 0.25).length;
+            _l3.push(`  recovery余力スタッフ: ${recoveryCapacity}名（休暇充足・bo非high）`);
+            if (recoveryCapacity === 0 && highNow.length > 0)
+              _l3.push(`  ⚠ recovery完全不足: burnout者のカバー余力がゼロ`);
+
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Support-Succession-Forecast] ──
+          {
+            const _l4 = [`[Support-Succession-Forecast] dept=${cd.id}`];
+            _l4.push(`  ── support継承予測（卒業・後継不足・空洞化リスク） ──`);
+
+            // Current support givers
+            const giverNames = [...new Set(_of_pairs.map(p => p.giver))];
+            const givers     = giverNames.map(n => _of_st[n]).filter(Boolean);
+
+            _l4.push(`  現support役: ${givers.length}名  ${givers.map(st => st.s.name).join(', ')||'なし'}`);
+
+            // Support graduation: giver will reach stage5 and receiver independent → pair dissolves
+            const graduatingGivers = givers.filter(st => {
+              const fut3 = _of_futureState(st, 3);
+              return fut3.stage >= 5 && fut3.bo !== 'high';
+            });
+            // Support receiver independence: receiver will reach stage≥4
+            const receivers = _of_pairs.map(p => _of_st[p.receiver]).filter(Boolean);
+            const independentReceivers = receivers.filter(st => {
+              const fut3 = _of_futureState(st, 3);
+              return fut3.stage >= 4;
+            });
+
+            _l4.push(`  3ヶ月後 support卒業予測: ${graduatingGivers.length}名  ${graduatingGivers.map(st => st.s.name).join(', ')||'なし'}`);
+            _l4.push(`  3ヶ月後 receiver独立予測: ${independentReceivers.length}名  ${independentReceivers.map(st => st.s.name).join(', ')||'なし'}`);
+
+            // Next support candidates: stage3-4, bo≠high, nightOk
+            const nextCandidates = _of_arr.filter(st =>
+              st.stage >= 3 && st.stage <= 4 && st.bo !== 'high' && st.nCnt >= 1
+              && !giverNames.includes(st.s.name)
+            );
+            _l4.push(`  次support候補（stage3-4・非burnout・夜勤経験あり）: ${nextCandidates.length}名`);
+            if (nextCandidates.length) nextCandidates.forEach(st =>
+              _l4.push(`    ${st.s.name}: stage=${st.stage}  fl=${st.fl.toFixed(1)}  bo=${st.bo}`)
+            );
+
+            // Forecast per horizon
+            for (const [t, label] of _OF_HORIZONS) {
+              const activeGivers = givers.filter(st => {
+                const fs = _of_futureState(st, t);
+                return fs.bo !== 'high'; // burnout givers can't support
+              }).length;
+              const newCandidates = _of_arr.filter(st => {
+                const fs = _of_futureState(st, t);
+                return fs.stage >= 3 && fs.ladder >= 3 && !giverNames.includes(st.s.name)
+                  && _of_futureBoStr(st.bo, st.co, st.sSq, st.cSq, t) !== 'high';
+              }).length;
+              const netSupport = activeGivers + newCandidates;
+              const neededSupport = _of_arr.filter(st => {
+                const fs = _of_futureState(st, t);
+                return fs.stage <= 2;
+              }).length;
+              const gap = Math.max(0, neededSupport - netSupport);
+              _l4.push(`  ${label}: activeSupport=${activeGivers}名  新候補=${newCandidates}名  必要=${neededSupport}名  gap=${gap}${gap > 0 ? ' ⚠' : ' ✓'}`);
+            }
+
+            // Succession risk verdict
+            const newStaff3m = _of_arr.filter(st => _of_futureState(st, 3).stage <= 2).length;
+            const availGivers3m = givers.filter(st => _of_futureBoStr(st.bo, st.co, st.sSq, st.cSq, 3) !== 'high').length
+              + nextCandidates.filter(st => _of_futureState(st, 3).stage >= 3).length;
+            const gapRisk = newStaff3m > availGivers3m * 2 ? 'critical'
+              : newStaff3m > availGivers3m ? 'high'
+              : nextCandidates.length === 0 && graduatingGivers.length > 0 ? 'medium'
+              : 'low';
+            _l4.push(`  supportGapRisk: ${gapRisk}${gapRisk !== 'low' ? ' ⚠' : ' ✓'}`);
+            if (gapRisk === 'critical') _l4.push(`  ⚠⚠ support空洞化: 新人数に対しsupport役が全く足りない`);
+            if (gapRisk === 'high')     _l4.push(`  ⚠ 継承断絶リスク: 卒業後の補充候補が不足`);
+            if (gapRisk === 'medium')   _l4.push(`  △ 継承 marginal: 候補育成を今から始めるべき`);
+            if (gapRisk === 'low')      _l4.push(`  ✓ support継承: 問題なし`);
+
+            // fixation dissolution forecast
+            const fixPairs = _of_pairs.filter(p => p.depType === 'fixationRisk');
+            if (fixPairs.length) {
+              _l4.push(`  fixation解除予測:`);
+              for (const p of fixPairs) {
+                const rSt = _of_st[p.receiver];
+                if (!rSt) continue;
+                let dissolveMonth = null;
+                for (const t of [1, 2, 3, 4, 5, 6]) {
+                  const fs = _of_futureState(rSt, t);
+                  if (fs.stage >= 4) { dissolveMonth = t; break; }
+                }
+                _l4.push(`    ${p.pk}: fixation解除予測 ${dissolveMonth ? `≈${dissolveMonth}ヶ月後` : '6ヶ月以内に困難'}`);
+              }
+            }
+
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Growth-Pipeline-Forecast] ──
+          {
+            const _l5 = [`[Growth-Pipeline-Forecast] dept=${cd.id}`];
+            _l5.push(`  ── 育成パイプライン予測（stage推移・断絶・unsafe昇格） ──`);
+
+            // Current pipeline state
+            const curr01 = _of_arr.filter(st => st.stage <= 1).length;
+            const curr23 = _of_arr.filter(st => st.stage >= 2 && st.stage <= 3).length;
+            const curr45 = _of_arr.filter(st => st.stage >= 4).length;
+            _l5.push(`  現在: stage0-1=${curr01}  stage2-3=${curr23}  stage4-5=${curr45}`);
+
+            // Forecast per horizon
+            for (const [t, label] of _OF_HORIZONS) {
+              const futStates = _of_arr.map(st => ({ name: st.s.name, fut: _of_futureState(st, t), curr: st }));
+              const fut01 = futStates.filter(e => e.fut.stage <= 1).length;
+              const fut23 = futStates.filter(e => e.fut.stage >= 2 && e.fut.stage <= 3).length;
+              const fut45 = futStates.filter(e => e.fut.stage >= 4).length;
+              const trend01 = fut01 > curr01 ? '↑増加' : fut01 < curr01 ? '↓減少' : '→横ばい';
+              const trend23 = fut23 > curr23 ? '↑増加' : fut23 < curr23 ? '↓減少' : '→横ばい';
+              const trend45 = fut45 > curr45 ? '↑増加' : fut45 < curr45 ? '↓減少' : '→横ばい';
+              _l5.push(`  ${label}: stage0-1=${fut01}(${trend01})  stage2-3=${fut23}(${trend23})  stage4-5=${fut45}(${trend45})`);
+
+              // Structural warnings
+              if (fut01 === 0 && _of_arr.length > 0)
+                _l5.push(`    △ ${label}: 新人層消滅 — 組織の新陳代謝が止まる`);
+              if (fut23 === 0 && fut01 > 0)
+                _l5.push(`    ⚠ ${label}: 中間育成層断絶 — 新人が直接stage4への道を失う`);
+              // Unsafe promotion: stage0-1 jumping to ladder≥3
+              const unsafePromo = futStates.filter(e => e.curr.stage <= 1 && e.fut.ladder >= 3);
+              if (unsafePromo.length)
+                _l5.push(`    ⚠ ${label}: unsafe昇格リスク — ${unsafePromo.map(e => e.name).join(', ')} (stage0-1→ladder≥3)`);
+              // Stage stagnation: same stage predicted for 6 months
+              const t6States = _of_arr.map(st => ({ name: st.s.name, stg6: _of_futureState(st, 6).stage, curr: st.stage }));
+              const stagnant6 = t6States.filter(e => e.stg6 === e.curr && e.curr >= 2 && e.curr <= 3);
+              if (stagnant6.length && t === 6)
+                _l5.push(`    ⚠ 6ヶ月後も停滞予測: ${stagnant6.map(e => e.name).join(', ')} (stage${stagnant6[0]?.curr}固定)`);
+            }
+
+            // Ladder progression forecast
+            _l5.push(`  ── ladder移行予測 ──`);
+            for (const st of _of_arr.filter(s => s.nightOk && s.ladder < 4)) {
+              let nextLadderMonth = null;
+              for (const t of [1, 2, 3, 4, 5, 6]) {
+                const fs = _of_futureState(st, t);
+                if (fs.ladder > st.ladder) { nextLadderMonth = { t, lad: fs.ladder }; break; }
+              }
+              if (nextLadderMonth)
+                _l5.push(`    ${st.s.name}: 現ladder=${st.ladder} → ladder${nextLadderMonth.lad}（≈${nextLadderMonth.t}ヶ月後）`);
+              else
+                _l5.push(`    ${st.s.name}: 現ladder=${st.ladder} — 6ヶ月以内のladder上昇困難`);
+            }
+
+            // Pipeline health verdict
+            const pipe6 = _of_arr.map(st => _of_futureState(st, 6));
+            const f01_6 = pipe6.filter(fs => fs.stage <= 1).length;
+            const f23_6 = pipe6.filter(fs => fs.stage >= 2 && fs.stage <= 3).length;
+            const f45_6 = pipe6.filter(fs => fs.stage >= 4).length;
+            const pipeHealth = f01_6 === 0 ? 'empty-entry'
+              : f23_6 === 0 && f01_6 > 0 ? 'disconnected'
+              : f45_6 === 0 ? 'no-senior'
+              : f01_6 > 0 && f23_6 > 0 && f45_6 > 0 ? 'healthy'
+              : 'marginal';
+            _l5.push(`  6ヶ月後パイプライン状態: ${pipeHealth}${pipeHealth === 'healthy' ? ' ✓' : ' ⚠'}`);
+            if (pipeHealth === 'empty-entry')   _l5.push(`  ⚠ 新人流入ゼロ: 育成サイクルが6ヶ月後に停止`);
+            if (pipeHealth === 'disconnected')  _l5.push(`  ⚠ 育成断絶: stage0-1→stage2以上への橋渡しがない`);
+            if (pipeHealth === 'no-senior')     _l5.push(`  ⚠ 熟練層消滅: 夜勤運用が不可能になる`);
+            if (pipeHealth === 'marginal')      _l5.push(`  △ marginal: 層バランスが偏り始めている`);
+            if (pipeHealth === 'healthy')       _l5.push(`  ✓ 育成パイプライン: 継続可能`);
+
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Organization-Sustainability-Audit] ──
+          {
+            const _l6 = [`[Organization-Sustainability-Audit] dept=${cd.id}`];
+            _l6.push(`  ── 組織長期継続可能性監査（Human Organization Future Timeline） ──`);
+
+            const total    = _of_arr.length;
+            // Recompute key future states at 3 and 6 months
+            const fut3all  = _of_arr.map(st => _of_futureState(st, 3));
+            const fut6all  = _of_arr.map(st => _of_futureState(st, 6));
+            const core3    = fut3all.filter(fs => fs.ladder >= 4).length;
+            const core6    = fut6all.filter(fs => fs.ladder >= 4).length;
+            const high3    = fut3all.filter(fs => fs.bo === 'high').length;
+            const high6    = fut6all.filter(fs => fs.bo === 'high').length;
+            const giverN   = [...new Set(_of_pairs.map(p => p.giver))];
+            const suppAvail3 = giverN.filter(n => {
+              const st = _of_st[n]; if (!st) return false;
+              return _of_futureBoStr(st.bo, st.co, st.sSq, st.cSq, 3) !== 'high';
+            }).length;
+            const pipe6    = _of_arr.map(st => _of_futureState(st, 6));
+            const f01_6    = pipe6.filter(fs => fs.stage <= 1).length;
+            const f23_6    = pipe6.filter(fs => fs.stage >= 2 && fs.stage <= 3).length;
+            const f45_6    = pipe6.filter(fs => fs.stage >= 4).length;
+            const relocSt  = _of_arr.filter(st => st.rr === 'high');
+            const relocStag = relocSt.filter(st => _of_futureState(st, 6).stage <= 2 && st.fy >= 2);
+
+            // ──── Dimension A: nightCore崩壊リスク ────
+            const coreCurr = _of_arr.filter(st => st.ladder >= 4).length;
+            const coreRisk = core6 === 0 && coreCurr > 0 ? 'collapse'
+              : core3 < coreCurr * 0.5 ? 'critical'
+              : core3 === coreCurr && high3 === 0 ? 'stable'
+              : 'moderate';
+            _l6.push(`  [A] nightCore崩壊リスク: ${coreRisk}  (現=${coreCurr}→3m=${core3}→6m=${core6}名)`);
+            if (coreRisk === 'collapse')  _l6.push(`      ⚠⚠ 6ヶ月後nightCore消滅 — 今すぐ後継育成が必要`);
+            if (coreRisk === 'critical')  _l6.push(`      ⚠ 3ヶ月後に半減 — burnout連鎖リスク`);
+            if (coreRisk === 'moderate')  _l6.push(`      △ moderate: 後継確保を検討`);
+            if (coreRisk === 'stable')    _l6.push(`      ✓ nightCore安定維持予測`);
+
+            // ──── Dimension B: burnout連鎖 ────
+            const boChain = high6 >= 3 ? 'critical'
+              : high3 >= 2 && high6 >= high3 ? 'worsening'
+              : high3 <= 1 && high6 <= 1 ? 'stable'
+              : 'moderate';
+            _l6.push(`  [B] burnout連鎖リスク: ${boChain}  (high: 現=${_of_arr.filter(st => st.bo === 'high').length}→3m=${high3}→6m=${high6}名)`);
+            if (boChain === 'critical')   _l6.push(`      ⚠⚠ 構造的burnout連鎖: 6ヶ月後high×3以上`);
+            if (boChain === 'worsening')  _l6.push(`      ⚠ 悪化傾向: 連鎖が止まっていない`);
+            if (boChain === 'moderate')   _l6.push(`      △ moderate: 個別対応で解決可能`);
+            if (boChain === 'stable')     _l6.push(`      ✓ burnout安定`);
+
+            // ──── Dimension C: support断絶 ────
+            const newStaff6  = f01_6 + f23_6;
+            const suppGap6   = Math.max(0, newStaff6 - suppAvail3);
+            const suppChain  = suppGap6 >= 3 ? 'critical' : suppGap6 >= 1 ? 'at-risk' : 'stable';
+            _l6.push(`  [C] support断絶リスク: ${suppChain}  (3m後support役=${suppAvail3}名 / 6m後support必要≈${newStaff6}名)`);
+            if (suppChain === 'critical') _l6.push(`      ⚠⚠ support空洞化: 育成が完全停止`);
+            if (suppChain === 'at-risk')  _l6.push(`      △ at-risk: support補充を急ぐべき`);
+            if (suppChain === 'stable')   _l6.push(`      ✓ support構造 安定`);
+
+            // ──── Dimension D: 育成空洞化 ────
+            const pipeVoid = f01_6 === 0 && f23_6 === 0 ? 'void'
+              : f01_6 === 0 ? 'entry-drought'
+              : f23_6 === 0 ? 'mid-gap'
+              : f01_6 > 0 && f23_6 > 0 && f45_6 > 0 ? 'healthy'
+              : 'thin';
+            _l6.push(`  [D] 育成パイプライン: ${pipeVoid}  (6m後 新人=${f01_6} 中堅=${f23_6} 熟練=${f45_6}名)`);
+            if (pipeVoid === 'void')         _l6.push(`      ⚠⚠ 完全空洞化: 育成サイクル消滅`);
+            if (pipeVoid === 'entry-drought')_l6.push(`      ⚠ 新人流入停止: 将来の熟練層が育たない`);
+            if (pipeVoid === 'mid-gap')      _l6.push(`      ⚠ 中間断絶: 熟練化ルートが消える`);
+            if (pipeVoid === 'thin')         _l6.push(`      △ thin: 層が薄い — 補充を検討`);
+            if (pipeVoid === 'healthy')      _l6.push(`      ✓ 育成パイプライン健全`);
+
+            // ──── Dimension E: relocation滞留 ────
+            const relocRisk = relocStag.length >= 2 ? 'critical'
+              : relocStag.length === 1 ? 'monitoring'
+              : 'healthy';
+            _l6.push(`  [E] 異動者適応リスク: ${relocRisk}  (異動者=${relocSt.length}名 うち6m後も停滞予測=${relocStag.length}名)`);
+            if (relocRisk === 'critical')   _l6.push(`      ⚠ 複数異動者 長期停滞: 専任support体制が必要`);
+            if (relocRisk === 'monitoring') _l6.push(`      △ 要観察: ${relocStag.map(st => st.s.name).join(', ')}`);
+            if (relocRisk === 'healthy')    _l6.push(`      ✓ 異動適応 問題なし`);
+
+            // ──── Dimension F: unsafe育成速度 ────
+            const unsafeAll = _of_arr.filter(st => {
+              const fs6 = _of_futureState(st, 6);
+              return st.stage <= 1 && fs6.ladder >= 4;
+            });
+            const unsafeRisk = unsafeAll.length >= 2 ? 'critical' : unsafeAll.length === 1 ? 'alert' : 'safe';
+            _l6.push(`  [F] unsafe育成速度: ${unsafeRisk}  (6m後 stage0-1→ladder≥4の急速昇格=${unsafeAll.length}名)`);
+            if (unsafeRisk === 'critical') _l6.push(`      ⚠⚠ 複数急速昇格: 安全性確認が必要`);
+            if (unsafeRisk === 'alert')    _l6.push(`      △ ${unsafeAll.map(st => st.s.name).join(', ')}: 夜勤昇格速度を確認`);
+            if (unsafeRisk === 'safe')     _l6.push(`      ✓ 育成速度 適正`);
+
+            // ──── Overall sustainability verdict ────
+            const dims = [coreRisk, boChain, suppChain, pipeVoid, relocRisk, unsafeRisk];
+            const critCount = dims.filter(d => ['collapse','critical','void','worsening'].includes(d)).length;
+            const warnCount = dims.filter(d => ['moderate','at-risk','monitoring','alert','thin','entry-drought','mid-gap'].includes(d)).length;
+            const sustainability = critCount >= 2 ? 'critical'
+              : critCount === 1 ? 'at-risk'
+              : warnCount >= 3 ? 'moderate'
+              : warnCount >= 1 ? 'caution'
+              : 'sustainable';
+            _l6.push(`  ══ 総合継続可能性: ${sustainability.toUpperCase()} (critical=${critCount} / warning=${warnCount}) ══`);
+            if (sustainability === 'critical')   _l6.push(`  ⚠⚠ 組織継続不能リスク: 複数の構造問題が同時進行 — 早急な介入が必要`);
+            if (sustainability === 'at-risk')    _l6.push(`  ⚠ at-risk: 単一重大問題が進行中 — 計画的対応が必要`);
+            if (sustainability === 'moderate')   _l6.push(`  △ moderate: 軽微な複数問題 — 継続監視が必要`);
+            if (sustainability === 'caution')    _l6.push(`  △ caution: 注意点あり — 来月レビューを推奨`);
+            if (sustainability === 'sustainable') _l6.push(`  ✓ 組織継続可能: Human Organization Future Timeline として健全`);
+
+            // Future Q&A
+            _l6.push(`  ── 組織未来診断 Q&A ──`);
+            _l6.push(`  Q1: このままだとnightCoreはいつ崩壊するか?`);
+            _l6.push(`    → ${coreRisk === 'stable' ? '✓ 崩壊リスクなし' : coreRisk === 'collapse' ? '⚠ 6ヶ月以内に消滅予測' : `△ ${coreRisk}: 後継育成で回避可能`}`);
+            _l6.push(`  Q2: burnoutは組織として連鎖するか?`);
+            _l6.push(`    → ${boChain === 'stable' ? '✓ 連鎖なし' : `⚠ ${boChain}: 3m後high=${high3}名 6m後high=${high6}名`}`);
+            _l6.push(`  Q3: support役の継承は成立するか?`);
+            _l6.push(`    → ${suppChain === 'stable' ? '✓ 成立' : `⚠ ${suppChain}: gap=${suppGap6}名`}`);
+            _l6.push(`  Q4: 育成パイプラインは6ヶ月後も継続可能か?`);
+            _l6.push(`    → ${pipeVoid === 'healthy' ? '✓ 継続可能' : `⚠ ${pipeVoid}`}`);
+            _l6.push(`  Q5: 異動者は長期停滞していないか?`);
+            _l6.push(`    → ${relocRisk === 'healthy' ? '✓ 問題なし' : `△ ${relocStag.length}名が6ヶ月後も停滞予測`}`);
+            _l6.push(`  Q6: 組織は「今月だけ回る」危険構造か?`);
+            _l6.push(`    → ${sustainability === 'sustainable' ? '✓ 長期継続可能な構造' : `⚠ ${sustainability}: 今後の構造的対応が必要`}`);
+
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Organization-Future-Projection / NightCore-Collapse-Forecast /
+        //    Burnout-Chain-Forecast / Support-Succession-Forecast /
+        //    Growth-Pipeline-Forecast / Organization-Sustainability-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
