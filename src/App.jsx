@@ -12607,6 +12607,514 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Burnout-Avoidance-Route / Night-Introduction-Ladder /
         //    Training-Stability-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        //    [Career-Timeline-Memory / Stage-History / Night-Adaptation-History /
+        //    Burnout-History / Support-Transition-History / Career-Stability-Audit]
+        // Temporal Career Memory — Growth History Memory Layer (read-only)
+        // - facilityYears/floorYears/ct トレンドから成長履歴を後方推定し観察する。
+        // - 実shift変更禁止。autoGenerate変更禁止。DB保存禁止。persistence禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _cm_days  = getDays(year, month);
+          const _cm_ds    = cs.filter(s => s.dept === cd.id);
+          const _cm_cds   = cd.customShiftDefs || [];
+          const _cm_tailN = Math.min(7, _cm_days);
+
+          // ── helpers ──
+          const _cm_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _cm_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _cm_nset.add(k);
+          });
+          const _cm_isNight = sh => _cm_nset.has(sh);
+          const _cm_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _cm_isWork  = sh => !!(sh && !_cm_isRest(sh) && sh !== '明け' && sh !== '');
+          const _cm_fw      = sh => _cm_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _cm_boOf    = totF => totF >= _cm_days * 2.0 ? 'high' : totF >= _cm_days * 1.2 ? 'medium' : 'low';
+
+          // ── trend lookup ──
+          const _cm_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics (current month) ──
+          const _cm_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, dSq=0, leSq=0;
+            for (let d = 1; d <= _cm_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _cm_fw(sh);
+              if (d > _cm_days - _cm_tailN) tlF += _cm_fw(sh);
+              if (_cm_isNight(sh)) nCnt++;
+              if (_cm_isRest(sh))  rCnt++;
+              if (sh === '明け' && _cm_isNight(pv)) {
+                if (_cm_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_cm_isWork(nx))    dSq++;
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _cm_boOf(totF);
+            const co = tlF >= _cm_tailN * 3.0 ? 'high' : tlF >= _cm_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _cm_days * 0.25 * 0.7 ? 'high' : rCnt < _cm_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, dSq, leSq, bo, co, rd };
+          };
+
+          // ── stage model ──
+          const _cm_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _CM_STAGE_NAMES = ['日勤中心','floor適応中','遅番安定化','夜勤準備','夜勤適応中','独立運用'];
+          const _CM_RANGES = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _cm_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _CM_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+
+          // ── pair co-occurrence ──
+          const _cm_pco = {};
+          for (let d = 1; d <= _cm_days; d++) {
+            const nw = _cm_ds.filter(s => _cm_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _cm_pco[pk] = (_cm_pco[pk] || 0) + 1;
+              }
+          }
+          const _cm_fixedPairs = Object.entries(_cm_pco)
+            .filter(([, n]) => n >= _cm_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── night ladder ──
+          const _CM_LADDER_LABELS = [
+            '夜勤禁止', '夜勤見学', 'support夜勤', '月1夜勤', '安定夜勤', 'nightCore'
+          ];
+          const _cm_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasSupport) => {
+            if (!nightOk)                                     return 0;
+            if (stage >= 5 && bo !== 'high')                  return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')     return 4;
+            if (nCnt >= 1)                                    return 3;
+            if (stage >= 3 && progress >= 0.6 && hasSupport)  return 2;
+            if (stage >= 2 && fl >= 0.5)                      return 1;
+            return 0;
+          };
+
+          // ──────────────────────────────────────────────────────────────────────
+          // Career history estimation from profile data:
+          //  - floorYears が現在値 → 12ヶ月前は fl - 1.0, 6ヶ月前は fl - 0.5 等
+          //  - facilityYears も同様に後方推定
+          //  - ct._months あれば月別の burnout 傾向を拾う
+          //  - nCnt の過去推定: 現 nCnt × 0.8/0.5/0.2 で段階的に減衰
+          // ──────────────────────────────────────────────────────────────────────
+          // Time horizons: [months ago, label]
+          const _CM_HORIZONS = [
+            [12, '12ヶ月前'],
+            [9,  ' 9ヶ月前'],
+            [6,  ' 6ヶ月前'],
+            [3,  ' 3ヶ月前'],
+            [1,  ' 1ヶ月前'],
+            [0,  '現在'],
+          ];
+
+          // Estimate past fl/fy at t months ago (linear back-projection)
+          const _cm_pastFl = (fl, t) => Math.max(0, fl - t / 12);
+          const _cm_pastFy = (fy, t) => Math.max(0, fy - t / 12);
+
+          // Estimate past nCnt at t months ago (decay: 0 before stage3 typically)
+          const _cm_pastNcnt = (nCnt, stage, fl, t) => {
+            if (t === 0) return nCnt;
+            const flPast = _cm_pastFl(fl, t);
+            // Night starts roughly when fl≥1.0 (stage3 boundary)
+            const monthsWithNight = Math.max(0, (fl - 1.0) / (1.0 / 12));
+            if (t >= monthsWithNight) return 0;
+            // Linear ramp from 0 to current nCnt over months with night
+            const ratio = Math.max(0, 1 - t / Math.max(0.5, monthsWithNight));
+            return Math.round(nCnt * ratio);
+          };
+
+          // Estimate past burnout from ct trend months if available, else from fl
+          const _cm_pastBo = (tr, t, currentBo) => {
+            const months = tr?._months;
+            if (Array.isArray(months) && months.length > t) {
+              // Use stored month trend if available
+              const mKey = months[months.length - 1 - Math.min(t, months.length - 1)];
+              const mCnt = tr?._monthCounts?.[mKey];
+              if (typeof mCnt === 'number') {
+                return mCnt >= _cm_days * 2.0 ? 'high' : mCnt >= _cm_days * 1.2 ? 'medium' : 'low';
+              }
+            }
+            // Fallback: lower burnout in earlier months (less floor experience)
+            if (t >= 9) return 'low';
+            if (t >= 4 && currentBo === 'high') return 'medium';
+            return currentBo;
+          };
+
+          // ── per-staff current state ──
+          const _cm_st = {};
+          for (const s of _cm_ds) {
+            const m    = _cm_metric(result[s.id] || {});
+            const tr   = _cm_trd(s.name);
+            const wk   = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy   = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl   = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr   = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _cm_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _cm_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _cm_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _cm_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _cm_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, tr, isNew, ...m };
+          }
+
+          // ── Layer 1: [Career-Timeline-Memory] ──
+          {
+            const _l1 = [`[Career-Timeline-Memory] dept=${cd.id}`];
+            _l1.push(`  ── キャリアタイムライン（後方推定・facilityYears/floorYears基準） ──`);
+            for (const s of _cm_ds) {
+              const st = _cm_st[s.name]; if (!st) continue;
+              _l1.push(`  ▌${s.name}  fy=${st.fy.toFixed(1)}  fl=${st.fl.toFixed(1)}  workTotal=${st.tr?._workTotal??'?'}`);
+              const milestones = [];
+              for (const [t, label] of _CM_HORIZONS) {
+                const flP  = _cm_pastFl(st.fl, t);
+                const fyP  = _cm_pastFy(st.fy, t);
+                const ncP  = _cm_pastNcnt(st.nCnt, st.stage, st.fl, t);
+                const rrP  = (fyP >= 2 && flP < 0.5) ? 'high' : (fyP >= 1 && flP < 0.3) ? 'medium' : 'low';
+                const stgP = _cm_stageOf(fyP, flP, ncP, rrP);
+                const boP  = _cm_pastBo(st.tr, t, st.bo);
+                milestones.push({ t, label, flP, fyP, ncP, stgP, boP });
+              }
+              // Detect key milestone transitions
+              const events = [];
+              for (let i = 1; i < milestones.length; i++) {
+                const prev = milestones[i - 1], curr = milestones[i];
+                if (curr.stgP !== prev.stgP)
+                  events.push(`stage${prev.stgP}→${curr.stgP}（${curr.label}〜${prev.label}頃）`);
+                if (prev.ncP === 0 && curr.ncP > 0)
+                  events.push(`夜勤開始（${curr.label}頃）`);
+                if (prev.boP === 'high' && curr.boP !== 'high')
+                  events.push(`バーンアウト回復（${curr.label}頃）`);
+              }
+              milestones.forEach(({ label, flP, stgP, ncP, boP }) => {
+                _l1.push(`    ${label}: stage=${stgP}(${_CM_STAGE_NAMES[stgP]})  fl≈${flP.toFixed(2)}  nCnt≈${ncP}  bo=${boP}`);
+              });
+              if (events.length) _l1.push(`    ▶ キャリアイベント: ${events.join(' / ')}`);
+            }
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Stage-History] ──
+          {
+            const _l2 = [`[Stage-History] dept=${cd.id}`];
+            _l2.push(`  ── ステージ履歴推定（停滞/成長/後退シグナル） ──`);
+            for (const s of _cm_ds) {
+              const st = _cm_st[s.name]; if (!st) continue;
+              // Build stage sequence for each horizon
+              const stageSeq = _CM_HORIZONS.map(([t, label]) => {
+                const flP = _cm_pastFl(st.fl, t);
+                const fyP = _cm_pastFy(st.fy, t);
+                const ncP = _cm_pastNcnt(st.nCnt, st.stage, st.fl, t);
+                const rrP = (fyP >= 2 && flP < 0.5) ? 'high' : (fyP >= 1 && flP < 0.3) ? 'medium' : 'low';
+                return { t, label, stgP: _cm_stageOf(fyP, flP, ncP, rrP) };
+              });
+              // Trend signal
+              const firstStage  = stageSeq[0].stgP;
+              const middleStage = stageSeq[Math.floor(stageSeq.length / 2)].stgP;
+              const lastStage   = stageSeq[stageSeq.length - 1].stgP;
+              let trendSig = 'stable';
+              if (lastStage > firstStage + 1)          trendSig = 'rapidGrowth';
+              else if (lastStage > firstStage)          trendSig = 'growth';
+              else if (lastStage === firstStage && st.progress < 0.3) trendSig = 'stagnation';
+              else if (lastStage < firstStage)          trendSig = 'setback';
+              // Stagnation check: same stage for ≥6 months
+              const stagnantMonths = stageSeq.filter(e => e.stgP === lastStage).length;
+              const stagnationFlag = stagnantMonths >= 4 && lastStage <= 3 ? '⚠ 長期停滞' : '';
+              _l2.push(`  ▌${s.name}  現stage=${lastStage}(${_CM_STAGE_NAMES[lastStage]})  trend=${trendSig}  ${stagnationFlag}`);
+              _l2.push(`    履歴: ${stageSeq.map(e => `[${e.label}:${e.stgP}]`).join(' → ')}`);
+              // Growth speed estimate
+              const stageGain = lastStage - firstStage;
+              const growthRate = stageGain / 12; // stages per month
+              if (stageGain > 0)
+                _l2.push(`    成長速度: +${stageGain}stage / 12ヶ月 (≈${growthRate.toFixed(2)}stage/月)`);
+              // Next milestone projection
+              if (lastStage < 5) {
+                const flNeeded = _CM_RANGES[lastStage + 1]?.[0] ?? 4.0;
+                const flRemain = Math.max(0, flNeeded - st.fl);
+                const monthsNeeded = growthRate > 0 ? Math.ceil(flRemain / (st.fl / 12)) : '不明';
+                _l2.push(`    次stage到達予測: stage${lastStage + 1}まであと fl≈+${flRemain.toFixed(2)} (≈${monthsNeeded}ヶ月)`);
+              }
+              if (trendSig === 'stagnation')
+                _l2.push(`    ⚠ 停滞シグナル: progress=${st.progress.toFixed(2)} stage=${lastStage}で長期停滞中`);
+            }
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Night-Adaptation-History] ──
+          {
+            const _l3 = [`[Night-Adaptation-History] dept=${cd.id}`];
+            _l3.push(`  ── 夜勤適応履歴推定（ラダー段階推定・nCnt後方投影） ──`);
+            for (const s of _cm_ds) {
+              const st = _cm_st[s.name]; if (!st) continue;
+              const ladderHistory = _CM_HORIZONS.map(([t, label]) => {
+                const flP  = _cm_pastFl(st.fl, t);
+                const fyP  = _cm_pastFy(st.fy, t);
+                const ncP  = _cm_pastNcnt(st.nCnt, st.stage, st.fl, t);
+                const rrP  = (fyP >= 2 && flP < 0.5) ? 'high' : (fyP >= 1 && flP < 0.3) ? 'medium' : 'low';
+                const stgP = _cm_stageOf(fyP, flP, ncP, rrP);
+                const boP  = _cm_pastBo(st.tr, t, st.bo);
+                const progP = _cm_progOf(stgP, flP, 0, 0, boP, 'low', 0);
+                const lad  = _cm_ladderOf(stgP, flP, ncP, boP, progP, st.nightOk, st.hasPair);
+                return { t, label, lad, ncP, boP, stgP };
+              });
+              const firstLad = ladderHistory[0].lad;
+              const lastLad  = ladderHistory[ladderHistory.length - 1].lad;
+              const nightStartIdx = ladderHistory.findIndex(e => e.ncP > 0);
+              const ladGain = lastLad - firstLad;
+              _l3.push(`  ▌${s.name}  nightOk=${st.nightOk}  現ladder=${lastLad}(${_CM_LADDER_LABELS[lastLad]})`);
+              _l3.push(`    ラダー履歴: ${ladderHistory.map(e => `[${e.label}:${e.lad}/${_CM_LADDER_LABELS[e.lad]}]`).join(' → ')}`);
+              if (nightStartIdx > 0) {
+                _l3.push(`    夜勤開始時点推定: ${ladderHistory[nightStartIdx].label} 頃（ladder${ladderHistory[nightStartIdx - 1].lad}→${ladderHistory[nightStartIdx].lad}）`);
+              } else if (!st.nightOk) {
+                _l3.push(`    夜勤未設定: nightOk=false  夜勤履歴なし`);
+              }
+              if (ladGain > 0)
+                _l3.push(`    適応速度: +${ladGain}段階 / 12ヶ月`);
+              // Night burden assessment
+              const avgNc = ladderHistory.filter(e => e.ncP > 0).reduce((a, e) => a + e.ncP, 0)
+                / Math.max(1, ladderHistory.filter(e => e.ncP > 0).length);
+              if (avgNc > 0)
+                _l3.push(`    夜勤平均回数（過去）: ≈${avgNc.toFixed(1)}回/月`);
+              if (lastLad >= 4)
+                _l3.push(`    ✓ 夜勤適応完了: ${_CM_LADDER_LABELS[lastLad]}`);
+              else if (lastLad <= 1 && st.nightOk)
+                _l3.push(`    △ 夜勤適応初期: support夜勤への移行条件確認が必要`);
+            }
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Burnout-History] ──
+          {
+            const _l4 = [`[Burnout-History] dept=${cd.id}`];
+            _l4.push(`  ── バーンアウト履歴推定（ct月別トレンド＋後方投影） ──`);
+            for (const s of _cm_ds) {
+              const st = _cm_st[s.name]; if (!st) continue;
+              const boHistory = _CM_HORIZONS.map(([t, label]) => {
+                const boP = _cm_pastBo(st.tr, t, st.bo);
+                return { t, label, boP };
+              });
+              const highCount   = boHistory.filter(e => e.boP === 'high').length;
+              const medCount    = boHistory.filter(e => e.boP === 'medium').length;
+              const recoveredSeq= [];
+              for (let i = 1; i < boHistory.length; i++) {
+                if (boHistory[i - 1].boP === 'high' && boHistory[i].boP !== 'high')
+                  recoveredSeq.push(boHistory[i].label);
+              }
+              const repeatBurnout = highCount >= 2;
+              _l4.push(`  ▌${s.name}  現bo=${st.bo}  highCount=${highCount}/6  medCount=${medCount}/6`);
+              _l4.push(`    burnout履歴: ${boHistory.map(e => `[${e.label}:${e.boP}]`).join(' → ')}`);
+              if (repeatBurnout)
+                _l4.push(`    ⚠ 反復バーンアウトシグナル: ${highCount}回検出 — 勤務過多パターンの確認が必要`);
+              if (recoveredSeq.length)
+                _l4.push(`    ✓ 回復確認: ${recoveredSeq.join(', ')} 頃`);
+              // Trend
+              const first2Avg = boHistory.slice(0, 2).filter(e => e.boP === 'high').length;
+              const last2Avg  = boHistory.slice(-2).filter(e => e.boP === 'high').length;
+              const boTrend   = last2Avg > first2Avg ? '悪化傾向' : last2Avg < first2Avg ? '改善傾向' : '安定';
+              _l4.push(`    burnout傾向: ${boTrend}`);
+              // ct trend data summary
+              const trMonths = st.tr?._months;
+              if (Array.isArray(trMonths) && trMonths.length >= 2) {
+                _l4.push(`    ct記録月数: ${trMonths.length}ヶ月  最古=${trMonths[0]}  最新=${trMonths[trMonths.length - 1]}`);
+              } else {
+                _l4.push(`    ct月別データ: なし（後方線形推定のみ）`);
+              }
+            }
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Support-Transition-History] ──
+          {
+            const _l5 = [`[Support-Transition-History] dept=${cd.id}`];
+            _l5.push(`  ── support依存遷移履歴推定（ペア固着度・依存タイプ変化） ──`);
+            // Build current pair dependency
+            const _cm_pairs = [];
+            for (const pair of _cm_fixedPairs) {
+              const [n1, n2] = pair;
+              const s1 = _cm_st[n1], s2 = _cm_st[n2];
+              if (!s1 || !s2) continue;
+              const pk   = pair.slice().sort().join('×');
+              const cnt  = _cm_pco[pk] || 0;
+              const rate = cnt / _cm_days;
+              const [, receiver, , rSt] = s1.stage >= s2.stage
+                ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+              let depType;
+              if (rSt.stage <= 2 && rSt.fl >= 1.5)                           depType = 'overProtection';
+              else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3)  depType = 'fixationRisk';
+              else if (rSt.stage >= 4 && s1.stage >= 4)                      depType = 'stablePair';
+              else                                                             depType = 'healthySupport';
+              _cm_pairs.push({ pair, pk, cnt, rate, receiver, rSt, depType });
+            }
+            for (const s of _cm_ds) {
+              const st = _cm_st[s.name]; if (!st) continue;
+              const myPairs = _cm_pairs.filter(p => p.pair.includes(s.name));
+              _l5.push(`  ▌${s.name}  stage=${st.stage}  ペア数=${myPairs.length}`);
+              if (!myPairs.length) {
+                _l5.push(`    現在固定ペアなし — 自立運用または support役なし`);
+                continue;
+              }
+              for (const p of myPairs) {
+                const partner = p.pair.find(n => n !== s.name) || '';
+                _l5.push(`    ペア: ${partner}  rate=${(p.rate * 100).toFixed(0)}%  depType=${p.depType}`);
+                // Estimate how dep type changed over time based on stage evolution
+                const depHistory = _CM_HORIZONS.map(([t, label]) => {
+                  const flP  = _cm_pastFl(st.fl, t);
+                  const fyP  = _cm_pastFy(st.fy, t);
+                  const ncP  = _cm_pastNcnt(st.nCnt, st.stage, st.fl, t);
+                  const rrP  = (fyP >= 2 && flP < 0.5) ? 'high' : (fyP >= 1 && flP < 0.3) ? 'medium' : 'low';
+                  const stgP = _cm_stageOf(fyP, flP, ncP, rrP);
+                  // Simplified dep reconstruction from past stage
+                  let pastDep;
+                  if (stgP <= 2 && flP >= 1.5)          pastDep = 'overProtection';
+                  else if (p.rate > 0.6 && stgP <= 3)   pastDep = 'fixationRisk';
+                  else if (stgP >= 4)                    pastDep = 'stablePair';
+                  else                                   pastDep = 'healthySupport';
+                  return { t, label, pastDep, stgP };
+                });
+                _l5.push(`      依存遷移: ${depHistory.map(e => `[${e.label}:${e.pastDep}]`).join(' → ')}`);
+                // Transition events
+                for (let i = 1; i < depHistory.length; i++) {
+                  if (depHistory[i].pastDep !== depHistory[i - 1].pastDep)
+                    _l5.push(`      ▶ ${depHistory[i - 1].pastDep}→${depHistory[i].pastDep}（${depHistory[i].label}頃）`);
+                }
+                if (p.depType === 'fixationRisk')
+                  _l5.push(`      ⚠ 固着リスク継続中: 段階的support削減を検討`);
+                else if (p.depType === 'overProtection')
+                  _l5.push(`      ⚠ 過保護状態: fl=${st.fl.toFixed(1)}≥1.5 なのに stage${st.stage}停滞`);
+                else if (p.depType === 'stablePair')
+                  _l5.push(`      ✓ 安定ペア: 相互補完が成立`);
+              }
+            }
+            if (!_cm_pairs.length)
+              _l5.push(`  固定ペアなし — 全スタッフが夜勤独立運用またはnight非対象`);
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Career-Stability-Audit] ──
+          {
+            const _l6 = [`[Career-Stability-Audit] dept=${cd.id}`];
+            _l6.push(`  ── 施設全体キャリア安定性監査（長期パターン検出） ──`);
+            const issues = [];
+            const alerts = [];
+            const staffArr = _cm_ds.map(s => _cm_st[s.name]).filter(Boolean);
+
+            // Check 1: 長期停滞スタッフ（stage≤2 かつ fl≥0.8）
+            const stagnant = staffArr.filter(st => st.stage <= 2 && st.fl >= 0.8 && st.progress < 0.4);
+            if (stagnant.length)
+              issues.push({ code: 'LONG_STAGNATION', names: stagnant.map(st => st.s.name),
+                msg: `stage≤2 かつ fl≥0.8 で progress<0.4: 育成停滞の可能性` });
+
+            // Check 2: 反復バーンアウト（bo=high かつ 過去にも high の痕跡）
+            const repeatBo = staffArr.filter(st => {
+              if (st.bo !== 'high') return false;
+              const hist = _CM_HORIZONS.map(([t]) => _cm_pastBo(st.tr, t, st.bo));
+              return hist.filter(b => b === 'high').length >= 3;
+            });
+            if (repeatBo.length)
+              issues.push({ code: 'REPEAT_BURNOUT', names: repeatBo.map(st => st.s.name),
+                msg: `現在 bo=high かつ過去3回以上 high: 慢性疲労の可能性` });
+
+            // Check 3: 過保護ペア（fixationRisk / overProtection）
+            const overDep = _cm_pairs.filter(p => ['fixationRisk','overProtection'].includes(p.depType));
+            if (overDep.length)
+              issues.push({ code: 'OVER_DEPENDENCY', names: overDep.map(p => p.pk),
+                msg: `過依存ペア検出: support削減・独立運用移行の検討が必要` });
+
+            // Check 4: 夜勤急速昇格（fl<1.0 なのに nightCore=ladder5）
+            const rapidNight = staffArr.filter(st => st.ladder >= 4 && st.fl < 1.0);
+            if (rapidNight.length)
+              alerts.push({ code: 'RAPID_NIGHT_PROMOTION', names: rapidNight.map(st => st.s.name),
+                msg: `fl<1.0 で ladder≥4: 夜勤過早昇格の可能性 — 安全性確認が必要` });
+
+            // Check 5: 異動ベテランの長期 stage1 停滞
+            const relocStagnant = staffArr.filter(st => st.rr === 'high' && st.stage <= 2 && st.fy >= 3);
+            if (relocStagnant.length)
+              issues.push({ code: 'RELOCATION_DELAY', names: relocStagnant.map(st => st.s.name),
+                msg: `rr=high かつ stage≤2・fy≥3: 異動後の適応が遅延している可能性` });
+
+            // Check 6: nightOk なのに ladder=0（設定矛盾）
+            const nightConflict = staffArr.filter(st => st.nightOk && st.ladder === 0);
+            if (nightConflict.length)
+              alerts.push({ code: 'NIGHT_SETTING_CONFLICT', names: nightConflict.map(st => st.s.name),
+                msg: `nightOk=true なのに ladder=0: stage/fl条件を確認 (stage<2またはfl<0.5)` });
+
+            // Summary
+            _l6.push(`  スタッフ数=${staffArr.length}  問題=${issues.length}件  警告=${alerts.length}件`);
+            if (!issues.length && !alerts.length) {
+              _l6.push(`  ✓ キャリア安定性: 全スタッフ 問題なし`);
+            } else {
+              for (const issue of issues) {
+                _l6.push(`  ⚠ [${issue.code}] ${issue.msg}`);
+                _l6.push(`      対象: ${issue.names.join(', ')}`);
+              }
+              for (const alert of alerts) {
+                _l6.push(`  △ [${alert.code}] ${alert.msg}`);
+                _l6.push(`      対象: ${alert.names.join(', ')}`);
+              }
+            }
+            // Stage distribution summary
+            const stageDist = [0,1,2,3,4,5].map(sg =>
+              ({ sg, n: staffArr.filter(st => st.stage === sg).length })
+            ).filter(e => e.n > 0);
+            _l6.push(`  ステージ分布: ${stageDist.map(e => `stage${e.sg}(${_CM_STAGE_NAMES[e.sg]}):${e.n}名`).join(' / ')}`);
+            // Night adaptation rate
+            const nightReady = staffArr.filter(st => st.ladder >= 3).length;
+            const nightTotal = staffArr.filter(st => st.nightOk).length;
+            _l6.push(`  夜勤対応率: ${nightReady}/${nightTotal}名 (nightOk設定済のうち ladder≥3)`);
+            // Burnout summary
+            const boHigh = staffArr.filter(st => st.bo === 'high').length;
+            const boMed  = staffArr.filter(st => st.bo === 'medium').length;
+            _l6.push(`  burnout状況: high=${boHigh}名 medium=${boMed}名 low=${staffArr.length - boHigh - boMed}名`);
+            // Q&A
+            _l6.push(`  ── 安定性診断 Q&A ──`);
+            _l6.push(`  Q1: 最も成長が早いスタッフは?`);
+            const fastGrower = staffArr.reduce((best, st) => {
+              const gain = _CM_HORIZONS.map(([t]) => {
+                const flP = _cm_pastFl(st.fl, t), fyP = _cm_pastFy(st.fy, t);
+                const ncP = _cm_pastNcnt(st.nCnt, st.stage, st.fl, t);
+                const rrP = (fyP>=2&&flP<0.5)?'high':(fyP>=1&&flP<0.3)?'medium':'low';
+                return _cm_stageOf(fyP, flP, ncP, rrP);
+              });
+              const growthScore = gain[gain.length - 1] - gain[0];
+              return !best || growthScore > best.score ? { name: st.s.name, score: growthScore } : best;
+            }, null);
+            if (fastGrower) _l6.push(`    → ${fastGrower.name} (stage+${fastGrower.score}/12ヶ月)`);
+            _l6.push(`  Q2: 夜勤適応が最も進んでいるスタッフは?`);
+            const bestNight = staffArr.filter(st => st.nightOk).sort((a, b) => b.ladder - a.ladder)[0];
+            if (bestNight) _l6.push(`    → ${bestNight.s.name} (ladder=${bestNight.ladder}/${_CM_LADDER_LABELS[bestNight.ladder]})`);
+            _l6.push(`  Q3: 最も注意が必要なスタッフは?`);
+            const atRisk = staffArr.filter(st =>
+              st.bo === 'high' || st.stage <= 1 || issues.some(i => i.names.includes(st.s.name))
+            ).map(st => st.s.name);
+            _l6.push(`    → ${atRisk.length ? atRisk.join(', ') : 'なし'}`);
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Career-Timeline-Memory / Stage-History / Night-Adaptation-History /
+        //    Burnout-History / Support-Transition-History /
+        //    Career-Stability-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
