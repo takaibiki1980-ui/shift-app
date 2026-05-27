@@ -17228,6 +17228,620 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Temporal-Cost-Function / Temporal-Preservation-Rules /
         //    Controlled-Intervention-Boundary / Temporal-Architecture-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        //    [Shadow-Temporal-Loop / Temporal-Candidate-Generator /
+        //    Constraint-vs-Temporal-Diff / Future-Impact-Delta /
+        //    Temporal-Safety-Gate / Shadow-Generation-Audit]
+        // Shadow Temporal Generation Engine — 本番非接続 shadow シミュレーション（read-only）
+        // - 既存 autoGenerate の result を読み取り、Temporal Engine が生成する仮候補を shadow で計算。
+        // - shadowResult は local のみ。result 変更禁止。setAllShifts 呼出禁止。自動介入禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _sg_days  = getDays(year, month);
+          const _sg_ds    = cs.filter(s => s.dept === cd.id);
+          const _sg_cds   = cd.customShiftDefs || [];
+          const _sg_tailN = Math.min(7, _sg_days);
+
+          // ── helpers ──
+          const _sg_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _sg_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _sg_nset.add(k);
+          });
+          const _sg_isNight = sh => _sg_nset.has(sh);
+          const _sg_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _sg_isWork  = sh => !!(sh && !_sg_isRest(sh) && sh !== '明け' && sh !== '');
+          const _sg_fw      = sh => _sg_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _sg_boOf    = totF => totF >= _sg_days * 2.0 ? 'high' : totF >= _sg_days * 1.2 ? 'medium' : 'low';
+
+          // ── trend lookup ──
+          const _sg_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics from result (read-only) ──
+          const _sg_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, leSq=0;
+            for (let d = 1; d <= _sg_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _sg_fw(sh);
+              if (d > _sg_days - _sg_tailN) tlF += _sg_fw(sh);
+              if (_sg_isNight(sh)) nCnt++;
+              if (_sg_isRest(sh))  rCnt++;
+              if (sh === '明け' && _sg_isNight(pv)) {
+                if (_sg_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')    cSq++;
+                else if (_sg_isWork(nx))   { /* dSq */ }
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _sg_boOf(totF);
+            const co = tlF >= _sg_tailN * 3.0 ? 'high' : tlF >= _sg_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _sg_days * 0.25 * 0.7 ? 'high' : rCnt < _sg_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, leSq, bo, co, rd };
+          };
+
+          // ── stage / progress / ladder models ──
+          const _sg_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _SG_FL_G    = 0.08;
+          const _SG_RANGES  = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _sg_progOf  = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _SG_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+          const _sg_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasPair) => {
+            if (!nightOk)                                   return 0;
+            if (stage >= 5 && bo !== 'high')                return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')  return 4;
+            if (nCnt >= 1)                                  return 3;
+            if (stage >= 3 && progress >= 0.6 && hasPair)  return 2;
+            if (stage >= 2 && fl >= 0.5)                   return 1;
+            return 0;
+          };
+
+          // ── pair co-occurrence ──
+          const _sg_pco = {};
+          for (let d = 1; d <= _sg_days; d++) {
+            const nw = _sg_ds.filter(s => _sg_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _sg_pco[pk] = (_sg_pco[pk] || 0) + 1;
+              }
+          }
+          const _sg_fixedPairs = Object.entries(_sg_pco)
+            .filter(([, n]) => n >= _sg_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── per-staff full state (read from result) ──
+          const _sg_st = {};
+          for (const s of _sg_ds) {
+            const m     = _sg_metric(result[s.id] || {});
+            const tr    = _sg_trd(s.name);
+            const wk    = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy    = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl    = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr    = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _sg_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _sg_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _sg_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _sg_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _sg_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, isNew, ...m };
+          }
+          const _sg_arr = _sg_ds.map(s => _sg_st[s.name]).filter(Boolean);
+
+          // ── forecast helpers ──
+          const _sg_futBo = (bo, co, sSq, cSq, t) => {
+            const ord = { low:0, medium:1, high:2 };
+            let v = ord[bo];
+            if (co === 'high' && cSq > 0)        v = Math.min(2, v + Math.floor(t / 2));
+            else if (co === 'high' && sSq > 0)   v = Math.min(2, v + Math.floor(t / 3));
+            else if (bo === 'high' && sSq > 0)   v = Math.max(0, v - Math.floor(t / 2));
+            else if (bo === 'medium' && sSq > 0) v = Math.max(0, v - Math.floor(t / 3));
+            return ['low','medium','high'][Math.max(0, Math.min(2, v))];
+          };
+          const _sg_futState = (st, t) => {
+            const ffl  = st.fl + _SG_FL_G * t, fFy = st.fy + t / 12;
+            const fBo  = _sg_futBo(st.bo, st.co, st.sSq, st.cSq, t);
+            const fRr  = (fFy >= 2 && ffl < 0.5) ? 'high' : (fFy >= 1 && ffl < 0.3) ? 'medium' : 'low';
+            const fStg = _sg_stageOf(fFy, ffl, st.nCnt, fRr);
+            const fPrg = _sg_progOf(fStg, ffl, st.sSq, st.cSq, fBo, st.co, st.leSq);
+            const fNc  = !st.nightOk ? 0
+              : fStg >= 5 ? Math.max(st.nCnt, 3) : fStg >= 4 ? Math.max(st.nCnt, 1)
+              : (fStg === 3 && fPrg >= 0.6 && st.hasPair) ? Math.max(st.nCnt, 1) : st.nCnt;
+            return { fl: ffl, bo: fBo, nCnt: fNc, stage: fStg, progress: fPrg,
+                     ladder: _sg_ladderOf(fStg, ffl, fNc, fBo, fPrg, st.nightOk, st.hasPair) };
+          };
+          // shadow variant: uses shadowNcnt for stage/ladder projection
+          const _sg_shadowFutState = (st, shadowNcnt, t) => {
+            const ffl  = st.fl + _SG_FL_G * t, fFy = st.fy + t / 12;
+            const fBo  = _sg_futBo(st.bo, st.co, st.sSq, st.cSq, t);
+            const fRr  = (fFy >= 2 && ffl < 0.5) ? 'high' : (fFy >= 1 && ffl < 0.3) ? 'medium' : 'low';
+            const fStg = _sg_stageOf(fFy, ffl, shadowNcnt, fRr);
+            const fPrg = _sg_progOf(fStg, ffl, st.sSq, st.cSq, fBo, st.co, st.leSq);
+            const fNc  = !st.nightOk ? 0
+              : fStg >= 5 ? Math.max(shadowNcnt, 3) : fStg >= 4 ? Math.max(shadowNcnt, 1)
+              : (fStg === 3 && fPrg >= 0.6 && st.hasPair) ? Math.max(shadowNcnt, 1) : shadowNcnt;
+            return { fl: ffl, bo: fBo, nCnt: fNc, stage: fStg, progress: fPrg,
+                     ladder: _sg_ladderOf(fStg, ffl, fNc, fBo, fPrg, st.nightOk, st.hasPair) };
+          };
+
+          // ── Layer 1: [Shadow-Temporal-Loop] ──
+          {
+            const _l1 = [`[Shadow-Temporal-Loop] dept=${cd.id}`];
+            _l1.push(`  ── Shadow Temporal Engine: 本番並列シャドウ実行ループ設計 ──`);
+            _l1.push(`  モード: Phase0（read-only）— 既存 autoGenerate の result を読み取るのみ`);
+            _l1.push(`  禁止: result変更 / setAllShifts呼出 / 自動介入 / DB保存`);
+            _l1.push(``);
+
+            const loopSteps = [
+              { step:1, name:'Baseline Read',
+                desc:'autoGenerate の result から per-staff nCnt/bo/stage/ladder を読み取る',
+                current:`dept ${cd.id}: ${_sg_arr.length}名 を観察対象として読み取り済み` },
+              { step:2, name:'Shadow Candidate Generation',
+                desc:'Temporal Engine が生成する仮候補 shadowNcnt を per-staff で計算する',
+                current:`ladder分布: 0=${_sg_arr.filter(st=>st.ladder===0).length} 1-3=${_sg_arr.filter(st=>st.ladder>=1&&st.ladder<=3).length} 4-5=${_sg_arr.filter(st=>st.ladder>=4).length}` },
+              { step:3, name:'Constraint vs Temporal Diff',
+                desc:'制約充足(result)と Temporal候補(shadow)の nCnt 差分を比較する',
+                current:`result 夜勤総数: ${_sg_arr.reduce((s,st)=>s+st.nCnt,0)}回` },
+              { step:4, name:'Future Impact Delta',
+                desc:'現状と shadow の 3m/6m 後の組織状態を比較して未来差分を計算する',
+                current:`3m後 burnout high(現状): ${_sg_arr.filter(st=>_sg_futBo(st.bo,st.co,st.sSq,st.cSq,3)==='high').length}名` },
+              { step:5, name:'Temporal Safety Gate',
+                desc:'shadow候補が ABSOLUTE/STRONG 保存ルールに違反しないかを検証する',
+                current:`bo=high: ${_sg_arr.filter(st=>st.bo==='high').length}名  stage≤1: ${_sg_arr.filter(st=>st.stage<=1).length}名` },
+              { step:6, name:'Shadow Generation Audit',
+                desc:'Shadow Engine の成熟度・安全性・将来バイアスを総合評価する',
+                current:`現在フェーズ: Phase0（観察のみ）` },
+            ];
+
+            _l1.push(`  ── ループステップ一覧 ──`);
+            for (const ls of loopSteps) {
+              _l1.push(`  Step${ls.step}: ${ls.name}`);
+              _l1.push(`    目的: ${ls.desc}`);
+              _l1.push(`    現状: ${ls.current}`);
+            }
+
+            _l1.push(`  ── ベースライン（autoGenerate result）サマリー ──`);
+            _l1.push(`  観察対象スタッフ数: ${_sg_arr.length}名`);
+            _l1.push(`  夜勤可能スタッフ: ${_sg_arr.filter(st=>st.nightOk).length}名`);
+            _l1.push(`  現月夜勤総数: ${_sg_arr.reduce((s,st)=>s+st.nCnt,0)}回`);
+            _l1.push(`  nightCore(ladder≥4): ${_sg_arr.filter(st=>st.ladder>=4).length}名`);
+            _l1.push(`  bo=high: ${_sg_arr.filter(st=>st.bo==='high').length}名`);
+            _l1.push(`  stage分布: s0=${_sg_arr.filter(st=>st.stage===0).length} s1=${_sg_arr.filter(st=>st.stage===1).length} s2=${_sg_arr.filter(st=>st.stage===2).length} s3=${_sg_arr.filter(st=>st.stage===3).length} s4=${_sg_arr.filter(st=>st.stage===4).length} s5=${_sg_arr.filter(st=>st.stage===5).length}`);
+            console.log(_l1.join('\n'));
+          }
+
+          // _sg_shadow: per-staff shadow candidate — populated in Layer 2, read in Layers 3-6
+          const _sg_shadow = {};
+
+          // ── Layer 2: [Temporal-Candidate-Generator] ──
+          {
+            const _l2 = [`[Temporal-Candidate-Generator] dept=${cd.id}`];
+            _l2.push(`  ── Temporal ルールベース shadow 夜勤候補計算 ──`);
+            _l2.push(`  NOTE: shadowNcnt は local のみ。result への書き戻し禁止。`);
+            _l2.push(``);
+
+            // Rule hierarchy (first match wins):
+            // nightOkFalse:  nightOk=false           → 0
+            // unsafeBlock:   stage≤1                 → 0 (unsafe night block)
+            // coreKept:      bo=high && ladder≥4     → max(1, nCnt) (core preservation)
+            // boReduce:      bo=high                 → max(0, nCnt-1) (burnout reduction)
+            // growthUp:      ladder=2..3 && nCnt<2   → min(3, nCnt+1) (growth promote)
+            // coreStable:    ladder≥4 && bo≠high     → nCnt (stable)
+            // noChange:      otherwise               → nCnt
+
+            const ruleLog = [];
+            for (const st of _sg_arr) {
+              let shadowNcnt = st.nCnt;
+              let rule = 'noChange', reasoning = '';
+
+              if (!st.nightOk) {
+                shadowNcnt = 0;  rule = 'nightOkFalse';
+                reasoning = '夜勤不可スタッフ: 夜勤=0';
+              } else if (st.stage <= 1) {
+                shadowNcnt = 0;  rule = 'unsafeBlock';
+                reasoning = `stage=${st.stage}(≤1): 安全ブロック — 夜勤実施は不安全`;
+              } else if (st.bo === 'high' && st.ladder >= 4) {
+                shadowNcnt = Math.max(1, st.nCnt);  rule = 'coreKept';
+                reasoning = `bo=high+ladder=${st.ladder}(nightCore): 最低1回維持で交代準備`;
+              } else if (st.bo === 'high') {
+                shadowNcnt = Math.max(0, st.nCnt - 1);  rule = 'boReduce';
+                reasoning = `bo=high: 夜勤を-1削減（回復促進）`;
+              } else if (st.ladder >= 2 && st.ladder <= 3 && st.nCnt < 2) {
+                shadowNcnt = Math.min(3, st.nCnt + 1);  rule = 'growthUp';
+                reasoning = `ladder=${st.ladder}(成長期): 夜勤+1（ladder成長促進）`;
+              } else if (st.ladder >= 4) {
+                shadowNcnt = st.nCnt;  rule = 'coreStable';
+                reasoning = `ladder=${st.ladder}(nightCore): 安定維持`;
+              } else {
+                shadowNcnt = st.nCnt;  rule = 'noChange';
+                reasoning = `ladder=${st.ladder},stage=${st.stage}: 変更なし`;
+              }
+
+              _sg_shadow[st.s.id] = {
+                name: st.s.name, currNcnt: st.nCnt, shadowNcnt,
+                delta: shadowNcnt - st.nCnt, rule, reasoning,
+                stage: st.stage, ladder: st.ladder, bo: st.bo,
+              };
+              ruleLog.push(_sg_shadow[st.s.id]);
+            }
+
+            const ruleCounts = {};
+            for (const r of ruleLog) ruleCounts[r.rule] = (ruleCounts[r.rule] || 0) + 1;
+
+            _l2.push(`  ── per-staff 夜勤候補 ──`);
+            for (const r of ruleLog) {
+              const d = r.delta === 0 ? '±0' : r.delta > 0 ? `+${r.delta}` : `${r.delta}`;
+              _l2.push(`  ${r.name.padEnd(12)}: result=${r.currNcnt}回 → shadow=${r.shadowNcnt}回 (${d})  [${r.rule}]  stage=${r.stage} ladder=${r.ladder} bo=${r.bo}`);
+            }
+            _l2.push(``);
+            _l2.push(`  ── ルール適用集計 ──`);
+            for (const [rule, cnt] of Object.entries(ruleCounts))
+              _l2.push(`    ${rule}: ${cnt}名`);
+            const shadowTotal = ruleLog.reduce((s, v) => s + v.shadowNcnt, 0);
+            const currTotal   = ruleLog.reduce((s, v) => s + v.currNcnt,   0);
+            _l2.push(`  夜勤総数 result: ${currTotal}回  shadow: ${shadowTotal}回  差分: ${shadowTotal-currTotal>=0?'+':''}${shadowTotal-currTotal}`);
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Constraint-vs-Temporal-Diff] ──
+          {
+            const _l3 = [`[Constraint-vs-Temporal-Diff] dept=${cd.id}`];
+            _l3.push(`  ── 制約充足(result) vs Temporal候補(shadow) 差分分析 ──`);
+            _l3.push(``);
+
+            const diffs     = Object.values(_sg_shadow);
+            const increased = diffs.filter(d => d.delta > 0);
+            const decreased = diffs.filter(d => d.delta < 0);
+            const unchanged = diffs.filter(d => d.delta === 0);
+            const blocked   = diffs.filter(d => d.rule === 'unsafeBlock' || d.rule === 'nightOkFalse');
+
+            _l3.push(`  差分集計:`);
+            _l3.push(`    夜勤増加(growthUp/coreKept): ${increased.length}名  ${increased.map(d=>`${d.name}+${d.delta}`).join(', ')||'なし'}`);
+            _l3.push(`    夜勤削減(boReduce):          ${decreased.length}名  ${decreased.map(d=>`${d.name}${d.delta}`).join(', ')||'なし'}`);
+            _l3.push(`    変更なし:                    ${unchanged.length}名`);
+            _l3.push(`    安全ブロック(unsafeBlock):   ${blocked.length}名  ${blocked.map(d=>d.name).join(', ')||'なし'}`);
+
+            // Simplified temporal cost: HARD + STRUCTURAL + SOFT - BONUS
+            const _sg_cost = (arr, shadowMap) => {
+              let hard=0, struct=0, soft=0, bonus=0;
+              const coreAvail = arr.filter(st => {
+                const nc = shadowMap ? (shadowMap[st.s.id]?.shadowNcnt ?? st.nCnt) : st.nCnt;
+                return st.ladder >= 4 && nc >= 1;
+              }).length;
+              if (coreAvail === 0) hard += 15;
+              for (const st of arr) {
+                const nc = shadowMap ? (shadowMap[st.s.id]?.shadowNcnt ?? st.nCnt) : st.nCnt;
+                if (st.stage <= 1 && nc > 0)                              hard   += 15;
+                if (st.bo === 'high' && nc > 0)                           struct += 8;
+                if (st.ladder >= 2 && st.ladder <= 3 && nc < 1)          soft   += 2;
+                if (st.sSq > 0 && st.bo !== 'high')                       bonus  += 4;
+                if (st.ladder >= 4 && nc >= 1)                            bonus  += 3;
+              }
+              return hard + struct + soft - bonus;
+            };
+
+            const currCost   = _sg_cost(_sg_arr, null);
+            const shadowCost = _sg_cost(_sg_arr, _sg_shadow);
+            const costDelta  = shadowCost - currCost;
+
+            _l3.push(``);
+            _l3.push(`  ── 簡易 Temporal コスト比較 ──`);
+            _l3.push(`    result コスト: ${currCost}`);
+            _l3.push(`    shadow コスト: ${shadowCost}  (差分: ${costDelta>=0?'+':''}${costDelta})`);
+            _l3.push(`    評価: ${costDelta<-5?'✓ shadow が有意に優位':costDelta<0?'△ shadow がわずかに優位':costDelta===0?'= 同等':'✗ shadow が不利'}`);
+
+            const nightDef = diffs.reduce((s,d)=>s+d.currNcnt,0) - diffs.reduce((s,d)=>s+d.shadowNcnt,0);
+            _l3.push(``);
+            _l3.push(`  ── 夜勤カバレッジ影響 ──`);
+            _l3.push(`    result 夜勤総数: ${diffs.reduce((s,d)=>s+d.currNcnt,0)}回 / shadow: ${diffs.reduce((s,d)=>s+d.shadowNcnt,0)}回`);
+            if (nightDef > 0)       _l3.push(`    ⚠ shadow による夜勤削減: ${nightDef}回 → 夜勤不足リスクを確認要`);
+            else if (nightDef < 0)  _l3.push(`    ✓ shadow による夜勤増加: ${Math.abs(nightDef)}回 → カバレッジ改善見込み`);
+            else                    _l3.push(`    = 夜勤総数は変化なし`);
+
+            if (increased.length > 0) {
+              _l3.push(``);
+              _l3.push(`  ── 夜勤増加スタッフ詳細 ──`);
+              for (const d of increased)
+                _l3.push(`    ${d.name}: result=${d.currNcnt}→shadow=${d.shadowNcnt} (+${d.delta})  [${d.rule}] — ${d.reasoning}`);
+            }
+            if (decreased.length > 0) {
+              _l3.push(``);
+              _l3.push(`  ── 夜勤削減スタッフ詳細 ──`);
+              for (const d of decreased)
+                _l3.push(`    ${d.name}: result=${d.currNcnt}→shadow=${d.shadowNcnt} (${d.delta})  [${d.rule}] — ${d.reasoning}`);
+            }
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Future-Impact-Delta] ──
+          {
+            const _l4 = [`[Future-Impact-Delta] dept=${cd.id}`];
+            _l4.push(`  ── 現状(result) vs Shadow の未来影響比較 ──`);
+            _l4.push(`  NOTE: bo は shift pattern(sSq/cSq/co)依存のため shadow でも同値。`);
+            _l4.push(`        主差分は nCnt 変化による stage/ladder/nightCore への影響。`);
+            _l4.push(``);
+
+            for (const { label, t } of [{ label:'3ヶ月後', t:3 }, { label:'6ヶ月後', t:6 }]) {
+              const currBoHigh = _sg_arr.filter(st => _sg_futBo(st.bo,st.co,st.sSq,st.cSq,t)==='high').length;
+              const currCore   = _sg_arr.filter(st => _sg_futState(st,t).ladder>=4).length;
+              const currUnsafe = _sg_arr.filter(st => st.stage<=1 && _sg_futState(st,t).ladder>=3).length;
+              const currLadder = _sg_arr.filter(st => { const fs=_sg_futState(st,t); return fs.ladder>=2&&fs.ladder<=3; }).length;
+              const currSupp   = _sg_arr.filter(st => _sg_futState(st,t).bo!=='high' && st.stage>=2).length;
+
+              // shadow: bo unchanged (pattern-derived), stage/ladder use shadowNcnt
+              const shBoHigh = currBoHigh; // bo unaffected by nCnt in this model
+              const shCore   = _sg_arr.filter(st => {
+                const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+                return _sg_shadowFutState(st,sNc,t).ladder>=4;
+              }).length;
+              const shUnsafe = _sg_arr.filter(st => {
+                const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+                return st.stage<=1 && _sg_shadowFutState(st,sNc,t).ladder>=3;
+              }).length;
+              const shLadder = _sg_arr.filter(st => {
+                const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+                const fs = _sg_shadowFutState(st,sNc,t);
+                return fs.ladder>=2&&fs.ladder<=3;
+              }).length;
+              const shSupp   = _sg_arr.filter(st => {
+                const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+                return _sg_shadowFutState(st,sNc,t).bo!=='high' && st.stage>=2;
+              }).length;
+
+              const fmt = (cur, shd, higherBetter) => {
+                const d = shd-cur;
+                const mark = d===0?'=':((higherBetter?d>0:d<0)?'✓':'⚠');
+                return `${String(cur).padEnd(10)}${String(shd).padEnd(10)}${d>=0?'+':''}${d}  ${mark}`;
+              };
+              _l4.push(`  ── ${label} ──`);
+              _l4.push(`  指標                  result    shadow    差分`);
+              _l4.push(`  bo=high(pattern)      ${fmt(currBoHigh,shBoHigh,false)}`);
+              _l4.push(`  nightCore(ladder≥4)   ${fmt(currCore,shCore,true)}`);
+              _l4.push(`  unsafePromotion        ${fmt(currUnsafe,shUnsafe,false)}`);
+              _l4.push(`  ladderCands(2-3)       ${fmt(currLadder,shLadder,true)}`);
+              _l4.push(`  suppAvail              ${fmt(currSupp,shSupp,true)}`);
+              _l4.push(``);
+            }
+
+            const t6Core_cur = _sg_arr.filter(st=>_sg_futState(st,6).ladder>=4).length;
+            const t6Core_shd = _sg_arr.filter(st=>{
+              const sNc=_sg_shadow[st.s.id]?.shadowNcnt??st.nCnt;
+              return _sg_shadowFutState(st,sNc,6).ladder>=4;
+            }).length;
+            const t6Unsafe_cur = _sg_arr.filter(st=>st.stage<=1&&_sg_futState(st,6).ladder>=3).length;
+            const t6Unsafe_shd = _sg_arr.filter(st=>{
+              const sNc=_sg_shadow[st.s.id]?.shadowNcnt??st.nCnt;
+              return st.stage<=1&&_sg_shadowFutState(st,sNc,6).ladder>=3;
+            }).length;
+
+            const coreGain   = t6Core_shd > t6Core_cur;
+            const unsafeDrop = t6Unsafe_shd < t6Unsafe_cur;
+            _l4.push(`  ── 6m 未来改善判定 ──`);
+            _l4.push(`    nightCore 6m: result=${t6Core_cur}→shadow=${t6Core_shd}  ${coreGain?'✓ 改善':t6Core_shd<t6Core_cur?'⚠ 悪化':'= 同等'}`);
+            _l4.push(`    unsafe 6m:   result=${t6Unsafe_cur}→shadow=${t6Unsafe_shd}  ${unsafeDrop?'✓ 改善':t6Unsafe_shd>t6Unsafe_cur?'⚠ 悪化':'= 同等'}`);
+            _l4.push(`    総合未来評価: ${(coreGain||unsafeDrop)&&!(t6Core_shd<t6Core_cur||t6Unsafe_shd>t6Unsafe_cur)?'✓ shadow が未来に優位':(!coreGain&&!unsafeDrop&&(t6Core_shd<t6Core_cur||t6Unsafe_shd>t6Unsafe_cur))?'⚠ shadow が未来に不利':'△ 混在（トレードオフあり）'}`);
+            console.log(_l4.join('\n'));
+          }
+
+          // _sg_safetyResult: verdict from Layer 5, read in Layer 6
+          const _sg_safetyResult = { verdict:'unknown', violations:0, warnings:0 };
+
+          // ── Layer 5: [Temporal-Safety-Gate] ──
+          {
+            const _l5 = [`[Temporal-Safety-Gate] dept=${cd.id}`];
+            _l5.push(`  ── Shadow候補 ABSOLUTE/STRONG 保存ルール検証 ──`);
+            _l5.push(``);
+
+            const violations = [], warnings = [];
+
+            // ABSOLUTE 1: unsafeNightBlock — stage≤1 with shadowNcnt>0
+            const absUnsafe = _sg_arr.filter(st => {
+              const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+              return st.stage <= 1 && sNc > 0;
+            });
+            if (absUnsafe.length > 0)
+              violations.push({ rule:'ABSOLUTE: unsafeNightBlock',
+                desc:`stage≤1 スタッフへの夜勤配置`, staff:absUnsafe.map(st=>st.s.name) });
+
+            // ABSOLUTE 2: burnoutRecovery — bo=high with shadowNcnt > currNcnt
+            const absBoMore = _sg_arr.filter(st => {
+              const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+              return st.bo === 'high' && sNc > st.nCnt;
+            });
+            if (absBoMore.length > 0)
+              violations.push({ rule:'ABSOLUTE: burnoutRecovery',
+                desc:`bo=high スタッフの夜勤増加（回復妨害）`, staff:absBoMore.map(st=>st.s.name) });
+
+            // ABSOLUTE 3: nightCoreMinimum — shadow leaves 0 active core
+            const shadowCoreCount = _sg_arr.filter(st => {
+              const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+              return st.ladder >= 4 && sNc >= 1;
+            }).length;
+            if (shadowCoreCount === 0 && _sg_arr.filter(st=>st.ladder>=4).length > 0)
+              violations.push({ rule:'ABSOLUTE: nightCoreMinimum',
+                desc:`shadow候補で nightCore が全員夜勤0になる`, staff:[] });
+
+            // STRONG 1: supportContinuity
+            const _sg_givers     = _sg_arr.filter(st=>st.ladder>=3&&st.bo!=='high').map(st=>st.s.name);
+            const suppNeedCount  = _sg_arr.filter(st=>st.stage<=2).length;
+            const suppGiverCount = _sg_arr.filter(st=>{
+              if (!_sg_givers.includes(st.s.name)) return false;
+              const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+              return sNc >= 1;
+            }).length;
+            if (suppNeedCount > 0 && suppGiverCount < Math.ceil(suppNeedCount * 0.5))
+              warnings.push({ rule:'STRONG: supportContinuity',
+                desc:`support役不足: 必要≈${suppNeedCount}名に対し active giver=${suppGiverCount}名` });
+
+            // STRONG 2: ladderContinuityProtection — ladder=2/3 all blocked
+            const ladderBlocked = _sg_arr.filter(st => {
+              const sNc = _sg_shadow[st.s.id]?.shadowNcnt ?? st.nCnt;
+              return st.ladder >= 2 && st.ladder <= 3 && sNc === 0 && st.bo !== 'high';
+            });
+            if (ladderBlocked.length >= 2)
+              warnings.push({ rule:'STRONG: ladderContinuityProtection',
+                desc:`成長中スタッフ(ladder 2-3)が複数夜勤0: ${ladderBlocked.map(st=>st.s.name).join(', ')}` });
+
+            _l5.push(`  ── ABSOLUTE ルール検証 ──`);
+            if (violations.length === 0) {
+              _l5.push(`  ✓ ABSOLUTE 違反なし（shadow候補は絶対保存ルールを満たす）`);
+            } else {
+              for (const v of violations) {
+                _l5.push(`  🔴 [${v.rule}] ${v.desc}`);
+                if (v.staff.length > 0) _l5.push(`       対象: ${v.staff.join(', ')}`);
+              }
+            }
+            _l5.push(``);
+            _l5.push(`  ── STRONG ルール検証 ──`);
+            if (warnings.length === 0) {
+              _l5.push(`  ✓ STRONG 警告なし`);
+            } else {
+              for (const w of warnings)
+                _l5.push(`  🟠 [${w.rule}] ${w.desc}`);
+            }
+
+            const verdict = violations.length > 0 ? 'shadowUnsafe'
+              : warnings.length >= 2              ? 'shadowMarginal'
+              : warnings.length === 1             ? 'shadowMarginalMinor'
+              : 'shadowSafe';
+            _sg_safetyResult.verdict    = verdict;
+            _sg_safetyResult.violations = violations.length;
+            _sg_safetyResult.warnings   = warnings.length;
+
+            const vLabel = {
+              shadowSafe:          '✓ SAFE  — shadow候補は安全基準を満たす',
+              shadowMarginalMinor: '△ MARGINAL-MINOR  — 軽微な警告あり、要注意',
+              shadowMarginal:      '⚠ MARGINAL  — 複数の STRONG 警告、慎重な検討が必要',
+              shadowUnsafe:        '🔴 UNSAFE  — ABSOLUTE 違反あり、このshadowは使用不可',
+            };
+            _l5.push(``);
+            _l5.push(`  ── Safety Gate 判定 ──`);
+            _l5.push(`    ABSOLUTE 違反: ${violations.length}件  STRONG 警告: ${warnings.length}件`);
+            _l5.push(`    verdict: ${verdict}`);
+            _l5.push(`    ${vLabel[verdict]}`);
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Shadow-Generation-Audit] ──
+          {
+            const _l6 = [`[Shadow-Generation-Audit] dept=${cd.id}`];
+            _l6.push(`  ── Shadow Temporal Engine 総合成熟度評価 ──`);
+            _l6.push(``);
+
+            // [1] temporalGain: rule application effectiveness
+            const boReduceCount = Object.values(_sg_shadow).filter(v=>v.rule==='boReduce').length;
+            const growthUpCount = Object.values(_sg_shadow).filter(v=>v.rule==='growthUp').length;
+            const blockCount    = Object.values(_sg_shadow).filter(v=>v.rule==='unsafeBlock').length;
+            const tgScore = (boReduceCount>0?2:0) + (growthUpCount>0?2:0) + (blockCount>0?1:0);
+            const temporalGain  = tgScore>=4?'excellent':tgScore>=2?'good':tgScore>=1?'moderate':'minimal';
+
+            // [2] constraintSafety: from Safety Gate
+            const constraintSafety = _sg_safetyResult.verdict==='shadowSafe'         ? 'safe'
+              : _sg_safetyResult.verdict==='shadowMarginalMinor' ? 'marginal'
+              : _sg_safetyResult.verdict==='shadowMarginal'      ? 'caution'
+              : 'unsafe';
+
+            // [3] humanReadability: ratio of actionable rules
+            const actionable = Object.values(_sg_shadow).filter(v=>
+              v.rule!=='noChange'&&v.rule!=='nightOkFalse'&&v.rule!=='coreStable').length;
+            const total = Object.values(_sg_shadow).length;
+            const actRatio = total > 0 ? actionable / total : 0;
+            const humanReadability = actRatio>0.5?'dense':actRatio>0.2?'clear':actRatio>0?'sparse':'empty';
+
+            // [4] futureBias: shadow favors future state improvement
+            const t6Core_cur = _sg_arr.filter(st=>_sg_futState(st,6).ladder>=4).length;
+            const t6Core_shd = _sg_arr.filter(st=>{
+              const sNc=_sg_shadow[st.s.id]?.shadowNcnt??st.nCnt;
+              return _sg_shadowFutState(st,sNc,6).ladder>=4;
+            }).length;
+            const t6Unsafe_cur = _sg_arr.filter(st=>st.stage<=1&&_sg_futState(st,6).ladder>=3).length;
+            const t6Unsafe_shd = _sg_arr.filter(st=>{
+              const sNc=_sg_shadow[st.s.id]?.shadowNcnt??st.nCnt;
+              return st.stage<=1&&_sg_shadowFutState(st,sNc,6).ladder>=3;
+            }).length;
+            const fbScore = (t6Core_shd>=t6Core_cur?1:0) + (t6Unsafe_shd<=t6Unsafe_cur?1:0);
+            const futureBias = fbScore>=2?'strong':fbScore>=1?'moderate':'weak';
+
+            _l6.push(`  ── 4次元成熟度スコア ──`);
+            _l6.push(`  [1] temporalGain    — Temporal ルール適用の実効性`);
+            _l6.push(`       boReduce=${boReduceCount}名 / growthUp=${growthUpCount}名 / unsafeBlock=${blockCount}名`);
+            _l6.push(`       → ${temporalGain.toUpperCase()}`);
+            _l6.push(``);
+            _l6.push(`  [2] constraintSafety — ABSOLUTE/STRONG ゲート通過状況`);
+            _l6.push(`       ABSOLUTE違反=${_sg_safetyResult.violations}件 / STRONG警告=${_sg_safetyResult.warnings}件`);
+            _l6.push(`       → ${constraintSafety.toUpperCase()}`);
+            _l6.push(``);
+            _l6.push(`  [3] humanReadability — 変更の可読性（actionableルール率）`);
+            _l6.push(`       actionable=${actionable}名 / total=${total}名 (${(actRatio*100).toFixed(0)}%)`);
+            _l6.push(`       → ${humanReadability.toUpperCase()}`);
+            _l6.push(``);
+            _l6.push(`  [4] futureBias      — shadow が未来状態を改善するか`);
+            _l6.push(`       nightCore 6m: result=${t6Core_cur}→shadow=${t6Core_shd}  unsafe 6m: result=${t6Unsafe_cur}→shadow=${t6Unsafe_shd}`);
+            _l6.push(`       → ${futureBias.toUpperCase()}`);
+
+            // Overall maturity
+            const safetyOk = constraintSafety==='safe'||constraintSafety==='marginal';
+            const gainOk   = temporalGain==='excellent'||temporalGain==='good';
+            const futureOk = futureBias==='strong'||futureBias==='moderate';
+            const overallMaturity =
+              safetyOk&&gainOk&&futureOk    ? 'shadowTemporalMature'
+              : constraintSafety==='unsafe' ? 'shadowTemporalBlocked'
+              : safetyOk&&(gainOk||futureOk)? 'shadowTemporalStable'
+              : 'shadowTemporalUnready';
+
+            const mLabel = {
+              shadowTemporalMature:  '✓ MATURE  — 安全かつ将来優位。Phase1移行を検討可能。',
+              shadowTemporalStable:  '△ STABLE  — 安全基準OK。Temporal効果は限定的。追加学習推奨。',
+              shadowTemporalUnready: '⚠ UNREADY — 安全だが Temporal改善が不十分。設計見直し推奨。',
+              shadowTemporalBlocked: '🔴 BLOCKED — ABSOLUTE違反あり。適用不可。ルール再設計が必要。',
+            };
+            _l6.push(``);
+            _l6.push(`  ── 総合成熟度判定 ──`);
+            _l6.push(`    ${mLabel[overallMaturity]}`);
+            _l6.push(``);
+            _l6.push(`  ── Q&A: Shadow Engine 設計の考察 ──`);
+            _l6.push(`  Q1: Shadow Engine は現在のシフトより本当に良いか?`);
+            _l6.push(`    → temporalGain=${temporalGain}, futureBias=${futureBias}`);
+            _l6.push(`    → ${gainOk&&futureOk?'✓ 有意な改善の可能性あり':'△ 改善は限定的または確認不十分'}`);
+            _l6.push(`  Q2: Shadow をそのまま本番に使えるか?`);
+            _l6.push(`    → constraintSafety=${constraintSafety}`);
+            _l6.push(`    → ${safetyOk?'△ 安全基準はクリア。ただし人間確認ゲートが必要（Phase0制約）':'🔴 不可。ABSOLUTE違反を解消してから再評価'}`);
+            _l6.push(`  Q3: 何を改善すれば Phase1 に移行できるか?`);
+            _l6.push(`    → 夜勤需要カバレッジの整合性: shadowNcnt 削減時に他スタッフとの調整が必要`);
+            _l6.push(`    → 夜勤パターン(明け翌日)追跡: nCnt 変更がシーケンス品質に与える影響の観察`);
+            _l6.push(`    → 月次ローテーション整合性: shadow と minStaff を突き合わせた不足日チェック`);
+            _l6.push(`  Q4: Phase0→Phase1 のトリガー条件は何か?`);
+            _l6.push(`    → overallMaturity=shadowTemporalMature かつ ABSOLUTE=0 かつ 人間レビュー承認`);
+            _l6.push(`    → 現在: ${overallMaturity} → ${overallMaturity==='shadowTemporalMature'?'✓ 移行条件クリア（人間確認待ち）':'移行には追加改善が必要'}`);
+            _l6.push(`  Q5: Shadow Engine が「間違った」変更を提案する可能性は?`);
+            _l6.push(`    → nCnt は月単位集計値のみ。日単位制約（連続夜勤禁止等）は反映不可。`);
+            _l6.push(`    → 対策: Phase1移行時には日単位パターン整合性チェックを追加ゲートとして設置。`);
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Shadow-Temporal-Loop / Temporal-Candidate-Generator /
+        //    Constraint-vs-Temporal-Diff / Future-Impact-Delta /
+        //    Temporal-Safety-Gate / Shadow-Generation-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
