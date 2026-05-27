@@ -11233,6 +11233,387 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // ══ [WhatIf-Sandbox / Intervention-Impact / Sequence-Stability-Impact /
         //    Burnout-Recovery-Sim / Dependency-Change-Sim / Intervention-Cost] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Readiness-Stage / Transition-Progress / Adaptation-Velocity /
+        //    Support-Dependency-Transition / Night-Readiness-Projection /
+        //    Readiness-Stability-Audit]
+        // Readiness Transition Engine — Human Adaptation System (read-only)
+        // - Readiness を「静的能力」ではなく「時間変化する適応状態」として観測。
+        // - facilityYears / floorYears を分離して段階モデル化。
+        // - 実shift変更禁止。autoGenerate変更禁止。DB保存禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _rt_days  = getDays(year, month);
+          const _rt_ds    = cs.filter(s => s.dept === cd.id);
+          const _rt_cds   = cd.customShiftDefs || [];
+          const _rt_tailN = Math.min(7, _rt_days);
+
+          // ── shift helpers ──
+          const _rt_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _rt_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _rt_nset.add(k);
+          });
+          const _rt_isNight = sh => _rt_nset.has(sh);
+          const _rt_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _rt_isWork  = sh => !!(sh && !_rt_isRest(sh) && sh !== '明け' && sh !== '');
+          const _rt_fw      = sh => _rt_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+
+          // ── trend lookup ──
+          const _rt_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics ──
+          const _rt_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, dSq=0, leSq=0;
+            for (let d = 1; d <= _rt_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _rt_fw(sh);
+              if (d > _rt_days - _rt_tailN) tlF += _rt_fw(sh);
+              if (_rt_isNight(sh)) nCnt++;
+              if (_rt_isRest(sh))  rCnt++;
+              if (sh === '明け' && _rt_isNight(pv)) {
+                if (_rt_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_rt_isWork(nx))    dSq++;
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = totF >= _rt_days*2.0 ? 'high' : totF >= _rt_days*1.2 ? 'medium' : 'low';
+            const co = tlF  >= _rt_tailN*3.0 ? 'high' : tlF  >= _rt_tailN*1.5 ? 'medium' : 'low';
+            const rd = rCnt < _rt_days*0.25*0.7 ? 'high' : rCnt < _rt_days*0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, dSq, leSq, bo, co, rd };
+          };
+
+          // ── pair co-occurrence ──
+          const _rt_pco = {};
+          for (let d = 1; d <= _rt_days; d++) {
+            const nw = _rt_ds.filter(s => _rt_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _rt_pco[pk] = (_rt_pco[pk] || 0) + 1;
+              }
+          }
+          const _rt_fixedPairsRaw = Object.entries(_rt_pco)
+            .filter(([, n]) => n >= _rt_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Stage Model:
+          //  stage0: floor未経験 / 入職直後
+          //  stage1: floor初期(fl<0.5) / 異動ベテラン再適応中
+          //  stage2: floor中期(fl<1.0)・遅番安定化
+          //  stage3: fl>=1.0 夜勤準備段階（nCnt=0）
+          //  stage4: 夜勤適応中（nCnt>=1, fl<2.0）
+          //  stage5: 独立運用（nCnt>=1, fl>=2.0）
+          // ─────────────────────────────────────────────────────────────────────
+          const _RT_STAGE_LABELS = [
+            '入職初期（日勤中心・support依存高）',
+            '早番導入（floor適応中）',
+            '遅番安定化（sequence理解進行）',
+            '夜勤準備（support付き夜勤候補）',
+            '夜勤適応中（fatigue観測必要）',
+            '独立運用（nightCore候補）'
+          ];
+
+          const _rt_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1; // 異動ベテランはfloor再適応から
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3; // fl>=1.0 だが夜勤未経験
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+
+          // ── Transition Progress within stage (0.00 - 1.00) ──
+          // Base: floor years ratio within stage range
+          // Behavioral modifiers: sequence / fatigue / lateEarly signals
+          const _RT_STAGE_RANGES = [
+            [0, 0.1], [0.1, 0.5], [0.5, 1.0], [1.0, 1.5], [1.5, 2.0], [2.0, 4.0]
+          ];
+          const _rt_progressOf = (stage, fl, sSq, cSq, dSq, bo, co, leSq) => {
+            const [lo, hi] = _RT_STAGE_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : dSq > 0 ? -0.05 : 0;
+            const fatAdj = bo === 'low' && co === 'low' ? +0.05 : bo === 'high' ? -0.15 : co === 'high' ? -0.10 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+
+          // ── Adaptation Velocity (fast / normal / slow) ──
+          const _rt_velOf = (bo, co, sSq, cSq, rr, leSq, rd) => {
+            let sc = 0;
+            if (bo === 'low')   sc += 2;  if (co === 'low')   sc += 1;
+            if (sSq > 0)        sc += 1;  if (cSq === 0)      sc += 1;
+            if (leSq === 0)     sc += 1;  if (rd !== 'high')  sc += 1;
+            if (bo === 'high')  sc -= 3;  if (co === 'high')  sc -= 2;
+            if (rr === 'high')  sc -= 1;  if (cSq > 0)        sc -= 2;
+            if (leSq > 0)       sc -= 1;
+            return sc >= 5 ? 'fast' : sc <= 1 ? 'slow' : 'normal';
+          };
+
+          // ── per-staff state (static + derived) ──
+          const _rt_st = {};
+          for (const s of _rt_ds) {
+            const m   = _rt_metric(result[s.id] || {});
+            const tr  = _rt_trd(s.name);
+            const wk  = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy  = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl  = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr  = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const sn  = (fl < 0.3 || fy < 0.3) ? 'high' : (fl < 0.8 || fy < 0.8) ? 'medium' : 'low';
+            const nr  = (fy < 0.5 || fl < 0.2) ? 'low' : (m.bo === 'high' || fy < 1.5 || fl < 0.5) ? 'medium' : 'high';
+            const stage    = _rt_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _rt_progressOf(stage, fl, m.sSq, m.cSq, m.dSq, m.bo, m.co, m.leSq);
+            const velocity = _rt_velOf(m.bo, m.co, m.sSq, m.cSq, rr, m.leSq, m.rd);
+            _rt_st[s.name] = {
+              fy, fl, rr, sn, nr, stage,
+              stageLabel: _RT_STAGE_LABELS[stage],
+              progress, velocity,
+              nightOk: !!s.nightOk,
+              ...m,
+              depType: null,  // filled by pair analysis
+              nightProj: null // filled after depType
+            };
+          }
+
+          // ── Pair dependency classification ──
+          // healthySupport: receiver actively progressing
+          // stablePair:     both stage4+
+          // fixationRisk:   high freq + low progress = dependency solidifying
+          // overProtection: floor-veteran still in early stage (growth stalled)
+          const _rt_pairs = [];
+          for (const pair of _rt_fixedPairsRaw) {
+            const [n1, n2] = pair;
+            const s1 = _rt_st[n1], s2 = _rt_st[n2];
+            if (!s1 || !s2) continue;
+            const pk   = pair.slice().sort().join('×');
+            const cnt  = _rt_pco[pk] || 0;
+            const rate = cnt / _rt_days;
+            // giver = higher stage; receiver = lower stage (the one being supported)
+            const [giver, receiver, gSt, rSt] = s1.stage >= s2.stage
+              ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+            let depType, reason;
+            if (rSt.stage <= 2 && rSt.fl >= 1.5) {
+              depType = 'overProtection';
+              reason  = `${receiver}: floor${rSt.fl.toFixed(1)}年に対し夜勤適応が停滞（stage${rSt.stage}）`;
+            } else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3) {
+              depType = 'fixationRisk';
+              reason  = `ペア頻度${(rate * 100).toFixed(0)}%・progress=${rSt.progress.toFixed(2)} → 固定化兆候`;
+            } else if (rSt.stage >= 4 && gSt.stage >= 4) {
+              depType = 'stablePair';
+              reason  = `両者ともstage${rSt.stage}以上（独立運用済）`;
+            } else {
+              depType = 'healthySupport';
+              reason  = `${receiver}がstage${rSt.stage}で適応進行中（${giver}が支援）`;
+            }
+            _rt_pairs.push({ pair, pk, cnt, rate, giver, receiver, gSt, rSt, depType, reason });
+            if (_rt_st[receiver]) _rt_st[receiver].depType = depType;
+            if (_rt_st[giver])    _rt_st[giver].depType    = depType;
+          }
+
+          // ── Night Readiness Projection (rising / stable / risk / blocked) ──
+          for (const s of _rt_ds) {
+            const st = _rt_st[s.name]; if (!st) continue;
+            let proj;
+            if      (st.stage === 5 && st.bo !== 'high')                       proj = 'stable';
+            else if (st.rr === 'high' && st.fl < 0.5)                          proj = 'blocked';
+            else if (st.depType === 'overProtection')                           proj = 'blocked';
+            else if (st.bo === 'high' || (st.co === 'high' && st.stage >= 3))  proj = 'risk';
+            else if (st.stage >= 2 && st.velocity !== 'slow')                  proj = 'rising';
+            else                                                                proj = 'stable';
+            st.nightProj = proj;
+          }
+
+          // ── Layer 1: [Readiness-Stage] ──
+          {
+            const _l1 = [`[Readiness-Stage] dept=${cd.id}`];
+            for (const s of _rt_ds) {
+              const st = _rt_st[s.name]; if (!st) continue;
+              _l1.push(`  ─── ${s.name} ───`);
+              _l1.push(`    facilityYears=${st.fy.toFixed(1)}  floorYears=${st.fl.toFixed(1)}`);
+              _l1.push(`    stage=${st.stage}: ${st.stageLabel}`);
+              _l1.push(`    relocationRisk=${st.rr}  nightReadiness=${st.nr}`);
+              if (st.rr === 'high')   _l1.push(`    ⚠ 異動ベテラン: 施設経験${st.fy.toFixed(1)}年だがfloor再適応中`);
+              if (st.rr === 'medium') _l1.push(`    ⚠ 軽度relocation: 施設経験ありfloor浅い(${st.fl.toFixed(1)}年)`);
+              _l1.push(`    夜勤${st.nCnt}回/月  burnout=${st.bo}  fatigueCarryOver=${st.co}`);
+            }
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Transition-Progress] ──
+          {
+            const _l2 = [`[Transition-Progress] dept=${cd.id}`];
+            const BAR = p => {
+              const f = Math.round(p * 10);
+              return `[${'█'.repeat(f)}${'░'.repeat(10 - f)}] ${(p * 100).toFixed(0)}%`;
+            };
+            const NEXT = ['早番導入', '遅番安定化', '夜勤準備', '夜勤適応', '独立運用', '維持'];
+            for (const s of _rt_ds) {
+              const st = _rt_st[s.name]; if (!st) continue;
+              _l2.push(`  ${s.name}: stage${st.stage} ${BAR(st.progress)}`);
+              const sigs = [];
+              if (st.sSq > 0 && st.cSq === 0) sigs.push(`+sequence安定(sSq=${st.sSq})`);
+              if (st.cSq > 0)                  sigs.push(`-criticalSeq=${st.cSq}`);
+              if (st.bo === 'low')             sigs.push(`+burnout低`);
+              if (st.bo === 'high')            sigs.push(`-burnout高`);
+              if (st.leSq > 0)                 sigs.push(`-遅→早=${st.leSq}件`);
+              if (st.rr === 'high')            sigs.push(`-relocation継続`);
+              if (sigs.length) _l2.push(`    信号: ${sigs.join(' / ')}`);
+              const nxt = NEXT[Math.min(st.stage, 5)];
+              if (st.progress >= 0.8)      _l2.push(`    → 次段階（${nxt}）準備完了 ✓`);
+              else if (st.progress >= 0.5) _l2.push(`    → 次段階（${nxt}）へ進行中`);
+              else                         _l2.push(`    → 現段階での安定化が優先`);
+            }
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Adaptation-Velocity] ──
+          {
+            const _l3 = [`[Adaptation-Velocity] dept=${cd.id}`];
+            const VI = { fast: '🚀', normal: '→', slow: '⚠' };
+            const vg = { fast: [], normal: [], slow: [] };
+            for (const s of _rt_ds) {
+              const st = _rt_st[s.name]; if (!st) continue;
+              vg[st.velocity].push(s.name);
+              _l3.push(`  ${VI[st.velocity]} ${s.name}: velocity=${st.velocity}`);
+              const rs = [];
+              if (st.bo === 'low' && st.co === 'low') rs.push('burnout/fatigue安定');
+              if (st.bo === 'high')                   rs.push('burnout高（適応阻害）');
+              if (st.co === 'high')                   rs.push('fatigue累積');
+              if (st.sSq > 0 && st.cSq === 0)        rs.push(`safeSeq${st.sSq}件✓`);
+              if (st.cSq > 0)                         rs.push(`criticalSeq${st.cSq}件`);
+              if (st.rr === 'high')                   rs.push('relocation適応負荷');
+              if (st.leSq > 0)                        rs.push(`遅→早${st.leSq}件`);
+              if (rs.length) _l3.push(`    reason: ${rs.join(' / ')}`);
+            }
+            _l3.push(`  ── velocity サマリー ──`);
+            _l3.push(`  🚀 fast=${vg.fast.length}名${vg.fast.length ? ` (${vg.fast.join('/')})` : ' (なし)'}`);
+            _l3.push(`  →  normal=${vg.normal.length}名`);
+            _l3.push(`  ⚠  slow=${vg.slow.length}名${vg.slow.length ? ` (${vg.slow.join('/')})` : ' (なし)'}`);
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Support-Dependency-Transition] ──
+          {
+            const _l4 = [`[Support-Dependency-Transition] dept=${cd.id}`];
+            const DI = { healthySupport: '✓', stablePair: '🔵', fixationRisk: '⚠', overProtection: '🔴' };
+            if (_rt_pairs.length === 0) {
+              _l4.push('  固定ペアなし（夜勤依存関係なし）✓');
+            } else {
+              for (const p of _rt_pairs) {
+                _l4.push(`  ${DI[p.depType]} ${p.pk}:`);
+                _l4.push(`    分類: ${p.depType}  (共存${p.cnt}回 / ${_rt_days}日  rate=${(p.rate * 100).toFixed(0)}%)`);
+                _l4.push(`    ${p.reason}`);
+                _l4.push(`    支援者=${p.giver}(stage${p.gSt.stage})  受益者=${p.receiver}(stage${p.rSt.stage}  progress=${p.rSt.progress.toFixed(2)})`);
+                if (p.depType === 'overProtection') _l4.push(`    ⚠ ${p.receiver}: 夜勤準備段階を超過 → 成長促進検討`);
+                if (p.depType === 'fixationRisk')   _l4.push(`    ⚠ 固定化進行 → 段階的独立配置を検討`);
+                if (p.depType === 'healthySupport') _l4.push(`    ✓ 適応進行中のsupport構造として機能`);
+              }
+            }
+            const pairStaff = new Set(_rt_pairs.flatMap(p => p.pair));
+            const loners = _rt_ds.filter(s => !pairStaff.has(s.name));
+            if (loners.length > 0)
+              _l4.push(`  単独配置スタッフ: ${loners.map(s => `${s.name}(stage${_rt_st[s.name]?.stage ?? '?'})`).join(', ')}`);
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Night-Readiness-Projection] ──
+          {
+            const _l5 = [`[Night-Readiness-Projection] dept=${cd.id}`];
+            const PI = { rising: '📈', stable: '✓', risk: '⚠', blocked: '🚫' };
+            const pg = { rising: [], stable: [], risk: [], blocked: [] };
+            for (const s of _rt_ds) {
+              const st = _rt_st[s.name]; if (!st) continue;
+              pg[st.nightProj].push(s.name);
+              _l5.push(`  ${PI[st.nightProj]} ${s.name}: current=${st.nr}  projection=${st.nightProj}`);
+              const rs = [];
+              if (st.nightProj === 'rising') {
+                if (st.stage >= 3)          rs.push(`stage${st.stage}（夜勤準備段階）`);
+                if (st.fl >= 0.5)           rs.push(`floor${st.fl.toFixed(1)}年`);
+                if (st.velocity === 'fast') rs.push('適応速度fast');
+                if (st.sSq > 0)             rs.push(`safeSeq${st.sSq}件実績`);
+              } else if (st.nightProj === 'blocked') {
+                if (st.rr === 'high' && st.fl < 0.5) rs.push(`異動後floor未適応(${st.fl.toFixed(1)}年)`);
+                if (st.depType === 'overProtection')  rs.push('support過保護状態');
+              } else if (st.nightProj === 'risk') {
+                if (st.bo === 'high') rs.push('burnout高（適応阻害）');
+                if (st.co === 'high') rs.push('fatigueCarryOver高（持越しリスク）');
+                if (st.cSq > 0)      rs.push(`criticalSeq=${st.cSq}件`);
+              } else {
+                rs.push(st.stage === 5 ? '独立運用段階で安定' : `stage${st.stage}で現状維持`);
+              }
+              if (rs.length) _l5.push(`    reason: ${rs.join(' / ')}`);
+            }
+            _l5.push(`  ── night projection サマリー ──`);
+            _l5.push(`  📈 rising=${pg.rising.length}名${pg.rising.length ? ` (${pg.rising.join('/')})` : ' (なし)'}`);
+            _l5.push(`  ✓  stable=${pg.stable.length}名`);
+            _l5.push(`  ⚠  risk=${pg.risk.length}名${pg.risk.length ? ` (${pg.risk.join('/')})` : ' (なし)'}`);
+            _l5.push(`  🚫 blocked=${pg.blocked.length}名${pg.blocked.length ? ` (${pg.blocked.join('/')})` : ' (なし)'}`);
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Readiness-Stability-Audit] ──
+          {
+            const _l6 = [`[Readiness-Stability-Audit] dept=${cd.id}`];
+            // Facility-wide aggregation
+            const _rt_stagnant       = _rt_ds.filter(s => { const st=_rt_st[s.name]; return st && st.stage===3 && st.fl>=1.5; });
+            const _rt_prolongedReloc = _rt_ds.filter(s => { const st=_rt_st[s.name]; return st && st.fy>=2 && st.fl>0.1 && st.fl<0.8; });
+            const _rt_overProt       = _rt_ds.filter(s => { const st=_rt_st[s.name]; return st && st.depType==='overProtection'; });
+            const _rt_fixPairs       = _rt_pairs.filter(p => p.depType === 'fixationRisk');
+            const _rt_healthyPairs   = _rt_pairs.filter(p => p.depType === 'healthySupport');
+            const _rt_nightOvld      = _rt_ds.filter(s => { const st=_rt_st[s.name]; return st && st.stage===5 && st.bo==='high'; });
+            const _rt_growthBlk      = _rt_ds.filter(s => { const st=_rt_st[s.name]; return st && st.velocity==='slow' && st.stage<=3; });
+            const _rt_risingN        = _rt_ds.filter(s => { const st=_rt_st[s.name]; return st && st.nightProj==='rising'; });
+            const _rt_fastAdapt      = _rt_ds.filter(s => { const st=_rt_st[s.name]; return st && st.velocity==='fast'; });
+
+            _l6.push(`  ── 新人・適応段階 ──`);
+            _l6.push(`  stagnation(stage3 fl≥1.5年):  ${_rt_stagnant.length}名 ${_rt_stagnant.length ? '⚠ '+_rt_stagnant.map(s=>s.name).join('/')+' 夜勤準備長期化' : '✓'}`);
+            _l6.push(`  fastAdaptation:               ${_rt_fastAdapt.length}名${_rt_fastAdapt.length ? ` ✓ (${_rt_fastAdapt.map(s=>s.name).join('/')})` : ' (なし)'}`);
+            _l6.push(`  growthBlocked(slow×stage≤3):  ${_rt_growthBlk.length}名 ${_rt_growthBlk.length ? '⚠ '+_rt_growthBlk.map(s=>s.name).join('/') : '✓'}`);
+
+            _l6.push(`  ── 異動・再適応 ──`);
+            _l6.push(`  prolongedRelocation(fy≥2 fl<0.8): ${_rt_prolongedReloc.length}名 ${_rt_prolongedReloc.length ? '⚠ '+_rt_prolongedReloc.map(s=>s.name).join('/')+' 再適応長期化' : '✓'}`);
+
+            _l6.push(`  ── support依存構造 ──`);
+            _l6.push(`  healthySupport: ${_rt_healthyPairs.length}組${_rt_healthyPairs.length ? ' ✓' : ' (なし)'}`);
+            _l6.push(`  fixationRisk:   ${_rt_fixPairs.length}組${_rt_fixPairs.length ? ' ⚠ '+_rt_fixPairs.map(p=>p.pk).join(', ') : ' ✓'}`);
+            _l6.push(`  overProtection: ${_rt_overProt.length}名 ${_rt_overProt.length ? '⚠ '+_rt_overProt.map(s=>s.name).join('/')+' 成長停止傾向' : '✓'}`);
+
+            _l6.push(`  ── 夜勤育成 ──`);
+            _l6.push(`  nightCoreOverload(stage5×burnout高): ${_rt_nightOvld.length}名 ${_rt_nightOvld.length ? '⚠ '+_rt_nightOvld.map(s=>s.name).join('/')+' nightCore過負荷' : '✓'}`);
+            _l6.push(`  nightReadinessRising: ${_rt_risingN.length}名${_rt_risingN.length ? ` ✓ (${_rt_risingN.map(s=>s.name).join('/')})` : ' (なし)'}`);
+
+            // Overall health
+            const _rt_issues = _rt_stagnant.length + _rt_prolongedReloc.length + _rt_overProt.length
+                              + _rt_fixPairs.length + _rt_nightOvld.length + _rt_growthBlk.length;
+            _l6.push(`  ── 育成安定性 総合診断 ──`);
+            _l6.push(`  課題数: ${_rt_issues}件`);
+            if (_rt_issues === 0) {
+              _l6.push(`  ✓ 育成構造健全（新人保護・成長促進・夜勤育成が均衡）`);
+            } else {
+              const _rt_safeConflict = _rt_overProt.length > 0 || _rt_stagnant.length > 0;
+              const _rt_supFctn      = _rt_healthyPairs.length > 0;
+              _l6.push(`  新人保護 vs 成長促進:   ${_rt_safeConflict ? '競合あり ⚠（overProtection/stagnation確認）' : '競合なし ✓'}`);
+              _l6.push(`  support pair 育成機能:  ${_rt_supFctn ? '機能中 ✓' : _rt_fixPairs.length > 0 ? '固定化リスク ⚠' : 'support構造なし'}`);
+              _l6.push(`  nightCore依存度:        ${_rt_nightOvld.length > 0 ? '過負荷（育成停滞リスク）⚠' : '許容範囲内 ✓'}`);
+              _l6.push(`  異動ベテラン再適応:     ${_rt_prolongedReloc.length > 0 ? '長期化中 ⚠' : '適応中または対象なし ✓'}`);
+              _l6.push(`  安全 vs 成長競合:       ${_rt_overProt.length > 0 ? 'overProtectionあり ⚠' : '競合なし ✓'}`);
+            }
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Readiness-Stage / Transition-Progress / Adaptation-Velocity /
+        //    Support-Dependency-Transition / Night-Readiness-Projection /
+        //    Readiness-Stability-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
