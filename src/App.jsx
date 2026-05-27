@@ -17842,6 +17842,661 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Constraint-vs-Temporal-Diff / Future-Impact-Delta /
         //    Temporal-Safety-Gate / Shadow-Generation-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        //    [Temporal-Recommendation-Generator / Low-Risk-Adjustment-Filter /
+        //    Recommendation-Tradeoff-Analyzer / Human-Approval-Simulation /
+        //    Recommendation-Safety-Audit / Temporal-Recommendation-Readability]
+        // Controlled Temporal Recommendation Layer — 人間確認前提の安全な改善提案（read-only）
+        // - Shadow Temporal Engine の結果を "採用可能な recommendation" に変換。
+        // - 実shift変更禁止。result変更禁止。setAllShifts禁止。autoGenerate変更禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _cr_days  = getDays(year, month);
+          const _cr_ds    = cs.filter(s => s.dept === cd.id);
+          const _cr_cds   = cd.customShiftDefs || [];
+          const _cr_tailN = Math.min(7, _cr_days);
+
+          // ── helpers (isolated) ──
+          const _cr_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _cr_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _cr_nset.add(k);
+          });
+          const _cr_isNight = sh => _cr_nset.has(sh);
+          const _cr_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _cr_isWork  = sh => !!(sh && !_cr_isRest(sh) && sh !== '明け' && sh !== '');
+          const _cr_fw      = sh => _cr_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _cr_boOf    = totF => totF >= _cr_days * 2.0 ? 'high' : totF >= _cr_days * 1.2 ? 'medium' : 'low';
+          const _cr_trd     = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+          const _cr_metric  = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, leSq=0;
+            for (let d = 1; d <= _cr_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _cr_fw(sh);
+              if (d > _cr_days - _cr_tailN) tlF += _cr_fw(sh);
+              if (_cr_isNight(sh)) nCnt++;
+              if (_cr_isRest(sh))  rCnt++;
+              if (sh === '明け' && _cr_isNight(pv)) {
+                if (_cr_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')    cSq++;
+                else if (_cr_isWork(nx))   { /* dSq */ }
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _cr_boOf(totF);
+            const co = tlF >= _cr_tailN * 3.0 ? 'high' : tlF >= _cr_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _cr_days * 0.25 * 0.7 ? 'high' : rCnt < _cr_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, leSq, bo, co, rd };
+          };
+          const _cr_stageOf  = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _CR_FL_G    = 0.08;
+          const _CR_RANGES  = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _cr_progOf  = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _CR_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+          const _cr_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasPair) => {
+            if (!nightOk)                                   return 0;
+            if (stage >= 5 && bo !== 'high')                return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')  return 4;
+            if (nCnt >= 1)                                  return 3;
+            if (stage >= 3 && progress >= 0.6 && hasPair)  return 2;
+            if (stage >= 2 && fl >= 0.5)                   return 1;
+            return 0;
+          };
+
+          // ── pair co-occurrence ──
+          const _cr_pco = {};
+          for (let d = 1; d <= _cr_days; d++) {
+            const nw = _cr_ds.filter(s => _cr_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _cr_pco[pk] = (_cr_pco[pk] || 0) + 1;
+              }
+          }
+          const _cr_fixedPairs = Object.entries(_cr_pco)
+            .filter(([, n]) => n >= _cr_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── per-staff state (read-only from result) ──
+          const _cr_st = {};
+          for (const s of _cr_ds) {
+            const m     = _cr_metric(result[s.id] || {});
+            const tr    = _cr_trd(s.name);
+            const wk    = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy    = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl    = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr    = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _cr_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _cr_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _cr_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _cr_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _cr_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, isNew, ...m };
+          }
+          const _cr_arr = _cr_ds.map(s => _cr_st[s.name]).filter(Boolean);
+
+          // ── forecast helpers ──
+          const _cr_futBo = (bo, co, sSq, cSq, t) => {
+            const ord = { low:0, medium:1, high:2 };
+            let v = ord[bo];
+            if (co === 'high' && cSq > 0)        v = Math.min(2, v + Math.floor(t / 2));
+            else if (co === 'high' && sSq > 0)   v = Math.min(2, v + Math.floor(t / 3));
+            else if (bo === 'high' && sSq > 0)   v = Math.max(0, v - Math.floor(t / 2));
+            else if (bo === 'medium' && sSq > 0) v = Math.max(0, v - Math.floor(t / 3));
+            return ['low','medium','high'][Math.max(0, Math.min(2, v))];
+          };
+          const _cr_futState = (st, t) => {
+            const ffl  = st.fl + _CR_FL_G * t, fFy = st.fy + t / 12;
+            const fBo  = _cr_futBo(st.bo, st.co, st.sSq, st.cSq, t);
+            const fRr  = (fFy >= 2 && ffl < 0.5) ? 'high' : (fFy >= 1 && ffl < 0.3) ? 'medium' : 'low';
+            const fStg = _cr_stageOf(fFy, ffl, st.nCnt, fRr);
+            const fPrg = _cr_progOf(fStg, ffl, st.sSq, st.cSq, fBo, st.co, st.leSq);
+            const fNc  = !st.nightOk ? 0
+              : fStg >= 5 ? Math.max(st.nCnt, 3) : fStg >= 4 ? Math.max(st.nCnt, 1)
+              : (fStg === 3 && fPrg >= 0.6 && st.hasPair) ? Math.max(st.nCnt, 1) : st.nCnt;
+            return { fl: ffl, bo: fBo, nCnt: fNc, stage: fStg, progress: fPrg,
+                     ladder: _cr_ladderOf(fStg, ffl, fNc, fBo, fPrg, st.nightOk, st.hasPair) };
+          };
+          const _cr_shadowFutState = (st, shadowNcnt, t) => {
+            const ffl  = st.fl + _CR_FL_G * t, fFy = st.fy + t / 12;
+            const fBo  = _cr_futBo(st.bo, st.co, st.sSq, st.cSq, t);
+            const fRr  = (fFy >= 2 && ffl < 0.5) ? 'high' : (fFy >= 1 && ffl < 0.3) ? 'medium' : 'low';
+            const fStg = _cr_stageOf(fFy, ffl, shadowNcnt, fRr);
+            const fPrg = _cr_progOf(fStg, ffl, st.sSq, st.cSq, fBo, st.co, st.leSq);
+            const fNc  = !st.nightOk ? 0
+              : fStg >= 5 ? Math.max(shadowNcnt, 3) : fStg >= 4 ? Math.max(shadowNcnt, 1)
+              : (fStg === 3 && fPrg >= 0.6 && st.hasPair) ? Math.max(shadowNcnt, 1) : shadowNcnt;
+            return { fl: ffl, bo: fBo, nCnt: fNc, stage: fStg, progress: fPrg,
+                     ladder: _cr_ladderOf(fStg, ffl, fNc, fBo, fPrg, st.nightOk, st.hasPair) };
+          };
+
+          // ── Re-apply temporal shadow rules (same rule set as _sg_ Layer 2) ──
+          const _cr_shadow = {};
+          for (const st of _cr_arr) {
+            let shadowNcnt = st.nCnt, rule = 'noChange', reasoning = '';
+            if (!st.nightOk) {
+              shadowNcnt = 0; rule = 'nightOkFalse'; reasoning = '夜勤不可スタッフ';
+            } else if (st.stage <= 1) {
+              shadowNcnt = 0; rule = 'unsafeBlock'; reasoning = `stage=${st.stage}(≤1): 安全ブロック`;
+            } else if (st.bo === 'high' && st.ladder >= 4) {
+              shadowNcnt = Math.max(1, st.nCnt); rule = 'coreKept';
+              reasoning = `bo=high+ladder=${st.ladder}(nightCore): 最低1回維持`;
+            } else if (st.bo === 'high') {
+              shadowNcnt = Math.max(0, st.nCnt - 1); rule = 'boReduce';
+              reasoning = `bo=high: 夜勤-1削減（回復促進）`;
+            } else if (st.ladder >= 2 && st.ladder <= 3 && st.nCnt < 2) {
+              shadowNcnt = Math.min(3, st.nCnt + 1); rule = 'growthUp';
+              reasoning = `ladder=${st.ladder}(成長期): 夜勤+1（ladder成長促進）`;
+            } else if (st.ladder >= 4) {
+              shadowNcnt = st.nCnt; rule = 'coreStable'; reasoning = `ladder=${st.ladder}: 安定維持`;
+            } else {
+              shadowNcnt = st.nCnt; rule = 'noChange';
+              reasoning = `ladder=${st.ladder},stage=${st.stage}: 変更なし`;
+            }
+            _cr_shadow[st.s.id] = {
+              name: st.s.name, currNcnt: st.nCnt, shadowNcnt,
+              delta: shadowNcnt - st.nCnt, rule, reasoning,
+              stage: st.stage, ladder: st.ladder, bo: st.bo,
+            };
+          }
+
+          // _cr_recs: raw recommendation candidates from Layer 1
+          const _cr_recs = [];
+
+          // ── Layer 1: [Temporal-Recommendation-Generator] ──
+          {
+            const _l1 = [`[Temporal-Recommendation-Generator] dept=${cd.id}`];
+            _l1.push(`  ── Shadow Diff から採用可能改善候補を抽出 ──`);
+            _l1.push(`  NOTE: recommendation のみ。実shift変更禁止。result変更禁止。`);
+            _l1.push(``);
+
+            const diffs = Object.values(_cr_shadow).filter(d => d.delta !== 0);
+            if (diffs.length === 0)
+              _l1.push(`  ℹ 現在 Temporal Engine からの差分提案なし（全スタッフ変更不要）`);
+
+            for (const d of diffs) {
+              const st = _cr_arr.find(x => x.s.name === d.name);
+              if (!st) continue;
+
+              let category = '', benefit = '', risk = '', preserved = [];
+              if (d.rule === 'boReduce') {
+                category = 'burnoutReduction';
+                benefit  = `burnout trajectory 改善（bo=high → 回復促進）`;
+                risk     = d.currNcnt > 1 ? '夜勤カバレッジわずかに低下' : '夜勤カバレッジ要確認';
+                if (st.sSq > 0) preserved.push('safeSequence維持 ✓');
+                if (st.hasPair) preserved.push('ペア関係維持 ✓');
+                preserved.push('support continuity要確認');
+              } else if (d.rule === 'growthUp') {
+                category = 'growthPromotion';
+                benefit  = `ladder成長促進（ladder=${d.ladder} → 夜勤経験+1）`;
+                risk     = 'burnout escalationリスクを継続観察';
+                preserved.push(`stage=${d.stage}での段階的成長 ✓`);
+                if (st.hasPair) preserved.push('適応ペアの継続 ✓');
+              } else if (d.rule === 'unsafeBlock') {
+                category = 'unsafeElimination';
+                benefit  = `unsafe夜勤ゼロ化（stage≤1スタッフ保護）`;
+                risk     = '夜勤総数削減による不足リスク';
+                preserved.push(`stage=${d.stage}での安全確保 ✓`);
+                preserved.push('日勤・早番・遅番での継続成長 ✓');
+              } else if (d.rule === 'coreKept') {
+                category = 'corePreservation';
+                benefit  = `nightCore最低確保（burnout中でも夜勤1回維持）`;
+                risk     = 'burnout悪化リスク継続監視要';
+                preserved.push(`nightCore ladder=${d.ladder}の連続性 ✓`);
+                preserved.push('夜勤カバレッジ維持 ✓');
+              }
+
+              const sNc        = d.shadowNcnt;
+              const futCurr3   = _cr_futState(st, 3);
+              const futShad3   = _cr_shadowFutState(st, sNc, 3);
+              const futCurr6   = _cr_futState(st, 6);
+              const futShad6   = _cr_shadowFutState(st, sNc, 6);
+
+              const rec = {
+                name: d.name, category,
+                currNcnt: d.currNcnt, recNcnt: d.shadowNcnt, delta: d.delta,
+                rule: d.rule, reasoning: d.reasoning,
+                benefit, risk, preserved,
+                stage: d.stage, ladder: d.ladder, bo: d.bo,
+                futImpact: {
+                  ladder3: futShad3.ladder - futCurr3.ladder,
+                  ladder6: futShad6.ladder - futCurr6.ladder,
+                  stage3:  futShad3.stage  - futCurr3.stage,
+                },
+              };
+              _cr_recs.push(rec);
+
+              _l1.push(`  ── ${d.name} ──`);
+              _l1.push(`    recommendation: 夜勤 ${d.currNcnt} → ${d.shadowNcnt}  (${d.delta >= 0 ? '+' : ''}${d.delta})`);
+              _l1.push(`    category:       ${category}`);
+              _l1.push(`    理由:           ${d.reasoning}`);
+              _l1.push(`    benefit:        ${benefit}`);
+              _l1.push(`    risk:           ${risk}`);
+              _l1.push(`    preserved:      ${preserved.join(' / ') || 'なし'}`);
+              _l1.push(`    3m後ladder変化: ${futShad3.ladder - futCurr3.ladder >= 0 ? '+' : ''}${futShad3.ladder - futCurr3.ladder}`);
+              _l1.push(`    6m後ladder変化: ${futShad6.ladder - futCurr6.ladder >= 0 ? '+' : ''}${futShad6.ladder - futCurr6.ladder}`);
+            }
+
+            _l1.push(``);
+            _l1.push(`  ── 推奨候補サマリー ──`);
+            _l1.push(`  推奨候補数: ${_cr_recs.length}件`);
+            const catCounts = {};
+            for (const r of _cr_recs) catCounts[r.category] = (catCounts[r.category] || 0) + 1;
+            for (const [cat, cnt] of Object.entries(catCounts))
+              _l1.push(`    ${cat}: ${cnt}件`);
+            console.log(_l1.join('\n'));
+          }
+
+          // _cr_filtered: recs that pass Layer 2 filter
+          const _cr_filtered = [];
+
+          // ── Layer 2: [Low-Risk-Adjustment-Filter] ──
+          {
+            const _l2 = [`[Low-Risk-Adjustment-Filter] dept=${cd.id}`];
+            _l2.push(`  ── 危険提案を除外（unsafe/support collapse/burnout escalation/shortage急増） ──`);
+            _l2.push(``);
+
+            const currNightTotal = _cr_arr.reduce((s, st) => s + st.nCnt, 0);
+            const shadowTotal    = Object.values(_cr_shadow).reduce((s, v) => s + v.shadowNcnt, 0);
+            const giverNames     = _cr_arr.filter(st => st.ladder >= 3 && st.bo !== 'high').map(st => st.s.name);
+            const needSupp       = _cr_arr.filter(st => st.stage <= 2).length;
+
+            for (const rec of _cr_recs) {
+              const st = _cr_arr.find(x => x.s.name === rec.name);
+              if (!st) continue;
+
+              const rejectReasons = [];
+
+              if (rec.recNcnt > 0 && st.stage <= 1)
+                rejectReasons.push(`⚠ unsafePromotion: stage≤1スタッフへの夜勤配置`);
+              if (st.bo === 'high' && rec.recNcnt > rec.currNcnt)
+                rejectReasons.push(`⚠ burnoutEscalation: bo=high スタッフの夜勤増加`);
+              if (st.bo === 'high' && st.cSq > 0 && rec.delta > 0)
+                rejectReasons.push(`⚠ recoveryInterruption: bo=high+cSq>0 スタッフへの夜勤増加`);
+              if (giverNames.includes(rec.name) && rec.recNcnt === 0 && needSupp >= 2)
+                rejectReasons.push(`⚠ supportCollapse: support役が全夜勤0（新人${needSupp}名サポート不足リスク）`);
+              if (shadowTotal < currNightTotal * 0.7 && rec.delta < 0)
+                rejectReasons.push(`⚠ shortageRisk: shadow夜勤総数が現状の70%未満（急削減）`);
+
+              if (rejectReasons.length === 0) {
+                _cr_filtered.push({ ...rec });
+                _l2.push(`  ✓ ACCEPTED: ${rec.name} (${rec.rule})  夜勤${rec.currNcnt}→${rec.recNcnt}`);
+                _l2.push(`      category: ${rec.category}  benefit: ${rec.benefit}`);
+              } else {
+                _l2.push(`  ✗ REJECTED: ${rec.name} (${rec.rule})  夜勤${rec.currNcnt}→${rec.recNcnt}`);
+                for (const r of rejectReasons) _l2.push(`      ${r}`);
+              }
+            }
+
+            _l2.push(``);
+            _l2.push(`  ── フィルタ結果サマリー ──`);
+            _l2.push(`  全候補: ${_cr_recs.length}件 → 採用: ${_cr_filtered.length}件 / 除外: ${_cr_recs.length - _cr_filtered.length}件`);
+            if (_cr_filtered.length === 0 && _cr_recs.length > 0)
+              _l2.push(`  ⚠ 全候補が除外されました。Temporal Engine のルール設計を見直してください。`);
+            else if (_cr_recs.length === 0)
+              _l2.push(`  ℹ 提案候補なし（全スタッフ現状維持が最適）`);
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Recommendation-Tradeoff-Analyzer] ──
+          {
+            const _l3 = [`[Recommendation-Tradeoff-Analyzer] dept=${cd.id}`];
+            _l3.push(`  ── 改善と代償を人間が理解可能な形で分析 ──`);
+            _l3.push(``);
+
+            if (_cr_filtered.length === 0) {
+              _l3.push(`  ℹ フィルタ後の採用候補なし。分析対象なし。`);
+            }
+
+            const giverNames   = _cr_arr.filter(st => st.ladder >= 3 && st.bo !== 'high').map(st => st.s.name);
+            const currNightTot = _cr_arr.reduce((s, st) => s + st.nCnt, 0);
+            const shadNightTot = Object.values(_cr_shadow).reduce((s, v) => s + v.shadowNcnt, 0);
+
+            for (const rec of _cr_filtered) {
+              const benefits = [], costs = [];
+
+              if (rec.rule === 'boReduce') {
+                benefits.push({ dim:'burnout trajectory', value:`bo=high → 回復促進`, score:3 });
+                benefits.push({ dim:'recovery余力',       value:`夜勤-1で回復時間確保`, score:2 });
+                costs.push({ dim:'夜勤カバレッジ', value:`部署夜勤 ${currNightTot}→${shadNightTot}回`, score: currNightTot > shadNightTot ? 1 : 0 });
+                if (giverNames.includes(rec.name))
+                  costs.push({ dim:'support余力', value:`support役の稼働-1`, score:2 });
+              } else if (rec.rule === 'growthUp') {
+                benefits.push({ dim:'ladder成長速度',   value:`ladder=${rec.ladder} 経験積み上げ加速`, score:2 });
+                benefits.push({ dim:'nightCore予備軍',  value:`3-6m後 core候補育成`, score:3 });
+                costs.push({ dim:'burnout escalationリスク', value:`夜勤増加→疲労蓄積の継続観察要`, score:1 });
+                costs.push({ dim:'サポートニーズ', value:`stage${rec.stage}での夜勤増加→ペアサポート負担`, score:1 });
+              } else if (rec.rule === 'unsafeBlock') {
+                benefits.push({ dim:'安全確保',    value:`unsafe夜勤ゼロ（stage≤1保護）`, score:4 });
+                benefits.push({ dim:'成長持続性',  value:`段階を踏んだ健全成長`, score:2 });
+                costs.push({ dim:'夜勤戦力', value:`夜勤可能スタッフが一時的に減少`, score:2 });
+              } else if (rec.rule === 'coreKept') {
+                benefits.push({ dim:'nightCore維持',     value:`最低1回確保で体制継続`, score:3 });
+                benefits.push({ dim:'夜勤体制安定性',   value:`core空白リスク回避`, score:2 });
+                costs.push({ dim:'burnout継続リスク', value:`bo=high継続 → 長期回復要`, score:2 });
+              }
+
+              const benefitScore = benefits.reduce((s, b) => s + b.score, 0);
+              const costScore    = costs.reduce((s, c) => s + c.score, 0);
+              const net          = benefitScore - costScore;
+              const verdict      = net >= 3 ? 'strongRecommend'
+                : net >= 1 ? 'conditionalRecommend'
+                : net >= 0 ? 'marginal'
+                : 'notRecommended';
+
+              rec.tradeoff = { benefits, costs, benefitScore, costScore, net, verdict };
+
+              _l3.push(`  ── ${rec.name}: 夜勤${rec.currNcnt}→${rec.recNcnt} (${rec.category}) ──`);
+              _l3.push(`  改善(benefit):`);
+              for (const b of benefits)
+                _l3.push(`    [+${b.score}] ${b.dim}: ${b.value}`);
+              _l3.push(`  代償(cost):`);
+              if (costs.length === 0 || costs.every(c => c.score === 0)) {
+                _l3.push(`    [代償なし / 軽微]`);
+              } else {
+                for (const c of costs) if (c.score > 0)
+                  _l3.push(`    [-${c.score}] ${c.dim}: ${c.value}`);
+              }
+              _l3.push(`  バランス: benefit=${benefitScore} / cost=${costScore} / net=${net >= 0 ? '+' : ''}${net}`);
+              _l3.push(`  verdict:  ${verdict}`);
+              _l3.push(``);
+            }
+
+            if (_cr_filtered.length > 0) {
+              const strong = _cr_filtered.filter(r => r.tradeoff?.verdict === 'strongRecommend').length;
+              const cond   = _cr_filtered.filter(r => r.tradeoff?.verdict === 'conditionalRecommend').length;
+              const marg   = _cr_filtered.filter(r => r.tradeoff?.verdict === 'marginal').length;
+              _l3.push(`  ── Tradeoff サマリー ──`);
+              _l3.push(`    strongRecommend:      ${strong}件`);
+              _l3.push(`    conditionalRecommend: ${cond}件`);
+              _l3.push(`    marginal:             ${marg}件`);
+            }
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Human-Approval-Simulation] ──
+          {
+            const _l4 = [`[Human-Approval-Simulation] dept=${cd.id}`];
+            _l4.push(`  ── 管理者・現場が採用しそうかを分析 ──`);
+            _l4.push(`  観測軸: explainability / gradualChange / operationalRealism / psychologicalAcceptance`);
+            _l4.push(``);
+
+            if (_cr_filtered.length === 0)
+              _l4.push(`  ℹ 採用候補なし。分析対象なし。`);
+
+            const coverageDelta = Object.values(_cr_shadow).reduce((s, v) => s + v.shadowNcnt, 0)
+              - _cr_arr.reduce((s, st) => s + st.nCnt, 0);
+
+            for (const rec of _cr_filtered) {
+              // explainability: reason clearly one-line
+              const explScore = rec.reasoning && rec.reasoning.length >= 5 ? 3 : 1;
+              const explLabel = explScore >= 3 ? 'high' : 'low';
+
+              // gradual change: delta=±1 → low-risk
+              const absDelta  = Math.abs(rec.delta);
+              const gradScore = absDelta <= 1 ? 3 : absDelta === 2 ? 2 : 1;
+              const gradLabel = gradScore >= 3 ? 'gradual(low-risk)' : gradScore >= 2 ? 'moderate' : 'drastic(high-risk)';
+
+              // operational realism: total coverage impact
+              const opScore = coverageDelta >= 0 ? 3 : coverageDelta >= -2 ? 2 : 1;
+              const opLabel = opScore >= 3 ? 'realistic' : opScore >= 2 ? 'manageable' : 'challenging';
+
+              // psychological acceptance
+              let psychScore = 2, psychLabel = 'neutral';
+              if (rec.category === 'burnoutReduction') {
+                psychScore = 3; psychLabel = 'high(負担軽減 → 本人・管理者ともに受け入れやすい)';
+              } else if (rec.category === 'unsafeElimination') {
+                psychScore = 3; psychLabel = 'high(安全確保 → 明確な根拠あり)';
+              } else if (rec.category === 'growthPromotion') {
+                psychScore = rec.ladder >= 2 ? 2 : 1;
+                psychLabel = rec.ladder >= 2 ? 'moderate(本人の成長意欲次第)' : 'low(成長準備不十分の可能性)';
+              } else if (rec.category === 'corePreservation') {
+                psychScore = 2; psychLabel = 'moderate(burnout中の維持依頼 → 丁寧な説明が必要)';
+              }
+
+              const totalScore = explScore + gradScore + opScore + psychScore;
+              const overallLabel = totalScore >= 10 ? 'highAcceptance'
+                : totalScore >= 7  ? 'mediumAcceptance'
+                : 'lowAcceptance';
+              rec.approval = { explLabel, gradLabel, opLabel, psychLabel, totalScore, overallLabel };
+
+              _l4.push(`  ── ${rec.name}: 夜勤${rec.currNcnt}→${rec.recNcnt} (${rec.category}) ──`);
+              _l4.push(`    explainability:     ${explLabel}  「${rec.reasoning}」`);
+              _l4.push(`    gradualChange:      ${gradLabel}  (delta=${rec.delta >= 0 ? '+' : ''}${rec.delta})`);
+              _l4.push(`    operationalRealism: ${opLabel}  (部署夜勤総数変化 ${coverageDelta >= 0 ? '+' : ''}${coverageDelta})`);
+              _l4.push(`    psychAcceptance:    ${psychLabel}`);
+              _l4.push(`    overallScore:       ${totalScore}/12  → ${overallLabel}`);
+              _l4.push(``);
+            }
+
+            if (_cr_filtered.length > 0) {
+              const hiCnt  = _cr_filtered.filter(r => r.approval?.overallLabel === 'highAcceptance').length;
+              const medCnt = _cr_filtered.filter(r => r.approval?.overallLabel === 'mediumAcceptance').length;
+              const loCnt  = _cr_filtered.filter(r => r.approval?.overallLabel === 'lowAcceptance').length;
+              _l4.push(`  ── 人間受容性サマリー ──`);
+              _l4.push(`    highAcceptance:   ${hiCnt}件`);
+              _l4.push(`    mediumAcceptance: ${medCnt}件`);
+              _l4.push(`    lowAcceptance:    ${loCnt}件`);
+            }
+            console.log(_l4.join('\n'));
+          }
+
+          // _cr_safetyAudit: result from Layer 5, read in Layer 6
+          const _cr_safetyAudit = { verdict: 'unknown', issues: 0 };
+
+          // ── Layer 5: [Recommendation-Safety-Audit] ──
+          {
+            const _l5 = [`[Recommendation-Safety-Audit] dept=${cd.id}`];
+            _l5.push(`  ── Recommendation が Temporal Preservation を破壊していないか監査 ──`);
+            _l5.push(``);
+
+            const issues = [];
+            const giverNames = _cr_arr.filter(st => st.ladder >= 3 && st.bo !== 'high').map(st => st.s.name);
+            const needSupp   = _cr_arr.filter(st => st.stage <= 2).length;
+
+            // Audit 1: safeSequence破壊リスク
+            const safeSeqV = _cr_filtered.filter(r => {
+              const st = _cr_arr.find(x => x.s.name === r.name);
+              return st && st.sSq > 0 && r.recNcnt === 0 && r.currNcnt > 0;
+            });
+            if (safeSeqV.length > 0)
+              issues.push({ audit:'safeSequence破壊リスク', severity:'CAUTION',
+                desc:`sSq>0スタッフへの夜勤ゼロ提案: ${safeSeqV.map(r => r.name).join(', ')}` });
+            else
+              _l5.push(`  ✓ safeSequence: 保全中`);
+
+            // Audit 2: support continuity
+            const giversAfter = giverNames.filter(n => {
+              const rec = _cr_filtered.find(r => r.name === n);
+              const st  = _cr_arr.find(x => x.s.name === n);
+              const nc  = rec ? rec.recNcnt : (st?.nCnt ?? 0);
+              return nc >= 1;
+            }).length;
+            if (needSupp > 0 && giversAfter === 0)
+              issues.push({ audit:'support continuity崩壊', severity:'HIGH',
+                desc:`推奨適用後 support役が全員夜勤0（新人${needSupp}名サポート不足）` });
+            else
+              _l5.push(`  ✓ support continuity: 安定中（giver=${giversAfter}名 / 新人=${needSupp}名）`);
+
+            // Audit 3: burnout recovery中断
+            const boEsc = _cr_filtered.filter(r => r.bo === 'high' && r.recNcnt > r.currNcnt);
+            if (boEsc.length > 0)
+              issues.push({ audit:'burnout recovery中断', severity:'HIGH',
+                desc:`bo=high スタッフの夜勤増加推奨: ${boEsc.map(r => r.name).join(', ')}` });
+            else
+              _l5.push(`  ✓ burnout recovery: 保護中（bo=high スタッフへの夜勤増加なし）`);
+
+            // Audit 4: unsafe ladder jump
+            const unsafeJ = _cr_filtered.filter(r => {
+              const st = _cr_arr.find(x => x.s.name === r.name);
+              return st && st.stage <= 1 && r.recNcnt > 0;
+            });
+            if (unsafeJ.length > 0)
+              issues.push({ audit:'unsafe ladder jump', severity:'CRITICAL',
+                desc:`stage≤1スタッフへの夜勤配置推奨: ${unsafeJ.map(r => r.name).join(', ')}` });
+            else
+              _l5.push(`  ✓ unsafe ladder jump: なし（stage≤1スタッフ保護中）`);
+
+            // Audit 5: future overfit
+            const overfit = _cr_filtered.filter(r => r.rule === 'growthUp' && r.futImpact && r.futImpact.ladder3 >= 2);
+            if (overfit.length >= 2)
+              issues.push({ audit:'future overfit', severity:'CAUTION',
+                desc:`ladder+2以上跳ぶ推奨が複数件: ${overfit.map(r => r.name).join(', ')}` });
+            else
+              _l5.push(`  ✓ future overfit: なし（ladder成長速度は適切）`);
+
+            // Audit 6: explainability低下
+            const unclear = _cr_filtered.filter(r => !r.reasoning || r.reasoning.length < 5);
+            if (unclear.length > 0)
+              issues.push({ audit:'explainability低下', severity:'CAUTION',
+                desc:`理由不明瞭な推奨: ${unclear.map(r => r.name).join(', ')}` });
+            else
+              _l5.push(`  ✓ explainability: 全推奨に明確な理由あり`);
+
+            for (const issue of issues) {
+              const mark = issue.severity === 'CRITICAL' ? '🔴' : issue.severity === 'HIGH' ? '🟠' : '🟡';
+              _l5.push(`  ${mark} [${issue.audit}] ${issue.desc}`);
+            }
+
+            const critC   = issues.filter(i => i.severity === 'CRITICAL').length;
+            const highC   = issues.filter(i => i.severity === 'HIGH').length;
+            const cauC    = issues.filter(i => i.severity === 'CAUTION').length;
+            const verdict = critC > 0 ? 'recommendationUnsafe'
+              : highC > 0             ? 'recommendationCaution'
+              : cauC  > 0             ? 'recommendationReviewNeeded'
+              : 'recommendationSafe';
+            _cr_safetyAudit.verdict = verdict;
+            _cr_safetyAudit.issues  = issues.length;
+
+            const vLabel = {
+              recommendationSafe:         '✓ SAFE  — 全推奨が安全基準を満たす',
+              recommendationReviewNeeded: '△ REVIEW NEEDED  — 軽微な注意点あり',
+              recommendationCaution:      '⚠ CAUTION  — 高リスク項目あり、人間確認必須',
+              recommendationUnsafe:       '🔴 UNSAFE  — CRITICAL違反あり。この推奨は使用不可',
+            };
+            _l5.push(``);
+            _l5.push(`  ── Safety Audit 判定 ──`);
+            _l5.push(`    CRITICAL: ${critC}件  HIGH: ${highC}件  CAUTION: ${cauC}件`);
+            _l5.push(`    overall: ${verdict}`);
+            _l5.push(`    ${vLabel[verdict]}`);
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Temporal-Recommendation-Readability] ──
+          {
+            const _l6 = [`[Temporal-Recommendation-Readability] dept=${cd.id}`];
+            _l6.push(`  ── Recommendation UI の人間理解可能性監査 ──`);
+            _l6.push(``);
+
+            const recCount = _cr_filtered.length;
+
+            // [1] clarity
+            const allReason   = _cr_filtered.every(r => r.reasoning && r.reasoning.length > 0);
+            const allCategory = _cr_filtered.every(r => r.category && r.category.length > 0);
+            const clarityLabel = allReason && allCategory ? 'high' : allReason ? 'medium' : 'low';
+
+            // [2] tradeoff visibility
+            const allTradeoff    = recCount > 0 && _cr_filtered.every(r => r.tradeoff !== undefined);
+            const tradeoffLabel  = recCount === 0 ? 'n/a' : allTradeoff ? 'visible' : 'partial';
+
+            // [3] count
+            const countLabel = recCount === 0 ? 'empty' : recCount <= 3 ? 'appropriate' : recCount <= 6 ? 'moderate' : 'dense(多すぎ)';
+
+            // [4] AI decision feeling
+            const allGradual    = _cr_filtered.every(r => Math.abs(r.delta) <= 1);
+            const aiRiskLabel   = !allGradual ? 'detected(急激な変更含む — 説明強化推奨)' : 'low(全delta≤1 ✓)';
+
+            // [5] future explanation
+            const allFuture     = _cr_filtered.every(r => r.futImpact !== undefined);
+            const futureLabel   = recCount === 0 ? 'n/a' : allFuture ? 'visible(3m/6m影響付き)' : 'partial';
+
+            // [6] operational realism
+            const highAccCount = _cr_filtered.filter(r => r.approval?.overallLabel === 'highAcceptance').length;
+            const opLabel      = recCount === 0 ? 'n/a'
+              : highAccCount / recCount >= 0.6 ? 'maintained'
+              : highAccCount / recCount >= 0.3 ? 'partial'
+              : 'challenged';
+
+            // Issue count for overall verdict
+            const issueCount =
+              (clarityLabel === 'low' ? 2 : clarityLabel === 'medium' ? 1 : 0) +
+              (tradeoffLabel === 'partial' ? 1 : tradeoffLabel === 'n/a' ? 0 : 0) +
+              (countLabel.startsWith('dense') ? 2 : 0) +
+              (aiRiskLabel.startsWith('detected') ? 1 : 0) +
+              (_cr_safetyAudit.verdict === 'recommendationSafe' ? 0 : _cr_safetyAudit.verdict === 'recommendationReviewNeeded' ? 1 : 2) +
+              (opLabel === 'challenged' ? 1 : 0);
+
+            const overallReadability = recCount === 0 ? 'noRecommendationsYet'
+              : issueCount === 0 ? 'humanAcceptableRecommendationUI'
+              : issueCount <= 2  ? 'partiallyAcceptable'
+              : 'needsImprovement';
+
+            _l6.push(`  ── 6軸 Readability チェック ──`);
+            _l6.push(`  [1] clarity:              ${clarityLabel}  — reason:${allReason?'✓':'✗'} / category:${allCategory?'✓':'✗'}`);
+            _l6.push(`  [2] tradeoff visibility:  ${tradeoffLabel}  — ${allTradeoff?'全推奨に代償明示':'一部未明示'}`);
+            _l6.push(`  [3] recommendation count: ${countLabel}  (${recCount}件)`);
+            _l6.push(`  [4] AI decision feeling:  ${aiRiskLabel}`);
+            _l6.push(`  [5] future explanation:   ${futureLabel}`);
+            _l6.push(`  [6] operationalRealism:   ${opLabel}  (highAcceptance=${highAccCount}/${recCount}件)`);
+            _l6.push(`  safetyAudit:              ${_cr_safetyAudit.verdict}`);
+            _l6.push(``);
+
+            const readLabel = {
+              humanAcceptableRecommendationUI: '✓ ACCEPTABLE  — 人間が採用判断できる UI 品質',
+              partiallyAcceptable:             '△ PARTIALLY ACCEPTABLE  — 一部改善で採用可能',
+              needsImprovement:                '⚠ NEEDS IMPROVEMENT  — readability 課題複数',
+              noRecommendationsYet:            'ℹ NO RECS  — 推奨なし（全スタッフ最適またはフィルタで除外）',
+            };
+            _l6.push(`  ── 総合 Readability 判定 ──`);
+            _l6.push(`    overall: ${overallReadability}`);
+            _l6.push(`    ${readLabel[overallReadability]}`);
+            _l6.push(``);
+            _l6.push(`  ── 5つの分析設問 ──`);
+            _l6.push(`  Q1: Temporal Recommendation は人間が実際採用できる内容か?`);
+            _l6.push(`    → clarity=${clarityLabel} / operationalRealism=${opLabel}`);
+            _l6.push(`    → ${clarityLabel === 'high' && opLabel !== 'challenged' ? '✓ 採用可能な品質' : '△ 追加説明が必要な可能性あり'}`);
+            _l6.push(`  Q2: burnout改善と現場負担維持は両立可能か?`);
+            const boRecCount = _cr_filtered.filter(r => r.category === 'burnoutReduction').length;
+            _l6.push(`    → burnoutReduction推奨: ${boRecCount}件  (代償: 夜勤カバレッジの段階的調整が必要)`);
+            _l6.push(`    → ${boRecCount > 0 ? '△ burnout改善は常にカバレッジとのトレードオフ。段階的適用が現実的。' : 'ℹ burnout改善推奨なし（現時点 burnout 問題なし）'}`);
+            _l6.push(`  Q3: 「最適提案」と「受け入れ可能提案」は違うか?`);
+            const strongCount = _cr_filtered.filter(r => r.tradeoff?.verdict === 'strongRecommend').length;
+            _l6.push(`    → strongRecommend(理論最適): ${strongCount}件  highAcceptance(受入可能): ${highAccCount}件`);
+            _l6.push(`    → ${strongCount === highAccCount ? '= 今回は両者が一致している' : '△ 理論最適 ≠ 受入可能。現場優先順位付けが必要。'}`);
+            _l6.push(`  Q4: support continuity を守ると改善速度は落ちるか?`);
+            const rejected = _cr_recs.length - _cr_filtered.length;
+            _l6.push(`    → フィルタ除外: ${rejected}件 / 元候補: ${_cr_recs.length}件`);
+            _l6.push(`    → ${rejected > 0 ? '△ 保護ルールにより一部の積極的改善が除外された可能性あり' : '✓ 保護制約による除外なし'}`);
+            _l6.push(`  Q5: Temporal Engine の recommendation は Explainable なまま維持できるか?`);
+            _l6.push(`    → allReason=${allReason}  allFuture=${allFuture}  aiRisk=${aiRiskLabel.startsWith('low') ? 'low' : 'detected'}`);
+            _l6.push(`    → ${allReason && allFuture ? '✓ 現時点では Explainable な状態を維持できている' : '△ 未来影響または理由説明の補強が必要'}`);
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Temporal-Recommendation-Generator / Low-Risk-Adjustment-Filter /
+        //    Recommendation-Tradeoff-Analyzer / Human-Approval-Simulation /
+        //    Recommendation-Safety-Audit / Temporal-Recommendation-Readability] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
