@@ -3332,6 +3332,13 @@ function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 1
   );
 }
 
+const deriveYears = (dateStr, refDate) => {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return Math.max(0, (refDate - d) / (365.25 * 24 * 60 * 60 * 1000));
+};
+
 function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCountByDay, kiboLimit }) {
   const isNew = !data;
   const mk = monthKey(year, month);
@@ -3385,21 +3392,23 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
         )}
         <div style={{fontSize:11,color:"#7a5590",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 職員経験・適応状況（オプション）</div>
         <div style={{background:"#f8f0ff",border:"1px solid #c8a0d8",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
-          <div style={{fontSize:10,color:"#7a5590",marginBottom:8}}>Readiness診断に使用します。未入力の場合はシフト傾向から自動推定されます。</div>
+          <div style={{fontSize:10,color:"#7a5590",marginBottom:8}}>入職日を入力すると経験年数が自動計算されます。未入力の場合はシフト傾向から自動推定されます。</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             <div>
-              <div style={{color:"#7a5590",fontSize:11,marginBottom:4}}>介護経験年数</div>
-              <input type="number" min="0" max="50" step="0.5"
-                value={form.facilityYears ?? ""}
-                onChange={e=>set("facilityYears",e.target.value===""?null:parseFloat(e.target.value))}
-                style={{...INPUT_STYLE,textAlign:"center"}} placeholder="例: 5.0"/>
+              <div style={{color:"#7a5590",fontSize:11,marginBottom:4}}>介護業界 入職日</div>
+              <input type="date"
+                value={form.facilityJoinDate ?? ""}
+                onChange={e=>set("facilityJoinDate",e.target.value||null)}
+                style={{...INPUT_STYLE,textAlign:"center",fontSize:12}}/>
+              {form.facilityJoinDate&&<div style={{fontSize:10,color:"#9b59b6",marginTop:3,textAlign:"center"}}>{deriveYears(form.facilityJoinDate,new Date())?.toFixed(1)} 年</div>}
             </div>
             <div>
-              <div style={{color:"#7a5590",fontSize:11,marginBottom:4}}>フロア適応年数</div>
-              <input type="number" min="0" max="50" step="0.5"
-                value={form.floorYears ?? ""}
-                onChange={e=>set("floorYears",e.target.value===""?null:parseFloat(e.target.value))}
-                style={{...INPUT_STYLE,textAlign:"center"}} placeholder="例: 2.0"/>
+              <div style={{color:"#7a5590",fontSize:11,marginBottom:4}}>フロア 配属日</div>
+              <input type="date"
+                value={form.floorJoinDate ?? ""}
+                onChange={e=>set("floorJoinDate",e.target.value||null)}
+                style={{...INPUT_STYLE,textAlign:"center",fontSize:12}}/>
+              {form.floorJoinDate&&<div style={{fontSize:10,color:"#9b59b6",marginTop:3,textAlign:"center"}}>{deriveYears(form.floorJoinDate,new Date())?.toFixed(1)} 年</div>}
             </div>
           </div>
         </div>
@@ -5824,6 +5833,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const deptsUpsertInProgress = useRef(false); // depts保存中フラグ
   const pendingDeptsRef = useRef(null); // 保存中に届いた新しいdepts（完了後に再保存）
   const pendingStaffListRef = useRef(null); // 保存中に届いた新しいstaffList
+  const legacyJoinDateMigratedRef = useRef(false); // facilityYears→facilityJoinDate 一回限り移行ガード
   const dbInitialized = useRef(false); // 初回DB読込完了フラグ（二重保護）
   const dirtyDeptIdsRef = useRef(new Set()); // ★Fix W-2: 未保存部署の追跡（emergencySave多部署対応）
   const reloadFromRemoteRef = useRef(null); // reloadFromRemote関数への参照（catch節から呼び出し用）
@@ -5908,6 +5918,31 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       };
       saveStaffList(staffList);
     }
+  }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // facilityYears/floorYears → facilityJoinDate/floorJoinDate 一回限りレガシー移行
+  useEffect(() => {
+    if (legacyJoinDateMigratedRef.current) return;
+    if (staffList.length === 0) return;
+    const needsMigration = staffList.some(s =>
+      (!s.facilityJoinDate && s.facilityYears != null) ||
+      (!s.floorJoinDate    && s.floorYears    != null)
+    );
+    if (!needsMigration) { legacyJoinDateMigratedRef.current = true; return; }
+    legacyJoinDateMigratedRef.current = true;
+    const today = new Date();
+    const toDateStr = (years) => {
+      if (years == null) return null;
+      const d = new Date(today.getTime() - years * 365.25 * 24 * 60 * 60 * 1000);
+      return d.toISOString().slice(0, 10);
+    };
+    setStaffList(prev => prev.map(s => {
+      const patch = {};
+      if (!s.facilityJoinDate && s.facilityYears != null) patch.facilityJoinDate = toDateStr(s.facilityYears);
+      if (!s.floorJoinDate    && s.floorYears    != null) patch.floorJoinDate    = toDateStr(s.floorYears);
+      return Object.keys(patch).length > 0 ? { ...s, ...patch } : s;
+    }));
+    console.log('[Migration] facilityYears/floorYears → JoinDate 変換完了');
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // スタッフポータル用: 施設設定をSupabaseに公開保存（dbLoading完了後に必ず1回書く）
@@ -6875,7 +6910,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
     isInitializing.current = false;
-    const cs=staffList, cd=dept, ct=mergeShiftTrends(shiftTrend[activeDeptId]||{}, learnedTrend);
+    const _gen_refDate = new Date();
+    const cs = staffList.map(s => {
+      const fy = s.facilityJoinDate ? deriveYears(s.facilityJoinDate, _gen_refDate) : (s.facilityYears ?? null);
+      const fl = s.floorJoinDate    ? deriveYears(s.floorJoinDate,    _gen_refDate) : (s.floorYears    ?? null);
+      return { ...s, facilityYears: fy, floorYears: fl };
+    });
+    const cd=dept, ct=mergeShiftTrends(shiftTrend[activeDeptId]||{}, learnedTrend);
     generateTimerRef.current = setTimeout(() => {
       // 月切り替え中は生成を中断（year/monthクロージャ陳腐化チェック）
       if (year !== yearRef.current || month !== monthRef.current) {
@@ -19057,6 +19098,137 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // ══ [Intervention-Sandbox-Clone / Temporary-Recommendation-Apply /
         //    Re-Simulation-Engine / Intervention-Rollback-System /
         //    Intervention-Stability-Audit / Human-Intervention-Review] ここまで ══
+
+        // ══ [Date-Integrity-Audit / Migration-Safety-Audit] ══
+        // Layer 5: [Date-Integrity-Audit] facilityJoinDate/floorJoinDate 整合性監査
+        {
+          const _di_ds      = cs.filter(s => s.dept === cd.id);
+          const _di_refDate = new Date();
+          const _di_today   = _di_refDate.toISOString().slice(0, 10);
+
+          // ── 各スタッフの日付フィールド整合性チェック ──
+          const _di_results = _di_ds.map(s => {
+            const raw = staffList.find(r => r.id === s.id) || {};
+            const hasFacDate = !!raw.facilityJoinDate;
+            const hasFlDate  = !!raw.floorJoinDate;
+            const hasFacYrs  = raw.facilityYears != null;
+            const hasFlYrs   = raw.floorYears    != null;
+
+            // 日付文字列が有効かチェック
+            const facDateValid = hasFacDate ? !isNaN(new Date(raw.facilityJoinDate).getTime()) : true;
+            const flDateValid  = hasFlDate  ? !isNaN(new Date(raw.floorJoinDate).getTime())    : true;
+
+            // 未来日付チェック
+            const facFuture = hasFacDate && raw.facilityJoinDate > _di_today;
+            const flFuture  = hasFlDate  && raw.floorJoinDate    > _di_today;
+
+            // フロア入職日 ≥ 施設入職日チェック（フロアが先はNG）
+            const flBeforeFac = hasFacDate && hasFlDate && raw.floorJoinDate < raw.facilityJoinDate;
+
+            // 導出年数が正常範囲か（0〜60年）
+            const facYrs = s.facilityYears;
+            const flYrs  = s.floorYears;
+            const facYrsOk = facYrs == null || (facYrs >= 0 && facYrs <= 60);
+            const flYrsOk  = flYrs  == null || (flYrs  >= 0 && flYrs  <= 60);
+
+            // フロア年数 ≤ 施設年数チェック
+            const flGtFac = facYrs != null && flYrs != null && flYrs > facYrs + 0.1;
+
+            const issues = [];
+            if (!facDateValid) issues.push('facilityJoinDate:無効日付');
+            if (!flDateValid)  issues.push('floorJoinDate:無効日付');
+            if (facFuture)     issues.push('facilityJoinDate:未来日付');
+            if (flFuture)      issues.push('floorJoinDate:未来日付');
+            if (flBeforeFac)   issues.push('floorJoinDate<facilityJoinDate');
+            if (!facYrsOk)     issues.push(`facilityYears=${facYrs?.toFixed(1)}:範囲外`);
+            if (!flYrsOk)      issues.push(`floorYears=${flYrs?.toFixed(1)}:範囲外`);
+            if (flGtFac)       issues.push(`floorYears(${flYrs?.toFixed(1)})>facilityYears(${facYrs?.toFixed(1)})`);
+
+            const source = hasFacDate ? 'date' : hasFacYrs ? 'legacyNum' : 'estimated';
+            return { name: s.name, hasFacDate, hasFlDate, facYrs, flYrs, source, issues };
+          });
+
+          // ── 集計 ──
+          const _di_withDate    = _di_results.filter(r => r.hasFacDate).length;
+          const _di_withFlDate  = _di_results.filter(r => r.hasFlDate).length;
+          const _di_legacyNum   = _di_results.filter(r => r.source === 'legacyNum').length;
+          const _di_estimated   = _di_results.filter(r => r.source === 'estimated').length;
+          const _di_withIssues  = _di_results.filter(r => r.issues.length > 0);
+          const _di_clean       = _di_withIssues.length === 0;
+
+          const _di_lines = [`[Date-Integrity-Audit] dept=${cd.id}  staff=${_di_ds.length}`];
+          _di_lines.push(`  source breakdown: date=${_di_withDate}  floorDate=${_di_withFlDate}  legacyNum=${_di_legacyNum}  estimated=${_di_estimated}`);
+          _di_lines.push(`  integrity: ${_di_clean ? '✓ 全フィールド正常' : `⚠ ${_di_withIssues.length}件の問題あり`}`);
+
+          if (_di_withIssues.length > 0) {
+            for (const r of _di_withIssues) {
+              _di_lines.push(`    ${r.name}: ${r.issues.join(' | ')}`);
+            }
+          }
+
+          // サンプル表示（最大3名）
+          const _di_sample = _di_results.filter(r => r.hasFacDate || r.hasFlDate).slice(0, 3);
+          if (_di_sample.length > 0) {
+            _di_lines.push('  sample (date-registered staff):');
+            for (const r of _di_sample) {
+              _di_lines.push(`    ${r.name}: facilityYrs=${r.facYrs?.toFixed(2) ?? 'est'}  floorYrs=${r.flYrs?.toFixed(2) ?? 'est'}  src=${r.source}`);
+            }
+          }
+
+          _di_lines.push(`  verdict: ${_di_clean ? 'PASS' : 'WARN'}`);
+          console.log(_di_lines.join('\n'));
+        }
+
+        // Layer 6: [Migration-Safety-Audit] レガシーデータ移行状態の安全監査
+        {
+          const _ms_ds = cs.filter(s => s.dept === cd.id);
+
+          // rawスタッフリストからマイグレーション状態を検査
+          const _ms_raw = _ms_ds.map(s => staffList.find(r => r.id === s.id) || {});
+
+          const _ms_hasDate    = _ms_raw.filter(r => r.facilityJoinDate || r.floorJoinDate).length;
+          const _ms_hasLegacy  = _ms_raw.filter(r => (!r.facilityJoinDate && r.facilityYears != null) || (!r.floorJoinDate && r.floorYears != null)).length;
+          const _ms_neitherFac = _ms_raw.filter(r => !r.facilityJoinDate && r.facilityYears == null).length;
+          const _ms_neitherFl  = _ms_raw.filter(r => !r.floorJoinDate && r.floorYears == null).length;
+          const _ms_total      = _ms_ds.length;
+
+          // 移行完了率
+          const _ms_migrated     = _ms_raw.filter(r => !(!r.facilityJoinDate && r.facilityYears != null)).length;
+          const _ms_migrateRate  = _ms_total > 0 ? (_ms_migrated / _ms_total * 100).toFixed(0) : 100;
+
+          // 年数の正合性チェック（旧facilityYearsと新導出値の差）
+          const _ms_driftCheck = _ms_ds.map(s => {
+            const raw = staffList.find(r => r.id === s.id) || {};
+            if (!raw.facilityJoinDate || raw.facilityYears == null) return null;
+            const derived = s.facilityYears ?? 0;
+            const legacy  = raw.facilityYears;
+            return { name: s.name, drift: Math.abs(derived - legacy) };
+          }).filter(Boolean);
+
+          const _ms_maxDrift  = _ms_driftCheck.length > 0 ? Math.max(..._ms_driftCheck.map(d => d.drift)) : 0;
+          const _ms_driftOk   = _ms_maxDrift < 0.3;
+
+          // 安全判定
+          const _ms_safeToOperate = _ms_hasLegacy === 0;
+          const _ms_verdict = _ms_safeToOperate
+            ? (_ms_hasDate > 0 ? 'MIGRATED' : 'CLEAN_NEW')
+            : `LEGACY_PENDING(${_ms_hasLegacy}件)`;
+
+          const _ms_lines = [`[Migration-Safety-Audit] dept=${cd.id}  staff=${_ms_total}`];
+          _ms_lines.push(`  migration status:`);
+          _ms_lines.push(`    date-registered : ${_ms_hasDate}  legacy-number: ${_ms_hasLegacy}  no-data: ${_ms_neitherFac}(fac)/${_ms_neitherFl}(fl)`);
+          _ms_lines.push(`    migration rate  : ${_ms_migrateRate}%`);
+          if (_ms_driftCheck.length > 0) {
+            _ms_lines.push(`    legacy drift    : maxDrift=${_ms_maxDrift.toFixed(3)}yr  ${_ms_driftOk ? '✓ 許容範囲' : '⚠ 乖離あり'}`);
+          }
+          _ms_lines.push(`  enrichment safety:`);
+          _ms_lines.push(`    cs.facilityYears populated: ${_ms_ds.filter(s => s.facilityYears != null).length}/${_ms_total}`);
+          _ms_lines.push(`    cs.floorYears    populated: ${_ms_ds.filter(s => s.floorYears != null).length}/${_ms_total}`);
+          _ms_lines.push(`    result untouched: ✓ (read-only in all diagnostic blocks)`);
+          _ms_lines.push(`  verdict: ${_ms_verdict}  drift: ${_ms_driftOk ? 'OK' : 'WARN'}`);
+          console.log(_ms_lines.join('\n'));
+        }
+        // ══ [Date-Integrity-Audit / Migration-Safety-Audit] ここまで ══
 
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
