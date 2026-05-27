@@ -10543,6 +10543,321 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // ══ [ShiftExplanationMeta / Explanation-Event / Explanation-Timeline /
         //    Explanation-Grouping / Explanation-Severity / Explanation-UIFlow] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Why-UI-Preview / Reason-Card / Timeline-View /
+        //    Severity-Badge / Explanation-Summary / UI-Readability-Audit]
+        // Why UI Sandbox — Explainable UI Sandbox
+        // - ShiftExplanationMeta を「人間が理解できるUI構造」へ変換するsandbox。
+        // - rule-based。LLM API不要。本番UI置換禁止。DB保存禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _wu_days  = getDays(year, month);
+          const _wu_ds    = cs.filter(s => s.dept === cd.id);
+          const _wu_cds   = cd.customShiftDefs || [];
+          const _wu_tailN = Math.min(7, _wu_days);
+          const _wu_third = Math.ceil(_wu_days / 3);
+
+          // 夜勤 set
+          const _wu_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _nc = _wu_cds.find(c => c.key === k);
+            if ((_nc?.baseType || k) === '夜勤') _wu_nset.add(k);
+          });
+          const _wu_isNight = (sh) => _wu_nset.has(sh);
+          const _wu_isRest  = (sh) => ['休み', '希望休', '有休'].includes(sh);
+          const _wu_isWork  = (sh) => !!(sh && !_wu_isRest(sh) && sh !== '明け' && sh !== '');
+          const _wu_fw      = (sh) => _wu_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+
+          // trend lookup
+          const _wu_trd = (name) => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // 夜勤ペア共起
+          const _wu_pc = {};
+          for (let d = 1; d <= _wu_days; d++) {
+            const nw = _wu_ds.filter(s => _wu_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const k = [nw[i].name, nw[j].name].sort().join('×');
+                _wu_pc[k] = (_wu_pc[k] || 0) + 1;
+              }
+          }
+          const _wu_sp = Object.entries(_wu_pc)
+            .filter(([, n]) => n >= _wu_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── per-staff state recompute (UI sandbox用) ──
+          const _wu_st = {};
+          for (const s of _wu_ds) {
+            const tr = _wu_trd(s.name);
+            const wk = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            let totF = 0, tlF = 0, nCnt = 0, rCnt = 0;
+            let sSq = 0, cSq = 0, dSq = 0, leSq = 0;
+            const psq = [
+              { s:0,c:0,d:0,w:0 }, { s:0,c:0,d:0,w:0 }, { s:0,c:0,d:0,w:0 }
+            ];
+            for (let d = 1; d <= _wu_days; d++) {
+              const sh = result[s.id]?.[d]??'', pv = result[s.id]?.[d-1]??'', nx = result[s.id]?.[d+1]??'';
+              const pi = d <= _wu_third ? 0 : d <= _wu_third*2 ? 1 : 2;
+              totF += _wu_fw(sh);
+              if (d > _wu_days - _wu_tailN) tlF += _wu_fw(sh);
+              if (_wu_isNight(sh)) nCnt++;
+              if (_wu_isRest(sh))  rCnt++;
+              if (sh === '明け' && _wu_isNight(pv)) {
+                if (_wu_isRest(nx)||!nx) { sSq++; psq[pi].s++; }
+                else if (nx==='早番')    { cSq++; psq[pi].c++; }
+                else if (_wu_isWork(nx)) { dSq++; psq[pi].d++; }
+                else                     { sSq++; psq[pi].s++; }
+              }
+              if (sh==='早番' && d>1 && pv==='遅番') { leSq++; psq[pi].w++; }
+            }
+            const bo  = totF >= _wu_days*2.0 ? 'high' : totF >= _wu_days*1.2 ? 'medium' : 'low';
+            const co  = tlF  >= _wu_tailN*3.0 ? 'high' : tlF  >= _wu_tailN*1.5 ? 'medium' : 'low';
+            const rd  = rCnt < _wu_days*0.25*0.7 ? 'high' : rCnt < _wu_days*0.25 ? 'medium' : 'low';
+            const fy  = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk/30*0.5+0.5));
+            const fl  = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const nr  = (fy<0.5||fl<0.2) ? 'low' : (bo==='high'||fy<1.5||fl<0.5) ? 'medium' : 'high';
+            const lr  = (fy<0.5||fl<0.2) ? 'low' : (fy<1.0||fl<0.5) ? 'medium' : 'high';
+            const rr  = (fy>=2&&fl<0.5) ? 'high' : (fy>=1&&fl<0.3) ? 'medium' : 'low';
+            const sn  = (fl<0.3||fy<0.3) ? 'high' : (fl<0.8||fy<0.8) ? 'medium' : 'low';
+            const as_ = fl<0.1?0:fl<0.3?1:fl<0.8?2:fl<1.5?3:fl<3?4:5;
+            const pk  = _wu_sp.find(p => p.includes(s.name))?.join('×') || null;
+            _wu_st[s.name] = {
+              isNew, nCnt, rCnt, sSq, cSq, dSq, leSq, psq,
+              bo, co, rd, fy, fl, nr, lr, rr, sn, as_, pk,
+              nightOk: !!s.nightOk
+            };
+          }
+
+          // ── 説明 reasons 再構築 ──
+          const _wu_reasons = (name) => {
+            const st = _wu_st[name]; if (!st) return [];
+            const rs = [];
+            rs.push({ grp:'readiness',   type:'nightReadiness',       lvl:st.nr,                 icon: st.nr==='high'?'🟢':st.nr==='medium'?'🟡':'🟠' });
+            if (st.rr!=='low')  rs.push({ grp:'relocation',  type:'relocationRisk',      lvl:st.rr, icon:'🟠' });
+            if (st.sn!=='low')  rs.push({ grp:'adaptation',  type:'supportNeed',          lvl:st.sn, icon:'🟡' });
+            if (st.as_<=2)      rs.push({ grp:'adaptation',  type:'adaptationStage',      lvl:'medium', icon:'🟡', detail:`stage=${st.as_}` });
+            if (st.bo!=='low')  rs.push({ grp:'burnout',     type:'burnoutAccumulation',  lvl:st.bo, icon: st.bo==='high'?'🔴':'🟠' });
+            if (st.co!=='low')  rs.push({ grp:'fatigue',     type:'fatigueCarryOver',     lvl:st.co, icon:'🟡' });
+            if (st.rd!=='low')  rs.push({ grp:'fatigue',     type:'recoveryDebt',         lvl:st.rd, icon:'🟡' });
+            if (st.sSq>0)       rs.push({ grp:'sequence',    type:'safeSequence',         lvl:'positive', icon:'🟢', detail:`${st.sSq}件` });
+            if (st.cSq>0)       rs.push({ grp:'sequence',    type:'criticalSequence',     lvl:'high', icon:'🔴', detail:`${st.cSq}件` });
+            if (st.pk)          rs.push({ grp:'dependency',  type:'supportPair',          lvl:'info', icon:'🔵', detail:st.pk });
+            rs.push({ grp:'protection', type:'seqIntegrity', lvl:st.cSq+st.dSq===0?'intact':'partial', icon: st.cSq===0?'🟢':'🟡' });
+            return rs;
+          };
+
+          // ── severity 判定 ──
+          const _wu_sev = (r) => {
+            if (r.grp==='burnout'   && r.lvl==='high')      return 'critical';
+            if (r.type==='criticalSequence')                 return 'critical';
+            if (r.type==='nightReadiness'   && r.lvl==='low') return 'high';
+            if (r.type==='recoveryDebt'     && r.lvl==='high') return 'high';
+            if (r.type==='relocationRisk'   && r.lvl==='high') return 'high';
+            if (r.type==='fatigueCarryOver' && r.lvl==='high') return 'high';
+            if (r.lvl==='positive'||r.lvl==='intact'||r.grp==='protection'||r.grp==='dependency') return 'positive';
+            if (r.lvl==='medium') return 'medium';
+            return 'low';
+          };
+          const _wu_sIcon = { critical:'🔴', high:'🟠', medium:'🟡', low:'🔵', positive:'🟢', info:'🔵' };
+
+          // ── Layer 1: [Why-UI-Preview] ──
+          {
+            const _w1 = [`[Why-UI-Preview] dept=${cd.id}  (sandbox / not rendered)`];
+            for (const s of _wu_ds) {
+              const st = _wu_st[s.name]; if (!st) continue;
+              const rs = _wu_reasons(s.name);
+              const topSev = rs.some(r => _wu_sev(r)==='critical') ? 'CRITICAL' :
+                             rs.some(r => _wu_sev(r)==='high')     ? 'HIGH'     :
+                             rs.some(r => _wu_sev(r)==='medium')   ? 'MEDIUM'   : 'STABLE';
+              const icon = { CRITICAL:'🔴', HIGH:'🟠', MEDIUM:'🟡', STABLE:'🟢' }[topSev];
+              _w1.push(`  ━━ ${s.name} ${icon}${topSev} ━━`);
+              _w1.push(`  夜勤適応度: ${st.nr.toUpperCase()}${st.nr==='low'?' ⚠':st.nr==='high'?' ✓':''}`);
+              _w1.push(`  主要理由:`);
+              const topRs = rs.filter(r => ['critical','high'].includes(_wu_sev(r))).slice(0,3);
+              if (!topRs.length) _w1.push(`    ・特筆事項なし（安定状態）✓`);
+              else topRs.forEach(r => _w1.push(`    ・${r.type}=${r.lvl}${r.detail?` (${r.detail})`:''}`));
+              const posPts = rs.filter(r => _wu_sev(r)==='positive');
+              if (posPts.length) _w1.push(`  安定要因: ${posPts.map(r => r.type+(r.detail?`(${r.detail})`:`(${r.lvl})`)).join(' / ')}`);
+            }
+            console.log(_w1.join('\n'));
+          }
+
+          // ── Layer 2: [Reason-Card] ──
+          {
+            const _w2 = [`[Reason-Card] dept=${cd.id}`];
+            const GRP_ORDER = ['readiness','relocation','burnout','fatigue','adaptation','sequence','dependency','protection'];
+            const GRP_ICON  = { readiness:'🟨', relocation:'🟥', burnout:'🟥', fatigue:'🟧',
+                                 adaptation:'🟦', sequence:'🟩', dependency:'🔷', protection:'🟦' };
+            for (const s of _wu_ds) {
+              const rs = _wu_reasons(s.name); if (!rs.length) continue;
+              const byGrp = {};
+              for (const r of rs) {
+                if (!byGrp[r.grp]) byGrp[r.grp] = [];
+                byGrp[r.grp].push(`${r.icon} ${r.type}=${r.lvl}${r.detail?` (${r.detail})`:''}`);
+              }
+              _w2.push(`  ─── ${s.name} ───`);
+              for (const g of GRP_ORDER) {
+                if (!byGrp[g]) continue;
+                _w2.push(`  ${GRP_ICON[g]||'⬜'} ${g.charAt(0).toUpperCase()+g.slice(1)}`);
+                byGrp[g].forEach(line => _w2.push(`      ${line}`));
+              }
+            }
+            console.log(_w2.join('\n'));
+          }
+
+          // ── Layer 3: [Timeline-View] ──
+          {
+            const _w3 = [`[Timeline-View] dept=${cd.id}`];
+            const _wu_pLabel = (p, st) => {
+              // per-period human label
+              const msgs = [];
+              if (p.s>0) msgs.push(`安全系列×${p.s}`);
+              if (p.c>0) msgs.push(`⚠高疲労系列×${p.c}`);
+              if (p.d>0) msgs.push(`⚠danger系列×${p.d}`);
+              if (p.w>0) msgs.push(`遅→早×${p.w}`);
+              return msgs.length ? msgs.join(' / ') : '系列なし';
+            };
+            for (const s of _wu_ds) {
+              const st = _wu_st[s.name]; if (!st) continue;
+              const hasSeq = st.psq.some(p => p.s+p.c+p.d+p.w > 0);
+              _w3.push(`  ${s.name}:`);
+              if (!hasSeq) { _w3.push(`    月全体: 夜勤系列なし（日勤中心）`); continue; }
+              const labels = ['前期', '中期', '後期'];
+              const d1 = [1, _wu_third+1, _wu_third*2+1];
+              const d2 = [_wu_third, _wu_third*2, _wu_days];
+              st.psq.forEach((p, i) => {
+                const trendArrow = i>0 && (st.psq[i].c > st.psq[i-1].c) ? '↑悪化⚠' : i>0 && (st.psq[i].c < st.psq[i-1].c) ? '↓改善✓' : '';
+                _w3.push(`    ${labels[i]}(d${d1[i]}-d${d2[i]}): ${_wu_pLabel(p, st)} ${trendArrow}`);
+              });
+              // adaptation hint
+              if (st.as_<=2 && st.nCnt===0) _w3.push(`    → フロア適応期間中（夜勤準備段階）`);
+              else if (st.nr==='high' && st.nCnt>0) _w3.push(`    → 夜勤コア状態 ✓`);
+            }
+            console.log(_w3.join('\n'));
+          }
+
+          // ── Layer 4: [Severity-Badge] ──
+          {
+            const _w4 = [`[Severity-Badge] dept=${cd.id}`];
+            for (const s of _wu_ds) {
+              const st = _wu_st[s.name]; if (!st) continue;
+              const rs = _wu_reasons(s.name);
+              const badges = rs.map(r => {
+                const sev = _wu_sev(r);
+                const ic  = _wu_sIcon[sev] || '⬜';
+                const sevLabel = sev === 'positive' ? 'STABLE' : sev.toUpperCase();
+                return `${ic}${r.type}(${sevLabel})`;
+              });
+              // overall badge
+              const topSev = rs.reduce((best, r) => {
+                const order = ['critical','high','medium','low','positive'];
+                const idx = order.indexOf(_wu_sev(r));
+                return idx < order.indexOf(best) ? _wu_sev(r) : best;
+              }, 'positive');
+              _w4.push(`  ${s.name} ${_wu_sIcon[topSev]||'⬜'}${topSev.toUpperCase()}:`);
+              _w4.push(`    ${badges.join('  ')}`);
+            }
+            console.log(_w4.join('\n'));
+          }
+
+          // ── Layer 5: [Explanation-Summary] ──
+          // rule-based natural Japanese summary（LLM API不要）
+          {
+            const _w5 = [`[Explanation-Summary] dept=${cd.id}  (rule-based / not LLM)`];
+            for (const s of _wu_ds) {
+              const st = _wu_st[s.name]; if (!st) continue;
+              const lines = [];
+
+              // Core identity sentence
+              if (st.rr==='high') {
+                lines.push(`${s.name}さんは介護経験${st.fy.toFixed(1)}年のベテランですが、`+
+                           `現フロアへの異動から間もない（${st.fl.toFixed(1)}年）ため、夜勤適応度を低めに評価しています。`);
+              } else if (st.nr==='low') {
+                lines.push(`${s.name}さんは介護経験${st.fy.toFixed(1)}年・フロア経験${st.fl.toFixed(1)}年で、`+
+                           `現時点での夜勤適応度は準備段階です。`);
+              } else if (st.nr==='high' && st.nCnt >= 3) {
+                lines.push(`${s.name}さんはフロア経験${st.fl.toFixed(1)}年で夜勤適応度が高く、`+
+                           `今月${st.nCnt}回の夜勤を担当しています。`);
+              } else if (st.isNew) {
+                lines.push(`${s.name}さんは入職間もない段階で、`+
+                           `日勤・早番中心に経験を積んでいます。`);
+              } else {
+                lines.push(`${s.name}さんは経験${st.fy.toFixed(1)}年・フロア適応${st.fl.toFixed(1)}年で、`+
+                           `安定した配置状態にあります。`);
+              }
+
+              // Burnout / fatigue sentence
+              if (st.bo==='high')
+                lines.push(`今月は疲労蓄積が高く、バーンアウト予防のため休日確保を優先しています。`);
+              else if (st.co==='high')
+                lines.push(`月末に疲労が残っており、翌月初の配置に配慮が必要です。`);
+
+              // Sequence sentence
+              if (st.cSq > 0)
+                lines.push(`夜勤→明け→早番という高疲労系列が${st.cSq}件発生しています。次月の改善が望まれます。`);
+              else if (st.sSq > 0)
+                lines.push(`夜勤→明け→休みの安全系列が${st.sSq}件維持されており、系列品質は良好です。`);
+
+              // Pair / support sentence
+              if (st.pk)
+                lines.push(`現在は${st.pk}との夜勤ペアが継続中で、安全な支援構造が機能しています。`);
+              else if (st.sn==='high' && st.nCnt===0)
+                lines.push(`現在は支援が必要な段階のため、日勤中心の配置で安全を確保しています。`);
+
+              _w5.push(`  ${s.name}:`);
+              lines.forEach(l => _w5.push(`    ${l}`));
+            }
+            console.log(_w5.join('\n'));
+          }
+
+          // ── Layer 6: [UI-Readability-Audit] ──
+          {
+            const _w6 = [`[UI-Readability-Audit] dept=${cd.id}`];
+            let deptIssues = 0;
+            for (const s of _wu_ds) {
+              const st = _wu_st[s.name]; if (!st) continue;
+              const rs = _wu_reasons(s.name);
+              const issues = [];
+              // 1. reasonCount excessive
+              if (rs.length > 8) issues.push(`理由数多い(${rs.length}件) → 表示絞込み推奨`);
+              // 2. duplicates: same type appearing twice
+              const types = rs.map(r => r.type);
+              const dups = types.filter((t, i) => types.indexOf(t) !== i);
+              if (dups.length > 0) issues.push(`重複理由: ${[...new Set(dups)].join(', ')}`);
+              // 3. all-negative (no positive)
+              const posCount = rs.filter(r => _wu_sev(r)==='positive').length;
+              if (posCount === 0) issues.push(`ポジティブ要因なし → 「危険のみ」UI になる可能性`);
+              // 4. timeline complexity
+              const complexPeriods = st.psq.filter(p => p.c + p.d > 0).length;
+              if (complexPeriods >= 2) issues.push(`timeline複雑(${complexPeriods}期に問題) → 折りたたみ表示推奨`);
+              // 5. readability score
+              const sevCounts = { critical:0, high:0, medium:0, low:0, positive:0 };
+              rs.forEach(r => sevCounts[_wu_sev(r)] = (sevCounts[_wu_sev(r)]||0) + 1);
+              const negRatio = (sevCounts.critical + sevCounts.high) / Math.max(rs.length, 1);
+              const readability = negRatio > 0.6 ? 'heavy' : negRatio > 0.3 ? 'moderate' : 'good';
+              const readIcon = { heavy:'⚠', moderate:'', good:'✓' }[readability];
+
+              if (issues.length === 0) {
+                _w6.push(`  ${s.name}: readability=${readability} ${readIcon} (reasons=${rs.length} positive=${posCount})`);
+              } else {
+                deptIssues++;
+                _w6.push(`  ${s.name}: readability=${readability}${readIcon} ⚠`);
+                issues.forEach(i => _w6.push(`    - ${i}`));
+                _w6.push(`    positive=${posCount}/${rs.length} negRatio=${(negRatio*100).toFixed(0)}%`);
+              }
+            }
+            _w6.push(deptIssues === 0 ? '  全スタッフ readability 良好 ✓' : `  readability要改善: ${deptIssues}名`);
+            console.log(_w6.join('\n'));
+          }
+        }
+        // ══ [Why-UI-Preview / Reason-Card / Timeline-View /
+        //    Severity-Badge / Explanation-Summary / UI-Readability-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
