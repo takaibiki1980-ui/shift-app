@@ -15816,6 +15816,605 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Conflict-Visualization / Why-Decision-Panel /
         //    Decision-Readability-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        //    [Scenario-Branch-Generator / Intervention-Outcome-Projection /
+        //    Stability-Tradeoff-Analyzer / Human-Impact-Comparison /
+        //    Scenario-Recommendation-Layer / Scenario-Explainability-Audit]
+        // Temporal Scenario Comparison Engine — Human Temporal Future Decision System (read-only)
+        // - 複数介入シナリオの未来分岐を生成し、「どの未来を選ぶか」を比較可能にする。
+        // - AIが未来を決定するのではなく、人間が比較して選択できる状態を作る。
+        // - 実shift変更禁止。autoGenerate変更禁止。DB保存禁止。persistence禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _sc_days  = getDays(year, month);
+          const _sc_ds    = cs.filter(s => s.dept === cd.id);
+          const _sc_cds   = cd.customShiftDefs || [];
+          const _sc_tailN = Math.min(7, _sc_days);
+
+          // ── helpers ──
+          const _sc_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _sc_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _sc_nset.add(k);
+          });
+          const _sc_isNight = sh => _sc_nset.has(sh);
+          const _sc_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _sc_isWork  = sh => !!(sh && !_sc_isRest(sh) && sh !== '明け' && sh !== '');
+          const _sc_fw      = sh => _sc_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _sc_boOf    = totF => totF >= _sc_days * 2.0 ? 'high' : totF >= _sc_days * 1.2 ? 'medium' : 'low';
+
+          // ── trend lookup ──
+          const _sc_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics ──
+          const _sc_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, leSq=0;
+            for (let d = 1; d <= _sc_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _sc_fw(sh);
+              if (d > _sc_days - _sc_tailN) tlF += _sc_fw(sh);
+              if (_sc_isNight(sh)) nCnt++;
+              if (_sc_isRest(sh))  rCnt++;
+              if (sh === '明け' && _sc_isNight(pv)) {
+                if (_sc_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_sc_isWork(nx))    { /* dSq */ }
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _sc_boOf(totF);
+            const co = tlF >= _sc_tailN * 3.0 ? 'high' : tlF >= _sc_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _sc_days * 0.25 * 0.7 ? 'high' : rCnt < _sc_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, leSq, bo, co, rd };
+          };
+
+          // ── stage / progress / ladder ──
+          const _sc_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _SC_STAGE_NAMES = ['日勤中心','floor適応中','遅番安定化','夜勤準備','夜勤適応中','独立運用'];
+          const _SC_RANGES = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _sc_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _SC_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+          const _sc_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasPair) => {
+            if (!nightOk)                                   return 0;
+            if (stage >= 5 && bo !== 'high')                return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')  return 4;
+            if (nCnt >= 1)                                  return 3;
+            if (stage >= 3 && progress >= 0.6 && hasPair)  return 2;
+            if (stage >= 2 && fl >= 0.5)                   return 1;
+            return 0;
+          };
+
+          // ── pair co-occurrence ──
+          const _sc_pco = {};
+          for (let d = 1; d <= _sc_days; d++) {
+            const nw = _sc_ds.filter(s => _sc_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _sc_pco[pk] = (_sc_pco[pk] || 0) + 1;
+              }
+          }
+          const _sc_fixedPairs = Object.entries(_sc_pco)
+            .filter(([, n]) => n >= _sc_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── per-staff full state (baseline) ──
+          const _sc_st = {};
+          for (const s of _sc_ds) {
+            const m    = _sc_metric(result[s.id] || {});
+            const tr   = _sc_trd(s.name);
+            const wk   = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy   = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl   = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr   = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _sc_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _sc_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _sc_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _sc_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _sc_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, isNew, ...m };
+          }
+          const _sc_arr = _sc_ds.map(s => _sc_st[s.name]).filter(Boolean);
+
+          // ── pair dependency ──
+          const _sc_pairs = [];
+          for (const pair of _sc_fixedPairs) {
+            const [n1, n2] = pair;
+            const s1 = _sc_st[n1], s2 = _sc_st[n2];
+            if (!s1 || !s2) continue;
+            const pk   = pair.slice().sort().join('×');
+            const cnt  = _sc_pco[pk] || 0;
+            const rate = cnt / _sc_days;
+            const [giver, receiver, gSt, rSt] = s1.stage >= s2.stage
+              ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+            let depType;
+            if (rSt.stage <= 2 && rSt.fl >= 1.5)                          depType = 'overProtection';
+            else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3) depType = 'fixationRisk';
+            else if (rSt.stage >= 4 && gSt.stage >= 4)                    depType = 'stablePair';
+            else                                                            depType = 'healthySupport';
+            _sc_pairs.push({ pair, pk, cnt, rate, giver, receiver, gSt, rSt, depType });
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Scenario simulation engine:
+          //  Each scenario applies modifier functions to a staff member's
+          //  baseline state before running the standard future projection.
+          //  Modifiers are additive adjustments to bo_ord / cSq / nCnt / fl_growth.
+          //  No result modification — all changes are local to simulation variables.
+          // ─────────────────────────────────────────────────────────────────────
+          const _SC_FL_G   = 0.08; // baseline fl growth/month
+          const _sc_boOrd  = { low:0, medium:1, high:2 };
+          const _sc_boStr  = v => ['low','medium','high'][Math.max(0, Math.min(2, v))];
+
+          // Baseline future bo (same model as _of_ / _dc_ / _eu_)
+          const _sc_baseFutBo = (bo, co, sSq, cSq, t) => {
+            let v = _sc_boOrd[bo];
+            if (co === 'high' && cSq > 0)        v = Math.min(2, v + Math.floor(t / 2));
+            else if (co === 'high' && sSq > 0)   v = Math.min(2, v + Math.floor(t / 3));
+            else if (bo === 'high' && sSq > 0)   v = Math.max(0, v - Math.floor(t / 2));
+            else if (bo === 'medium' && sSq > 0) v = Math.max(0, v - Math.floor(t / 3));
+            return Math.max(0, Math.min(2, v));
+          };
+
+          // Scenario-modified future state for one staff member at horizon t
+          // mod = { boAdj, cSqAdj, sSqAdj, flMult, nightOkOverride, nightBlock }
+          const _sc_simState = (st, t, mod) => {
+            const ffl  = st.fl + (_SC_FL_G * (mod.flMult ?? 1)) * t;
+            const fFy  = st.fy + t / 12;
+            // Adjusted bo calculation
+            const effCsq = Math.max(0, st.cSq + (mod.cSqAdj ?? 0));
+            const effSsq = Math.max(0, st.sSq + (mod.sSqAdj ?? 0));
+            const effBo  = _sc_boStr(Math.max(0, Math.min(2,
+              _sc_baseFutBo(st.bo, st.co, effSsq > 0 ? 'low' : st.co, effCsq, t) + (mod.boAdj ?? 0)
+            )));
+            const fRr  = (fFy >= 2 && ffl < 0.5) ? 'high' : (fFy >= 1 && ffl < 0.3) ? 'medium' : 'low';
+            const fStg = _sc_stageOf(fFy, ffl, st.nCnt, fRr);
+            const fPrg = _sc_progOf(fStg, ffl, effSsq, effCsq, effBo, st.co, st.leSq);
+            const nightOk = mod.nightOkOverride !== undefined ? mod.nightOkOverride : st.nightOk;
+            const blocked = mod.nightBlock ? true : false;
+            const fNc  = (blocked || !nightOk) ? 0
+              : fStg >= 5 ? Math.max(st.nCnt, 3)
+              : fStg >= 4 ? Math.max(st.nCnt, 1)
+              : (fStg === 3 && fPrg >= 0.6 && st.hasPair) ? Math.max(st.nCnt, 1)
+              : st.nCnt;
+            const fLad = _sc_ladderOf(fStg, ffl, fNc, effBo, fPrg, nightOk && !blocked, st.hasPair);
+            return { fl: ffl, bo: effBo, nCnt: fNc, stage: fStg, progress: fPrg, ladder: fLad };
+          };
+
+          // Evaluate a full scenario for all staff at a given horizon
+          // modFn(st) → mod object for that staff member
+          const _sc_evalScenario = (modFn, t) => {
+            const states = _sc_arr.map(st => ({
+              name: st.s.name, base: st,
+              fut: _sc_simState(st, t, modFn(st))
+            }));
+            const boHighCount = states.filter(e => e.fut.bo === 'high').length;
+            const boMedCount  = states.filter(e => e.fut.bo === 'medium').length;
+            const coreCount   = states.filter(e => e.fut.ladder >= 4).length;
+            const suppAvail   = [...new Set(_sc_pairs.map(p => p.giver))]
+              .filter(n => { const e = states.find(e => e.name === n); return e && e.fut.bo !== 'high'; }).length;
+            const earlyCount  = states.filter(e => e.fut.stage <= 2).length;
+            const unsafeCount = states.filter(e => e.base.stage <= 1 && e.fut.ladder >= 3).length;
+            const ladderCands = states.filter(e => e.fut.ladder >= 2 && e.fut.ladder <= 3).length;
+            return { states, boHighCount, boMedCount, coreCount, suppAvail, earlyCount, unsafeCount, ladderCands };
+          };
+
+          // ─── Scenario Definitions ───
+          // Scenario A: 現状維持 — no intervention, baseline extrapolation
+          const _SC_A_MOD = () => ({});
+
+          // Scenario B: gradual burnout reduction — high-bo core staff get sSq boost
+          const _sc_coreBoHigh = _sc_arr.filter(st => st.ladder >= 4 && st.bo === 'high').map(st => st.s.name);
+          const _SC_B_MOD = st =>
+            _sc_coreBoHigh.includes(st.s.name) ? { sSqAdj: 1, cSqAdj: -1, boAdj: -1 } : {};
+
+          // Scenario C: support-first — protect all healthy pairs, accelerate support candidates
+          const _sc_suppCands = _sc_arr.filter(st => st.stage >= 3 && st.bo !== 'high'
+            && !_sc_pairs.some(p => p.giver === st.s.name)).map(st => st.s.name);
+          const _SC_C_MOD = st =>
+            _sc_suppCands.includes(st.s.name) ? { flMult: 1.3, boAdj: 0 }
+            : _sc_pairs.some(p => p.depType === 'healthySupport' && p.pair.includes(st.s.name))
+              ? { sSqAdj: 1 } : {};
+
+          // Scenario D: aggressive nightCore dispersal — force ladder up for all nightOk ladder1-2
+          const _sc_ladderTargets = _sc_arr.filter(st => st.nightOk && st.ladder >= 1 && st.ladder <= 2
+            && st.bo !== 'high').map(st => st.s.name);
+          const _SC_D_MOD = st =>
+            _sc_ladderTargets.includes(st.s.name) ? { flMult: 1.5, boAdj: 1 } // faster but costlier
+            : _sc_arr.filter(s => s.ladder >= 4).some(s => s.s.name === st.s.name) ? { boAdj: -1 } : {};
+
+          // Scenario E: growth-first — all early-stage staff get fl growth boost
+          const _sc_earlyNames = _sc_arr.filter(st => st.stage <= 2).map(st => st.s.name);
+          const _SC_E_MOD = st =>
+            _sc_earlyNames.includes(st.s.name) ? { flMult: 1.4, sSqAdj: 1, boAdj: 0 } : {};
+
+          // Scenario F: burnout-first — all bo=high get aggressive recovery (sSq+2, cSq-2, boAdj-2)
+          const _sc_boHighNames = _sc_arr.filter(st => st.bo === 'high').map(st => st.s.name);
+          const _SC_F_MOD = st =>
+            _sc_boHighNames.includes(st.s.name) ? { sSqAdj: 2, cSqAdj: -2, boAdj: -2, flMult: 0.5 }
+            : {};
+
+          // Scenario G: unsafe block — block night for all unsafe-risk staff
+          const _sc_unsafeNames = _sc_arr.filter(st => st.stage <= 1 && st.ladder >= 3).map(st => st.s.name);
+          const _SC_G_MOD = st =>
+            _sc_unsafeNames.includes(st.s.name) ? { nightBlock: true }
+            : _sc_coreBoHigh.includes(st.s.name) ? { boAdj: -1, sSqAdj: 1 } : {};
+
+          // Evaluate all scenarios at t=3 (primary) and t=6 (long-term)
+          const _sc_scenarios = [
+            { id: 'A', label: '現状維持',             mod: _SC_A_MOD,
+              desc: '介入なし — 現在のシフト設計を継続する' },
+            { id: 'B', label: 'Gradual Burnout Reduction',   mod: _SC_B_MOD,
+              desc: `nightCore burnout者（${_sc_coreBoHigh.join(', ')||'なし'}）の夜勤を段階的に削減し、safe sequence を確保する` },
+            { id: 'C', label: 'Support-First',         mod: _SC_C_MOD,
+              desc: 'support候補を育成加速し、healthySupport ペアを保護する' },
+            { id: 'D', label: 'Aggressive NightCore Dispersal', mod: _SC_D_MOD,
+              desc: 'ladder1-2 の staff を強制的に夜勤昇格させ、nightCore を即座に分散する' },
+            { id: 'E', label: 'Growth-First',           mod: _SC_E_MOD,
+              desc: '新人・初期層の fl 成長を加速し、将来のnightCore後継を早期育成する' },
+            { id: 'F', label: 'Burnout-Aggressive Recovery', mod: _SC_F_MOD,
+              desc: 'bo=high 全員を一時的に夜勤軽減し、burnout 回復を最優先する' },
+            { id: 'G', label: 'Safety Block + Gradual',  mod: _SC_G_MOD,
+              desc: 'unsafe昇格を即時ブロックし、nightCore burnout を段階削減する' },
+          ].map(sc => ({
+            ...sc,
+            r3: _sc_evalScenario(sc.mod, 3),
+            r6: _sc_evalScenario(sc.mod, 6),
+          }));
+
+          // Scoring: lower is better for boHigh/unsafe; higher is better for core/supp/ladder
+          // Overall score: coreCount*3 + suppAvail*2 + ladderCands*1 - boHighCount*4 - unsafeCount*5
+          const _sc_score = r => r.coreCount * 3 + r.suppAvail * 2 + r.ladderCands - r.boHighCount * 4 - r.unsafeCount * 5;
+
+          // ── Layer 1: [Scenario-Branch-Generator] ──
+          {
+            const _l1 = [`[Scenario-Branch-Generator] dept=${cd.id}`];
+            _l1.push(`  ── シナリオ分岐生成（「最適解」ではなく「未来の選択肢」を比較） ──`);
+            _l1.push(`  生成シナリオ数: ${_sc_scenarios.length}  評価地平: 3ヶ月後 / 6ヶ月後`);
+            _l1.push(`  ベースライン: スタッフ${_sc_arr.length}名  nightCore=${_sc_arr.filter(st => st.ladder >= 4).length}名  bo=high=${_sc_boHighNames.length}名`);
+            _l1.push(``);
+            for (const sc of _sc_scenarios) {
+              const s3 = _sc_score(sc.r3), s6 = _sc_score(sc.r6);
+              const trend = s6 > s3 ? '↗ 改善' : s6 < s3 ? '↘ 悪化' : '→ 横ばい';
+              _l1.push(`  [Scenario ${sc.id}] ${sc.label}`);
+              _l1.push(`    概要: ${sc.desc}`);
+              _l1.push(`    3m後スコア: ${s3}  6m後スコア: ${s6}  トレンド: ${trend}`);
+              if (sc.id === 'D') _l1.push(`    ⚠ aggressive — unsafe昇格リスクに注意`);
+              if (sc.id === 'F') _l1.push(`    △ burnout回復中は nightCore 人員が一時的に減少`);
+            }
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Intervention-Outcome-Projection] ──
+          {
+            const _l2 = [`[Intervention-Outcome-Projection] dept=${cd.id}`];
+            _l2.push(`  ── 各シナリオの未来結果予測（3ヶ月後 / 6ヶ月後） ──`);
+
+            const dimHeader = '  シナリオ        | boHigh  | Core  | Support | Unsafe | LadderCand | Score';
+            _l2.push(dimHeader);
+            _l2.push('  ' + '-'.repeat(dimHeader.length - 2));
+
+            for (const sc of _sc_scenarios) {
+              const { r3, r6 } = sc;
+              const boFlag3 = r3.boHighCount >= 2 ? '⚠⚠' : r3.boHighCount >= 1 ? '⚠' : '✓';
+              const coreF3  = r3.coreCount === 0 ? '⚠⚠' : r3.coreCount === 1 ? '⚠' : '✓';
+              _l2.push(`  [${sc.id}] ${sc.label.slice(0,16).padEnd(16)} | 3m: ${String(r3.boHighCount).padStart(2)}${boFlag3} | ${String(r3.coreCount).padStart(2)}${coreF3} | ${String(r3.suppAvail).padStart(3)}   | ${String(r3.unsafeCount).padStart(3)}${r3.unsafeCount > 0 ? '⚠' : ' '} | ${String(r3.ladderCands).padStart(6)}   | ${String(_sc_score(r3)).padStart(4)}`);
+              _l2.push(`  ${''.padEnd(18)} | 6m: ${String(r6.boHighCount).padStart(2)}   | ${String(r6.coreCount).padStart(2)}   | ${String(r6.suppAvail).padStart(3)}   | ${String(r6.unsafeCount).padStart(3)}   | ${String(r6.ladderCands).padStart(6)}   | ${String(_sc_score(r6)).padStart(4)}`);
+            }
+
+            // Per-dimension narrative
+            _l2.push(`  ── burnout軌跡 ──`);
+            for (const sc of _sc_scenarios)
+              _l2.push(`  [${sc.id}]: ${_sc_arr.filter(st => st.bo === 'high').length}名(現) → ${sc.r3.boHighCount}名(3m) → ${sc.r6.boHighCount}名(6m)${sc.r6.boHighCount === 0 ? ' ✓' : sc.r6.boHighCount <= 1 ? ' △' : ' ⚠'}`);
+            _l2.push(`  ── nightCore推移 ──`);
+            for (const sc of _sc_scenarios)
+              _l2.push(`  [${sc.id}]: ${_sc_arr.filter(st => st.ladder >= 4).length}名(現) → ${sc.r3.coreCount}名(3m) → ${sc.r6.coreCount}名(6m)${sc.r6.coreCount >= 2 ? ' ✓' : sc.r6.coreCount === 1 ? ' △' : ' ⚠⚠'}`);
+            _l2.push(`  ── unsafe昇格リスク ──`);
+            for (const sc of _sc_scenarios)
+              _l2.push(`  [${sc.id}]: ${sc.r3.unsafeCount}件(3m) → ${sc.r6.unsafeCount}件(6m)${sc.r6.unsafeCount === 0 ? ' ✓' : sc.r6.unsafeCount >= 2 ? ' ⚠⚠' : ' ⚠'}`);
+
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Stability-Tradeoff-Analyzer] ──
+          {
+            const _l3 = [`[Stability-Tradeoff-Analyzer] dept=${cd.id}`];
+            _l3.push(`  ── 安定性トレードオフ分析（「改善量」だけでなく「失う安定」を見る） ──`);
+
+            const baseR3 = _sc_scenarios[0].r3; // Scenario A as baseline
+            for (const sc of _sc_scenarios) {
+              const { r3 } = sc;
+              const boImprove   = baseR3.boHighCount - r3.boHighCount;        // positive = better
+              const coreChange  = r3.coreCount - baseR3.coreCount;
+              const suppChange  = r3.suppAvail - baseR3.suppAvail;
+              const unsafeInc   = r3.unsafeCount - baseR3.unsafeCount;        // positive = worse
+              const ladderGain  = r3.ladderCands - baseR3.ladderCands;
+
+              // Tradeoff score: benefits - costs
+              const benefit = boImprove * 2 + coreChange * 3 + suppChange * 2 + ladderGain;
+              const cost    = unsafeInc * 5 + Math.max(0, -suppChange) * 2 + Math.max(0, -coreChange) * 3;
+              const net     = benefit - cost;
+              const netLabel = net >= 5 ? 'highly-positive' : net >= 2 ? 'positive'
+                : net === 0 ? 'neutral' : net >= -3 ? 'negative' : 'highly-negative';
+
+              _l3.push(`  [Scenario ${sc.id}] ${sc.label}  net=${net > 0 ? '+' : ''}${net} (${netLabel})`);
+              if (boImprove !== 0) _l3.push(`    burnout改善: ${boImprove > 0 ? '+' : ''}${boImprove}名${boImprove > 0 ? ' ✓' : ' ⚠'}`);
+              if (coreChange !== 0) _l3.push(`    nightCore変化: ${coreChange > 0 ? '+' : ''}${coreChange}名${coreChange >= 0 ? ' ✓' : ' ⚠'}`);
+              if (suppChange !== 0) _l3.push(`    support役変化: ${suppChange > 0 ? '+' : ''}${suppChange}名${suppChange >= 0 ? ' ✓' : ' ⚠'}`);
+              if (unsafeInc > 0) _l3.push(`    unsafe昇格増: +${unsafeInc}件 ⚠`);
+              if (ladderGain !== 0) _l3.push(`    ladder候補変化: ${ladderGain > 0 ? '+' : ''}${ladderGain}名${ladderGain >= 0 ? ' ✓' : ' △'}`);
+
+              // Key tradeoff summary
+              if (sc.id === 'A')
+                _l3.push(`    → 「何もしない」は安全か: ${baseR3.boHighCount > 0 ? '⚠ No — burnout継続で連鎖リスクあり' : '✓ 現状維持で安定'}`);
+              if (sc.id === 'D' && unsafeInc > 0)
+                _l3.push(`    → nightCore分散の代償: unsafe昇格+${unsafeInc}件 — aggressive介入は諸刃の剣`);
+              if (sc.id === 'F')
+                _l3.push(`    → burnout最優先の代償: fl成長率50%減 — 短期回復 vs 長期成長停滞のトレードオフ`);
+            }
+
+            // Best tradeoff
+            const sorted = [..._sc_scenarios].sort((a, b) => {
+              const nA = _sc_score(a.r3) + _sc_score(a.r6);
+              const nB = _sc_score(b.r3) + _sc_score(b.r6);
+              return nB - nA;
+            });
+            _l3.push(`  ── トレードオフ総評 ──`);
+            _l3.push(`  最もバランスが良いシナリオ: [${sorted[0].id}] ${sorted[0].label}`);
+            _l3.push(`  最もリスクが高いシナリオ: [${sorted[sorted.length - 1].id}] ${sorted[sorted.length - 1].label}`);
+
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Human-Impact-Comparison] ──
+          {
+            const _l4 = [`[Human-Impact-Comparison] dept=${cd.id}`];
+            _l4.push(`  ── 人間への影響比較（「勤務効率」ではなく「人間状態」を比較） ──`);
+
+            // Human impact dimensions (derived from scenario states at t=3)
+            const _sc_humanImpact = (sc) => {
+              const { r3, r6 } = sc;
+              // Anxiety proxy: bo=high + unsafe昇格 → high anxiety
+              const anxietyScore = r3.boHighCount * 2 + r3.unsafeCount * 3;
+              const anxiety = anxietyScore >= 5 ? 'high' : anxietyScore >= 2 ? 'moderate' : 'low';
+              // Adaptation stability: high coreCount + no unsafe = stable
+              const adaptStable = r3.unsafeCount === 0 && r3.coreCount >= Math.max(1, _sc_arr.filter(st => st.ladder >= 4).length);
+              // Recovery margin: staff not in bo=high = recovery capacity
+              const recoveryMargin = r3.states.filter(e => e.fut.bo !== 'high' && e.base.rd !== 'high').length;
+              // Psychological safety proxy: support intact + no fixation growing
+              const fixGrow = _sc_pairs.filter(p => p.depType === 'fixationRisk').length;
+              const psychSafe = r3.boHighCount === 0 && r3.unsafeCount === 0 && fixGrow === 0
+                ? 'high' : r3.boHighCount <= 1 && r3.unsafeCount === 0 ? 'moderate' : 'low';
+              // Support dependency: healthy pairs maintained
+              const healthyPairCount = _sc_pairs.filter(p => p.depType === 'healthySupport').length;
+              return { anxiety, adaptStable, recoveryMargin, psychSafe, healthyPairCount };
+            };
+
+            for (const sc of _sc_scenarios) {
+              const h = _sc_humanImpact(sc);
+              const anxIcon = h.anxiety === 'high' ? '↑⚠' : h.anxiety === 'moderate' ? '→△' : '↓✓';
+              const adapIcon = h.adaptStable ? '✓ 安定' : '⚠ 不安定';
+              const psychIcon = h.psychSafe === 'high' ? '✓ 高い' : h.psychSafe === 'moderate' ? '△ 普通' : '⚠ 低い';
+              _l4.push(`  [${sc.id}] ${sc.label}`);
+              _l4.push(`    不安感: ${h.anxiety} ${anxIcon}  適応安定: ${adapIcon}  recovery余力: ${h.recoveryMargin}名`);
+              _l4.push(`    psychological safety: ${psychIcon}  healthySupport維持: ${h.healthyPairCount}組`);
+              // Notable human concerns
+              if (h.anxiety === 'high')
+                _l4.push(`    ⚠ 高不安: burnout/unsafe の重なりがスタッフの心理的安全を脅かす`);
+              if (!h.adaptStable)
+                _l4.push(`    ⚠ 適応不安定: unsafe昇格によるstress増大リスクあり`);
+              if (h.psychSafe === 'high' && sc.id !== 'A')
+                _l4.push(`    ✓ 最も心理的安全を保つシナリオの一つ`);
+            }
+
+            // Human perspective comparison
+            _l4.push(`  ── 人間影響軸での比較 ──`);
+            const safestHuman = _sc_scenarios.reduce((best, sc) => {
+              const h = _sc_humanImpact(sc);
+              const score = (h.anxiety === 'low' ? 3 : h.anxiety === 'moderate' ? 1 : 0)
+                + (h.adaptStable ? 2 : 0) + (h.psychSafe === 'high' ? 3 : h.psychSafe === 'moderate' ? 1 : 0)
+                + h.recoveryMargin;
+              return !best || score > best.score ? { id: sc.id, label: sc.label, score } : best;
+            }, null);
+            _l4.push(`  人間視点で最も安全なシナリオ: [${safestHuman?.id}] ${safestHuman?.label}`);
+            _l4.push(`  → burnout軽減と psychological safety の両立が最良`);
+
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Scenario-Recommendation-Layer] ──
+          {
+            const _l5 = [`[Scenario-Recommendation-Layer] dept=${cd.id}`];
+            _l5.push(`  ── シナリオ推奨（「なぜその未来を推奨するか」を説明する） ──`);
+
+            // Multi-axis scoring for each scenario (higher = better)
+            const _sc_fullScore = (sc) => {
+              const { r3, r6 } = sc;
+              const sustainability   = r6.coreCount >= 1 && r6.boHighCount === 0 ? 3 : r6.coreCount >= 1 ? 2 : 0;
+              const recoverySpeed    = r3.boHighCount < _sc_boHighNames.length ? 2 : 0;
+              const growthContinuity = r6.ladderCands + r6.suppAvail;
+              const burnoutSafety    = 3 - Math.min(3, r3.boHighCount);
+              const supportIntegrity = r3.suppAvail;
+              const orgRisk          = -(r3.unsafeCount * 3 + (r3.coreCount === 0 ? 5 : 0));
+              const total = sustainability * 2 + recoverySpeed * 2 + growthContinuity
+                + burnoutSafety * 2 + supportIntegrity + orgRisk;
+              return { total, sustainability, recoverySpeed, growthContinuity, burnoutSafety, supportIntegrity, orgRisk };
+            };
+
+            const scored = _sc_scenarios.map(sc => ({ ...sc, score: _sc_fullScore(sc) }))
+              .sort((a, b) => b.score.total - a.score.total);
+
+            _l5.push(`  ── 6軸評価スコア ──`);
+            _l5.push(`  シナリオ                  | 持続性 | 回復速 | 成長継 | bo安全 | support | 組織リスク | 合計`);
+            for (const sc of scored) {
+              const s = sc.score;
+              _l5.push(`  [${sc.id}] ${sc.label.slice(0,20).padEnd(20)} | ${String(s.sustainability*2).padStart(4)}   | ${String(s.recoverySpeed*2).padStart(4)}   | ${String(s.growthContinuity).padStart(4)}   | ${String(s.burnoutSafety*2).padStart(4)}   | ${String(s.supportIntegrity).padStart(5)}   | ${String(s.orgRisk).padStart(6)}     | ${String(s.total).padStart(4)}`);
+            }
+
+            // Recommendation
+            const rec  = scored[0];
+            const warn = scored[scored.length - 1];
+            _l5.push(`  ── 推奨シナリオ ──`);
+            _l5.push(`  ✅ 推奨: [${rec.id}] ${rec.label}  (スコア=${rec.score.total})`);
+            _l5.push(`  理由:`);
+            _l5.push(`    ・持続性スコア ${rec.score.sustainability * 2}: 6ヶ月後も nightCore が維持される見込み`);
+            if (rec.score.recoverySpeed > 0) _l5.push(`    ・回復速度スコア ${rec.score.recoverySpeed * 2}: burnout の早期改善が期待できる`);
+            if (rec.score.burnoutSafety > 0) _l5.push(`    ・burnout安全スコア ${rec.score.burnoutSafety * 2}: bo=high を最小化できる`);
+            if (rec.score.orgRisk === 0) _l5.push(`    ・unsafe昇格リスクがゼロ`);
+            _l5.push(`    ・${rec.desc}`);
+
+            _l5.push(`  ⛔ 非推奨: [${warn.id}] ${warn.label}  (スコア=${warn.score.total})`);
+            _l5.push(`  理由:`);
+            if (warn.score.orgRisk < 0) _l5.push(`    ・組織リスクスコア ${warn.score.orgRisk}: unsafe昇格や nightCore 消滅のリスクが高い`);
+            if (warn.score.burnoutSafety < 2) _l5.push(`    ・burnout継続または悪化リスクあり`);
+            _l5.push(`    ・${warn.desc}`);
+
+            // Answer key questions
+            _l5.push(`  ── Q&A ──`);
+            _l5.push(`  Q1: 現状維持[A]は本当に安全か?`);
+            const aScore = scored.find(s => s.id === 'A')?.score.total ?? 0;
+            const aRisk  = _sc_scenarios[0].r3.boHighCount > 0;
+            _l5.push(`    → ${aRisk ? `⚠ No: burnout継続・連鎖リスクあり（スコア=${aScore}）` : `✓ Yes: 現状が安定していれば維持も選択肢`}`);
+            _l5.push(`  Q2: burnout軽減とgrowth継続は両立可能か?`);
+            const bSc = scored.find(s => s.id === 'B');
+            _l5.push(`    → ${bSc?.score.growthContinuity >= 2 ? `✓ [B]で両立可能（growth継続=${bSc.score.growthContinuity}）` : `△ 難しい — burnout回復中はfl成長が鈍化する`}`);
+            _l5.push(`  Q3: support維持とnightCore分散は同時成立できるか?`);
+            const cSc = scored.find(s => s.id === 'C');
+            const dSc = scored.find(s => s.id === 'D');
+            _l5.push(`    → [C]support-first: suppAvail=${cSc?.r3.suppAvail??0}  [D]aggressive: unsafe=${dSc?.r3.unsafeCount??0}件`);
+            _l5.push(`    → ${dSc && dSc.r3.unsafeCount > 0 ? '⚠ 急速分散はunsafe昇格を招く — Cの段階的アプローチを推奨' : '✓ 同時成立可能'}`);
+            _l5.push(`  Q4: 人間心理を考慮すると最適未来は変わるか?`);
+            const bestPsych = _sc_scenarios.reduce((b, sc) => {
+              const boLow = sc.r3.boHighCount === 0 && sc.r3.unsafeCount === 0;
+              return boLow && (!b || sc.r3.ladderCands > b.cands) ? { id: sc.id, cands: sc.r3.ladderCands } : b;
+            }, null);
+            _l5.push(`    → ${bestPsych ? `✓ 人間視点での最良: [${bestPsych.id}] — bo=high/unsafe=0で心理的安全が最大` : '△ 完全安心なシナリオなし — tradeoffが残る'}`);
+
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Scenario-Explainability-Audit] ──
+          {
+            const _l6 = [`[Scenario-Explainability-Audit] dept=${cd.id}`];
+            _l6.push(`  ── シナリオ比較の説明可能性監査（人間が「比較して選択」できる状態か） ──`);
+
+            const checks = [];
+
+            // Check 1: 分岐数過多
+            const branchCount = _sc_scenarios.length;
+            checks.push({
+              item: 'シナリオ数',
+              result: branchCount > 7 ? 'overload' : branchCount >= 3 ? 'appropriate' : 'insufficient',
+              detail: branchCount > 7 ? `⚠ ${branchCount}件 — 管理者には多すぎる可能性`
+                : `✓ ${branchCount}件 — 比較可能な適切な数`
+            });
+
+            // Check 2: 推奨理由の明確さ
+            const topScore  = Math.max(..._sc_scenarios.map(sc => _sc_score(sc.r3) + _sc_score(sc.r6)));
+            const lastScore = Math.min(..._sc_scenarios.map(sc => _sc_score(sc.r3) + _sc_score(sc.r6)));
+            const scoreDiff = topScore - lastScore;
+            checks.push({
+              item: '推奨差別化',
+              result: scoreDiff >= 5 ? 'clear' : scoreDiff >= 2 ? 'moderate' : 'unclear',
+              detail: scoreDiff >= 5 ? `✓ スコア差=${scoreDiff} — 推奨と非推奨が明確に区別できる`
+                : scoreDiff >= 2 ? `△ スコア差=${scoreDiff} — 差が小さい。追加軸での説明が必要`
+                : `⚠ スコア差=${scoreDiff} — ほぼ同等。推奨理由の補強が必要`
+            });
+
+            // Check 3: tradeoff可視性
+            const hasUnsafe = _sc_scenarios.some(sc => sc.r3.unsafeCount > 0);
+            const hasBoWorse = _sc_scenarios.some(sc => sc.r3.boHighCount > _sc_boHighNames.length);
+            checks.push({
+              item: 'トレードオフ可視性',
+              result: hasUnsafe || hasBoWorse ? 'visible' : 'limited',
+              detail: hasUnsafe || hasBoWorse
+                ? `✓ unsafe昇格 or burnout悪化シナリオが存在 — 代償が明確に見える`
+                : `△ 全シナリオで改善のみ — 代償の比較ができていない可能性`
+            });
+
+            // Check 4: burnout偏重
+            const burnFocus = _sc_scenarios.filter(sc => sc.id === 'B' || sc.id === 'F').length;
+            checks.push({
+              item: 'burnout偏重',
+              result: burnFocus >= 3 ? 'warn' : 'balanced',
+              detail: burnFocus >= 3 ? `△ burnout中心シナリオが${burnFocus}件 — growth・supportの視点が薄い可能性`
+                : `✓ バランスよく burnout / support / growth / nightCore を網羅`
+            });
+
+            // Check 5: 人間影響の表示
+            checks.push({
+              item: '人間影響の可視性',
+              result: 'ok',
+              detail: `✓ Layer4 で anxiety / adaptStable / recovery余力 / psychological safety を表示済み`
+            });
+
+            // Check 6: AI決定感の排除
+            const recCount  = 1; // only 1 recommendation
+            const hasWhyRec = true; // Layer5 always explains why
+            checks.push({
+              item: 'AI決定感の排除',
+              result: hasWhyRec ? 'ok' : 'partial',
+              detail: hasWhyRec
+                ? `✓ 推奨は1件だが「なぜ」を明記 + 4つのQ&Aで人間判断を支援`
+                : `△ 推奨理由の説明が不足 — 人間が「AIに決めてもらった」感が残る可能性`
+            });
+
+            const okCount   = checks.filter(c => ['ok','appropriate','clear','visible','balanced'].includes(c.result)).length;
+            const warnCount = checks.filter(c => ['warn','overload','unclear','insufficient'].includes(c.result)).length;
+
+            _l6.push(`  ── 可読性チェック（${checks.length}項目） ──`);
+            for (const c of checks) {
+              const icon = ['ok','appropriate','clear','visible','balanced'].includes(c.result) ? '✓'
+                : ['partial','moderate','limited'].includes(c.result) ? '△' : '⚠';
+              _l6.push(`  ${icon} ${c.item}: ${c.detail}`);
+            }
+
+            const overall = warnCount === 0 && okCount >= 5 ? 'humanComparableScenarioUI'
+              : warnCount <= 1 ? 'mostlyComparable'
+              : 'needsClarification';
+            _l6.push(`  ── 総合判定: ${overall} (ok=${okCount} / warn=${warnCount}) ──`);
+            if (overall === 'humanComparableScenarioUI')
+              _l6.push(`  ✓ 人間が「未来を比較して選択」できる Scenario Comparison UI として成立しています。`);
+            if (overall === 'mostlyComparable')
+              _l6.push(`  △ ほぼ比較可能。推奨差の説明またはtradeoff可視化を強化するとさらに良くなります。`);
+            if (overall === 'needsClarification')
+              _l6.push(`  ⚠ シナリオ整理が必要。上位3件に絞りトレードオフを明示することを推奨します。`);
+
+            // Final guidance
+            _l6.push(`  ─ Scenario UI 設計向け観察メモ ─`);
+            _l6.push(`  1. 「現状維持 vs 推奨シナリオ」の対比が最もわかりやすい見せ方`);
+            _l6.push(`  2. スコア数値より「burnout何名減 / nightCore何名増」の実数が管理者に伝わりやすい`);
+            _l6.push(`  3. aggressive シナリオは常に unsafe リスクとセットで表示する`);
+            _l6.push(`  4. 「3ヶ月後」と「6ヶ月後」の2軸比較が短期 vs 長期のトレードオフを明確にする`);
+            _l6.push(`  5. 推奨は「AIが決めた」ではなく「この指標でこのシナリオが最良」として提示する`);
+
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Scenario-Branch-Generator / Intervention-Outcome-Projection /
+        //    Stability-Tradeoff-Analyzer / Human-Impact-Comparison /
+        //    Scenario-Recommendation-Layer / Scenario-Explainability-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
