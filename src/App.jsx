@@ -11614,6 +11614,511 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Support-Dependency-Transition / Night-Readiness-Projection /
         //    Readiness-Stability-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Readiness-Intervention-Candidate / Support-Reduction-Sim /
+        //    Night-Introduction-Sim / OverProtection-Recovery /
+        //    Growth-Stability-Analysis / Readiness-Intervention-Cost]
+        // Readiness Intervention Sandbox — Human Growth Simulation System (read-only)
+        // - 育成・適応・夜勤導入を「介入シミュレーション」として観測。
+        // - 実shift変更禁止。autoGenerate変更禁止。DB保存禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _ri_days  = getDays(year, month);
+          const _ri_ds    = cs.filter(s => s.dept === cd.id);
+          const _ri_cds   = cd.customShiftDefs || [];
+          const _ri_tailN = Math.min(7, _ri_days);
+          const _ri_boOrd = { low: 0, medium: 1, high: 2 };
+
+          // ── helpers ──
+          const _ri_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _ri_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _ri_nset.add(k);
+          });
+          const _ri_isNight = sh => _ri_nset.has(sh);
+          const _ri_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _ri_isWork  = sh => !!(sh && !_ri_isRest(sh) && sh !== '明け' && sh !== '');
+          const _ri_fw      = sh => _ri_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _ri_boOf    = totF => totF >= _ri_days * 2.0 ? 'high' : totF >= _ri_days * 1.2 ? 'medium' : 'low';
+
+          // ── trend lookup ──
+          const _ri_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics ──
+          const _ri_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, dSq=0, leSq=0;
+            for (let d = 1; d <= _ri_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _ri_fw(sh);
+              if (d > _ri_days - _ri_tailN) tlF += _ri_fw(sh);
+              if (_ri_isNight(sh)) nCnt++;
+              if (_ri_isRest(sh))  rCnt++;
+              if (sh === '明け' && _ri_isNight(pv)) {
+                if (_ri_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_ri_isWork(nx))    dSq++;
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _ri_boOf(totF);
+            const co = tlF >= _ri_tailN * 3.0 ? 'high' : tlF >= _ri_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _ri_days * 0.25 * 0.7 ? 'high' : rCnt < _ri_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, dSq, leSq, bo, co, rd };
+          };
+
+          // ── pair co-occurrence ──
+          const _ri_pco = {};
+          for (let d = 1; d <= _ri_days; d++) {
+            const nw = _ri_ds.filter(s => _ri_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _ri_pco[pk] = (_ri_pco[pk] || 0) + 1;
+              }
+          }
+          const _ri_fixedPairsRaw = Object.entries(_ri_pco)
+            .filter(([, n]) => n >= _ri_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── stage model ──
+          const _ri_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+
+          // ── transition progress ──
+          const _RI_RANGES = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _ri_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _RI_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+
+          // ── per-staff state ──
+          const _ri_st = {};
+          for (const s of _ri_ds) {
+            const m   = _ri_metric(result[s.id] || {});
+            const tr  = _ri_trd(s.name);
+            const wk  = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy  = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl  = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr  = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _ri_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _ri_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            _ri_st[s.name] = { fy, fl, rr, stage, progress, nightOk: !!s.nightOk, ...m, depType: null };
+          }
+
+          // ── pair dependency classification ──
+          const _ri_pairs = [];
+          for (const pair of _ri_fixedPairsRaw) {
+            const [n1, n2] = pair;
+            const s1 = _ri_st[n1], s2 = _ri_st[n2];
+            if (!s1 || !s2) continue;
+            const pk   = pair.slice().sort().join('×');
+            const cnt  = _ri_pco[pk] || 0;
+            const rate = cnt / _ri_days;
+            const [giver, receiver, gSt, rSt] = s1.stage >= s2.stage
+              ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+            let depType;
+            if (rSt.stage <= 2 && rSt.fl >= 1.5)                            depType = 'overProtection';
+            else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3)   depType = 'fixationRisk';
+            else if (rSt.stage >= 4 && gSt.stage >= 4)                      depType = 'stablePair';
+            else                                                              depType = 'healthySupport';
+            _ri_pairs.push({ pair, pk, cnt, rate, giver, receiver, gSt, rSt, depType });
+            if (_ri_st[receiver]) _ri_st[receiver].depType = depType;
+            if (_ri_st[giver])    _ri_st[giver].depType    = depType;
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Layer 1 data: Intervention Candidates per staff
+          // ─────────────────────────────────────────────────────────────────────
+          // Types: supportContinue / recoveryPriority / lateEarlyReduction /
+          //        sequenceProtection / nightIntroPrep / nightIntro / nightIntroDelay /
+          //        nightFreqMaintain / nightFreqReduction / nightCoreStabilize /
+          //        nightCoreBurnoutPrev / supportReduction / pairGradualSeparation /
+          //        overProtectionRecovery / relocationStabilize
+          const _ri_cands = [];
+          for (const s of _ri_ds) {
+            const st = _ri_st[s.name]; if (!st) continue;
+            const ivs = [];
+            if (st.stage <= 1) {
+              if (st.bo !== 'high') ivs.push({ type: 'supportContinue',     reason: '初期段階、支援継続が最優先', priority: 1 });
+              else                  ivs.push({ type: 'recoveryPriority',     reason: 'burnout高→成長より回復優先', priority: 1 });
+              if (st.leSq > 0)      ivs.push({ type: 'lateEarlyReduction',  reason: '遅番→早番危険遷移の削減', priority: 2 });
+            } else if (st.stage === 2) {
+              if (st.cSq > 0)       ivs.push({ type: 'sequenceProtection',  reason: `criticalSeq=${st.cSq}件→sequence保護優先`, priority: 1 });
+              if (st.depType === 'overProtection') {
+                                    ivs.push({ type: 'overProtectionRecovery', reason: 'support過保護→段階的自立促進', priority: 1 });
+              }
+              if (st.bo !== 'high' && st.progress >= 0.5) {
+                                    ivs.push({ type: 'nightIntroPrep',      reason: `progress=${st.progress.toFixed(2)}→夜勤準備開始検討`, priority: 2 });
+              }
+            } else if (st.stage === 3) {
+              if (st.bo === 'high' || st.co === 'high') {
+                                    ivs.push({ type: 'nightIntroDelay',     reason: 'burnout/fatigue高→夜勤導入延期', priority: 1 });
+              } else if (st.progress >= 0.6 && st.nightOk) {
+                                    ivs.push({ type: 'nightIntro',          reason: `progress=${st.progress.toFixed(2)}→夜勤1回導入候補`, priority: 1 });
+              } else {
+                                    ivs.push({ type: 'nightIntroDelay',     reason: `progress=${st.progress.toFixed(2)}→準備継続`, priority: 2 });
+              }
+              if (st.depType === 'fixationRisk' || st.depType === 'overProtection') {
+                                    ivs.push({ type: 'supportReduction',    reason: `${st.depType}→support軽減で自立促進`, priority: 2 });
+              }
+            } else if (st.stage === 4) {
+              if (st.bo === 'high') ivs.push({ type: 'nightFreqReduction',  reason: 'burnout高→夜勤頻度一時削減', priority: 1 });
+              else                  ivs.push({ type: 'nightFreqMaintain',   reason: '適応中→夜勤頻度維持で経験積み上げ', priority: 1 });
+              if (st.cSq > 0)       ivs.push({ type: 'sequenceProtection',  reason: `criticalSeq=${st.cSq}件→次月sequence改善`, priority: 2 });
+            } else { // stage 5
+              if (st.bo !== 'high') ivs.push({ type: 'nightCoreStabilize',  reason: 'nightCore安定維持', priority: 1 });
+              else                  ivs.push({ type: 'nightCoreBurnoutPrev',reason: 'nightCore過負荷→burnout防止', priority: 1 });
+              if (st.depType === 'fixationRisk') {
+                                    ivs.push({ type: 'pairGradualSeparation', reason: 'pairFixation→段階的分散', priority: 2 });
+              }
+            }
+            if (st.rr === 'high')   ivs.push({ type: 'relocationStabilize', reason: `異動ベテラン(fy=${st.fy.toFixed(1)}y)→floor適応期間確保`, priority: 1 });
+            ivs.sort((a, b) => a.priority - b.priority);
+            if (ivs.length > 0) _ri_cands.push({ staffName: s.name, ivs });
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Layer 2 data: Support Reduction Simulation
+          // For fixationRisk / overProtection pairs: analytically reduce pair nights by 40%
+          // ─────────────────────────────────────────────────────────────────────
+          const _ri_supSims = [];
+          for (const p of _ri_pairs) {
+            if (p.depType !== 'fixationRisk' && p.depType !== 'overProtection') continue;
+            const rSt = _ri_st[p.receiver]; if (!rSt) continue;
+            const simNights     = Math.max(1, Math.round(p.cnt * 0.6));
+            const progressDelta = (p.cnt - simNights) * 0.02;
+            const simProgress   = Math.min(1.0, rSt.progress + progressDelta);
+            const simRate       = simNights / _ri_days;
+            const anxietyDelta  = rSt.stage <= 2 ? 1 : 0;
+            const seqImpact     = rSt.sSq > 0 && rSt.stage <= 2 ? 'mild_risk' : 'stable';
+            _ri_supSims.push({
+              pk: p.pk, receiver: p.receiver, giver: p.giver, depType: p.depType,
+              origN: p.cnt, simN: simNights, origRate: p.rate, simRate,
+              origProg: rSt.progress.toFixed(2),
+              progressDelta: progressDelta.toFixed(2),
+              simProgress: simProgress.toFixed(2),
+              anxietyDelta, seqImpact
+            });
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Layer 3 data: Night Introduction Simulation (stage-3 staff)
+          // Analytically compute effect of adding 1 night shift (fatigue +5: 夜勤+明け)
+          // ─────────────────────────────────────────────────────────────────────
+          const _ri_nightSims = [];
+          for (const s of _ri_ds) {
+            const st = _ri_st[s.name]; if (!st || st.stage !== 3) continue;
+            const addFatigue  = 5; // 夜勤(3) + 明け(2)
+            const simTotF     = st.totF + addFatigue;
+            const simBO       = _ri_boOf(simTotF);
+            const simProgress = _ri_progOf(4, st.fl, st.sSq, st.cSq, simBO, st.co, st.leSq);
+            const hasSupport  = _ri_pairs.some(p => p.receiver === s.name || p.giver === s.name);
+            let safety;
+            if (!st.nightOk)             safety = 'notEligible';
+            else if (simBO === 'high')   safety = 'tooHighRisk';
+            else if (hasSupport)         safety = 'safeWithSupport';
+            else if (st.progress < 0.4)  safety = 'cautious';
+            else                         safety = 'feasible';
+            _ri_nightSims.push({
+              staffName: s.name, stage: st.stage, simStage: 4, safety,
+              origBO: st.bo, simBO, origTotF: st.totF, simTotF, addFatigue,
+              hasSupport, origProg: st.progress.toFixed(2), simProgress: simProgress.toFixed(2),
+              readinessBefore: (st.fl < 0.5 || st.fy < 0.5) ? 'low' : 'medium',
+              readinessAfter:  (st.fl >= 1.0 && simBO !== 'high') ? 'medium' : 'low'
+            });
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Layer 4 data: OverProtection Recovery
+          // For overProtection staff: reduce shared nights by 40%, observe progress recovery
+          // ─────────────────────────────────────────────────────────────────────
+          const _ri_opRecs = [];
+          for (const s of _ri_ds) {
+            const st = _ri_st[s.name]; if (!st || st.depType !== 'overProtection') continue;
+            const pInfo = _ri_pairs.find(p => p.receiver === s.name && p.depType === 'overProtection');
+            if (!pInfo) continue;
+            const simN          = Math.max(1, Math.round(pInfo.cnt * 0.6));
+            const progressDelta = (pInfo.cnt - simN) * 0.025;
+            const simProgress   = Math.min(1.0, st.progress + progressDelta);
+            const simBO         = (st.bo === 'low' && pInfo.cnt - simN >= 3) ? 'medium' : st.bo;
+            const burnoutUp     = _ri_boOrd[simBO] > _ri_boOrd[st.bo];
+            _ri_opRecs.push({
+              staffName: s.name, giver: pInfo.giver,
+              origN: pInfo.cnt, simN,
+              progBefore: st.progress.toFixed(2), progAfter: simProgress.toFixed(2),
+              progressDelta: progressDelta.toFixed(2),
+              origBO: st.bo, simBO, burnoutUp,
+              seqIntact: st.nCnt === 0, // no nights → sequence unaffected
+              stage: st.stage, fl: st.fl
+            });
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Layer 5 data: Growth Stability Analysis
+          // For each staff with a candidate, compute growth vs. safety compatibility
+          // ─────────────────────────────────────────────────────────────────────
+          const _ri_growthAna = [];
+          for (const ci of _ri_cands) {
+            const st = _ri_st[ci.staffName]; if (!st) continue;
+            const growthRate   = st.progress >= 0.7 ? 'fast' : st.progress >= 0.4 ? 'moderate' : 'slow';
+            const seqStatus    = st.cSq === 0 && st.dSq === 0 ? 'intact' : st.cSq > 0 ? 'critical' : 'warning';
+            const burnoutRisk  = st.bo === 'high' ? 'high' : (st.co === 'high' && st.stage >= 3) ? 'elevated' : 'low';
+            const relocStable  = st.rr === 'low' || st.fl >= 0.5;
+            const compatible   = burnoutRisk !== 'high' && st.bo !== 'high' && seqStatus !== 'critical';
+            const compatibility = !compatible ? 'growth_blocked'
+              : growthRate === 'fast' ? 'optimal'
+              : burnoutRisk === 'elevated' ? 'cautious'
+              : 'good';
+            _ri_growthAna.push({
+              staffName: ci.staffName, stage: st.stage, growthRate,
+              seqStatus, burnoutRisk, relocStable, compatibility,
+              topType: ci.ivs[0]?.type ?? '-'
+            });
+          }
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Layer 6 data: Readiness Intervention Cost
+          // benefit = readinessGrowth×2 + independenceGain + supportReduction
+          // cost    = fatigueIncrease + burnoutRisk + seqFragility + anxietyRisk
+          // ─────────────────────────────────────────────────────────────────────
+          const _RI_BEN = {
+            nightIntro:            { rG:3, iG:2, sR:0 },
+            nightIntroPrep:        { rG:1, iG:1, sR:0 },
+            nightIntroDelay:       { rG:0, iG:0, sR:0 },
+            nightFreqMaintain:     { rG:2, iG:1, sR:0 },
+            nightFreqReduction:    { rG:0, iG:0, sR:0 },
+            nightCoreStabilize:    { rG:1, iG:1, sR:0 },
+            nightCoreBurnoutPrev:  { rG:0, iG:0, sR:0 },
+            supportContinue:       { rG:1, iG:0, sR:0 },
+            supportReduction:      { rG:2, iG:2, sR:2 },
+            pairGradualSeparation: { rG:2, iG:2, sR:2 },
+            overProtectionRecovery:{ rG:3, iG:2, sR:2 },
+            recoveryPriority:      { rG:0, iG:0, sR:0 },
+            sequenceProtection:    { rG:1, iG:0, sR:0 },
+            lateEarlyReduction:    { rG:1, iG:1, sR:0 },
+            relocationStabilize:   { rG:1, iG:0, sR:0 },
+          };
+          const _RI_CST = {
+            nightIntro:            { fi:2, bR:1, sF:1, aR:1 },
+            nightIntroPrep:        { fi:0, bR:0, sF:0, aR:0 },
+            nightIntroDelay:       { fi:0, bR:0, sF:0, aR:0 },
+            nightFreqMaintain:     { fi:1, bR:0, sF:0, aR:0 },
+            nightFreqReduction:    { fi:0, bR:0, sF:0, aR:0 },
+            nightCoreStabilize:    { fi:0, bR:0, sF:0, aR:0 },
+            nightCoreBurnoutPrev:  { fi:0, bR:0, sF:0, aR:0 },
+            supportContinue:       { fi:0, bR:0, sF:0, aR:0 },
+            supportReduction:      { fi:0, bR:1, sF:1, aR:2 },
+            pairGradualSeparation: { fi:0, bR:1, sF:1, aR:1 },
+            overProtectionRecovery:{ fi:0, bR:1, sF:0, aR:2 },
+            recoveryPriority:      { fi:0, bR:0, sF:0, aR:0 },
+            sequenceProtection:    { fi:0, bR:0, sF:0, aR:0 },
+            lateEarlyReduction:    { fi:0, bR:0, sF:1, aR:0 },
+            relocationStabilize:   { fi:0, bR:0, sF:0, aR:0 },
+          };
+
+          const _ri_costRows = [];
+          for (const ci of _ri_cands) {
+            const top = ci.ivs[0]; if (!top) continue;
+            const st  = _ri_st[ci.staffName]; if (!st) continue;
+            const b   = _RI_BEN[top.type] || { rG:0, iG:0, sR:0 };
+            const c   = _RI_CST[top.type] || { fi:0, bR:0, sF:0, aR:0 };
+            // burnout state amplifies burnoutRisk cost for night/support interventions
+            const boAmp = st.bo === 'high' ? 1 : 0;
+            const adjBR = c.bR + (top.type.includes('night') || top.type.includes('support') ? boAmp : 0);
+            const benefit = b.rG * 2 + b.iG + b.sR;
+            const cost    = c.fi + adjBR + c.sF + c.aR;
+            const net     = benefit - cost;
+            const netLabel = net >= 4 ? 'highPositive' : net >= 2 ? 'moderatePositive'
+                           : net === 0 ? 'neutral' : 'cautious';
+            _ri_costRows.push({
+              staffName: ci.staffName, type: top.type,
+              rG: b.rG, iG: b.iG, sR: b.sR, benefit,
+              fi: c.fi, bR: adjBR, sF: c.sF, aR: c.aR, cost,
+              net, netLabel
+            });
+          }
+
+          // ── Layer 1: [Readiness-Intervention-Candidate] ──
+          {
+            const _l1 = [`[Readiness-Intervention-Candidate] dept=${cd.id}`];
+            _l1.push(`  介入候補スタッフ数: ${_ri_cands.length}名`);
+            if (_ri_cands.length === 0) {
+              _l1.push('  介入候補なし（全スタッフ安定段階）✓');
+            } else {
+              for (const ci of _ri_cands) {
+                const st = _ri_st[ci.staffName];
+                _l1.push(`  ─── ${ci.staffName} (stage${st?.stage ?? '?'} progress=${st?.progress?.toFixed(2) ?? '-'}) ───`);
+                ci.ivs.forEach((iv, i) => {
+                  _l1.push(`    ${i === 0 ? '★' : '  '} [${iv.type}] ${iv.reason}`);
+                });
+              }
+            }
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Support-Reduction-Sim] ──
+          {
+            const _l2 = [`[Support-Reduction-Sim] dept=${cd.id}`];
+            if (_ri_supSims.length === 0) {
+              _l2.push('  support軽減シミュレーション対象なし（fixationRisk/overProtectionペアなし）✓');
+            } else {
+              for (const ss of _ri_supSims) {
+                _l2.push(`  ${ss.pk} (${ss.depType}):`);
+                _l2.push(`    supportPair: ${ss.origN}回 → ${ss.simN}回  (rate: ${(ss.origRate*100).toFixed(0)}% → ${(ss.simRate*100).toFixed(0)}%)`);
+                _l2.push(`    改善:`);
+                _l2.push(`      adaptationProgress: ${ss.origProg} → ${ss.simProgress} (+${ss.progressDelta})`);
+                if (ss.anxietyDelta > 0) {
+                  _l2.push(`    悪化:`);
+                  _l2.push(`      anxietyRisk: +${ss.anxietyDelta} ⚠ (${ss.receiver}: 早期段階のため不安増加)`);
+                }
+                _l2.push(`    sequence影響: ${ss.seqImpact === 'stable' ? '安定 ✓' : '軽微リスクあり ⚠'}`);
+                _l2.push(`    実適用: なし ✓`);
+              }
+            }
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Night-Introduction-Sim] ──
+          {
+            const _l3 = [`[Night-Introduction-Sim] dept=${cd.id}`];
+            const _l3_safety = {
+              safeWithSupport: '安全（支援ペアあり）✓',
+              feasible:        '実施可能 ✓',
+              cautious:        '慎重に（progress進行中）',
+              tooHighRisk:     '高リスク ⚠（burnout増加）',
+              notEligible:     '夜勤許可なし（要設定確認）'
+            };
+            if (_ri_nightSims.length === 0) {
+              _l3.push('  夜勤導入シミュレーション対象なし（stage3スタッフなし）');
+            } else {
+              for (const ns of _ri_nightSims) {
+                _l3.push(`  ${ns.staffName}: stage${ns.stage} → 夜勤1回導入シミュレーション`);
+                _l3.push(`    fatigue: ${ns.origTotF}pt → ${ns.simTotF}pt (+${ns.addFatigue})`);
+                _l3.push(`    burnout: ${ns.origBO} → ${ns.simBO}${ns.simBO !== ns.origBO ? (ns.simBO === 'high' ? ' ⚠' : ' →') : ' 変化なし'}`);
+                _l3.push(`    progress(stage4start): ${ns.simProgress}`);
+                _l3.push(`    support: ${ns.hasSupport ? '✓ ペアあり' : '⚠ 単独配置'}`);
+                _l3.push(`    判定: ${_l3_safety[ns.safety] || ns.safety}`);
+                if (ns.safety === 'safeWithSupport' || ns.safety === 'feasible') {
+                  _l3.push(`    → nightReadiness: ${ns.readinessBefore} → ${ns.readinessAfter} ✓`);
+                } else if (ns.safety === 'tooHighRisk') {
+                  _l3.push(`    → burnout=${ns.origBO}状態で夜勤追加はhigh化リスク → 延期推奨 ⚠`);
+                }
+                _l3.push(`    実適用: なし ✓`);
+              }
+            }
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [OverProtection-Recovery] ──
+          {
+            const _l4 = [`[OverProtection-Recovery] dept=${cd.id}`];
+            if (_ri_opRecs.length === 0) {
+              _l4.push('  overProtection対象なし ✓');
+            } else {
+              for (const op of _ri_opRecs) {
+                _l4.push(`  ${op.staffName} (${op.giver}とのペア解除シミュレーション):`);
+                _l4.push(`    support固定: ${op.origN}回 → ${op.simN}回`);
+                _l4.push(`    progress: ${op.progBefore} → ${op.progAfter} (+${op.progressDelta})`);
+                _l4.push(`    burnout: ${op.origBO}${op.burnoutUp ? ` → ${op.simBO} ⚠` : ' 変化なし ✓'}`);
+                _l4.push(`    sequence: ${op.seqIntact ? 'intact ✓（夜勤なし→影響なし）' : '要モニタリング'}`);
+                _l4.push(`    stage${op.stage} fl=${op.fl.toFixed(1)}年 → 段階的自立へ`);
+                _l4.push(`    ${op.burnoutUp ? '⚠ burnout上昇リスク → 1ヶ月1回削減の段階的実施を推奨' : '✓ burnout安全範囲内で自立促進が可能'}`);
+                _l4.push(`    実適用: なし ✓`);
+              }
+            }
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Growth-Stability-Analysis] ──
+          {
+            const _l5 = [`[Growth-Stability-Analysis] dept=${cd.id}`];
+            const COMP = { optimal:'🟢', good:'✓', cautious:'🟡', growth_blocked:'🔴' };
+            if (_ri_growthAna.length === 0) {
+              _l5.push('  分析対象なし（介入候補なし）');
+            } else {
+              for (const ga of _ri_growthAna) {
+                _l5.push(`  ${COMP[ga.compatibility] || '⬜'} ${ga.staffName} (stage${ga.stage}):`);
+                _l5.push(`    growth=${ga.growthRate}  seqStatus=${ga.seqStatus}  burnoutRisk=${ga.burnoutRisk}`);
+                _l5.push(`    relocStable=${ga.relocStable ? '✓' : '⚠'}  compatibility=${ga.compatibility}`);
+                _l5.push(`    推奨介入: ${ga.topType}`);
+                if      (ga.compatibility === 'optimal')       _l5.push(`    ✓ 安全と成長が両立 → 積極的介入推奨`);
+                else if (ga.compatibility === 'good')          _l5.push(`    ✓ 安定状態 → 段階的介入で成長促進可`);
+                else if (ga.compatibility === 'cautious')      _l5.push(`    🟡 慎重介入 → sequence/fatigueモニタリングしながら実施`);
+                else                                           _l5.push(`    🔴 成長阻害状態 → burnout解消が先決、育成は一時停止`);
+              }
+            }
+            // Facility-wide balance
+            const _ri_newbies    = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 99) <= 2);
+            const _ri_nightCores = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 0) === 5);
+            const _ri_coexist    = _ri_newbies.every(s => _ri_st[s.name]?.bo !== 'high')
+                                && _ri_nightCores.every(s => _ri_st[s.name]?.bo !== 'high');
+            _l5.push(`  ── 施設全体バランス ──`);
+            _l5.push(`  新人・適応中(stage0-2): ${_ri_newbies.length}名  nightCore(stage5): ${_ri_nightCores.length}名`);
+            _l5.push(`  新人保護×nightCore負荷 両立: ${_ri_coexist ? '✓ 両立可能' : '⚠ burnout高スタッフあり → 調整必要'}`);
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Readiness-Intervention-Cost] ──
+          {
+            const _l6 = [`[Readiness-Intervention-Cost] dept=${cd.id}`];
+            if (_ri_costRows.length === 0) {
+              _l6.push('  コスト分析対象なし');
+            } else {
+              for (const ce of _ri_costRows) {
+                _l6.push(`  ${ce.staffName} [${ce.type}]:`);
+                _l6.push(`    benefit: readinessGrowth=${ce.rG}  independenceGain=${ce.iG}  supportReduction=${ce.sR}  → benefit=${ce.benefit}`);
+                _l6.push(`    cost:    fatigueIncrease=${ce.fi}  burnoutRisk=${ce.bR}  seqFragility=${ce.sF}  anxietyRisk=${ce.aR}  → cost=${ce.cost}`);
+                _l6.push(`    netImpact: ${ce.net >= 0 ? '+' : ''}${ce.net} → ${ce.netLabel}`);
+              }
+              const _ri_ranked = [..._ri_costRows].sort((a, b) => b.net - a.net);
+              _l6.push(`  ── コスト効率ランキング ──`);
+              _ri_ranked.forEach((x, i) => {
+                const icon = x.net >= 4 ? '🟢' : x.net >= 2 ? '🔵' : x.net >= 0 ? '🟡' : '🟠';
+                _l6.push(`  ${i + 1}. ${icon} ${x.staffName}(${x.type}) net=${x.net >= 0 ? '+' : ''}${x.net} [${x.netLabel}]`);
+              });
+            }
+            // 5 facility-level diagnostic questions
+            const _ri_q1 = _ri_supSims.length > 0
+              ? (_ri_supSims.some(ss => ss.anxietyDelta > 0) ? 'support軽減→成長促進: 有効だが不安リスクあり ⚠' : 'support軽減→成長促進: 有効かつ安全 ✓')
+              : 'support軽減→成長促進: 対象なし';
+            const _ri_q2_safe = _ri_nightSims.filter(ns => ns.safety === 'safeWithSupport' || ns.safety === 'feasible').map(ns => ns.staffName);
+            const _ri_q2 = _ri_q2_safe.length > 0
+              ? `夜勤導入最適タイミング: ${_ri_q2_safe.join('/')}が候補 ✓`
+              : _ri_nightSims.length > 0 ? '夜勤導入最適タイミング: 全対象が高リスクまたは未許可 ⚠' : '夜勤導入最適タイミング: 対象なし';
+            const _ri_q3 = _ri_opRecs.length > 0
+              ? (_ri_opRecs.some(op => op.burnoutUp) ? 'overProtection危険化: burnout上昇リスクあり ⚠' : 'overProtection危険化: 安全範囲内 ✓')
+              : 'overProtection危険化: 対象なし';
+            const _ri_q4 = _ri_ds.some(s => (_ri_st[s.name]?.stage ?? 99) <= 1 && _ri_st[s.name]?.bo === 'high')
+              ? '新人保護×nightCore分散: 新人burnout高あり ⚠' : '新人保護×nightCore分散: 両立可 ✓';
+            const _ri_q5 = _ri_opRecs.length > 0
+              ? '安全維持→成長停止: overProtection検知→成長介入推奨 ⚠'
+              : _ri_cands.some(ci => ci.ivs[0]?.type === 'nightIntroDelay') ? '安全維持→成長停止: 一部延期推奨（準備段階継続）' : '安全維持→成長停止: 競合なし ✓';
+            _l6.push(`  ── 施設全体 育成介入診断 ──`);
+            [_ri_q1, _ri_q2, _ri_q3, _ri_q4, _ri_q5].forEach(q => _l6.push(`  ${q}`));
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Readiness-Intervention-Candidate / Support-Reduction-Sim /
+        //    Night-Introduction-Sim / OverProtection-Recovery /
+        //    Growth-Stability-Analysis / Readiness-Intervention-Cost] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
