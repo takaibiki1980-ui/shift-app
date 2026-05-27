@@ -3383,6 +3383,26 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             {form.nightOk&&<div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div><div onClick={e=>setKp({value:form.nightMax,min:0,max:15,unit:"回",onConfirm:v=>set("nightMax",v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:80,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.nightMax}</div></div>}
           </div>
         )}
+        <div style={{fontSize:11,color:"#7a5590",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 職員経験・適応状況（オプション）</div>
+        <div style={{background:"#f8f0ff",border:"1px solid #c8a0d8",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:10,color:"#7a5590",marginBottom:8}}>Readiness診断に使用します。未入力の場合はシフト傾向から自動推定されます。</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div>
+              <div style={{color:"#7a5590",fontSize:11,marginBottom:4}}>介護経験年数</div>
+              <input type="number" min="0" max="50" step="0.5"
+                value={form.facilityYears ?? ""}
+                onChange={e=>set("facilityYears",e.target.value===""?null:parseFloat(e.target.value))}
+                style={{...INPUT_STYLE,textAlign:"center"}} placeholder="例: 5.0"/>
+            </div>
+            <div>
+              <div style={{color:"#7a5590",fontSize:11,marginBottom:4}}>フロア適応年数</div>
+              <input type="number" min="0" max="50" step="0.5"
+                value={form.floorYears ?? ""}
+                onChange={e=>set("floorYears",e.target.value===""?null:parseFloat(e.target.value))}
+                style={{...INPUT_STYLE,textAlign:"center"}} placeholder="例: 2.0"/>
+            </div>
+          </div>
+        </div>
         <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
         <div style={{background:"#fff8e6",border:"1px solid #f0c040",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
@@ -10022,6 +10042,216 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Decision-Priority / Decision-Pressure-Map / Temporal-Decision-Simulation /
         //    Intervention-Conflict / Temporal-Intervention-Stability] ここまで ══
+
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Staff-Readiness-Derived / Readiness-Classification /
+        //    Readiness-Audit / Readiness-Temporal]
+        // Staff Readiness Layer
+        // - 「資格上可能」と「今この環境で安全に可能」を分離するReadiness derived state。
+        // - facilityYears / floorYears を基に nightReadiness 等を算出。
+        // - 完全 read-only。生成変更禁止・readiness自動適用禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _sr_days  = getDays(year, month);
+          const _sr_ds    = cs.filter(s => s.dept === cd.id);
+          const _sr_cds   = cd.customShiftDefs || [];
+          const _sr_tailN = Math.min(7, _sr_days);
+
+          // 夜勤 set
+          const _sr_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _nc = _sr_cds.find(c => c.key === k);
+            if ((_nc?.baseType || k) === '夜勤') _sr_nset.add(k);
+          });
+          const _sr_isNight = (sh) => _sr_nset.has(sh);
+          const _sr_isRest  = (sh) => ['休み', '希望休', '有休'].includes(sh);
+          const _sr_fw      = (sh) => _sr_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+
+          // trend lookup
+          const _sr_trend = (name) => {
+            const key = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return key ? ct[key] : null;
+          };
+
+          // ── per-staff readiness state ──
+          const _sr_state = {};
+          for (const s of _sr_ds) {
+            const trend    = _sr_trend(s.name);
+            const wkTotal  = trend?._workTotal ?? 0;
+            const isNewbie = wkTotal < 30;
+            let totalF = 0, tailF = 0, nightCnt = 0, restCnt = 0;
+            for (let d = 1; d <= _sr_days; d++) {
+              const sh = result[s.id]?.[d] ?? '';
+              totalF += _sr_fw(sh);
+              if (d > _sr_days - _sr_tailN) tailF += _sr_fw(sh);
+              if (_sr_isNight(sh)) nightCnt++;
+              if (_sr_isRest(sh))  restCnt++;
+            }
+            const burnoutAccumulation = totalF >= _sr_days * 2.0 ? 'high' : totalF >= _sr_days * 1.2 ? 'medium' : 'low';
+            const fatigueCarryOver    = tailF  >= _sr_tailN * 3.0 ? 'high' : tailF >= _sr_tailN * 1.5 ? 'medium' : 'low';
+            const nightRate    = nightCnt / _sr_days;
+            const trendNight   = trend?._nightRate ?? trend?.['夜勤'] ?? 0;
+            const nightDiff    = Math.abs(nightRate - trendNight);
+            const nightAdaptation = nightDiff < 0.05 ? 'high' : nightDiff < 0.15 ? 'medium' : 'low';
+
+            // facilityYears / floorYears: 設定値 or trend 推定
+            const rawFy = s.facilityYears ?? null;
+            const rawFl = s.floorYears ?? null;
+            const isExplicit = rawFy !== null || rawFl !== null;
+            const fy = rawFy !== null ? rawFy
+              : isNewbie ? 0.3
+              : Math.min(5, (wkTotal / 30) * 0.5 + 0.5);
+            const fl = rawFl !== null ? rawFl
+              : isNewbie ? 0.2
+              : nightAdaptation === 'low' ? 0.4 : 1.5;
+
+            // ── Readiness derived fields ──
+            const nightReadiness = (() => {
+              if (fy < 0.5 || fl < 0.2) return 'low';
+              if (burnoutAccumulation === 'high') return 'medium';
+              if (fy < 1.5 || fl < 0.5) return 'medium';
+              return 'high';
+            })();
+            const earlyReadiness = (() => {
+              if (fy < 0.2 || fl < 0.1) return 'low';
+              if (fy < 0.5 || fl < 0.3) return 'medium';
+              return 'high';
+            })();
+            const lateReadiness = (() => {
+              if (fy < 0.5 || fl < 0.2) return 'low';
+              if (fy < 1.0 || fl < 0.5) return 'medium';
+              return 'high';
+            })();
+            const relocationRisk  = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const supportNeed     = (fl < 0.3 || fy < 0.3) ? 'high' : (fl < 0.8 || fy < 0.8) ? 'medium' : 'low';
+            const adaptationStage = fl < 0.1 ? 0 : fl < 0.3 ? 1 : fl < 0.8 ? 2 : fl < 1.5 ? 3 : fl < 3.0 ? 4 : 5;
+
+            // ── Classification ──
+            const classification = (() => {
+              if (relocationRisk === 'high')                           return 'relocated_veteran';
+              if (nightReadiness === 'high' && nightCnt >= 4)         return 'night_core';
+              if (s.nightOk && nightCnt > 0 && fl < 1.0)             return 'night_transition';
+              if (fy >= 3 && fl >= 2)                                 return 'flexible_veteran';
+              if (fl < 0.1 && fy < 0.5)                              return 'adaptation_stage_1';
+              if (fl < 0.5)                                           return 'adaptation_stage_2';
+              return 'stable_day_worker';
+            })();
+
+            _sr_state[s.name] = {
+              fy, fl, isExplicit, isNewbie, nightCnt, restCnt,
+              burnoutAccumulation, fatigueCarryOver, nightAdaptation,
+              earlyReadiness, lateReadiness, nightReadiness,
+              relocationRisk, supportNeed, adaptationStage, classification,
+              nightOk: !!s.nightOk
+            };
+          }
+
+          // ── Layer 1+2: [Staff-Readiness-Derived] ──
+          {
+            const _sr2 = [`[Staff-Readiness-Derived] dept=${cd.id} (read-only / not applied)`];
+            for (const s of _sr_ds) {
+              const st = _sr_state[s.name]; if (!st) continue;
+              const src = st.isExplicit ? '(設定値)' : '(trend推定★)';
+              _sr2.push(
+                `  ${s.name} ${src}` +
+                ` facilityYears=${st.fy.toFixed(1)} floorYears=${st.fl.toFixed(1)}`
+              );
+              _sr2.push(
+                `    early=${st.earlyReadiness} late=${st.lateReadiness}` +
+                ` night=${st.nightReadiness}${st.nightReadiness === 'low' ? ' ⚠' : ' ✓'}`
+              );
+              const flags = [];
+              if (st.relocationRisk !== 'low')  flags.push(`relocationRisk=${st.relocationRisk}⚠`);
+              if (st.supportNeed !== 'low')      flags.push(`supportNeed=${st.supportNeed}`);
+              flags.push(`adaptationStage=${st.adaptationStage}`);
+              _sr2.push(`    ${flags.join(' / ')}`);
+            }
+            if (_sr_ds.some(s => !_sr_state[s.name]?.isExplicit))
+              _sr2.push('  ★ = facilityYears/floorYears 未設定 → スタッフ設定で入力するとより精度が上がります');
+            console.log(_sr2.join('\n'));
+          }
+
+          // ── Layer 3: [Readiness-Classification] ──
+          {
+            const classCount = {};
+            for (const s of _sr_ds) {
+              const cls = _sr_state[s.name]?.classification || 'unknown';
+              classCount[cls] = (classCount[cls] || 0) + 1;
+            }
+            const classLabel = {
+              stable_day_worker:   '📋安定日勤型',
+              adaptation_stage_1:  '🌱初期適応中',
+              adaptation_stage_2:  '📈適応段階2',
+              night_transition:    '🌙夜勤移行中',
+              night_core:          '⭐夜勤コア',
+              flexible_veteran:    '🏆フレキシブルベテラン',
+              relocated_veteran:   '🔄異動ベテラン',
+            };
+            const _sr3 = [`[Readiness-Classification] dept=${cd.id}`];
+            for (const s of _sr_ds) {
+              const st = _sr_state[s.name]; if (!st) continue;
+              const lbl = classLabel[st.classification] || st.classification;
+              _sr3.push(`  ${s.name}: ${lbl} (stage=${st.adaptationStage} night=${st.nightCnt}回)`);
+            }
+            _sr3.push('  サマリ:');
+            for (const [cls, cnt] of Object.entries(classCount))
+              _sr3.push(`    ${classLabel[cls] || cls}=${cnt}名`);
+            console.log(_sr3.join('\n'));
+          }
+
+          // ── Layer 4: [Readiness-Audit] ──
+          {
+            const _sr4 = [`[Readiness-Audit] dept=${cd.id}`];
+            let mismatches = 0;
+            for (const s of _sr_ds) {
+              const st = _sr_state[s.name]; if (!st) continue;
+              const issues = [];
+              if (st.nightReadiness === 'low'    && st.nightCnt > 2)
+                issues.push(`nightReadiness=low なのに夜勤${st.nightCnt}回 ⚠`);
+              if (st.nightReadiness === 'medium' && st.nightCnt > 4)
+                issues.push(`nightReadiness=medium なのに夜勤${st.nightCnt}回 ⚠`);
+              if (st.relocationRisk === 'high'   && st.nightCnt > 1)
+                issues.push(`relocationRisk=high なのに夜勤${st.nightCnt}回 ⚠`);
+              if (st.supportNeed === 'high' && st.nightCnt > 0 && st.classification !== 'night_core')
+                issues.push(`supportNeed=high なのに夜勤単独配置の可能性 ⚠`);
+              if (issues.length > 0) {
+                mismatches++;
+                _sr4.push(`  ${s.name}: [不整合]`);
+                issues.forEach(i => _sr4.push(`    ${i}`));
+              } else {
+                _sr4.push(`  ${s.name}: nightReadiness=${st.nightReadiness} 実績=${st.nightCnt}回 ✓`);
+              }
+            }
+            _sr4.push(mismatches === 0 ? '  readiness/actual 不整合なし ✓' : `  不整合=${mismatches}名 ⚠`);
+            console.log(_sr4.join('\n'));
+          }
+
+          // ── Layer 5: [Readiness-Temporal] ──
+          {
+            const _sr5 = [`[Readiness-Temporal] dept=${cd.id}`];
+            for (const s of _sr_ds) {
+              const st = _sr_state[s.name]; if (!st) continue;
+              const effects = [];
+              if (st.burnoutAccumulation === 'high' && st.nightReadiness !== 'low')
+                effects.push(`burnout=high → nightReadiness 一時低下 (実効: medium相当)`);
+              if (st.burnoutAccumulation === 'high' && st.lateReadiness === 'high')
+                effects.push(`burnout=high → lateReadiness 一時低下`);
+              if (st.fatigueCarryOver === 'high')
+                effects.push(`fatigueCarryOver=high → 翌月初の earlyReadiness 要注意`);
+              if ([1, 2].includes(st.adaptationStage) && st.nightAdaptation !== 'low')
+                effects.push(`adaptationStage=${st.adaptationStage} → lateReadiness 上昇中`);
+              if (st.supportNeed === 'high')
+                effects.push(`supportNeed=high → pairサポート継続が readiness向上に貢献`);
+              if (st.relocationRisk === 'high')
+                effects.push(`relocationRisk=high → floorYears蓄積で nightReadiness 回復見込み`);
+              if (!effects.length) _sr5.push(`  ${s.name}: temporal影響なし ✓`);
+              else { _sr5.push(`  ${s.name}:`); effects.forEach(e => _sr5.push(`    → ${e}`)); }
+            }
+            console.log(_sr5.join('\n'));
+          }
+        }
+        // ══ [Staff-Readiness-Derived / Readiness-Classification / Readiness-Audit / Readiness-Temporal] ここまで ══
 
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
