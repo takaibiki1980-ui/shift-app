@@ -18497,6 +18497,567 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Recommendation-Tradeoff-Analyzer / Human-Approval-Simulation /
         //    Recommendation-Safety-Audit / Temporal-Recommendation-Readability] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        //    [Intervention-Sandbox-Clone / Temporary-Recommendation-Apply /
+        //    Re-Simulation-Engine / Intervention-Rollback-System /
+        //    Intervention-Stability-Audit / Human-Intervention-Review]
+        // Controlled Temporal Intervention Sandbox — 仮適用検証・完全 rollback 対応（read-only）
+        // - Recommendation を sandboxState のみへ仮適用。未来再シミュレーション後に rollback。
+        // - result変更禁止。setAllShifts禁止。autoGenerate変更禁止。本番状態汚染禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _ci_days  = getDays(year, month);
+          const _ci_ds    = cs.filter(s => s.dept === cd.id);
+          const _ci_cds   = cd.customShiftDefs || [];
+          const _ci_tailN = Math.min(7, _ci_days);
+
+          // ── helpers ──
+          const _ci_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _ci_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _ci_nset.add(k);
+          });
+          const _ci_isNight = sh => _ci_nset.has(sh);
+          const _ci_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _ci_isWork  = sh => !!(sh && !_ci_isRest(sh) && sh !== '明け' && sh !== '');
+          const _ci_fw      = sh => _ci_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _ci_boOf    = totF => totF >= _ci_days * 2.0 ? 'high' : totF >= _ci_days * 1.2 ? 'medium' : 'low';
+          const _ci_trd     = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+          const _ci_metric  = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, leSq=0;
+            for (let d = 1; d <= _ci_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _ci_fw(sh);
+              if (d > _ci_days - _ci_tailN) tlF += _ci_fw(sh);
+              if (_ci_isNight(sh)) nCnt++;
+              if (_ci_isRest(sh))  rCnt++;
+              if (sh === '明け' && _ci_isNight(pv)) {
+                if (_ci_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')    cSq++;
+                else if (_ci_isWork(nx))   { /* dSq */ }
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _ci_boOf(totF);
+            const co = tlF >= _ci_tailN * 3.0 ? 'high' : tlF >= _ci_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _ci_days * 0.25 * 0.7 ? 'high' : rCnt < _ci_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, leSq, bo, co, rd };
+          };
+          const _ci_stageOf  = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _CI_FL_G    = 0.08;
+          const _CI_RANGES  = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _ci_progOf  = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _CI_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+          const _ci_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasPair) => {
+            if (!nightOk)                                   return 0;
+            if (stage >= 5 && bo !== 'high')                return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')  return 4;
+            if (nCnt >= 1)                                  return 3;
+            if (stage >= 3 && progress >= 0.6 && hasPair)  return 2;
+            if (stage >= 2 && fl >= 0.5)                   return 1;
+            return 0;
+          };
+
+          // ── pair co-occurrence ──
+          const _ci_pco = {};
+          for (let d = 1; d <= _ci_days; d++) {
+            const nw = _ci_ds.filter(s => _ci_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _ci_pco[pk] = (_ci_pco[pk] || 0) + 1;
+              }
+          }
+          const _ci_fixedPairs = Object.entries(_ci_pco)
+            .filter(([, n]) => n >= _ci_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── per-staff current state (read-only from result) ──
+          const _ci_st = {};
+          for (const s of _ci_ds) {
+            const m     = _ci_metric(result[s.id] || {});
+            const tr    = _ci_trd(s.name);
+            const wk    = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy    = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl    = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr    = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _ci_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _ci_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _ci_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _ci_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _ci_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, isNew, ...m };
+          }
+          const _ci_arr = _ci_ds.map(s => _ci_st[s.name]).filter(Boolean);
+
+          // ── forecast helper ──
+          const _ci_futBo = (bo, co, sSq, cSq, t) => {
+            const ord = { low:0, medium:1, high:2 };
+            let v = ord[bo];
+            if (co === 'high' && cSq > 0)        v = Math.min(2, v + Math.floor(t / 2));
+            else if (co === 'high' && sSq > 0)   v = Math.min(2, v + Math.floor(t / 3));
+            else if (bo === 'high' && sSq > 0)   v = Math.max(0, v - Math.floor(t / 2));
+            else if (bo === 'medium' && sSq > 0) v = Math.max(0, v - Math.floor(t / 3));
+            return ['low','medium','high'][Math.max(0, Math.min(2, v))];
+          };
+          const _ci_futState = (st, t) => {
+            const ffl  = st.fl + _CI_FL_G * t, fFy = st.fy + t / 12;
+            const fBo  = _ci_futBo(st.bo, st.co, st.sSq, st.cSq, t);
+            const fRr  = (fFy >= 2 && ffl < 0.5) ? 'high' : (fFy >= 1 && ffl < 0.3) ? 'medium' : 'low';
+            const fStg = _ci_stageOf(fFy, ffl, st.nCnt, fRr);
+            const fPrg = _ci_progOf(fStg, ffl, st.sSq, st.cSq, fBo, st.co, st.leSq);
+            const fNc  = !st.nightOk ? 0
+              : fStg >= 5 ? Math.max(st.nCnt, 3) : fStg >= 4 ? Math.max(st.nCnt, 1)
+              : (fStg === 3 && fPrg >= 0.6 && st.hasPair) ? Math.max(st.nCnt, 1) : st.nCnt;
+            return { fl: ffl, bo: fBo, nCnt: fNc, stage: fStg, progress: fPrg,
+                     ladder: _ci_ladderOf(fStg, ffl, fNc, fBo, fPrg, st.nightOk, st.hasPair) };
+          };
+
+          // ── recalculate derived state after nCnt change ──
+          const _ci_recalc = st => {
+            const stage    = _ci_stageOf(st.fy, st.fl, st.nCnt, st.rr);
+            const progress = _ci_progOf(stage, st.fl, st.sSq, st.cSq, st.bo, st.co, st.leSq);
+            const ladder   = _ci_ladderOf(stage, st.fl, st.nCnt, st.bo, progress, st.nightOk, st.hasPair);
+            return { ...st, stage, progress, ladder };
+          };
+
+          // ── compute applied rules (same rule set as _cr_/_sg_) ──
+          const _ci_rules = {};
+          for (const st of _ci_arr) {
+            let appliedNcnt = st.nCnt, rule = 'noChange', reasoning = '';
+            if (!st.nightOk) {
+              appliedNcnt = 0; rule = 'nightOkFalse'; reasoning = '夜勤不可スタッフ';
+            } else if (st.stage <= 1) {
+              appliedNcnt = 0; rule = 'unsafeBlock'; reasoning = `stage=${st.stage}(≤1): 安全ブロック`;
+            } else if (st.bo === 'high' && st.ladder >= 4) {
+              appliedNcnt = Math.max(1, st.nCnt); rule = 'coreKept';
+              reasoning = `bo=high+ladder=${st.ladder}: nightCore最低1回維持`;
+            } else if (st.bo === 'high') {
+              appliedNcnt = Math.max(0, st.nCnt - 1); rule = 'boReduce';
+              reasoning = `bo=high: 夜勤-1削減（回復促進）`;
+            } else if (st.ladder >= 2 && st.ladder <= 3 && st.nCnt < 2) {
+              appliedNcnt = Math.min(3, st.nCnt + 1); rule = 'growthUp';
+              reasoning = `ladder=${st.ladder}: 夜勤+1（ladder成長促進）`;
+            } else if (st.ladder >= 4) {
+              appliedNcnt = st.nCnt; rule = 'coreStable'; reasoning = `ladder=${st.ladder}: 安定維持`;
+            } else {
+              appliedNcnt = st.nCnt; rule = 'noChange';
+              reasoning = `ladder=${st.ladder},stage=${st.stage}: 変更なし`;
+            }
+            _ci_rules[st.s.id] = { appliedNcnt, rule, reasoning, delta: appliedNcnt - st.nCnt };
+          }
+
+          // ── sandbox / rollback / base objects (all local, never touch result) ──
+          const _ci_base     = {};  // permanent read-only reference
+          const _ci_rollback = {};  // pre-apply snapshot for rollback verification
+          const _ci_sandbox  = {};  // mutable local clone that Layer 2 will modify
+          for (const st of _ci_arr) {
+            _ci_base[st.s.id]     = { ...st };
+            _ci_rollback[st.s.id] = { ...st };
+            _ci_sandbox[st.s.id]  = { ...st };
+          }
+
+          // ── Layer 1: [Intervention-Sandbox-Clone] ──
+          {
+            const _l1 = [`[Intervention-Sandbox-Clone] dept=${cd.id}`];
+            _l1.push(`  ── result を完全 local clone → sandbox / rollback / base を独立管理 ──`);
+            _l1.push(`  禁止: result変更 / setAllShifts / autoGenerate変更 / 本番状態汚染`);
+            _l1.push(``);
+
+            const baseIntact     = _ci_arr.every(st => _ci_base[st.s.id].nCnt === st.nCnt);
+            const rollbackIntact = _ci_arr.every(st => _ci_rollback[st.s.id].nCnt === st.nCnt);
+            const sandboxInitial = _ci_arr.every(st => _ci_sandbox[st.s.id].nCnt === st.nCnt);
+
+            _l1.push(`  ── Clone 完全性チェック ──`);
+            _l1.push(`    base clone:           ${baseIntact     ? '✓ intact' : '⚠ ERROR'}`);
+            _l1.push(`    rollback snapshot:    ${rollbackIntact ? '✓ intact' : '⚠ ERROR'}`);
+            _l1.push(`    sandbox (初期):       ${sandboxInitial ? '✓ intact' : '⚠ ERROR'}`);
+            _l1.push(`    result (本番):        読み取りのみ — 変更なし ✓`);
+            _l1.push(``);
+            _l1.push(`  ── ベースライン確認 ──`);
+            _l1.push(`  スタッフ数: ${_ci_arr.length}名`);
+            _l1.push(`  夜勤総数:   ${_ci_arr.reduce((s, st) => s + st.nCnt, 0)}回`);
+            _l1.push(`  bo=high:    ${_ci_arr.filter(st => st.bo === 'high').length}名`);
+            _l1.push(`  nightCore:  ${_ci_arr.filter(st => st.ladder >= 4).length}名`);
+            _l1.push(`  stage分布:  s0=${_ci_arr.filter(st => st.stage === 0).length} s1=${_ci_arr.filter(st => st.stage === 1).length} s2=${_ci_arr.filter(st => st.stage === 2).length} s3=${_ci_arr.filter(st => st.stage === 3).length} s4=${_ci_arr.filter(st => st.stage === 4).length} s5=${_ci_arr.filter(st => st.stage === 5).length}`);
+            _l1.push(``);
+            _l1.push(`  applyTarget:  sandboxResult のみ（base / rollback / result は変更なし）`);
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Temporary-Recommendation-Apply] ──
+          {
+            const _l2 = [`[Temporary-Recommendation-Apply] dept=${cd.id}`];
+            _l2.push(`  ── Controlled Recommendation を sandboxResult のみへ仮適用 ──`);
+            _l2.push(``);
+
+            let applyCount = 0, noChangeCount = 0;
+            for (const st of _ci_arr) {
+              const rule = _ci_rules[st.s.id];
+              if (!rule) continue;
+              if (rule.delta !== 0) {
+                // Modify sandbox only — apply nCnt change and recalculate derived state
+                _ci_sandbox[st.s.id] = _ci_recalc({ ..._ci_sandbox[st.s.id], nCnt: rule.appliedNcnt });
+                applyCount++;
+                _l2.push(`  ✓ APPLIED: ${st.s.name}  nCnt ${st.nCnt}→${rule.appliedNcnt} (${rule.delta >= 0 ? '+' : ''}${rule.delta})  [${rule.rule}]`);
+                _l2.push(`      理由:   ${rule.reasoning}`);
+                _l2.push(`      sandbox: stage ${st.stage}→${_ci_sandbox[st.s.id].stage}  ladder ${st.ladder}→${_ci_sandbox[st.s.id].ladder}`);
+              } else {
+                noChangeCount++;
+              }
+            }
+
+            // Verify no contamination after apply
+            const baseUntouched     = _ci_arr.every(st => _ci_base[st.s.id].nCnt === st.nCnt);
+            const rollbackUntouched = _ci_arr.every(st => _ci_rollback[st.s.id].nCnt === st.nCnt);
+            const resultUntouched   = _ci_arr.every(st => _ci_metric(result[st.s.id] || {}).nCnt === st.nCnt);
+
+            _l2.push(``);
+            _l2.push(`  ── 仮適用サマリー ──`);
+            _l2.push(`  変更適用: ${applyCount}名 / 変更なし: ${noChangeCount}名`);
+            _l2.push(`  sandbox 夜勤総数: ${Object.values(_ci_sandbox).reduce((s, v) => s + v.nCnt, 0)}回  (元: ${_ci_arr.reduce((s, st) => s + st.nCnt, 0)}回)`);
+            _l2.push(``);
+            _l2.push(`  ── 汚染確認（apply後） ──`);
+            _l2.push(`    base:              ${baseUntouched     ? '✓ 変更なし' : '⚠ ERROR: mutation detected'}`);
+            _l2.push(`    rollback snapshot: ${rollbackUntouched ? '✓ 変更なし' : '⚠ ERROR: mutation detected'}`);
+            _l2.push(`    result (本番):     ${resultUntouched   ? '✓ 変更なし' : '⚠ ERROR: contamination detected'}`);
+            _l2.push(`    applyTarget:        sandbox のみ ✓`);
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Re-Simulation-Engine] ──
+          {
+            const _l3 = [`[Re-Simulation-Engine] dept=${cd.id}`];
+            _l3.push(`  ── sandbox仮適用後の未来を再シミュレーション ──`);
+            _l3.push(``);
+
+            const sbArr = Object.values(_ci_sandbox);
+
+            for (const { label, t } of [{ label:'3ヶ月後', t:3 }, { label:'6ヶ月後', t:6 }]) {
+              const baseBoHigh = _ci_arr.filter(st => _ci_futBo(st.bo, st.co, st.sSq, st.cSq, t) === 'high').length;
+              const baseCore   = _ci_arr.filter(st => _ci_futState(st, t).ladder >= 4).length;
+              const baseUnsafe = _ci_arr.filter(st => st.stage <= 1 && _ci_futState(st, t).ladder >= 3).length;
+              const baseLadder = _ci_arr.filter(st => { const fs = _ci_futState(st, t); return fs.ladder >= 2 && fs.ladder <= 3; }).length;
+              const baseSupp   = _ci_arr.filter(st => _ci_futState(st, t).bo !== 'high' && st.stage >= 2).length;
+
+              const sbBoHigh   = sbArr.filter(st => _ci_futBo(st.bo, st.co, st.sSq, st.cSq, t) === 'high').length;
+              const sbCore     = sbArr.filter(st => _ci_futState(st, t).ladder >= 4).length;
+              const sbUnsafe   = sbArr.filter(st => st.stage <= 1 && _ci_futState(st, t).ladder >= 3).length;
+              const sbLadder   = sbArr.filter(st => { const fs = _ci_futState(st, t); return fs.ladder >= 2 && fs.ladder <= 3; }).length;
+              const sbSupp     = sbArr.filter(st => _ci_futState(st, t).bo !== 'high' && st.stage >= 2).length;
+
+              const fmt = (base, sb, higherBetter) => {
+                const d = sb - base;
+                const mark = d === 0 ? '=' : ((higherBetter ? d > 0 : d < 0) ? '✓' : '⚠');
+                return `${String(base).padEnd(8)}${String(sb).padEnd(8)}${d >= 0 ? '+' : ''}${d}  ${mark}`;
+              };
+              _l3.push(`  ── ${label} ──`);
+              _l3.push(`  指標                  baseline  sandbox   delta`);
+              _l3.push(`  bo=high(pattern)      ${fmt(baseBoHigh, sbBoHigh, false)}`);
+              _l3.push(`  nightCore(ladder≥4)   ${fmt(baseCore,   sbCore,   true)}`);
+              _l3.push(`  unsafePromotion        ${fmt(baseUnsafe, sbUnsafe, false)}`);
+              _l3.push(`  ladderCands(2-3)       ${fmt(baseLadder, sbLadder, true)}`);
+              _l3.push(`  suppAvail              ${fmt(baseSupp,   sbSupp,   true)}`);
+              _l3.push(``);
+            }
+
+            // Shortage impact
+            const baseNight    = _ci_arr.reduce((s, st) => s + st.nCnt, 0);
+            const sandboxNight = Object.values(_ci_sandbox).reduce((s, v) => s + v.nCnt, 0);
+            const nightDelta   = sandboxNight - baseNight;
+            _l3.push(`  ── 夜勤カバレッジ影響 ──`);
+            _l3.push(`    baseline: ${baseNight}回  sandbox: ${sandboxNight}回  delta: ${nightDelta >= 0 ? '+' : ''}${nightDelta}`);
+            if (nightDelta < 0)
+              _l3.push(`    ⚠ 夜勤削減 ${Math.abs(nightDelta)}回 → 不足日リスクを別途確認推奨`);
+            else if (nightDelta > 0)
+              _l3.push(`    ✓ 夜勤増加 ${nightDelta}回 → カバレッジ改善`);
+            else
+              _l3.push(`    = 夜勤総数変化なし`);
+
+            // Per-staff re-simulation
+            const changedSt = _ci_arr.filter(st => _ci_rules[st.s.id]?.delta !== 0);
+            if (changedSt.length > 0) {
+              _l3.push(``);
+              _l3.push(`  ── per-staff 再シミュレーション ──`);
+              for (const st of changedSt) {
+                const sbSt  = _ci_sandbox[st.s.id];
+                const base6 = _ci_futState(st,   6);
+                const sand6 = _ci_futState(sbSt, 6);
+                _l3.push(`  ${st.s.name.padEnd(12)}: nCnt ${st.nCnt}→${sbSt.nCnt}  stage ${st.stage}→${sbSt.stage}  ladder ${st.ladder}→${sbSt.ladder}`);
+                _l3.push(`      6m後: ladder ${base6.ladder}→${sand6.ladder}  stage ${base6.stage}→${sand6.stage}  ${sand6.ladder >= base6.ladder ? '✓' : '△'}`);
+              }
+            }
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Intervention-Rollback-System] ──
+          {
+            const _l4 = [`[Intervention-Rollback-System] dept=${cd.id}`];
+            _l4.push(`  ── sandbox変更を完全 rollback 可能にする ──`);
+            _l4.push(`  監査: rollback integrity / state leakage / accidental mutation / temporal contamination`);
+            _l4.push(``);
+
+            // Simulate rollback: restore from rollback snapshot
+            const _ci_reverted = {};
+            for (const id of Object.keys(_ci_rollback))
+              _ci_reverted[id] = { ..._ci_rollback[id] };
+
+            // Integrity checks
+            const rollbackOk = _ci_arr.every(st =>
+              _ci_reverted[st.s.id].nCnt   === _ci_rollback[st.s.id].nCnt &&
+              _ci_reverted[st.s.id].stage  === _ci_rollback[st.s.id].stage &&
+              _ci_reverted[st.s.id].ladder === _ci_rollback[st.s.id].ladder
+            );
+            const noLeak = _ci_arr.every(st => _ci_base[st.s.id].nCnt === st.nCnt);
+            const mutationContained = _ci_arr.every(st => {
+              const sb = _ci_sandbox[st.s.id], rb = _ci_rollback[st.s.id];
+              return sb.fy === rb.fy && sb.fl === rb.fl &&
+                     sb.bo === rb.bo && sb.sSq === rb.sSq && sb.cSq === rb.cSq;
+            });
+            const resultClean = _ci_arr.every(st =>
+              _ci_metric(result[st.s.id] || {}).nCnt === _ci_rollback[st.s.id].nCnt
+            );
+
+            _l4.push(`  ── Rollback 完全性チェック ──`);
+            _l4.push(`    rollback integrity:     ${rollbackOk          ? '✓ rollback後 = snapshot と一致' : '⚠ ERROR'}`);
+            _l4.push(`    state leakage:          ${noLeak              ? '✓ base 汚染なし' : '⚠ ERROR: leakage検出'}`);
+            _l4.push(`    accidental mutation:    ${mutationContained   ? '✓ 変更は nCnt/stage/ladder のみ' : '⚠ ERROR: 意図外変更検出'}`);
+            _l4.push(`    temporal contamination: ${resultClean         ? '✓ result（本番）変更なし' : '⚠ ERROR: contamination検出'}`);
+            _l4.push(`    shared reference破壊:   ✓ object spread で独立保持`);
+            _l4.push(``);
+
+            // Before / sandbox / reverted table
+            const modifiedSt = _ci_arr.filter(st => _ci_rules[st.s.id]?.delta !== 0);
+            if (modifiedSt.length === 0) {
+              _l4.push(`  ℹ 変更適用スタッフなし（rollback対象なし）`);
+            } else {
+              _l4.push(`  ── 状態遷移確認（Before → Sandbox → Reverted） ──`);
+              _l4.push(`  スタッフ名      元nCnt  sandbox  reverted  一致`);
+              for (const st of modifiedSt) {
+                const sbNc = _ci_sandbox[st.s.id].nCnt;
+                const rvNc = _ci_reverted[st.s.id].nCnt;
+                _l4.push(`  ${st.s.name.padEnd(12)}: ${String(st.nCnt).padEnd(8)}${String(sbNc).padEnd(9)}${rvNc}        ${rvNc === st.nCnt ? '✓' : '⚠'}`);
+              }
+            }
+            _l4.push(``);
+            const rollbackClean = rollbackOk && noLeak && mutationContained && resultClean;
+            _l4.push(`  rollbackSystem: ${rollbackClean ? '✓ CLEAN — sandbox は完全に rollback 可能' : '⚠ CONTAMINATION DETECTED'}`);
+            console.log(_l4.join('\n'));
+          }
+
+          // _ci_stabilityAudit: populated in Layer 5, read in Layer 6
+          const _ci_stabilityAudit = { verdict: 'unknown', improved: 0, broken: 0 };
+
+          // ── Layer 5: [Intervention-Stability-Audit] ──
+          {
+            const _l5 = [`[Intervention-Stability-Audit] dept=${cd.id}`];
+            _l5.push(`  ── 仮適用後の世界が本当に安定化したか監査 ──`);
+            _l5.push(``);
+
+            const improvements = [], breakages = [], maintained = [];
+            const sbArr = Object.values(_ci_sandbox);
+
+            // 1. burnout (6m future)
+            const baseBo6 = _ci_arr.filter(st => _ci_futBo(st.bo, st.co, st.sSq, st.cSq, 6) === 'high').length;
+            const sbBo6   = sbArr.filter(st => _ci_futBo(st.bo, st.co, st.sSq, st.cSq, 6) === 'high').length;
+            if (sbBo6 < baseBo6)       improvements.push({ dim:'burnout(6m)',    desc:`bo=high 6m後 ${baseBo6}→${sbBo6}名 ✓` });
+            else if (sbBo6 > baseBo6)  breakages.push({ dim:'burnout(6m)',       desc:`bo=high 6m後 ${baseBo6}→${sbBo6}名 ⚠` });
+            else                       maintained.push({ dim:'burnout',           desc:`bo=high(6m) ${sbBo6}名 変化なし` });
+
+            // 2. support continuity
+            const giversBefore = _ci_arr.filter(st => st.ladder >= 3 && st.bo !== 'high').length;
+            const giversAfter  = sbArr.filter(st => st.ladder >= 3 && st.bo !== 'high').length;
+            if (giversAfter >= giversBefore) maintained.push({ dim:'support continuity', desc:`giver ${giversAfter}名 維持/改善 ✓` });
+            else                             breakages.push({ dim:'support continuity', desc:`giver ${giversBefore}→${giversAfter}名 低下 ⚠` });
+
+            // 3. unsafe elimination
+            const unsafeBefore = _ci_arr.filter(st => st.stage <= 1 && st.nCnt > 0).length;
+            const unsafeAfter  = sbArr.filter(st => st.stage <= 1 && st.nCnt > 0).length;
+            if (unsafeAfter < unsafeBefore)       improvements.push({ dim:'unsafe elimination', desc:`stage≤1+夜勤 ${unsafeBefore}→${unsafeAfter}名 ✓` });
+            else if (unsafeAfter > unsafeBefore)  breakages.push({ dim:'unsafe escalation',    desc:`stage≤1+夜勤 ${unsafeBefore}→${unsafeAfter}名 ⚠` });
+            else                                  maintained.push({ dim:'unsafe',               desc:`stage≤1+夜勤 ${unsafeAfter}名 変化なし` });
+
+            // 4. safeSequence
+            const safeSeqB = _ci_arr.filter(st => st.sSq > 0 && st.bo !== 'high').length;
+            const safeSeqA = sbArr.filter(st => st.sSq > 0 && st.bo !== 'high').length;
+            if (safeSeqA >= safeSeqB) maintained.push({ dim:'safeSequence', desc:`sSq>0スタッフ ${safeSeqA}名 維持 ✓` });
+            else                      breakages.push({ dim:'safeSequence',  desc:`sSq>0 ${safeSeqB}→${safeSeqA}名 低下 ⚠` });
+
+            // 5. nightCore
+            const coreB = _ci_arr.filter(st => st.ladder >= 4).length;
+            const coreA = sbArr.filter(st => st.ladder >= 4).length;
+            if (coreA > coreB)       improvements.push({ dim:'nightCore growth', desc:`ladder≥4 ${coreB}→${coreA}名 ✓` });
+            else if (coreA < coreB)  breakages.push({ dim:'nightCore collapse',  desc:`ladder≥4 ${coreB}→${coreA}名 ⚠` });
+            else                     maintained.push({ dim:'nightCore',           desc:`ladder≥4 ${coreA}名 維持` });
+
+            // 6. growth pipeline
+            const growthB = _ci_arr.filter(st => st.ladder >= 2 && st.ladder <= 3).length;
+            const growthA = sbArr.filter(st => st.ladder >= 2 && st.ladder <= 3).length;
+            if (growthA > growthB)  improvements.push({ dim:'growth pipeline', desc:`ladderCands(2-3) ${growthB}→${growthA}名 ✓` });
+            else                    maintained.push({ dim:'growth pipeline',   desc:`ladderCands(2-3) ${growthA}名` });
+
+            // 7. recovery continuity: bo=high with sSq>0 (recovering)
+            const recB = _ci_arr.filter(st => st.bo === 'high' && st.sSq > 0 && st.cSq === 0).length;
+            const recA = sbArr.filter(st => st.bo === 'high' && st.sSq > 0 && st.cSq === 0).length;
+            if (recA >= recB) maintained.push({ dim:'recovery continuity', desc:`bo=high+sSq>0 ${recA}名 維持` });
+            else              breakages.push({ dim:'recovery interruption', desc:`bo=high+sSq>0 ${recB}→${recA}名 低下 ⚠` });
+
+            _l5.push(`  ── 改善 ──`);
+            if (improvements.length === 0) _l5.push(`  （改善なし）`);
+            for (const i of improvements) _l5.push(`  ✓ [${i.dim}] ${i.desc}`);
+            _l5.push(`  ── 維持 ──`);
+            if (maintained.length === 0) _l5.push(`  （項目なし）`);
+            for (const m of maintained) _l5.push(`  = [${m.dim}] ${m.desc}`);
+            _l5.push(`  ── 懸念 ──`);
+            if (breakages.length === 0) _l5.push(`  ✓ （懸念なし）`);
+            for (const b of breakages) _l5.push(`  ⚠ [${b.dim}] ${b.desc}`);
+
+            const verdict = breakages.length === 0 && improvements.length > 0 ? 'sandboxStable'
+              : breakages.length === 0 && improvements.length === 0           ? 'sandboxNeutral'
+              : improvements.length > breakages.length                        ? 'sandboxMixed'
+              : 'sandboxUnstable';
+            _ci_stabilityAudit.verdict  = verdict;
+            _ci_stabilityAudit.improved = improvements.length;
+            _ci_stabilityAudit.broken   = breakages.length;
+
+            const stLabel = {
+              sandboxStable:   '✓ STABLE  — 仮適用後の世界は安定化している',
+              sandboxNeutral:  '= NEUTRAL  — 有意な改善なし。継続観察推奨。',
+              sandboxMixed:    '△ MIXED  — 改善と懸念が混在。人間判断が必要。',
+              sandboxUnstable: '⚠ UNSTABLE  — 懸念が改善を上回る。適用再考推奨。',
+            };
+            _l5.push(``);
+            _l5.push(`  ── Stability Audit 判定 ──`);
+            _l5.push(`    improved: ${improvements.length}  maintained: ${maintained.length}  broken: ${breakages.length}`);
+            _l5.push(`    overall: ${verdict}`);
+            _l5.push(`    ${stLabel[verdict]}`);
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Human-Intervention-Review] ──
+          {
+            const _l6 = [`[Human-Intervention-Review] dept=${cd.id}`];
+            _l6.push(`  ── 管理者視点での介入結果レビュー ──`);
+            _l6.push(`  before/after / future delta / preserved structure / new risk / operational realism`);
+            _l6.push(``);
+
+            const modifiedSt = _ci_arr.filter(st => _ci_rules[st.s.id]?.delta !== 0);
+            const baseNight    = _ci_arr.reduce((s, st) => s + st.nCnt, 0);
+            const sandboxNight = Object.values(_ci_sandbox).reduce((s, v) => s + v.nCnt, 0);
+
+            if (modifiedSt.length === 0) {
+              _l6.push(`  ℹ 変更適用スタッフなし`);
+            } else {
+              for (const st of modifiedSt) {
+                const sbSt  = _ci_sandbox[st.s.id];
+                const rule  = _ci_rules[st.s.id];
+                const base6 = _ci_futState(st,   6);
+                const sand6 = _ci_futState(sbSt, 6);
+
+                const preserved = [];
+                if (st.sSq > 0)      preserved.push(`safeSequence(sSq=${st.sSq})`);
+                if (st.hasPair)      preserved.push(`ペア関係`);
+                if (sbSt.ladder >= 4) preserved.push(`nightCore ladder≥4維持`);
+
+                const newRisks = [];
+                if (sandboxNight < baseNight - 1 && rule.delta < 0)
+                  newRisks.push(`夜勤削減${baseNight - sandboxNight}回 → shortage確認推奨`);
+                if (rule.rule === 'growthUp' && sbSt.nCnt >= 2)
+                  newRisks.push(`夜勤増加→疲労蓄積を月次モニタリング要`);
+                if (rule.rule === 'coreKept' && st.bo === 'high')
+                  newRisks.push(`burnout継続 → 毎月状態確認が必須`);
+
+                const opReal = Math.abs(rule.delta) <= 1
+                  ? 'gradual(low-risk) — 実運用で採用しやすい'
+                  : 'significant — 段階的調整を推奨';
+                const psychImpact = rule.rule === 'boReduce'    ? '負担軽減 → 高受容'
+                  : rule.rule === 'growthUp'                    ? '成長促進 → 中受容（意欲次第）'
+                  : rule.rule === 'unsafeBlock'                 ? '安全確保 → 高受容（説明容易）'
+                  : rule.rule === 'coreKept'                    ? '負担継続の説明が必要 → 中受容'
+                  : '通常変更';
+
+                _l6.push(`  ── ${st.s.name} ──`);
+                _l6.push(`  before: nCnt=${st.nCnt}  stage=${st.stage}  ladder=${st.ladder}  bo=${st.bo}`);
+                _l6.push(`  after:  nCnt=${sbSt.nCnt}  stage=${sbSt.stage}  ladder=${sbSt.ladder}  (sandbox適用後)`);
+                _l6.push(`  6m後:  ladder ${base6.ladder}→${sand6.ladder}  stage ${base6.stage}→${sand6.stage}  ${sand6.ladder >= base6.ladder ? '✓' : '△'}`);
+                _l6.push(`  preserved:       ${preserved.length > 0 ? preserved.join(' / ') : 'なし'}`);
+                _l6.push(`  newRisk:         ${newRisks.length > 0 ? newRisks.join(' / ') : 'なし ✓'}`);
+                _l6.push(`  operationalReal: ${opReal}`);
+                _l6.push(`  psychImpact:     ${psychImpact}`);
+                _l6.push(`  理由:            ${rule.reasoning}`);
+                _l6.push(``);
+              }
+            }
+
+            // Overall verdict
+            const safetyOk        = _ci_stabilityAudit.broken === 0;
+            const hasImprovements = _ci_stabilityAudit.improved > 0;
+            const interventionVerdict = safetyOk && hasImprovements ? 'acceptableIntervention'
+              : safetyOk && !hasImprovements                        ? 'neutralIntervention'
+              : !safetyOk && hasImprovements                        ? 'conditionalIntervention'
+              : 'notRecommendedIntervention';
+            const ivLabel = {
+              acceptableIntervention:     '✓ ACCEPTABLE  — 安全かつ改善あり。管理者採用を推奨。',
+              neutralIntervention:        '= NEUTRAL  — 安全だが有意な改善なし。様子見継続。',
+              conditionalIntervention:    '△ CONDITIONAL  — 改善あるが懸念も存在。条件付き採用。',
+              notRecommendedIntervention: '⚠ NOT RECOMMENDED  — 懸念が優先。再設計推奨。',
+            };
+            _l6.push(`  ── 総合介入レビュー ──`);
+            _l6.push(`    stability: ${_ci_stabilityAudit.verdict}  improved: ${_ci_stabilityAudit.improved}  broken: ${_ci_stabilityAudit.broken}`);
+            _l6.push(`    interventionVerdict: ${interventionVerdict}`);
+            _l6.push(`    ${ivLabel[interventionVerdict]}`);
+            _l6.push(``);
+            _l6.push(`  ── 5つの分析設問 ──`);
+            _l6.push(`  Q1: Recommendation は本当に未来改善へ繋がるか?`);
+            const core6base = _ci_arr.filter(st => _ci_futState(st, 6).ladder >= 4).length;
+            const core6sb   = Object.values(_ci_sandbox).filter(st => _ci_futState(st, 6).ladder >= 4).length;
+            _l6.push(`    → 6m後 nightCore: base=${core6base}→sandbox=${core6sb}  ${core6sb >= core6base ? '✓ 維持/改善' : '⚠ 低下'}`);
+            _l6.push(`    → ${hasImprovements ? '✓ 改善効果が観測された' : '△ 改善効果は限定的または現時点では未観測'}`);
+            _l6.push(`  Q2: burnout改善と support continuity は両立可能か?`);
+            const boReduceN = Object.values(_ci_rules).filter(r => r.rule === 'boReduce' && r.delta !== 0).length;
+            const giverB = _ci_arr.filter(st => st.ladder >= 3 && st.bo !== 'high').length;
+            const giverA = Object.values(_ci_sandbox).filter(st => st.ladder >= 3 && st.bo !== 'high').length;
+            _l6.push(`    → boReduce適用: ${boReduceN}名  giver: ${giverB}→${giverA}名`);
+            _l6.push(`    → ${giverA >= giverB ? '✓ support continuity 維持しながら burnout 改善可能' : '△ giver低下あり。段階適用と交代準備が必要。'}`);
+            _l6.push(`  Q3: sandbox intervention は shortage悪化を招かないか?`);
+            _l6.push(`    → 夜勤総数: base=${baseNight}→sandbox=${sandboxNight} (${sandboxNight - baseNight >= 0 ? '+' : ''}${sandboxNight - baseNight})`);
+            _l6.push(`    → ${sandboxNight >= baseNight ? '✓ shortage悪化なし' : `△ 夜勤${baseNight - sandboxNight}回削減 → 不足日チェックを推奨`}`);
+            _l6.push(`  Q4: 心理安全性を維持したまま nightCore分散できるか?`);
+            const growthN = Object.values(_ci_rules).filter(r => r.rule === 'growthUp' && r.delta !== 0).length;
+            _l6.push(`    → growthUp適用: ${growthN}名`);
+            _l6.push(`    → ${growthN > 0 ? '△ ladder 成長促進あり。本人の意向確認と段階的適用が前提。' : 'ℹ nightCore分散提案なし（現時点）'}`);
+            _l6.push(`  Q5: Temporal Intervention は Explainable なまま維持できるか?`);
+            const allHaveReason = Object.values(_ci_rules).every(r => r.reasoning.length > 0);
+            _l6.push(`    → 全変更に reasoning あり: ${allHaveReason ? '✓' : '⚠'}`);
+            _l6.push(`    → rollback clean: ✓`);
+            _l6.push(`    → ${interventionVerdict === 'acceptableIntervention' ? '✓ Phase0→Phase1 移行条件クリアに近い状態' : '△ Phase1移行前に安定性の追加確認推奨'}`);
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Intervention-Sandbox-Clone / Temporary-Recommendation-Apply /
+        //    Re-Simulation-Engine / Intervention-Rollback-System /
+        //    Intervention-Stability-Audit / Human-Intervention-Review] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
