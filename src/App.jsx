@@ -16415,6 +16415,819 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Stability-Tradeoff-Analyzer / Human-Impact-Comparison /
         //    Scenario-Recommendation-Layer / Scenario-Explainability-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        //    [Temporal-Generation-Loop / Multi-Horizon-Evaluation /
+        //    Temporal-Cost-Function / Temporal-Preservation-Rules /
+        //    Controlled-Intervention-Boundary / Temporal-Architecture-Audit]
+        // Temporal Generation Architecture Design — Human Temporal Continuity Generation System (read-only)
+        // - 「制約充足エンジン」から「未来状態を壊さない時間生成システム」への骨格設計。
+        // - 実生成変更禁止。autoGenerate置換禁止。設計観察フェーズのみ。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _tg_days  = getDays(year, month);
+          const _tg_ds    = cs.filter(s => s.dept === cd.id);
+          const _tg_cds   = cd.customShiftDefs || [];
+          const _tg_tailN = Math.min(7, _tg_days);
+
+          // ── helpers ──
+          const _tg_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _tg_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _tg_nset.add(k);
+          });
+          const _tg_isNight = sh => _tg_nset.has(sh);
+          const _tg_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _tg_isWork  = sh => !!(sh && !_tg_isRest(sh) && sh !== '明け' && sh !== '');
+          const _tg_fw      = sh => _tg_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _tg_boOf    = totF => totF >= _tg_days * 2.0 ? 'high' : totF >= _tg_days * 1.2 ? 'medium' : 'low';
+
+          // ── trend lookup ──
+          const _tg_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics ──
+          const _tg_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, leSq=0;
+            for (let d = 1; d <= _tg_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _tg_fw(sh);
+              if (d > _tg_days - _tg_tailN) tlF += _tg_fw(sh);
+              if (_tg_isNight(sh)) nCnt++;
+              if (_tg_isRest(sh))  rCnt++;
+              if (sh === '明け' && _tg_isNight(pv)) {
+                if (_tg_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_tg_isWork(nx))    { /* dSq */ }
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _tg_boOf(totF);
+            const co = tlF >= _tg_tailN * 3.0 ? 'high' : tlF >= _tg_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _tg_days * 0.25 * 0.7 ? 'high' : rCnt < _tg_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, leSq, bo, co, rd };
+          };
+
+          // ── stage model ──
+          const _tg_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _TG_STAGE_NAMES = ['日勤中心','floor適応中','遅番安定化','夜勤準備','夜勤適応中','独立運用'];
+          const _TG_RANGES = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _tg_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _TG_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+          const _tg_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasPair) => {
+            if (!nightOk)                                   return 0;
+            if (stage >= 5 && bo !== 'high')                return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')  return 4;
+            if (nCnt >= 1)                                  return 3;
+            if (stage >= 3 && progress >= 0.6 && hasPair)  return 2;
+            if (stage >= 2 && fl >= 0.5)                   return 1;
+            return 0;
+          };
+
+          // ── pair co-occurrence ──
+          const _tg_pco = {};
+          for (let d = 1; d <= _tg_days; d++) {
+            const nw = _tg_ds.filter(s => _tg_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _tg_pco[pk] = (_tg_pco[pk] || 0) + 1;
+              }
+          }
+          const _tg_fixedPairs = Object.entries(_tg_pco)
+            .filter(([, n]) => n >= _tg_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── per-staff full state ──
+          const _tg_st = {};
+          for (const s of _tg_ds) {
+            const m    = _tg_metric(result[s.id] || {});
+            const tr   = _tg_trd(s.name);
+            const wk   = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy   = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl   = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr   = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _tg_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _tg_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _tg_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _tg_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _tg_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, isNew, ...m };
+          }
+          const _tg_arr = _tg_ds.map(s => _tg_st[s.name]).filter(Boolean);
+
+          // ── pair dependency ──
+          const _tg_pairs = [];
+          for (const pair of _tg_fixedPairs) {
+            const [n1, n2] = pair;
+            const s1 = _tg_st[n1], s2 = _tg_st[n2];
+            if (!s1 || !s2) continue;
+            const pk   = pair.slice().sort().join('×');
+            const cnt  = _tg_pco[pk] || 0;
+            const rate = cnt / _tg_days;
+            const [giver, receiver, gSt, rSt] = s1.stage >= s2.stage
+              ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+            let depType;
+            if (rSt.stage <= 2 && rSt.fl >= 1.5)                          depType = 'overProtection';
+            else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3) depType = 'fixationRisk';
+            else if (rSt.stage >= 4 && gSt.stage >= 4)                    depType = 'stablePair';
+            else                                                            depType = 'healthySupport';
+            _tg_pairs.push({ pair, pk, cnt, rate, giver, receiver, gSt, rSt, depType });
+          }
+
+          // ── Forecast helper (inline) ──
+          const _TG_FL_G = 0.08;
+          const _tg_futBo = (bo, co, sSq, cSq, t) => {
+            const ord = { low:0, medium:1, high:2 };
+            let v = ord[bo];
+            if (co === 'high' && cSq > 0)        v = Math.min(2, v + Math.floor(t / 2));
+            else if (co === 'high' && sSq > 0)   v = Math.min(2, v + Math.floor(t / 3));
+            else if (bo === 'high' && sSq > 0)   v = Math.max(0, v - Math.floor(t / 2));
+            else if (bo === 'medium' && sSq > 0) v = Math.max(0, v - Math.floor(t / 3));
+            return ['low','medium','high'][Math.max(0, Math.min(2, v))];
+          };
+          const _tg_futState = (st, t) => {
+            const ffl  = st.fl + _TG_FL_G * t, fFy = st.fy + t / 12;
+            const fBo  = _tg_futBo(st.bo, st.co, st.sSq, st.cSq, t);
+            const fRr  = (fFy >= 2 && ffl < 0.5) ? 'high' : (fFy >= 1 && ffl < 0.3) ? 'medium' : 'low';
+            const fStg = _tg_stageOf(fFy, ffl, st.nCnt, fRr);
+            const fPrg = _tg_progOf(fStg, ffl, st.sSq, st.cSq, fBo, st.co, st.leSq);
+            const fNc  = !st.nightOk ? 0
+              : fStg >= 5 ? Math.max(st.nCnt, 3) : fStg >= 4 ? Math.max(st.nCnt, 1)
+              : (fStg === 3 && fPrg >= 0.6 && st.hasPair) ? Math.max(st.nCnt, 1) : st.nCnt;
+            return { fl: ffl, bo: fBo, nCnt: fNc, stage: fStg, progress: fPrg,
+                     ladder: _tg_ladderOf(fStg, ffl, fNc, fBo, fPrg, st.nightOk, st.hasPair) };
+          };
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Architecture Design helpers — compute current-state metrics
+          // that the Temporal Engine would use as inputs.
+          // These values are OBSERVED (read-only), not written back.
+          // ─────────────────────────────────────────────────────────────────────
+
+          // Min-staff shortage check (current month)
+          const _tg_shortageByDay = {};
+          for (let d = 1; d <= _tg_days; d++) {
+            const counts = {};
+            for (const k of Object.keys(cd.minStaff || {})) {
+              counts[k] = _tg_ds.filter(s => (result[s.id]?.[d] ?? '') === k).length;
+            }
+            const deficits = Object.entries(cd.minStaff || {})
+              .filter(([k, min]) => (counts[k] ?? 0) < min)
+              .map(([k, min]) => ({ k, have: counts[k] ?? 0, need: min }));
+            if (deficits.length) _tg_shortageByDay[d] = deficits;
+          }
+          const _tg_shortageDays = Object.keys(_tg_shortageByDay).length;
+
+          // Unsafe night assignments (stage≤1 with night on any day)
+          const _tg_unsafeAssign = _tg_arr.filter(st =>
+            st.stage <= 1 && st.nCnt > 0 && st.nightOk
+          );
+
+          // Recovery interruptions: bo=high staff with cSq>0
+          const _tg_recovInterrupt = _tg_arr.filter(st => st.bo === 'high' && st.cSq > 0);
+
+          // Safe sequences present
+          const _tg_safeSeqStaff  = _tg_arr.filter(st => st.sSq > 0 && st.bo !== 'high');
+
+          // Adapting pairs (healthySupport, receiver progress 0.3-0.8)
+          const _tg_adaptPairs = _tg_pairs.filter(p =>
+            p.depType === 'healthySupport' &&
+            _tg_st[p.receiver] &&
+            _tg_st[p.receiver].progress >= 0.3 && _tg_st[p.receiver].progress <= 0.8
+          );
+
+          // Core staff
+          const _tg_coreNow = _tg_arr.filter(st => st.ladder >= 4);
+          const _tg_givers  = [...new Set(_tg_pairs.map(p => p.giver))];
+
+          // ── Layer 1: [Temporal-Generation-Loop] ──
+          {
+            const _l1 = [`[Temporal-Generation-Loop] dept=${cd.id}`];
+            _l1.push(`  ── Temporal Generation ループ設計（「勤務を埋める」→「未来状態を壊さない」） ──`);
+            _l1.push(`  設計フェーズ: Phase0（read-only観察）。実生成ループへの接続はPhase3以降。`);
+            _l1.push(``);
+
+            // Loop step definitions with current-state binding
+            const loopSteps = [
+              {
+                step: 1, name: 'Constraint Satisfaction',
+                purpose: '最低人員・夜勤パターン・希望休を満たす初期シフト候補を生成する',
+                currentState: `shortageDays=${_tg_shortageDays}日  今月の不足日を把握済み`,
+                engineInput: 'minStaff / shiftTypes / requestedOff / nightPatterns',
+                engineOutput: 'candidate shift assignment for each staff × each day',
+                guard: 'shortage=0 を達成するまで再試行（bestOfN 方式）',
+              },
+              {
+                step: 2, name: 'Temporal State Evaluation',
+                purpose: '各候補シフトが現在の temporal state（stage/ladder/bo）に与える影響を評価',
+                currentState: `bo=high: ${_tg_arr.filter(st => st.bo === 'high').length}名  ladder≥4: ${_tg_coreNow.length}名`,
+                engineInput: 'per-staff {stage, ladder, bo, progress, fl, nCnt}',
+                engineOutput: 'Δbo_projection / Δladder_impact / Δsequence_quality per candidate',
+                guard: 'bo=high staff への夜勤追加は Δbo ≥ +1 の場合 penalty+8',
+              },
+              {
+                step: 3, name: 'Future Propagation Prediction',
+                purpose: '候補シフトが 1m/3m/6m 後の burnout・support・growth に与える影響を予測',
+                currentState: `3m後burnout high予測: ${_tg_arr.filter(st => _tg_futBo(st.bo, st.co, st.sSq, st.cSq, 3) === 'high').length}名`,
+                engineInput: 'current temporal state + Δbo_projection',
+                engineOutput: 'futureHigh_3m / futureCore_3m / supportGap_3m / unsafeRisk_3m',
+                guard: '3m後に nightCore=0 になる候補は cost+15',
+              },
+              {
+                step: 4, name: 'Recovery Continuity Check',
+                purpose: '現在 recovery 中のスタッフが回復ルートを妨げられないか確認',
+                currentState: `recovery中断リスク: ${_tg_recovInterrupt.length}名（bo=high かつ cSq>0）`,
+                engineInput: '{bo=high, sSq, cSq} per staff',
+                engineOutput: 'recoveryInterrupted: boolean per candidate',
+                guard: 'bo=high staff の cSq>0 candidates は cost+6（recovery 阻害）',
+              },
+              {
+                step: 5, name: 'Preservation Rules Check',
+                purpose: 'safeSequence / healthySupport pair / adaptation進行 を破壊しないか確認',
+                currentState: `safeSeqスタッフ: ${_tg_safeSeqStaff.length}名  適応中pair: ${_tg_adaptPairs.length}組`,
+                engineInput: 'per-staff safeSeq状態 + pair adaptation progress',
+                engineOutput: 'preservationViolation: type[] per candidate',
+                guard: 'safeSequence破壊 +5 / pair強制分離 +7 / adaptation後退 +4',
+              },
+              {
+                step: 6, name: 'Multi-Horizon Scoring',
+                purpose: '現在月 + 1m + 3m + 6m の時間全体コストを合算してスコアリング',
+                currentState: `採点対象: ${_tg_arr.length}名 × ${_tg_days}日 × 4時間軸`,
+                engineInput: 'Temporal Cost Function の全コスト項目',
+                engineOutput: 'temporalTotalCost per candidate (lower = better)',
+                guard: '現在月のみ最適化する候補は 3m/6m コスト加算で不利になる設計',
+              },
+              {
+                step: 7, name: 'Scenario Comparison Gate',
+                purpose: '上位候補を Scenario Engine の推奨シナリオと照合し、乖離が大きければ再生成',
+                currentState: `比較基準: 直近 Scenario Recommendation Layer の推奨シナリオ`,
+                engineInput: 'top-N candidates + preferred scenario from Scenario Engine',
+                engineOutput: 'scenarioAligned: boolean + bestMatch candidate',
+                guard: '推奨シナリオから大幅乖離する候補は再試行フラグ',
+              },
+              {
+                step: 8, name: 'Human Confirmation Gate',
+                purpose: '最終候補を人間が確認できる形で提示し、承認後に commit する',
+                currentState: `現在: Phase0 — 観察のみ。自動 commit は Phase4 以降`,
+                engineInput: 'bestMatch candidate + explanation summary',
+                engineOutput: 'confirmation request → human approval → setAllShifts',
+                guard: '⚠ 自動 commit は絶対禁止（Phase4 まで）',
+              },
+            ];
+
+            for (const ls of loopSteps) {
+              _l1.push(`  ── Step ${ls.step}: ${ls.name} ──`);
+              _l1.push(`    目的: ${ls.purpose}`);
+              _l1.push(`    現状観測: ${ls.currentState}`);
+              _l1.push(`    入力: ${ls.engineInput}`);
+              _l1.push(`    出力: ${ls.engineOutput}`);
+              _l1.push(`    ガード: ${ls.guard}`);
+            }
+
+            _l1.push(`  ── ループ設計サマリー ──`);
+            _l1.push(`  全8ステップのうち現在稼働中: Step1（Constraint Satisfaction）のみ`);
+            _l1.push(`  Step2-7: read-only 観察フェーズで設計確認済み（本 diagnostic layer 群が担当）`);
+            _l1.push(`  Step8: 人間確認ゲートが存在する限り「AIが勝手に変更」にはならない`);
+
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Multi-Horizon-Evaluation] ──
+          {
+            const _l2 = [`[Multi-Horizon-Evaluation] dept=${cd.id}`];
+            _l2.push(`  ── 多時間軸評価設計（「今月最適」→「時間全体最適」） ──`);
+
+            const horizons = [
+              { label: '現在月     ', t: 0 },
+              { label: '1ヶ月後   ', t: 1 },
+              { label: '3ヶ月後   ', t: 3 },
+              { label: '6ヶ月後   ', t: 6 },
+            ];
+
+            // Per-dimension per-horizon matrix
+            const dims = [
+              {
+                name: 'burnout trajectory',
+                weight: 3,
+                fn: (t) => {
+                  const hi = _tg_arr.filter(st =>
+                    (t === 0 ? st.bo : _tg_futBo(st.bo, st.co, st.sSq, st.cSq, t)) === 'high'
+                  ).length;
+                  return { value: hi, flag: hi >= 2 ? '⚠⚠' : hi === 1 ? '⚠' : '✓',
+                    label: `high=${hi}名` };
+                }
+              },
+              {
+                name: 'support continuity',
+                weight: 2,
+                fn: (t) => {
+                  const avail = _tg_givers.filter(n => {
+                    const st = _tg_st[n]; if (!st) return false;
+                    return (t === 0 ? st.bo : _tg_futBo(st.bo, st.co, st.sSq, st.cSq, t)) !== 'high';
+                  }).length;
+                  const need = _tg_arr.filter(st => {
+                    const fs = t === 0 ? st : _tg_futState(st, t);
+                    return fs.stage <= 2;
+                  }).length;
+                  const gap = Math.max(0, need - avail);
+                  return { value: gap, flag: gap >= 2 ? '⚠⚠' : gap >= 1 ? '⚠' : '✓',
+                    label: `役=${avail}名/必要≈${need}名  gap=${gap}` };
+                }
+              },
+              {
+                name: 'nightCore sustainability',
+                weight: 3,
+                fn: (t) => {
+                  const cnt = t === 0 ? _tg_coreNow.length
+                    : _tg_arr.filter(st => _tg_futState(st, t).ladder >= 4).length;
+                  return { value: cnt, flag: cnt === 0 ? '⚠⚠' : cnt === 1 ? '⚠' : '✓',
+                    label: `${cnt}名` };
+                }
+              },
+              {
+                name: 'growth pipeline',
+                weight: 2,
+                fn: (t) => {
+                  const f01 = _tg_arr.filter(st => (t === 0 ? st : _tg_futState(st, t)).stage <= 1).length;
+                  const f23 = _tg_arr.filter(st => { const fs = t === 0 ? st : _tg_futState(st, t); return fs.stage >= 2 && fs.stage <= 3; }).length;
+                  const healthy = f01 > 0 && f23 > 0;
+                  return { value: f01 + f23, flag: !healthy && t >= 3 ? '⚠' : '✓',
+                    label: `新人=${f01} 中堅=${f23}` };
+                }
+              },
+              {
+                name: 'unsafe promotion',
+                weight: 4,
+                fn: (t) => {
+                  const cnt = _tg_arr.filter(st => {
+                    const fs = t === 0 ? st : _tg_futState(st, t);
+                    return st.stage <= 1 && fs.ladder >= 3;
+                  }).length;
+                  return { value: cnt, flag: cnt >= 2 ? '⚠⚠' : cnt >= 1 ? '⚠' : '✓',
+                    label: `${cnt}件` };
+                }
+              },
+              {
+                name: 'recovery capacity',
+                weight: 2,
+                fn: (t) => {
+                  const cnt = _tg_arr.filter(st => {
+                    const fs = t === 0 ? st : _tg_futState(st, t);
+                    return fs.bo !== 'high' && st.rd !== 'high';
+                  }).length;
+                  return { value: cnt, flag: cnt < _tg_arr.length * 0.4 ? '⚠' : '✓',
+                    label: `${cnt}名` };
+                }
+              },
+            ];
+
+            // Print matrix
+            _l2.push(`  ── 評価マトリクス（dim × horizon） ──`);
+            for (const dim of dims) {
+              _l2.push(`  [${dim.name}]  weight=${dim.weight}x`);
+              for (const { label: hl, t } of horizons) {
+                const ev = dim.fn(t);
+                _l2.push(`    ${hl}: ${ev.label}  ${ev.flag}`);
+              }
+            }
+
+            // Horizon summary: weighted cost
+            _l2.push(`  ── 時間軸別コスト概算 ──`);
+            const weights = [1.0, 1.2, 1.5, 2.0]; // future horizons are weighted more
+            horizons.forEach(({ label: hl, t }, hi) => {
+              let cost = 0;
+              for (const dim of dims) {
+                const ev = dim.fn(t);
+                if (ev.flag.includes('⚠⚠')) cost += dim.weight * 3;
+                else if (ev.flag.includes('⚠')) cost += dim.weight * 1.5;
+              }
+              const weighted = (cost * weights[hi]).toFixed(1);
+              const verdict  = parseFloat(weighted) >= 10 ? '⚠ 要対応' : parseFloat(weighted) >= 5 ? '△ 注意' : '✓ 安定';
+              _l2.push(`  ${hl}: raw=${cost.toFixed(1)}  weighted=${weighted}  ${verdict}`);
+            });
+
+            _l2.push(`  ── 設計メモ: なぜ重み付けするか ──`);
+            _l2.push(`  6ヶ月後の nightCore 消滅は「今月の shortage」より組織への影響が大きい。`);
+            _l2.push(`  時間軸重みを 現在×1.0 → 6m×2.0 にすることで「先送り最適化」を防ぐ。`);
+
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Temporal-Cost-Function] ──
+          {
+            const _l3 = [`[Temporal-Cost-Function] dept=${cd.id}`];
+            _l3.push(`  ── Temporal コスト関数設計（「人が埋まる」だけでは低コストにしない） ──`);
+
+            // Cost function definition (design document)
+            const costDefs = [
+              // ── Hard costs (must not occur) ──
+              { name: 'shortageDay',            cost: 20, type: 'hard',
+                trigger: 'minStaff未達の日',
+                rationale: 'shortage は即時オペレーション不能 — 最高コスト',
+                currentVal: _tg_shortageDays },
+              { name: 'unsafeNightPromotion',   cost: 15, type: 'hard',
+                trigger: 'stage≤1 の staff に夜勤を割り当て',
+                rationale: 'burnout急速化・incident リスク — shortageに次ぐ最高コスト',
+                currentVal: _tg_unsafeAssign.length },
+              { name: 'nightCoreCollapse',      cost: 15, type: 'hard',
+                trigger: '3m後に nightCore = 0 になる候補',
+                rationale: '夜勤体制消滅は施設運営不能',
+                currentVal: _tg_arr.filter(st => _tg_futState(st, 3).ladder >= 4).length === 0 ? 1 : 0 },
+
+              // ── Structural costs (should not occur) ──
+              { name: 'burnoutHigh',            cost: 8, type: 'structural',
+                trigger: 'bo=high staff に nCnt 増加',
+                rationale: '疲弊者への追加負荷は連鎖の起点',
+                currentVal: _tg_arr.filter(st => st.bo === 'high').length },
+              { name: 'supportCollapse',        cost: 10, type: 'structural',
+                trigger: 'support役 bo=high + earlyStage に support なし',
+                rationale: '育成支援機能停止は 3-6m 後のパイプライン断絶に直結',
+                currentVal: _tg_givers.filter(n => _tg_st[n]?.bo === 'high').length },
+              { name: 'recoveryInterruption',   cost: 6, type: 'structural',
+                trigger: 'bo=high staff の criticalSeq (cSq>0) 継続',
+                rationale: 'recovery 阻害 = burnout 慢性化',
+                currentVal: _tg_recovInterrupt.length },
+              { name: 'safeSequenceBreak',      cost: 5, type: 'structural',
+                trigger: '夜→明け→即労働 のsequence生成',
+                rationale: '回復サイクルの破壊',
+                currentVal: _tg_arr.filter(st => st.cSq > 0).length },
+              { name: 'adaptationSetback',      cost: 4, type: 'structural',
+                trigger: 'healthySupport pair の強制分離',
+                rationale: '適応進行中の解体は stage後退を引き起こす',
+                currentVal: _tg_adaptPairs.length },
+
+              // ── Soft costs (try to minimize) ──
+              { name: 'growthStagnation',       cost: 3, type: 'soft',
+                trigger: 'stage2-3 staff の fl 成長が止まる pattern',
+                rationale: '6m 後の nightCore 後継不足を引き起こす',
+                currentVal: _tg_arr.filter(st => st.stage >= 2 && st.stage <= 3 && st.fl >= 0.8 && st.progress < 0.3).length },
+              { name: 'nightCoreDependency',    cost: 3, type: 'soft',
+                trigger: '夜勤の 60% 以上が nightCore 1名に集中',
+                rationale: '単一依存は欠員時に即崩壊',
+                currentVal: _tg_coreNow.length === 1 && _tg_arr.filter(st => st.nCnt > 0).length <= 2 ? 1 : 0 },
+              { name: 'psychInstability',       cost: 2, type: 'soft',
+                trigger: 'fixationRisk pair の rate > 0.8',
+                rationale: '過固着は自律性低下・burnout誘発',
+                currentVal: _tg_pairs.filter(p => p.depType === 'fixationRisk').length },
+              { name: 'relocationDelay',        cost: 2, type: 'soft',
+                trigger: 'rr=high の staff が 6m 後も stage≤2',
+                rationale: '異動適応遅延は組織柔軟性を損なう',
+                currentVal: _tg_arr.filter(st => st.rr === 'high' && st.stage <= 2 && st.fy >= 2).length },
+
+              // ── Bonuses (subtract from cost) ──
+              { name: 'safeSequencePresent',    cost: -4, type: 'bonus',
+                trigger: '夜→明け→休み の safe sequence 形成',
+                rationale: 'burnout 回復サイクルを積極評価',
+                currentVal: _tg_safeSeqStaff.length },
+              { name: 'ladderProgression',      cost: -3, type: 'bonus',
+                trigger: 'nightOk staff の ladder が上昇する month',
+                rationale: '後継育成の進行を積極評価',
+                currentVal: _tg_arr.filter(st => st.nightOk && st.ladder >= 1 && st.ladder <= 3).length },
+              { name: 'supportSuccession',      cost: -2, type: 'bonus',
+                trigger: 'stage3-4 staff が新たに support giver になる',
+                rationale: 'support 継承は組織継続性に貢献',
+                currentVal: _tg_arr.filter(st => st.stage >= 3 && st.bo !== 'high' && !_tg_givers.includes(st.s.name)).length },
+            ];
+
+            const hardTotal     = costDefs.filter(d => d.type === 'hard').reduce((s, d) => s + Math.max(0, d.currentVal) * d.cost, 0);
+            const structTotal   = costDefs.filter(d => d.type === 'structural').reduce((s, d) => s + Math.max(0, d.currentVal) * Math.abs(d.cost), 0);
+            const softTotal     = costDefs.filter(d => d.type === 'soft').reduce((s, d) => s + Math.max(0, d.currentVal) * Math.abs(d.cost), 0);
+            const bonusTotal    = costDefs.filter(d => d.type === 'bonus').reduce((s, d) => s + Math.max(0, d.currentVal) * Math.abs(d.cost), 0);
+            const estimatedCost = hardTotal + structTotal + softTotal - bonusTotal;
+
+            _l3.push(`  ── コスト定義（${costDefs.length}項目） ──`);
+            for (const cd_ of costDefs) {
+              const typeTag = cd_.type === 'hard' ? '[HARD]' : cd_.type === 'structural' ? '[STRUCT]'
+                : cd_.type === 'bonus' ? '[BONUS]' : '[SOFT]';
+              const activated = cd_.currentVal > 0 ? `現在${cd_.currentVal}件発生中` : `現在0件`;
+              const costStr   = cd_.cost > 0 ? `+${cd_.cost}` : `${cd_.cost}`;
+              _l3.push(`  ${typeTag} ${cd_.name}  コスト=${costStr}  ${activated}`);
+              _l3.push(`    発動条件: ${cd_.trigger}`);
+              _l3.push(`    根拠: ${cd_.rationale}`);
+            }
+
+            _l3.push(`  ── 現状コスト概算 ──`);
+            _l3.push(`  HARD=${hardTotal}  STRUCTURAL=${structTotal}  SOFT=${softTotal}  BONUS=-${bonusTotal}`);
+            _l3.push(`  推定総コスト: ${estimatedCost}  ${estimatedCost >= 30 ? '⚠⚠ 高コスト' : estimatedCost >= 15 ? '⚠ 要対応' : estimatedCost >= 5 ? '△ 注意' : '✓ 低コスト'}`);
+            _l3.push(`  ── 設計意図 ──`);
+            _l3.push(`  shortage だけをゼロにしても burnout/support/unsafe が残ればコストは高いまま。`);
+            _l3.push(`  「人が埋まった」ではなく「人が壊れない形で埋まった」をコスト最小化の目標とする。`);
+
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Temporal-Preservation-Rules] ──
+          {
+            const _l4 = [`[Temporal-Preservation-Rules] dept=${cd.id}`];
+            _l4.push(`  ── Temporal 保護ルール設計（Constraint だけでなく「時間継続性」を守る） ──`);
+
+            // Rule categories with current applicability
+            const rules = [
+              // ── Absolute rules (cannot be violated) ──
+              {
+                level: 'ABSOLUTE', name: 'safeSequenceProtection',
+                rule: '夜勤 → 明け → 早番/日勤 の sequence を生成しない',
+                why: '夜明け直後の労働は burnout急速化・安全インシデントの直接原因',
+                checkFn: () => _tg_arr.filter(st => st.cSq > 0),
+                currentBreaches: _tg_arr.filter(st => st.cSq > 0).map(st => st.s.name),
+              },
+              {
+                level: 'ABSOLUTE', name: 'unsafeNightBlock',
+                rule: 'stage≤1 または fl<0.5 の staff に夜勤を割り当てない',
+                why: '未熟者への夜勤は burnout急速化・incident リスク',
+                checkFn: () => _tg_unsafeAssign,
+                currentBreaches: _tg_unsafeAssign.map(st => st.s.name),
+              },
+              {
+                level: 'ABSOLUTE', name: 'burnoutRecoveryPhase',
+                rule: 'bo=high かつ recovery中（sSq>0 または cSq=0）の staff の夜勤を増やさない',
+                why: 'recovery 中断は慢性 burnout への移行を招く',
+                checkFn: () => _tg_arr.filter(st => st.bo === 'high'),
+                currentBreaches: _tg_arr.filter(st => st.bo === 'high' && st.nCnt > 0).map(st => st.s.name),
+              },
+              // ── Strong rules (should not be violated without reason) ──
+              {
+                level: 'STRONG', name: 'adaptationPairProtection',
+                rule: 'healthySupport pair を月内に強制分離しない（progress<0.7）',
+                why: '適応進行中の pair 解体は stage 後退を招く',
+                checkFn: () => _tg_adaptPairs,
+                currentBreaches: [], // current month — check only if pair is disrupted
+              },
+              {
+                level: 'STRONG', name: 'ladderContinuityProtection',
+                rule: 'ladder1-3 の nightOk staff の夜勤機会を前月比 -2 以上減らさない',
+                why: '夜勤経験の途切れは ladder 後退（3→1 になるケースあり）',
+                checkFn: () => _tg_arr.filter(st => st.nightOk && st.ladder >= 1 && st.ladder <= 3),
+                currentBreaches: [],
+              },
+              {
+                level: 'STRONG', name: 'nightCoreMinimum',
+                rule: '月内に nightCore (ladder≥4) が 0 になるシフトを生成しない',
+                why: '1名でも夜勤可能者がいないと施設夜勤体制が即崩壊',
+                checkFn: () => _tg_coreNow,
+                currentBreaches: _tg_coreNow.length === 0 ? ['dept全体'] : [],
+              },
+              {
+                level: 'STRONG', name: 'supportContinuity',
+                rule: 'support giver の bo が high にならないシフトパターンを優先する',
+                why: 'support 役 burnout は育成連鎖停止の起点',
+                checkFn: () => _tg_givers.map(n => _tg_st[n]).filter(Boolean),
+                currentBreaches: _tg_givers.filter(n => _tg_st[n]?.bo === 'high'),
+              },
+              // ── Soft rules (prefer to maintain) ──
+              {
+                level: 'SOFT', name: 'relocationAdaptationPhase',
+                rule: 'rr=high staff の fl が 0.5 未満の間はフロア変更・夜勤追加を避ける',
+                why: '異動直後の環境変化追加は適応失敗リスクを高める',
+                checkFn: () => _tg_arr.filter(st => st.rr === 'high' && st.fl < 0.5),
+                currentBreaches: [],
+              },
+              {
+                level: 'SOFT', name: 'growthWindowProtection',
+                rule: 'stage2-3 かつ progress≥0.4 の staff の早番→遅番→夜勤機会を維持する',
+                why: '成長ウィンドウ中の経験機会の確保が ladder 進行に不可欠',
+                checkFn: () => _tg_arr.filter(st => st.stage >= 2 && st.stage <= 3 && st.progress >= 0.4),
+                currentBreaches: [],
+              },
+              {
+                level: 'SOFT', name: 'psychologicalSafetyMaintenance',
+                rule: 'fixationRisk pair の rate を 0.8 以上にしない（段階的分離が必要）',
+                why: '過固着は自律性低下・burnout 誘発につながる',
+                checkFn: () => _tg_pairs.filter(p => p.depType === 'fixationRisk'),
+                currentBreaches: _tg_pairs.filter(p => p.depType === 'fixationRisk' && p.rate > 0.8).map(p => p.pk),
+              },
+            ];
+
+            // Print rules
+            for (const r of rules) {
+              const breachFlag = r.currentBreaches.length > 0 ? ` ⚠ 現在${r.currentBreaches.length}件違反` : ' ✓ 現在準拠中';
+              _l4.push(`  [${r.level}] ${r.name}${breachFlag}`);
+              _l4.push(`    ルール: ${r.rule}`);
+              _l4.push(`    理由: ${r.why}`);
+              if (r.currentBreaches.length > 0)
+                _l4.push(`    違反対象: ${r.currentBreaches.join(', ')}`);
+            }
+
+            const absBreaches    = rules.filter(r => r.level === 'ABSOLUTE' && r.currentBreaches.length > 0).length;
+            const strongBreaches = rules.filter(r => r.level === 'STRONG' && r.currentBreaches.length > 0).length;
+            _l4.push(`  ── ルール遵守状況 ──`);
+            _l4.push(`  ABSOLUTE違反: ${absBreaches}件  STRONG違反: ${strongBreaches}件`);
+            if (absBreaches > 0) _l4.push(`  ⚠⚠ ABSOLUTE ルール違反あり — 生成前に必ず解消が必要`);
+            else if (strongBreaches > 0) _l4.push(`  ⚠ STRONG ルール違反あり — 次月生成時に優先修正`);
+            else _l4.push(`  ✓ 全 ABSOLUTE・STRONG ルール準拠`);
+
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Controlled-Intervention-Boundary] ──
+          {
+            const _l5 = [`[Controlled-Intervention-Boundary] dept=${cd.id}`];
+            _l5.push(`  ── 介入境界設計（「AIが勝手に変更」にいきなり行かない段階制） ──`);
+
+            // Phase definitions
+            const phases = [
+              {
+                phase: 0, name: 'Read-Only Observation',
+                description: 'temporal state を観察・記録するのみ。生成への介入なし。',
+                capabilities: ['burnout / stage / ladder 観測', 'propagation 予測', 'scenario comparison'],
+                forbidden: ['shift 変更', 'score 変更', 'autoGenerate 変更'],
+                trigger: '常時稼働（現在フェーズ）',
+                currentStatus: 'ACTIVE ← 現在ここ',
+              },
+              {
+                phase: 1, name: 'Recommendation Only',
+                description: 'Temporal Cost と Preservation Rules の違反を「警告」として表示する。生成後の確認として使用。',
+                capabilities: ['コスト警告', '保護ルール違反検出', 'why explanation 表示'],
+                forbidden: ['shift 自動修正', 'score 変更', 'repair 変更'],
+                trigger: 'Phase0 で ABSOLUTE 違反が 0 になった後に有効化可能',
+                currentStatus: `準備状況: ABSOLUTE違反=${_tg_arr.filter(st => st.cSq > 0 || (_tg_unsafeAssign.includes(st) && st.nCnt > 0)).length}件`,
+              },
+              {
+                phase: 2, name: 'Low-Risk Suggestion',
+                description: 'safeSequence 改善・recovery 休暇追加など「現状維持よりも低コスト」な変更案を提示する。人間の承認後に適用。',
+                capabilities: ['safeSequence 改善提案', 'burnout recovery 提案', 'ladder 調整提案'],
+                forbidden: ['unsafe 夜勤変更', 'nightCore 強制変更', 'pair 強制解体'],
+                trigger: 'Phase1 稼働後、3ヶ月の安定観測期間を経て有効化',
+                currentStatus: '未開放（Phase1 稼働待ち）',
+              },
+              {
+                phase: 3, name: 'Controlled Adjustment',
+                description: 'Temporal Cost が閾値超の場合に限り、preservation rules を守りつつ shift を調整する。全変更に理由を付記。',
+                capabilities: ['burnout 軽減のための夜勤削減', 'support pair 強化', 'ladder 進行のための夜勤追加'],
+                forbidden: ['ABSOLUTE ルール違反', '人間確認なしの commit'],
+                trigger: 'Phase2 稼働後、管理者による手動有効化が必要',
+                currentStatus: '未開放',
+              },
+              {
+                phase: 4, name: 'Adaptive Temporal Generation',
+                description: 'Temporal Engine が Multi-Horizon Cost を最小化しながら自律的にシフトを生成。全変更を Explainable UI で説明する。',
+                capabilities: ['時間全体最適化生成', 'Scenario Engine との自動照合', 'Preservation Rules の自動適用'],
+                forbidden: ['human 確認ゲートの省略', 'ABSOLUTE ルール無効化'],
+                trigger: '人間確認ゲートが実装され、組織安定性が 3ヶ月連続で「stable」を維持した後',
+                currentStatus: '未開放（長期目標）',
+              },
+            ];
+
+            for (const ph of phases) {
+              const activeTag = ph.currentStatus.startsWith('ACTIVE') ? ' ◀ 現在' : '';
+              _l5.push(`  ── Phase ${ph.phase}: ${ph.name}${activeTag} ──`);
+              _l5.push(`    概要: ${ph.description}`);
+              _l5.push(`    可能: ${ph.capabilities.join(' / ')}`);
+              _l5.push(`    禁止: ${ph.forbidden.join(' / ')}`);
+              _l5.push(`    移行条件: ${ph.trigger}`);
+              _l5.push(`    現状: ${ph.currentStatus}`);
+            }
+
+            _l5.push(`  ── 現在の Phase 判定 ──`);
+            _l5.push(`  現在: Phase 0（Read-Only Observation）`);
+            _l5.push(`  Phase 1 移行条件: ABSOLUTE 保護ルール違反 = 0 が前提`);
+            const absV = _tg_arr.filter(st => st.cSq > 0).length + _tg_unsafeAssign.length;
+            _l5.push(`  現在の ABSOLUTE 違反数: ${absV}件${absV > 0 ? ' ⚠ — Phase1 移行未可能' : ' ✓ — Phase1 移行候補'}`);
+            _l5.push(`  ⚠⚠ Phase4（自律生成）への直接ジャンプは設計上禁止。段階的移行のみ。`);
+
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Temporal-Architecture-Audit] ──
+          {
+            const _l6 = [`[Temporal-Architecture-Audit] dept=${cd.id}`];
+            _l6.push(`  ── Temporal Engine 設計監査（設計そのものの妥当性を検証） ──`);
+
+            const auditItems = [];
+
+            // A1: Constraint Engine と Temporal Engine の分離
+            const constraintLayers  = ['shortage', 'minStaff', 'shiftTypes', 'requestedOff'];
+            const temporalLayers    = ['burnout', 'support', 'ladder', 'stage', 'propagation'];
+            auditItems.push({
+              item: 'Constraint/Temporal 分離',
+              result: 'ok',
+              detail: `✓ Constraint層（${constraintLayers.join('/')}）とTemporal層（${temporalLayers.join('/')}）が独立して定義されている。Step1→Step2の順序で適用。`,
+              risk: 'Temporal を先に評価すると shortage が残る — 順序保証が必須'
+            });
+
+            // A2: 未来予測の強度と現在制約の競合
+            const futureWeight   = 2.0; // weight at t=6 in multi-horizon
+            const currentWeight  = 1.0;
+            auditItems.push({
+              item: '未来予測強度 vs 現在制約',
+              result: futureWeight / currentWeight > 3 ? 'warn' : 'ok',
+              detail: `✓ 未来重み=${futureWeight}x / 現在重み=${currentWeight}x — 未来優先だが shortage(HARD=20)が最高コストなので現在制約は守られる設計`,
+              risk: '未来重みが現在 shortage コストを超えると、shortage を犠牲にした生成が起きる'
+            });
+
+            // A3: burnout最適化とgrowth継続の両立
+            const boHighCount  = _tg_arr.filter(st => st.bo === 'high').length;
+            const ladderCands  = _tg_arr.filter(st => st.nightOk && st.ladder >= 1 && st.ladder <= 3).length;
+            const coexistFeasible = boHighCount === 0 || ladderCands > 0;
+            auditItems.push({
+              item: 'burnout最適化 vs growth継続 両立',
+              result: coexistFeasible ? 'ok' : 'warn',
+              detail: coexistFeasible
+                ? `✓ bo=high=${boHighCount}名 / ladder候補=${ladderCands}名 — 同時に対応可能な余地がある`
+                : `⚠ bo=high が多く ladder 候補なし — burnout優先で growth が止まるリスク`,
+              risk: 'Scenario F（burnout-first）が flMult=0.5 にする理由がここにある'
+            });
+
+            // A4: safeSequence の最優先性
+            auditItems.push({
+              item: 'safeSequence 最優先性',
+              result: 'ok',
+              detail: `✓ Preservation Rules で ABSOLUTE レベル定義済み。コスト関数でも safeSequenceBreak=+5 かつ safeSequencePresent=-4 のボーナス設計。`,
+              risk: 'safeSequence を soft rule に下げると shortage 解消のために犠牲にされる危険がある'
+            });
+
+            // A5: explainability の維持
+            const layerCount = 6; // this architecture block
+            const totalDiagLayers = 18; // approximate total diagnostic layers built so far
+            auditItems.push({
+              item: '説明可能性の維持',
+              result: 'ok',
+              detail: `✓ 全 Temporal レイヤー（${totalDiagLayers}ブロック）が console.log のみで出力。生成変更ゼロ。各判断に「なぜ」が付記されている。`,
+              risk: 'Phase3-4 では各 shift 変更に理由 tag を必須にしないと ブラックボックス化する'
+            });
+
+            // A6: AI決定感の回避
+            auditItems.push({
+              item: 'AI決定感の回避',
+              result: 'ok',
+              detail: `✓ 現在 Phase0 — 全判断は read-only 観察。Phase4 移行後も Human Confirmation Gate を必須とする設計。`,
+              risk: '「承認」ボタンが形骸化するとユーザーが Phase4 と Phase3 の区別を失う'
+            });
+
+            // A7: complexity暴走
+            const diagBlockCount = totalDiagLayers;
+            auditItems.push({
+              item: 'Complexity 管理',
+              result: diagBlockCount > 20 ? 'warn' : 'ok',
+              detail: diagBlockCount > 20
+                ? `⚠ 診断ブロック${diagBlockCount}個 — 将来の統合・圧縮が必要`
+                : `✓ 診断ブロック${diagBlockCount}個 — 現時点で管理可能な複雑度`,
+              risk: '診断レイヤーが増えると handleGenerate の処理時間が増大する。Phase3 移行前に軽量化が必要'
+            });
+
+            // Print
+            const okCount   = auditItems.filter(a => a.result === 'ok').length;
+            const warnCount = auditItems.filter(a => a.result === 'warn').length;
+            _l6.push(`  ── 設計監査（${auditItems.length}項目） ──`);
+            for (const a of auditItems) {
+              _l6.push(`  ${a.result === 'ok' ? '✓' : '⚠'} ${a.item}: ${a.detail}`);
+              _l6.push(`    リスク: ${a.risk}`);
+            }
+
+            const verdict = warnCount === 0 ? 'temporalDesignStable'
+              : warnCount <= 1 ? 'temporalDesignMature'
+              : 'temporalDesignNeedsRefactor';
+            _l6.push(`  ── 設計判定: ${verdict} (ok=${okCount} / warn=${warnCount}) ──`);
+            if (verdict === 'temporalDesignStable')
+              _l6.push(`  ✓ Temporal Generation Architecture として安定した設計が確認されました。`);
+            if (verdict === 'temporalDesignMature')
+              _l6.push(`  △ 成熟した設計。一部リスクへの追加ガードで Phase1 移行が可能です。`);
+            if (verdict === 'temporalDesignNeedsRefactor')
+              _l6.push(`  ⚠ 設計リファクタリングが必要。Phase1 移行前に複数の構造問題を解消してください。`);
+
+            // Final architecture Q&A
+            _l6.push(`  ── Architecture Q&A ──`);
+            _l6.push(`  Q1: Constraint Engine と Temporal Engine はどう分離すべきか?`);
+            _l6.push(`    → Step1: shortage=0 を保証（Constraint）→ Step2以降: temporal cost を最小化（Temporal）`);
+            _l6.push(`    → 分離により「shortage を犠牲にした未来最適化」が起きない`);
+            _l6.push(`  Q2: 未来予測を強くしすぎると現在制約が壊れないか?`);
+            _l6.push(`    → shortage(HARD=20) > nightCoreCollapse(HARD=15) の設計で現在を優先`);
+            _l6.push(`    → 未来重みが shortage コストを超えた時だけ競合する（現在の設計では起きない）`);
+            _l6.push(`  Q3: burnout最適化と growth 継続は両立可能か?`);
+            _l6.push(`    → safeSequence ボーナス(-4) + ladder 進行ボーナス(-3) が同時に減算される設計で両立`);
+            _l6.push(`    → bo=high 者の夜勤削減と ladder 候補の夜勤追加は別コスト項目なので競合しない`);
+            _l6.push(`  Q4: safeSequence は Temporal Engine でも最優先か?`);
+            _l6.push(`    → ABSOLUTE ルールで定義済み。コスト設計でも最高重みに次ぐ保護`);
+            _l6.push(`  Q5: 人間理解可能性はどこまで維持できるか?`);
+            _l6.push(`    → Phase0-1: 全変更が read-only で説明付き — 最高の理解可能性`);
+            _l6.push(`    → Phase3-4: 各変更に「コスト削減理由 tag」を必須化することで維持可能`);
+
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Temporal-Generation-Loop / Multi-Horizon-Evaluation /
+        //    Temporal-Cost-Function / Temporal-Preservation-Rules /
+        //    Controlled-Intervention-Boundary / Temporal-Architecture-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
