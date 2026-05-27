@@ -12119,6 +12119,494 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Night-Introduction-Sim / OverProtection-Recovery /
         //    Growth-Stability-Analysis / Readiness-Intervention-Cost] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        // ★[Training-Path-Model / Stage-Transition-Route / Support-Assisted-Path /
+        //    Burnout-Avoidance-Route / Night-Introduction-Ladder /
+        //    Training-Stability-Audit]
+        // Temporal Training Path Engine — Human Training Timeline System (read-only)
+        // - 「どの順序で育成すると安全に適応できるか」を時間軸モデルで観測。
+        // - PathA/B/R/N × Stage × Ladder の3次元で育成ルートを定義。
+        // - 実shift変更禁止。autoGenerate変更禁止。DB保存禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _tp_days  = getDays(year, month);
+          const _tp_ds    = cs.filter(s => s.dept === cd.id);
+          const _tp_cds   = cd.customShiftDefs || [];
+          const _tp_tailN = Math.min(7, _tp_days);
+          const _tp_boOrd = { low: 0, medium: 1, high: 2 };
+
+          // ── helpers ──
+          const _tp_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _tp_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _tp_nset.add(k);
+          });
+          const _tp_isNight = sh => _tp_nset.has(sh);
+          const _tp_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _tp_isWork  = sh => !!(sh && !_tp_isRest(sh) && sh !== '明け' && sh !== '');
+          const _tp_fw      = sh => _tp_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _tp_boOf    = totF => totF >= _tp_days * 2.0 ? 'high' : totF >= _tp_days * 1.2 ? 'medium' : 'low';
+
+          // ── trend lookup ──
+          const _tp_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics ──
+          const _tp_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, dSq=0, leSq=0;
+            for (let d = 1; d <= _tp_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _tp_fw(sh);
+              if (d > _tp_days - _tp_tailN) tlF += _tp_fw(sh);
+              if (_tp_isNight(sh)) nCnt++;
+              if (_tp_isRest(sh))  rCnt++;
+              if (sh === '明け' && _tp_isNight(pv)) {
+                if (_tp_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_tp_isWork(nx))    dSq++;
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _tp_boOf(totF);
+            const co = tlF >= _tp_tailN * 3.0 ? 'high' : tlF >= _tp_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _tp_days * 0.25 * 0.7 ? 'high' : rCnt < _tp_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, dSq, leSq, bo, co, rd };
+          };
+
+          // ── pair co-occurrence ──
+          const _tp_pco = {};
+          for (let d = 1; d <= _tp_days; d++) {
+            const nw = _tp_ds.filter(s => _tp_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _tp_pco[pk] = (_tp_pco[pk] || 0) + 1;
+              }
+          }
+          const _tp_fixedPairs = Object.entries(_tp_pco)
+            .filter(([, n]) => n >= _tp_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── stage / progress model ──
+          const _tp_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _TP_RANGES = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _tp_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _TP_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+
+          // ─────────────────────────────────────────────────────────────────────
+          // Training Path assignment:
+          //  PathA: 標準新人ルート  (new / no prior floor / fy < 2)
+          //  PathB: 経験者floor適応 (fy≥2 but new to floor, rr!=high)
+          //  PathR: 異動ベテラン    (rr=high)
+          //  PathN: 夜勤運用最適化  (already stage4-5 or has nights)
+          // ─────────────────────────────────────────────────────────────────────
+          const _tp_pathOf = (fy, fl, rr, stage, nCnt) => {
+            if (stage >= 4 || nCnt >= 1) return 'PathN';
+            if (rr === 'high')           return 'PathR';
+            if (fy >= 2 && fl < 0.8)    return 'PathB';
+            return 'PathA';
+          };
+
+          // Path step definitions
+          const _TP_PATHS = {
+            PathA: {
+              label: '標準育成ルート（新人・一般）',
+              steps: [
+                { label: '日勤中心',            cond: 'fl<0.5',                   target: 'stage0→1' },
+                { label: '早番導入',             cond: 'fl≥0.5 sequence安定',      target: 'stage1→2' },
+                { label: '遅番安定化',           cond: 'fl≥1.0 leSq=0',            target: 'stage2' },
+                { label: 'support夜勤見学',      cond: 'nightOk fl≥1.0',           target: 'stage3前半' },
+                { label: 'support夜勤（月1回）', cond: 'progress≥0.6 bo!=high',    target: 'stage3→4' },
+                { label: '夜勤適応（月2-3回）',  cond: 'safeSeq≥1 co!=high',       target: 'stage4' },
+                { label: '独立夜勤',             cond: 'fl≥2.0 bo!=high',          target: 'stage5' },
+              ]
+            },
+            PathB: {
+              label: '経験者floor適応ルート',
+              steps: [
+                { label: 'floor適応（日勤+早番）', cond: 'fl<0.5 rr!=low',         target: 'stage1' },
+                { label: '遅番導入（sequence把握）', cond: 'fl≥0.5',              target: 'stage2' },
+                { label: '夜勤準備確認',          cond: 'fl≥1.0 bo!=high',         target: 'stage3' },
+                { label: 'support夜勤（ペア確認後）', cond: 'progress≥0.5 nightOk',target: 'stage3→4' },
+                { label: '独立夜勤（既存スキル活用）', cond: 'fl≥1.5 bo!=high',   target: 'stage4→5' },
+              ]
+            },
+            PathR: {
+              label: '異動ベテラン再適応ルート',
+              steps: [
+                { label: 'floor把握（日勤見学）', cond: 'fl<0.3 rr=high',          target: 'stage1前半' },
+                { label: 'floor適応（早番+日勤）', cond: 'fl<0.5',                target: 'stage1' },
+                { label: 'support pair確立',      cond: 'fl≥0.3',                 target: 'stage1→2' },
+                { label: '遅番・夜勤ルート把握',  cond: 'fl≥0.5',                 target: 'stage2' },
+                { label: 'support夜勤（ペア固定）', cond: 'fl≥0.8 bo!=high',      target: 'stage2→3' },
+                { label: '独立夜勤（経験活用）',  cond: 'fl≥1.2 safeSeq≥1',       target: 'stage4→5' },
+              ]
+            },
+            PathN: {
+              label: '夜勤運用最適化ルート',
+              steps: [
+                { label: '夜勤頻度安定',          cond: 'nCnt≥1 safeSeq≥1',       target: 'stage4維持' },
+                { label: 'sequence最適化',         cond: 'cSq=0 leSq=0',           target: 'stage4→5' },
+                { label: 'nightCore独立',          cond: 'fl≥2.0 bo!=high',        target: 'stage5' },
+                { label: '後輩育成support役',      cond: 'stage=5 bo=low',         target: 'support役' },
+              ]
+            }
+          };
+
+          // Night Introduction Ladder (0-5)
+          // 0=禁止 1=見学 2=support夜勤 3=月1夜勤 4=安定夜勤 5=nightCore
+          const _TP_LADDER_LABELS = [
+            '夜勤禁止（nightOk未設定）',
+            '夜勤見学（fl≥0.5・stage2以上）',
+            'support夜勤（stage3・ペアあり・progress<0.6）',
+            '月1夜勤（初回適応）',
+            '安定夜勤（月2-3回）',
+            'nightCore候補（独立運用）'
+          ];
+          const _tp_ladderOf = (stage, fl, nCnt, bo, sSq, progress, nightOk, hasSupport) => {
+            if (!nightOk)                                    return 0;
+            if (stage >= 5 && bo !== 'high')                 return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')   return 4;
+            if (nCnt >= 1)                                   return 3;
+            if (stage >= 3 && progress >= 0.6 && hasSupport) return 2;
+            if (stage >= 2 && fl >= 0.5)                    return 1;
+            return 0;
+          };
+
+          // ── per-staff state ──
+          const _tp_st = {};
+          for (const s of _tp_ds) {
+            const m   = _tp_metric(result[s.id] || {});
+            const tr  = _tp_trd(s.name);
+            const wk  = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy  = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl  = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr  = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _tp_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _tp_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _tp_fixedPairs.some(p => p.includes(s.name));
+            const path     = _tp_pathOf(fy, fl, rr, stage, m.nCnt);
+            const ladder   = _tp_ladderOf(stage, fl, m.nCnt, m.bo, m.sSq, progress, !!s.nightOk, hasPair);
+            _tp_st[s.name] = { fy, fl, rr, stage, progress, path, hasPair, ladder,
+                               nightOk: !!s.nightOk, ...m, depType: null };
+          }
+
+          // ── pair dependency ──
+          const _tp_pairs = [];
+          for (const pair of _tp_fixedPairs) {
+            const [n1, n2] = pair;
+            const s1 = _tp_st[n1], s2 = _tp_st[n2];
+            if (!s1 || !s2) continue;
+            const pk   = pair.slice().sort().join('×');
+            const cnt  = _tp_pco[pk] || 0;
+            const rate = cnt / _tp_days;
+            const [giver, receiver, gSt, rSt] = s1.stage >= s2.stage
+              ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+            let depType;
+            if (rSt.stage <= 2 && rSt.fl >= 1.5)                          depType = 'overProtection';
+            else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3) depType = 'fixationRisk';
+            else if (rSt.stage >= 4 && gSt.stage >= 4)                    depType = 'stablePair';
+            else                                                            depType = 'healthySupport';
+            _tp_pairs.push({ pair, pk, cnt, rate, giver, receiver, gSt, rSt, depType });
+            if (_tp_st[receiver]) _tp_st[receiver].depType = depType;
+            if (_tp_st[giver])    _tp_st[giver].depType    = depType;
+          }
+
+          // Stage names for display
+          const _TP_STAGE_NAMES = [
+            '日勤中心', 'floor適応中', '遅番安定化', '夜勤準備', '夜勤適応中', '独立運用'
+          ];
+
+          // ── Layer 1: [Training-Path-Model] ──
+          {
+            const _l1 = [`[Training-Path-Model] dept=${cd.id}`];
+            // Group by path
+            const pg = { PathA:[], PathB:[], PathR:[], PathN:[] };
+            for (const s of _tp_ds) {
+              const st = _tp_st[s.name]; if (!st) continue;
+              pg[st.path].push(s.name);
+            }
+            for (const [pk, names] of Object.entries(pg)) {
+              if (!names.length) continue;
+              const pDef = _TP_PATHS[pk];
+              _l1.push(`  ── ${pk}: ${pDef.label} ──`);
+              _l1.push(`  対象: ${names.join(', ')}`);
+              pDef.steps.forEach((step, i) => {
+                _l1.push(`    ${i + 1}. 「${step.label}」  条件: ${step.cond}  → ${step.target}`);
+              });
+            }
+            // Per-staff current position
+            _l1.push(`  ── 各スタッフのpath現在位置 ──`);
+            for (const s of _tp_ds) {
+              const st = _tp_st[s.name]; if (!st) continue;
+              const pDef  = _TP_PATHS[st.path];
+              const sIdx  = Math.min(st.stage, pDef.steps.length - 1);
+              _l1.push(`  ${s.name}: ${st.path}  ステップ[${sIdx + 1}]「${pDef.steps[sIdx].label}」`);
+              _l1.push(`    stage=${st.stage}  progress=${st.progress.toFixed(2)}  ladder=${st.ladder}`);
+            }
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Stage-Transition-Route] ──
+          {
+            const _l2 = [`[Stage-Transition-Route] dept=${cd.id}`];
+            for (const s of _tp_ds) {
+              const st = _tp_st[s.name]; if (!st) continue;
+              let nextStage = st.stage, conditions = [], avoids = [];
+              if (st.stage === 0) {
+                nextStage = 1;
+                conditions.push('floor経験0.1年以上');
+                conditions.push('burnout安定(low)');
+                avoids.push('夜勤直接導入 ⚠');
+              } else if (st.stage === 1) {
+                nextStage = 2;
+                conditions.push('fl≥0.5');
+                conditions.push('sequence安定(leSq=0)');
+                if (st.rr === 'high') conditions.push('異動適応確認(fl≥0.5)');
+                avoids.push('stage3以上への直接移行 ⚠');
+              } else if (st.stage === 2) {
+                nextStage = 3;
+                conditions.push('fl≥1.0');
+                conditions.push('criticalSeqなし');
+                conditions.push('burnout非high');
+                if (st.cSq > 0) avoids.push(`criticalSeq解消が先決(=${st.cSq}件) ⚠`);
+              } else if (st.stage === 3) {
+                if (st.bo === 'high' || st.co === 'high') {
+                  nextStage = 3;
+                  conditions.push('burnout/fatigue解消が先決');
+                  avoids.push('fatigue状態での夜勤導入 ⚠');
+                } else if (st.progress >= 0.6 && st.nightOk) {
+                  nextStage = 4;
+                  conditions.push(`progress≥0.6 ✓ (${st.progress.toFixed(2)})`);
+                  conditions.push('nightOk=true ✓');
+                  conditions.push('supportペア確認');
+                  if (!st.hasPair) avoids.push('単独初回夜勤 ⚠');
+                } else {
+                  nextStage = 3;
+                  conditions.push(`progress継続中(${st.progress.toFixed(2)}/0.60必要)`);
+                  avoids.push('progress未達での夜勤導入 ⚠');
+                }
+              } else if (st.stage === 4) {
+                nextStage = 5;
+                conditions.push('fl≥2.0');
+                conditions.push('safeSeq≥1');
+                conditions.push('burnout非high');
+                if (st.fl < 2.0) avoids.push(`fl不足(${st.fl.toFixed(1)}y < 2.0y) → 継続適応 ⚠`);
+              } else {
+                nextStage = 5;
+                conditions.push('独立運用維持');
+                conditions.push('後輩support役として機能');
+                avoids.push('burnout高でのnightCore過負荷 ⚠');
+              }
+              const moving = nextStage > st.stage;
+              _l2.push(`  ${s.name}: stage${st.stage}(${_TP_STAGE_NAMES[st.stage]}) → stage${nextStage}(${_TP_STAGE_NAMES[nextStage]})`);
+              _l2.push(`    ${moving ? '✓ 移行候補' : '→ 現段階維持'}`);
+              if (conditions.length) _l2.push(`    条件: ${conditions.join(' / ')}`);
+              if (avoids.length)     _l2.push(`    回避: ${avoids.join(' / ')}`);
+            }
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Support-Assisted-Path] ──
+          {
+            const _l3 = [`[Support-Assisted-Path] dept=${cd.id}`];
+            if (_tp_pairs.length === 0) {
+              _l3.push('  固定ペアなし → support-assistedパスなし ✓');
+            } else {
+              for (const p of _tp_pairs) {
+                const rSt = _tp_st[p.receiver]; if (!rSt) continue;
+                const progGood  = rSt.progress >= 0.4;
+                const boStable  = rSt.bo !== 'high';
+                const fixRisk   = p.depType === 'fixationRisk' || p.depType === 'overProtection';
+                const supportEff = progGood && boStable && !fixRisk ? 'effective'
+                                 : fixRisk ? 'fixation_risk'
+                                 : !boStable ? 'burnout_suppressed'
+                                 : 'marginal';
+                const SEI = { effective:'✓', fixation_risk:'⚠', burnout_suppressed:'🟠', marginal:'' };
+                const fixLevel = p.rate > 0.7 ? 'high' : p.rate > 0.5 ? 'medium' : 'low';
+                _l3.push(`  ${SEI[supportEff]} ${p.pk} (${p.depType}):`);
+                _l3.push(`    supportPath: ${supportEff === 'effective' ? '有効 ✓'
+                            : supportEff === 'fixation_risk' ? '固定化リスク ⚠'
+                            : supportEff === 'burnout_suppressed' ? 'burnout抑制機能中'
+                            : '限定的効果'}`);
+                _l3.push(`    効果: progress寄与≈+${(rSt.progress * 0.3).toFixed(2)}  burnout=${rSt.bo} ${boStable ? '✓' : '⚠'}`);
+                _l3.push(`    fixation risk: ${fixLevel} (共存率${(p.rate * 100).toFixed(0)}%)`);
+                _l3.push(`    support必要性: ${rSt.stage <= 3 ? 'あり（育成段階）' : '低下中（独立準備可）'}`);
+                if (supportEff === 'effective')
+                  _l3.push(`    → 段階的support継続が有効 (progress=${rSt.progress.toFixed(2)})`);
+                else if (supportEff === 'fixation_risk')
+                  _l3.push(`    → 段階的独立配置を検討（${p.receiver} stage${rSt.stage} fl=${rSt.fl.toFixed(1)}y）`);
+                else if (supportEff === 'burnout_suppressed')
+                  _l3.push(`    → burnout解消後にsupport削減を検討`);
+              }
+            }
+            // Staff without pairs
+            const pairStaff = new Set(_tp_pairs.flatMap(p => p.pair));
+            const loners = _tp_ds.filter(s => !pairStaff.has(s.name));
+            if (loners.length > 0)
+              _l3.push(`  単独配置スタッフ: ${loners.map(s => `${s.name}(stage${_tp_st[s.name]?.stage ?? '?'})`).join(', ')}`);
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Burnout-Avoidance-Route] ──
+          {
+            const _l4 = [`[Burnout-Avoidance-Route] dept=${cd.id}`];
+            for (const s of _tp_ds) {
+              const st = _tp_st[s.name]; if (!st) continue;
+              const riskLevel = st.bo === 'high' ? 'critical'
+                              : (st.co === 'high' || st.rd === 'high') ? 'elevated'
+                              : st.bo === 'medium' ? 'moderate' : 'low';
+              const rIcon = { critical:'🔴', elevated:'🟠', moderate:'🟡', low:'🟢' }[riskLevel];
+              let recommended = [], avoid = [];
+              if (riskLevel === 'critical') {
+                recommended = ['回復休を優先（月末1日追加）', '夜勤は一時停止', '日勤+早番中心へ変更'];
+                avoid        = ['夜勤継続導入 ⚠', '遅番→早番頻繁配置 ⚠', '休日削減 ⚠'];
+              } else if (riskLevel === 'elevated') {
+                recommended = ['support付き夜勤で疲労管理', 'safeSequence（夜勤→明け→休み）優先', '月末support強化'];
+                avoid        = ['夜勤頻度増加 ⚠', '遅番→早番繰り返し ⚠'];
+              } else if (riskLevel === 'moderate') {
+                recommended = ['support夜勤→recovery日→遅番 のパターン維持', '夜勤後の明けは必ず休みへ', '月2回以上の連続休日確保'];
+                avoid        = ['夜勤2回連続導入 ⚠', '明け→即早番 ⚠'];
+              } else { // low risk
+                if (st.stage >= 3 && st.nCnt === 0) {
+                  recommended = ['support夜勤導入検討', '夜勤→明け→休みパターンを事前整備'];
+                } else if (st.stage >= 4) {
+                  recommended = ['夜勤頻度維持', 'safeSequence確保（sSq維持）'];
+                  avoid        = ['burnout予防のため過負荷回避'];
+                } else {
+                  recommended = ['現段階での経験積み上げ継続'];
+                }
+              }
+              _l4.push(`  ${rIcon} ${s.name}: burnoutRisk=${riskLevel}`);
+              if (recommended.length) {
+                _l4.push(`    推奨:`);
+                recommended.forEach(r => _l4.push(`      ✓ ${r}`));
+              }
+              if (avoid.length) {
+                _l4.push(`    非推奨:`);
+                avoid.forEach(a => _l4.push(`      ✗ ${a}`));
+              }
+              if (st.cSq > 0)  _l4.push(`    ⚠ criticalSeq=${st.cSq}件 → 次月に夜勤→明け→早番パターンを解消`);
+              if (st.leSq > 0) _l4.push(`    ⚠ lateEarlySeq=${st.leSq}件 → 遅番翌日を早番から日勤へ変更推奨`);
+            }
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Night-Introduction-Ladder] ──
+          {
+            const _l5 = [`[Night-Introduction-Ladder] dept=${cd.id}`];
+            for (const s of _tp_ds) {
+              const st = _tp_st[s.name]; if (!st) continue;
+              _l5.push(`  ${s.name}: ladder=${st.ladder} 「${_TP_LADDER_LABELS[st.ladder]}」`);
+              const nextL    = Math.min(st.ladder + 1, 5);
+              const nextCond = [];
+              if      (st.ladder === 0) { nextCond.push('nightOk=trueを設定'); nextCond.push('fl≥0.5（floor適応）'); }
+              else if (st.ladder === 1) { nextCond.push('supportペア確立'); nextCond.push(`progress≥0.6（現在${st.progress.toFixed(2)}）`); }
+              else if (st.ladder === 2) { nextCond.push(`progress≥0.6（現在${st.progress.toFixed(2)}）`); nextCond.push('burnout=low'); nextCond.push('safeSeq実績あり'); }
+              else if (st.ladder === 3) { nextCond.push('safeSeq≥1'); nextCond.push('burnout非high'); nextCond.push('月1回夜勤を安定実施'); }
+              else if (st.ladder === 4) { nextCond.push(`fl≥2.0（現在${st.fl.toFixed(1)}y）`); nextCond.push('burnout=low'); }
+              else                      { nextCond.push('維持段階 → 後輩育成support役へ'); }
+              const canAdvance = st.ladder < 5 && (
+                (st.ladder === 0 && st.nightOk && st.fl >= 0.5) ||
+                (st.ladder === 1 && st.hasPair && st.progress >= 0.6) ||
+                (st.ladder === 2 && st.progress >= 0.6 && st.bo !== 'high' && st.sSq > 0) ||
+                (st.ladder === 3 && st.sSq > 0 && st.bo !== 'high') ||
+                (st.ladder === 4 && st.fl >= 2.0 && st.bo !== 'high')
+              );
+              if (canAdvance) _l5.push(`    → ladder${nextL}移行条件: 充足 ✓`);
+              else if (st.ladder < 5) _l5.push(`    → ladder${nextL}移行条件: ${nextCond.join(' / ')}`);
+              else _l5.push(`    → ${nextCond[0]}`);
+            }
+            // ladder distribution summary
+            _l5.push(`  ── ladder分布 ──`);
+            [0,1,2,3,4,5].forEach(lv => {
+              const names = _tp_ds.filter(s => (_tp_st[s.name]?.ladder ?? -1) === lv).map(s => s.name);
+              if (names.length > 0)
+                _l5.push(`  ladder${lv}: ${names.join(', ')} 「${_TP_LADDER_LABELS[lv]}」`);
+            });
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Training-Stability-Audit] ──
+          {
+            const _l6 = [`[Training-Stability-Audit] dept=${cd.id}`];
+            const _tp_stagnant    = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage===3 && st.fl>=1.5; });
+            const _tp_fixPairs    = _tp_pairs.filter(p => p.depType === 'fixationRisk');
+            const _tp_healthy     = _tp_pairs.filter(p => p.depType === 'healthySupport');
+            const _tp_boBlocked   = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage<=3 && st.bo==='high'; });
+            const _tp_relocDelay  = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.fy>=2 && st.fl>0.1 && st.fl<0.8; });
+            const _tp_nightCores  = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage===5; });
+            const _tp_ncBO        = _tp_nightCores.filter(s => _tp_st[s.name]?.bo === 'high');
+            const _tp_unsafeDirect= _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage<3 && st.nCnt>0; });
+            const _tp_overProt    = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.depType==='overProtection'; });
+
+            _l6.push(`  ── 新人・適応段階 ──`);
+            _l6.push(`  stagnation(stage3 fl≥1.5):  ${_tp_stagnant.length}名 ${_tp_stagnant.length ? '⚠ '+_tp_stagnant.map(s=>s.name).join('/') : '✓'}`);
+            _l6.push(`  burnoutBlocked(stage≤3×high): ${_tp_boBlocked.length}名 ${_tp_boBlocked.length ? '⚠ '+_tp_boBlocked.map(s=>s.name).join('/') : '✓'}`);
+            _l6.push(`  unsafeDirectNight(stage<3夜勤有): ${_tp_unsafeDirect.length}名 ${_tp_unsafeDirect.length ? '⚠ '+_tp_unsafeDirect.map(s=>s.name).join('/')+' 準備段階スキップ' : '✓'}`);
+
+            _l6.push(`  ── 異動適応 ──`);
+            _l6.push(`  relocationDelay(fy≥2 fl<0.8): ${_tp_relocDelay.length}名 ${_tp_relocDelay.length ? '⚠ '+_tp_relocDelay.map(s=>s.name).join('/')+' 再適応長期化' : '✓'}`);
+
+            _l6.push(`  ── support構造 ──`);
+            _l6.push(`  healthySupport: ${_tp_healthy.length}組${_tp_healthy.length ? ' ✓' : ' (なし)'}`);
+            _l6.push(`  fixation: ${_tp_fixPairs.length}組${_tp_fixPairs.length ? ' ⚠ '+_tp_fixPairs.map(p=>p.pk).join(', ') : ' ✓'}`);
+            _l6.push(`  overProtection: ${_tp_overProt.length}名${_tp_overProt.length ? ' ⚠ '+_tp_overProt.map(s=>s.name).join('/') : ' ✓'}`);
+
+            _l6.push(`  ── nightCore育成 ──`);
+            _l6.push(`  nightCore(stage5): ${_tp_nightCores.length}名${_tp_nightCores.length ? ` (${_tp_nightCores.map(s=>s.name).join('/')})` : '(なし)'}`);
+            _l6.push(`  nightCoreOverload: ${_tp_ncBO.length}名${_tp_ncBO.length ? ' ⚠ '+_tp_ncBO.map(s=>s.name).join('/') : ' ✓'}`);
+
+            const issues = _tp_stagnant.length + _tp_fixPairs.length + _tp_boBlocked.length
+                         + _tp_relocDelay.length + _tp_ncBO.length + _tp_unsafeDirect.length;
+            _l6.push(`  ── 育成ルート総合診断 ──`);
+            _l6.push(`  課題数: ${issues}件`);
+
+            if (issues === 0) {
+              _l6.push(`  ✓ 育成ルート健全（全スタッフが適切なpathで安全適応中）`);
+            } else {
+              const pathCounts = { PathA:0, PathB:0, PathR:0, PathN:0 };
+              _tp_ds.forEach(s => { const st=_tp_st[s.name]; if (st) pathCounts[st.path]++; });
+              _l6.push(`  pathA=${pathCounts.PathA}名 pathB=${pathCounts.PathB}名 pathR=${pathCounts.PathR}名 pathN=${pathCounts.PathN}名`);
+
+              // Q1: 最も安全な育成ルートは何か
+              const safestCount = _tp_ds.filter(s => _tp_st[s.name]?.path==='PathA' && _tp_st[s.name]?.bo!=='high').length;
+              _l6.push(`  最安全ルート: PathA標準ルート（burnout低${safestCount}名が安定適応中）`);
+              // Q2: 異動ベテランと新人で違うか
+              _l6.push(`  異動vs新人最適ルート: ${pathCounts.PathR>0?'PathR（異動専用・floor再適応重視）/ 新人はPathA':'PathR対象なし → 全員PathAまたはPathB'}`);
+              // Q3: support pair育成加速有効か
+              _l6.push(`  support pair育成加速: ${_tp_healthy.length>0?`有効（healthySupport ${_tp_healthy.length}組が加速中）✓`:'固定ペアなし'}`);
+              // Q4: burnout回避とnightCore育成両立
+              _l6.push(`  burnout回避×nightCore育成両立: ${_tp_ncBO.length===0?'✓ 両立可':'⚠ nightCoreにburnout高あり'}`);
+              // Q5: どの段階でsupport削減すべきか
+              _l6.push(`  support削減最適タイミング: stage3→4移行時（progress≥0.6・burnout非high確認後）`);
+            }
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Training-Path-Model / Stage-Transition-Route / Support-Assisted-Path /
+        //    Burnout-Avoidance-Route / Night-Introduction-Ladder /
+        //    Training-Stability-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
