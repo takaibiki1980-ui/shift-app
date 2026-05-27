@@ -13115,6 +13115,540 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         //    Burnout-History / Support-Transition-History /
         //    Career-Stability-Audit] ここまで ══
 
+        // ══════════════════════════════════════════════════════════════════════════
+        //    [Organization-Temporal-Map / NightCore-Distribution-Audit /
+        //    Growth-Layer-Balance / Burnout-Concentration-Analysis /
+        //    Support-Network-Stability / Organization-Stability-Audit]
+        // Temporal Organization Balance — Human Organization Timeline System (read-only)
+        // - 「個人単位」ではなく「組織全体の時間構造」を観測。
+        // - 育成・負荷・夜勤・支援が時間軸でバランスしているかを診断。
+        // - 実shift変更禁止。autoGenerate変更禁止。DB保存禁止。persistence禁止。
+        // ══════════════════════════════════════════════════════════════════════════
+        {
+          const _ob_days  = getDays(year, month);
+          const _ob_ds    = cs.filter(s => s.dept === cd.id);
+          const _ob_cds   = cd.customShiftDefs || [];
+          const _ob_tailN = Math.min(7, _ob_days);
+
+          // ── helpers ──
+          const _ob_nset = new Set();
+          [...new Set(cd.shiftTypes || [])].forEach(k => {
+            const _c = _ob_cds.find(x => x.key === k);
+            if ((_c?.baseType || k) === '夜勤') _ob_nset.add(k);
+          });
+          const _ob_isNight = sh => _ob_nset.has(sh);
+          const _ob_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _ob_isWork  = sh => !!(sh && !_ob_isRest(sh) && sh !== '明け' && sh !== '');
+          const _ob_fw      = sh => _ob_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _ob_boOf    = totF => totF >= _ob_days * 2.0 ? 'high' : totF >= _ob_days * 1.2 ? 'medium' : 'low';
+
+          // ── trend lookup ──
+          const _ob_trd = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+
+          // ── per-staff metrics ──
+          const _ob_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, dSq=0, leSq=0;
+            for (let d = 1; d <= _ob_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _ob_fw(sh);
+              if (d > _ob_days - _ob_tailN) tlF += _ob_fw(sh);
+              if (_ob_isNight(sh)) nCnt++;
+              if (_ob_isRest(sh))  rCnt++;
+              if (sh === '明け' && _ob_isNight(pv)) {
+                if (_ob_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')     cSq++;
+                else if (_ob_isWork(nx))    dSq++;
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _ob_boOf(totF);
+            const co = tlF >= _ob_tailN * 3.0 ? 'high' : tlF >= _ob_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _ob_days * 0.25 * 0.7 ? 'high' : rCnt < _ob_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, dSq, leSq, bo, co, rd };
+          };
+
+          // ── stage model ──
+          const _ob_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _OB_STAGE_NAMES = ['日勤中心','floor適応中','遅番安定化','夜勤準備','夜勤適応中','独立運用'];
+          const _OB_RANGES      = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _ob_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _OB_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+
+          // ── pair co-occurrence ──
+          const _ob_pco = {};
+          for (let d = 1; d <= _ob_days; d++) {
+            const nw = _ob_ds.filter(s => _ob_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _ob_pco[pk] = (_ob_pco[pk] || 0) + 1;
+              }
+          }
+          const _ob_fixedPairs = Object.entries(_ob_pco)
+            .filter(([, n]) => n >= _ob_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // Night introduction ladder
+          const _ob_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasSupport) => {
+            if (!nightOk)                                     return 0;
+            if (stage >= 5 && bo !== 'high')                  return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')     return 4;
+            if (nCnt >= 1)                                    return 3;
+            if (stage >= 3 && progress >= 0.6 && hasSupport)  return 2;
+            if (stage >= 2 && fl >= 0.5)                      return 1;
+            return 0;
+          };
+
+          // ── per-staff full state ──
+          const _ob_st = {};
+          for (const s of _ob_ds) {
+            const m    = _ob_metric(result[s.id] || {});
+            const tr   = _ob_trd(s.name);
+            const wk   = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy   = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl   = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr   = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _ob_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _ob_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _ob_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _ob_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _ob_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, isNew, ...m };
+          }
+          const _ob_arr = _ob_ds.map(s => _ob_st[s.name]).filter(Boolean);
+
+          // ── pair dependency classification ──
+          const _ob_pairs = [];
+          for (const pair of _ob_fixedPairs) {
+            const [n1, n2] = pair;
+            const s1 = _ob_st[n1], s2 = _ob_st[n2];
+            if (!s1 || !s2) continue;
+            const pk   = pair.slice().sort().join('×');
+            const cnt  = _ob_pco[pk] || 0;
+            const rate = cnt / _ob_days;
+            const [giver, receiver, gSt, rSt] = s1.stage >= s2.stage
+              ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+            let depType;
+            if (rSt.stage <= 2 && rSt.fl >= 1.5)                          depType = 'overProtection';
+            else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3) depType = 'fixationRisk';
+            else if (rSt.stage >= 4 && gSt.stage >= 4)                    depType = 'stablePair';
+            else                                                            depType = 'healthySupport';
+            _ob_pairs.push({ pair, pk, cnt, rate, giver, receiver, gSt, rSt, depType });
+          }
+
+          // ── Layer 1: [Organization-Temporal-Map] ──
+          {
+            const _l1 = [`[Organization-Temporal-Map] dept=${cd.id}`];
+            _l1.push(`  ── 組織時間構造マップ（全${_ob_arr.length}名） ──`);
+
+            // Temporal zone classification
+            const zones = {
+              新人層:          _ob_arr.filter(st => st.stage <= 1 && st.fl < 0.5),
+              適応中:          _ob_arr.filter(st => st.stage === 1 && st.fl >= 0.5 || st.stage === 2),
+              夜勤準備層:      _ob_arr.filter(st => st.stage === 3),
+              support夜勤層:   _ob_arr.filter(st => st.ladder === 2 || (st.stage === 3 && st.nCnt >= 1)),
+              夜勤適応層:      _ob_arr.filter(st => st.stage === 4 && st.ladder <= 4),
+              nightCore層:     _ob_arr.filter(st => st.ladder >= 5 || (st.stage >= 5 && st.nCnt >= 1)),
+              burnout高:       _ob_arr.filter(st => st.bo === 'high'),
+              異動適応中:      _ob_arr.filter(st => st.rr === 'high'),
+            };
+
+            for (const [label, members] of Object.entries(zones)) {
+              if (!members.length) continue;
+              const flag = (label === 'burnout高' && members.length >= 2) ||
+                           (label === '新人層' && members.length === 0) ? ' ⚠' : '';
+              _l1.push(`  ${label}: ${members.length}名${flag}`);
+              _l1.push(`    ${members.map(st => st.s.name).join(', ')}`);
+            }
+
+            // Temporal zone health
+            const nightCoreCount    = zones['nightCore層'].length;
+            const nightPrepCount    = zones['夜勤準備層'].length + zones['support夜勤層'].length;
+            const earlyStageCount   = zones['新人層'].length + zones['適応中'].length;
+            const totalNightOk      = _ob_arr.filter(st => st.nightOk).length;
+            _l1.push(`  ── 時間構造サマリー ──`);
+            _l1.push(`  nightOk設定済: ${totalNightOk}名  nightCore: ${nightCoreCount}名  夜勤準備: ${nightPrepCount}名`);
+            _l1.push(`  初期育成層(stage0-1): ${earlyStageCount}名  burnout high: ${zones['burnout高'].length}名`);
+
+            // Structural tension
+            if (nightCoreCount === 0 && totalNightOk > 0)
+              _l1.push(`  ⚠ nightCore不在: 全夜勤対応者がsupport段階 — 独立運用が成立しない可能性`);
+            if (nightCoreCount > 0 && _ob_arr.length > 0 && nightCoreCount / _ob_arr.length > 0.5)
+              _l1.push(`  ⚠ nightCore集中: 全体の${Math.round(nightCoreCount / _ob_arr.length * 100)}%がnightCore層`);
+            if (earlyStageCount === 0)
+              _l1.push(`  ⚠ 新人育成層ゼロ: 組織の新陳代謝が停止している可能性`);
+            if (zones['burnout高'].length >= 2)
+              _l1.push(`  ⚠ burnout高 複数同時: 構造的過負荷の可能性`);
+
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [NightCore-Distribution-Audit] ──
+          {
+            const _l2 = [`[NightCore-Distribution-Audit] dept=${cd.id}`];
+            _l2.push(`  ── nightCore負荷分布監査 ──`);
+
+            const nightWorkers = _ob_arr.filter(st => st.nCnt > 0);
+            const nightOkAll   = _ob_arr.filter(st => st.nightOk);
+
+            if (!nightWorkers.length) {
+              _l2.push(`  夜勤実施者なし — 今月は夜勤ゼロ`);
+            } else {
+              // Per-worker night count
+              const sorted = [...nightWorkers].sort((a, b) => b.nCnt - a.nCnt);
+              const totalNights = sorted.reduce((s, st) => s + st.nCnt, 0);
+              const avgNights   = totalNights / Math.max(1, sorted.length);
+              const maxNights   = sorted[0].nCnt;
+              const minNights   = sorted[sorted.length - 1].nCnt;
+
+              _l2.push(`  夜勤実施者: ${sorted.length}名  総夜勤数: ${totalNights}回  平均: ${avgNights.toFixed(1)}回`);
+              _l2.push(`  ── 個人別夜勤回数 ──`);
+              for (const st of sorted) {
+                const deviation = st.nCnt - avgNights;
+                const devFlag   = deviation > avgNights * 0.5 ? ' ⚠ 集中' : deviation < -avgNights * 0.5 ? ' △ 少' : '';
+                const isCore    = st.ladder >= 5 ? '[nightCore]' : st.ladder >= 4 ? '[安定夜勤]' : '[適応中]';
+                _l2.push(`    ${st.s.name}: ${st.nCnt}回 ${isCore}${devFlag}  bo=${st.bo}`);
+              }
+
+              // Concentration index (Gini-like: max/avg)
+              const concIndex = maxNights / Math.max(1, avgNights);
+              const concLevel = concIndex >= 2.5 ? 'high' : concIndex >= 1.5 ? 'medium' : 'low';
+              _l2.push(`  集中度: ${concLevel}（集中指数=${concIndex.toFixed(2)}  max=${maxNights} / avg=${avgNights.toFixed(1)}）`);
+              if (concLevel === 'high')
+                _l2.push(`  ⚠ 夜勤集中度high: 特定スタッフへの過負荷が発生している`);
+
+              // Rapid promotion check: high ladder but low fl
+              const rapidCore = _ob_arr.filter(st => st.ladder >= 4 && st.fl < 1.0);
+              if (rapidCore.length)
+                _l2.push(`  ⚠ 急速nightCore化: ${rapidCore.map(st => st.s.name).join(', ')} (fl<1.0 で ladder≥4)`);
+
+              // Support night shortage: no support layer between nightCore and new
+              const supportNight = _ob_arr.filter(st => st.ladder === 2 || st.ladder === 3);
+              if (supportNight.length === 0 && sorted.length > 0)
+                _l2.push(`  ⚠ support夜勤層不在: nightCore直下にbuffer層がない — 次世代育成が困難`);
+
+              // Newcomer night pressure: stage0-1 with nCnt > 0
+              const newNight = _ob_arr.filter(st => st.stage <= 1 && st.nCnt > 0);
+              if (newNight.length)
+                _l2.push(`  ⚠ 新人夜勤圧迫: ${newNight.map(st => st.s.name).join(', ')} — stage≤1で夜勤割当`);
+
+              // Burnout in nightCore
+              const burnCore = sorted.filter(st => st.bo === 'high' && st.ladder >= 4);
+              if (burnCore.length)
+                _l2.push(`  ⚠ nightCore burnout: ${burnCore.map(st => st.s.name).join(', ')} — 夜勤コア層が疲弊`);
+            }
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Growth-Layer-Balance] ──
+          {
+            const _l3 = [`[Growth-Layer-Balance] dept=${cd.id}`];
+            _l3.push(`  ── 育成層バランス観測 ──`);
+
+            // Stage band grouping
+            const band01 = _ob_arr.filter(st => st.stage <= 1);
+            const band23 = _ob_arr.filter(st => st.stage === 2 || st.stage === 3);
+            const band45 = _ob_arr.filter(st => st.stage >= 4);
+            const total  = _ob_arr.length;
+
+            _l3.push(`  stage0-1（新人・適応初期）: ${band01.length}名  ${band01.map(st => st.s.name).join(', ')||'なし'}`);
+            _l3.push(`  stage2-3（遅番安定〜夜勤準備）: ${band23.length}名  ${band23.map(st => st.s.name).join(', ')||'なし'}`);
+            _l3.push(`  stage4-5（夜勤適応〜独立運用）: ${band45.length}名  ${band45.map(st => st.s.name).join(', ')||'なし'}`);
+
+            // Balance ratios
+            const r01  = total > 0 ? band01.length / total : 0;
+            const r23  = total > 0 ? band23.length / total : 0;
+            const r45  = total > 0 ? band45.length / total : 0;
+            _l3.push(`  比率: 新人=${(r01*100).toFixed(0)}%  中堅=${(r23*100).toFixed(0)}%  熟練=${(r45*100).toFixed(0)}%`);
+
+            // Structural issues
+            const issues3 = [];
+            if (band01.length === 0)
+              issues3.push('初期育成層ゼロ — 新陳代謝なし ⚠');
+            if (band01.length > 0 && band23.length === 0)
+              issues3.push('適応中間層断絶 — 新人が孤立 ⚠');
+            if (band45.length === 0 && total > 0)
+              issues3.push('熟練層ゼロ — 夜勤運用不可 ⚠');
+            if (r01 > 0.5)
+              issues3.push(`新人過多（${(r01*100).toFixed(0)}%）— support・nightCore負荷増大 ⚠`);
+            if (r45 > 0.6)
+              issues3.push(`熟練集中（${(r45*100).toFixed(0)}%）— 育成継承が停滞 ⚠`);
+
+            // Ladder skip detection: stage2以下なのにladder>=3
+            const ladderJump = _ob_arr.filter(st => st.stage <= 2 && st.ladder >= 3);
+            if (ladderJump.length)
+              issues3.push(`ladder飛び級: ${ladderJump.map(st => st.s.name).join(', ')} (stage≤2 で ladder≥3) ⚠`);
+
+            // Stagnation: stage2-3 with low progress for >6 months (fl≥0.8 but progress<0.3)
+            const stagStaff = _ob_arr.filter(st => st.stage >= 2 && st.stage <= 3
+              && st.fl >= 0.8 && st.progress < 0.3);
+            if (stagStaff.length)
+              issues3.push(`stage停滞: ${stagStaff.map(st => st.s.name).join(', ')} (stage${stagStaff[0]?.stage} fl≥0.8 progress<0.3) ⚠`);
+
+            // Support per new staff
+            const supportGivers = _ob_pairs.map(p => p.giver);
+            const uniqueGivers  = [...new Set(supportGivers)];
+            const ratio = band01.length > 0 ? uniqueGivers.length / band01.length : 99;
+            if (ratio < 0.5 && band01.length > 0)
+              issues3.push(`support不足: 新人${band01.length}名に対しsupport役${uniqueGivers.length}名 ⚠`);
+
+            if (!issues3.length)
+              _l3.push(`  ✓ 育成層バランス: 問題なし`);
+            else
+              for (const iss of issues3) _l3.push(`  問題: ${iss}`);
+
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Burnout-Concentration-Analysis] ──
+          {
+            const _l4 = [`[Burnout-Concentration-Analysis] dept=${cd.id}`];
+            _l4.push(`  ── burnout集中分析（どの層に集中しているか） ──`);
+
+            // Segment the burnout by role/layer
+            const nightCoreStaff = _ob_arr.filter(st => st.ladder >= 4);
+            const supportStaff   = _ob_pairs.map(p => p.giver).map(n => _ob_st[n]).filter(Boolean);
+            const uniqueSupport  = [...new Map(supportStaff.map(st => [st.s.name, st])).values()];
+            const relocStaff     = _ob_arr.filter(st => st.rr === 'high');
+            const newStaff       = _ob_arr.filter(st => st.stage <= 1);
+
+            const segments = [
+              { label: 'nightCore層',   members: nightCoreStaff },
+              { label: 'support役',     members: uniqueSupport },
+              { label: '異動者',        members: relocStaff },
+              { label: '新人・初期層', members: newStaff },
+            ];
+
+            for (const seg of segments) {
+              if (!seg.members.length) continue;
+              const high = seg.members.filter(st => st.bo === 'high').length;
+              const med  = seg.members.filter(st => st.bo === 'medium').length;
+              const low  = seg.members.filter(st => st.bo === 'low').length;
+              const flag = high >= 2 ? ' ⚠ 集中' : high === 1 && seg.members.length === 1 ? ' ⚠' : '';
+              _l4.push(`  ${seg.label}（${seg.members.length}名）: high=${high}${flag}  medium=${med}  low=${low}`);
+              if (high > 0)
+                _l4.push(`    burnout対象: ${seg.members.filter(st => st.bo === 'high').map(st => st.s.name).join(', ')}`);
+            }
+
+            // Cross-segment burnout rate
+            const totalHigh = _ob_arr.filter(st => st.bo === 'high').length;
+            const totalMed  = _ob_arr.filter(st => st.bo === 'medium').length;
+            _l4.push(`  全体burnout: high=${totalHigh}名  medium=${totalMed}名  low=${_ob_arr.length - totalHigh - totalMed}名`);
+            const boRate = _ob_arr.length > 0 ? totalHigh / _ob_arr.length : 0;
+            _l4.push(`  高burnout率: ${(boRate * 100).toFixed(0)}%`);
+
+            // Concentration verdict
+            const coreBurnHigh = nightCoreStaff.filter(st => st.bo === 'high').length;
+            const suppBurnHigh = uniqueSupport.filter(st => st.bo === 'high').length;
+            if (coreBurnHigh > 0 && suppBurnHigh > 0)
+              _l4.push(`  ⚠ nightCore×support同時burnout: 夜勤運用崩壊リスク — 即時対応が必要`);
+            else if (coreBurnHigh > 0)
+              _l4.push(`  ⚠ nightCore層burnout集中: 夜勤カバー可能人数が減少`);
+            else if (suppBurnHigh > 0)
+              _l4.push(`  ⚠ support役burnout: 育成支援が機能不全`);
+            else if (totalHigh === 0)
+              _l4.push(`  ✓ burnout集中なし: 全体疲労は管理可能範囲`);
+
+            // Recovery assessment: medium staff with safe sequence
+            const recovering = _ob_arr.filter(st => st.bo === 'medium' && st.sSq > 0 && st.cSq === 0);
+            if (recovering.length)
+              _l4.push(`  recovery候補: ${recovering.map(st => st.s.name).join(', ')} — bo=medium かつ安全sequence`);
+            const noRecovery = _ob_arr.filter(st => st.bo === 'high' && st.cSq > 0);
+            if (noRecovery.length)
+              _l4.push(`  ⚠ recovery不足: ${noRecovery.map(st => st.s.name).join(', ')} — bo=high かつ criticalSeq残存`);
+
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Support-Network-Stability] ──
+          {
+            const _l5 = [`[Support-Network-Stability] dept=${cd.id}`];
+            _l5.push(`  ── support網安定性（組織支援構造として観測） ──`);
+
+            // Classify all pairs
+            const healthy  = _ob_pairs.filter(p => p.depType === 'healthySupport');
+            const fixation = _ob_pairs.filter(p => p.depType === 'fixationRisk');
+            const overProt = _ob_pairs.filter(p => p.depType === 'overProtection');
+            const stable   = _ob_pairs.filter(p => p.depType === 'stablePair');
+
+            _l5.push(`  healthySupport: ${healthy.length}組 ${healthy.length > 0 ? '✓' : ''}`);
+            for (const p of healthy) _l5.push(`    ${p.pair.join('→')}  rate=${(p.rate*100).toFixed(0)}%`);
+            _l5.push(`  fixationRisk: ${fixation.length}組 ${fixation.length > 0 ? '⚠' : '✓'}`);
+            for (const p of fixation) _l5.push(`    ⚠ ${p.pair.join('→')}  rate=${(p.rate*100).toFixed(0)}%`);
+            _l5.push(`  overProtection: ${overProt.length}組 ${overProt.length > 0 ? '⚠' : '✓'}`);
+            for (const p of overProt) _l5.push(`    ⚠ ${p.pair.join('→')}  receiver-fl=${p.rSt.fl.toFixed(1)}`);
+            _l5.push(`  stablePair: ${stable.length}組 ${stable.length > 0 ? '✓' : ''}`);
+            for (const p of stable) _l5.push(`    ✓ ${p.pair.join('×')}  両stage≥4`);
+
+            // Support giver load
+            const giverLoad = {};
+            for (const p of _ob_pairs) {
+              giverLoad[p.giver] = (giverLoad[p.giver] || 0) + 1;
+            }
+            const overloadedGivers = Object.entries(giverLoad).filter(([, n]) => n >= 2);
+            if (overloadedGivers.length)
+              _l5.push(`  ⚠ support役過負荷: ${overloadedGivers.map(([n, c]) => `${n}(${c}組)`).join(', ')}`);
+
+            // Support isolation: stage≤2 with no pair
+            const isolated = _ob_arr.filter(st =>
+              st.stage <= 2 && !_ob_pairs.some(p => p.pair.includes(st.s.name))
+            );
+            if (isolated.length)
+              _l5.push(`  ⚠ support孤立: ${isolated.map(st => st.s.name).join(', ')} — stage≤2で固定ペアなし`);
+            else
+              _l5.push(`  ✓ support孤立: なし`);
+
+            // Succession: is there a next-gen support giver in stage3-4?
+            const nextGenGivers = _ob_arr.filter(st => st.stage >= 3 && st.stage <= 4
+              && st.bo !== 'high' && st.nCnt >= 1);
+            if (!nextGenGivers.length && _ob_arr.filter(st => st.stage <= 2).length > 0)
+              _l5.push(`  ⚠ support継承不足: 次世代support役候補(stage3-4・非burnout)がいない`);
+            else if (nextGenGivers.length)
+              _l5.push(`  ✓ support継承候補: ${nextGenGivers.map(st => st.s.name).join(', ')}`);
+
+            // Overall network health
+            const networkScore = healthy.length * 2 + stable.length - fixation.length * 2 - overProt.length;
+            const netHealth    = networkScore >= 3 ? 'healthy' : networkScore >= 0 ? 'moderate' : 'fragile';
+            _l5.push(`  support網スコア: ${networkScore}  → 状態: ${netHealth}`);
+            if (netHealth === 'fragile')
+              _l5.push(`  ⚠ support網 fragile: 組織支援構造が脆弱 — 再設計を検討`);
+
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Organization-Stability-Audit] ──
+          {
+            const _l6 = [`[Organization-Stability-Audit] dept=${cd.id}`];
+            _l6.push(`  ── 施設全体 組織時間構造安定性監査 ──`);
+
+            const total    = _ob_arr.length;
+            const nightCoreStaff  = _ob_arr.filter(st => st.ladder >= 4);
+            const nightOkAll      = _ob_arr.filter(st => st.nightOk);
+            const supportGiversU  = [...new Set(_ob_pairs.map(p => p.giver))];
+            const earlyStage      = _ob_arr.filter(st => st.stage <= 1);
+            const midStage        = _ob_arr.filter(st => st.stage >= 2 && st.stage <= 3);
+            const highStage       = _ob_arr.filter(st => st.stage >= 4);
+            const burnHighAll     = _ob_arr.filter(st => st.bo === 'high');
+            const relocAll        = _ob_arr.filter(st => st.rr === 'high');
+
+            // ──── Dimension 1: nightCore依存 ────
+            const nightCoreDep = nightCoreStaff.length === 0 ? 'absent'
+              : total > 0 && nightCoreStaff.length / total > 0.5 ? 'concentrated'
+              : nightCoreStaff.length <= 1 && nightOkAll.length >= 3 ? 'fragile'
+              : 'stable';
+            _l6.push(`  [1] nightCore依存: ${nightCoreDep}  (nightCore=${nightCoreStaff.length}名 / nightOk=${nightOkAll.length}名 / 全体=${total}名)`);
+            if (nightCoreDep === 'absent')    _l6.push(`      ⚠ nightCore不在: 夜勤体制が成立しない`);
+            if (nightCoreDep === 'concentrated') _l6.push(`      ⚠ nightCore集中: 少数依存 — burnout時に即崩壊リスク`);
+            if (nightCoreDep === 'fragile')   _l6.push(`      △ nightCore fragile: 1名依存 — 欠員リスク高`);
+            if (nightCoreDep === 'stable')    _l6.push(`      ✓ nightCore分散: 安定した夜勤運用`);
+
+            // ──── Dimension 2: support役への負荷集中 ────
+            const supportBurnout = supportGiversU.map(n => _ob_st[n]).filter(st => st?.bo === 'high').length;
+            const supportStress  = supportBurnout >= 2 ? 'critical' : supportBurnout === 1 ? 'stressed' : 'stable';
+            _l6.push(`  [2] support構造: ${supportStress}  (support役=${supportGiversU.length}名  うちbo=high=${supportBurnout}名)`);
+            if (supportStress === 'critical') _l6.push(`      ⚠ support役複数burnout: 育成支援が機能不全`);
+            if (supportStress === 'stressed') _l6.push(`      △ support役部分疲弊: 担当交代を検討`);
+            if (supportStress === 'stable')   _l6.push(`      ✓ support役安定`);
+
+            // ──── Dimension 3: 新人育成ルートの継続可能性 ────
+            const newGrowth = earlyStage.length === 0 ? 'empty'
+              : midStage.length === 0 ? 'disconnected'
+              : earlyStage.length > 0 && midStage.length > 0 && supportGiversU.length > 0 ? 'sustainable'
+              : 'marginal';
+            _l6.push(`  [3] 新人育成ルート: ${newGrowth}  (新人=${earlyStage.length}名  中堅=${midStage.length}名  support=${supportGiversU.length}名)`);
+            if (newGrowth === 'empty')        _l6.push(`      △ 新人ゼロ: 将来の熟練層補充が停止`);
+            if (newGrowth === 'disconnected') _l6.push(`      ⚠ 育成中間層断絶: 新人が孤立 — 成長経路なし`);
+            if (newGrowth === 'sustainable')  _l6.push(`      ✓ 育成継続可能`);
+            if (newGrowth === 'marginal')     _l6.push(`      △ 育成経路 marginal: support不足 or 中堅薄`);
+
+            // ──── Dimension 4: 異動者長期停滞 ────
+            const relocStagnant = relocAll.filter(st => st.stage <= 2 && st.fy >= 2);
+            const relocHealth   = relocStagnant.length === 0 ? 'healthy' : relocStagnant.length === 1 ? 'monitoring' : 'stagnant';
+            _l6.push(`  [4] 異動者適応: ${relocHealth}  (異動者=${relocAll.length}名  停滞=${relocStagnant.length}名)`);
+            if (relocHealth === 'stagnant')  _l6.push(`      ⚠ 異動者複数停滞: ${relocStagnant.map(st => st.s.name).join(', ')} — 専任supportが必要`);
+            if (relocHealth === 'monitoring') _l6.push(`      △ 異動者観察中: ${relocStagnant.map(st => st.s.name).join(', ')}`);
+            if (relocHealth === 'healthy')   _l6.push(`      ✓ 異動者適応 問題なし`);
+
+            // ──── Dimension 5: burnout構造的問題 ────
+            const burnStructural = burnHighAll.length >= 2 ? 'structural'
+              : burnHighAll.length === 1 && nightCoreStaff.some(st => st.bo === 'high') ? 'critical-point'
+              : burnHighAll.length === 1 ? 'isolated'
+              : 'none';
+            _l6.push(`  [5] burnout構造: ${burnStructural}  (high=${burnHighAll.length}名 / ${total}名中)`);
+            if (burnStructural === 'structural')    _l6.push(`      ⚠ 構造的burnout: ${burnHighAll.map(st => st.s.name).join(', ')} — シフト設計の根本見直しが必要`);
+            if (burnStructural === 'critical-point') _l6.push(`      ⚠ nightCore burnout: 運用の要が疲弊 — 緊急対応が必要`);
+            if (burnStructural === 'isolated')      _l6.push(`      △ 個別burnout: ${burnHighAll.map(st => st.s.name).join(', ')} — 個人対応で解決可能`);
+            if (burnStructural === 'none')          _l6.push(`      ✓ burnout 問題なし`);
+
+            // ──── Dimension 6: 今月だけ成立 vs 継続可能 ────
+            // "今月だけ" = nightCore burnoutが高い、support層薄い、ladder分布が崩れている
+            const monthOnlyRisks = [];
+            if (nightCoreStaff.filter(st => st.bo === 'high').length > 0) monthOnlyRisks.push('nightCore疲弊');
+            if (_ob_arr.filter(st => st.ladder === 2 || st.ladder === 3).length === 0 && nightCoreStaff.length > 0)
+              monthOnlyRisks.push('support夜勤バッファなし');
+            if (supportGiversU.length < earlyStage.length * 0.5 && earlyStage.length > 0)
+              monthOnlyRisks.push('support不足');
+            const continuity = monthOnlyRisks.length === 0 ? 'sustainable' : monthOnlyRisks.length === 1 ? 'marginal' : 'month-only';
+            _l6.push(`  [6] 継続可能性: ${continuity}  (リスク要因=${monthOnlyRisks.length})`);
+            if (monthOnlyRisks.length) _l6.push(`      リスク: ${monthOnlyRisks.join(' / ')}`);
+            if (continuity === 'month-only')  _l6.push(`      ⚠ 今月だけ成立: 来月以降の運用維持に赤信号`);
+            if (continuity === 'marginal')    _l6.push(`      △ 継続 marginal: 要注意`);
+            if (continuity === 'sustainable') _l6.push(`      ✓ 継続可能な組織時間構造`);
+
+            // ──── Overall verdict ────
+            const criticals = [nightCoreDep, supportStress, newGrowth, relocHealth, burnStructural, continuity]
+              .filter(v => ['absent','concentrated','fragile','critical','structural','critical-point','disconnected','stagnant','month-only'].includes(v)).length;
+            const warnings  = [nightCoreDep, supportStress, newGrowth, relocHealth, burnStructural, continuity]
+              .filter(v => ['stressed','monitoring','isolated','marginal','empty'].includes(v)).length;
+            const overall   = criticals >= 2 ? 'critical' : criticals === 1 ? 'warning' : warnings >= 2 ? 'moderate' : 'stable';
+            _l6.push(`  ── 総合判定: ${overall.toUpperCase()} (critical=${criticals}  warning=${warnings}) ──`);
+            if (overall === 'critical')  _l6.push(`  ⚠⚠ 組織時間構造 critical: 複数の根本問題が同時発生 — 緊急対応が必要`);
+            if (overall === 'warning')   _l6.push(`  ⚠ 組織時間構造 warning: 構造的リスクあり — 来月までに対応`);
+            if (overall === 'moderate')  _l6.push(`  △ 組織時間構造 moderate: 軽微なバランス崩れ — 継続観測`);
+            if (overall === 'stable')    _l6.push(`  ✓ 組織時間構造 stable: Human Organization Timeline として健全`);
+
+            // Q&A diagnosis
+            _l6.push(`  ── 組織診断 Q&A ──`);
+            _l6.push(`  Q1: nightCoreに夜勤が偏っていないか?`);
+            _l6.push(`    → ${nightCoreDep === 'concentrated' ? '⚠ 集中している' : nightCoreDep === 'stable' ? '✓ 分散している' : `△ ${nightCoreDep}`}`);
+            _l6.push(`  Q2: support役への負荷集中は?`);
+            _l6.push(`    → ${supportStress === 'stable' ? '✓ 問題なし' : `⚠ ${supportStress}: burnout=${supportBurnout}名`}`);
+            _l6.push(`  Q3: 新人育成ルートは継続可能か?`);
+            _l6.push(`    → ${newGrowth === 'sustainable' ? '✓ 継続可能' : `⚠ ${newGrowth}`}`);
+            _l6.push(`  Q4: 異動者が長期停滞していないか?`);
+            _l6.push(`    → ${relocHealth === 'healthy' ? '✓ 問題なし' : `△ 停滞${relocStagnant.length}名`}`);
+            _l6.push(`  Q5: burnoutは構造的問題か?`);
+            _l6.push(`    → ${burnStructural === 'none' ? '✓ 構造的問題なし' : `⚠ ${burnStructural}`}`);
+            _l6.push(`  Q6: 組織は「今月だけ回っている」状態か?`);
+            _l6.push(`    → ${continuity === 'sustainable' ? '✓ 継続可能' : `⚠ ${continuity}: ${monthOnlyRisks.join(', ')}`}`);
+
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Organization-Temporal-Map / NightCore-Distribution-Audit /
+        //    Growth-Layer-Balance / Burnout-Concentration-Analysis /
+        //    Support-Network-Stability / Organization-Stability-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
