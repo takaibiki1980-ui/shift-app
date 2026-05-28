@@ -13190,28 +13190,29 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             console.log(_l4.join('\n'));
           }
 
+          // _cm_pairs: Layer5/6 共用（スコープ外参照を防ぐため親スコープで定義）
+          const _cm_pairs = [];
+          for (const pair of _cm_fixedPairs) {
+            const [n1, n2] = pair;
+            const s1 = _cm_st[n1], s2 = _cm_st[n2];
+            if (!s1 || !s2) continue;
+            const pk   = pair.slice().sort().join('×');
+            const cnt  = _cm_pco[pk] || 0;
+            const rate = cnt / _cm_days;
+            const [, receiver, , rSt] = s1.stage >= s2.stage
+              ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
+            let depType;
+            if (rSt.stage <= 2 && rSt.fl >= 1.5)                           depType = 'overProtection';
+            else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3)  depType = 'fixationRisk';
+            else if (rSt.stage >= 4 && s1.stage >= 4)                      depType = 'stablePair';
+            else                                                             depType = 'healthySupport';
+            _cm_pairs.push({ pair, pk, cnt, rate, receiver, rSt, depType });
+          }
+
           // ── Layer 5: [Support-Transition-History] ──
           {
             const _l5 = [`[Support-Transition-History] dept=${cd.id}`];
             _l5.push(`  ── support依存遷移履歴推定（ペア固着度・依存タイプ変化） ──`);
-            // Build current pair dependency
-            const _cm_pairs = [];
-            for (const pair of _cm_fixedPairs) {
-              const [n1, n2] = pair;
-              const s1 = _cm_st[n1], s2 = _cm_st[n2];
-              if (!s1 || !s2) continue;
-              const pk   = pair.slice().sort().join('×');
-              const cnt  = _cm_pco[pk] || 0;
-              const rate = cnt / _cm_days;
-              const [, receiver, , rSt] = s1.stage >= s2.stage
-                ? [n1, n2, s1, s2] : [n2, n1, s2, s1];
-              let depType;
-              if (rSt.stage <= 2 && rSt.fl >= 1.5)                           depType = 'overProtection';
-              else if (rate > 0.6 && rSt.progress < 0.3 && rSt.stage <= 3)  depType = 'fixationRisk';
-              else if (rSt.stage >= 4 && s1.stage >= 4)                      depType = 'stablePair';
-              else                                                             depType = 'healthySupport';
-              _cm_pairs.push({ pair, pk, cnt, rate, receiver, rSt, depType });
-            }
             for (const s of _cm_ds) {
               const st = _cm_st[s.name]; if (!st) continue;
               const myPairs = _cm_pairs.filter(p => p.pair.includes(s.name));
