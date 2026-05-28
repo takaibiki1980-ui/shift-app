@@ -21946,6 +21946,464 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Human Override Layer / _ho_] ここまで ══
 
+        // ══ [Recommendation Execution Preview System / _ep_] ここから ══
+        {
+          // ── Layer 1: Recommendation Execution Preview (shared data + proposals) ─
+          {
+            const _ep_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _ep_ scope)
+            const _ep_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk   ?? 'normal';
+                const ladder     = s.nightLadder   ?? 0;
+                const stage      = s.growthStage   ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears    ?? null;
+                const fy         = s.facilityYears ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                // Count actual night shifts this month
+                let nightCount = 0;
+                for (let day = 1; day <= _ep_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, fy, hasPair, nightOk,
+                         supportReq, isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _ep_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _ep_allArr      = Object.values(_ep_deptData).flatMap(dd => dd.arr);
+            const _ep_veterans    = _ep_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _ep_supportReqs = _ep_allArr.filter(e => e.supportReq && e.nightOk);
+
+            // Per-day snapshot (uncovered nights)
+            const _ep_dayMap = {};
+            for (let day = 1; day <= _ep_days; day++) {
+              const srOnNight = [];
+              for (const sr of _ep_supportReqs) {
+                const { shifts, nset } = _ep_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _ep_veterans.filter(vet => {
+                const { shifts, nset } = _ep_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              _ep_dayMap[day] = { srOnNight, vetOnNight, uncovCount: vetOnNight.length === 0 ? srOnNight.length : 0 };
+            }
+
+            // Derive execution preview proposals from current risk signals
+            // Each proposal: { proposalId, type, target, description, currentState, previewOutcome }
+            const _ep_proposals = [];
+
+            // Proposal A: reduce overloaded veteran night count
+            for (const e of _ep_veterans.filter(e => e.utilRate > 1.2)) {
+              const reducedNc = Math.max(e.targetNc, Math.round(e.nightCount * 0.8));
+              const coverageDelta = reducedNc - e.nightCount; // negative = reduction
+              _ep_proposals.push({
+                proposalId   : `vetReduce_${e.s.id}`,
+                type         : 'veteran_night_reduction',
+                target       : `${e.s.name} (${e.deptLabel})`,
+                description  : `夜勤 ${e.nightCount}→${reducedNc} 削減`,
+                currentState : { burnoutTrajectory: 'HIGH', utilRate: e.utilRate, nightCount: e.nightCount },
+                previewOutcome: {
+                  burnoutTrajectory  : 'MEDIUM',
+                  supportCoverageDelta: coverageDelta,
+                  recoveryContinuity : 'maintained',
+                  uncovNightsDelta   : Math.abs(coverageDelta) > 0 ? '+1〜2' : '0',
+                  overallImpact      : 'controlled_improvement',
+                },
+                rollbackAvailable: true,
+                resimRequired: e.utilRate > 1.4,
+              });
+            }
+
+            // Proposal B: burnout night removal
+            for (const e of _ep_allArr.filter(e => e.isBurnout && e.nightOk && e.nightCount >= 2)) {
+              _ep_proposals.push({
+                proposalId   : `burnoutRemove_${e.s.id}`,
+                type         : 'burnout_night_removal',
+                target       : `${e.s.name} (${e.deptLabel})`,
+                description  : `夜勤全削減 (${e.nightCount}→0) burnout recovery優先`,
+                currentState : { burnoutTrajectory: 'HIGH', nightCount: e.nightCount },
+                previewOutcome: {
+                  burnoutTrajectory  : 'recovering',
+                  supportCoverageDelta: -e.nightCount,
+                  recoveryContinuity : 'improved',
+                  uncovNightsDelta   : `+${e.nightCount}`,
+                  overallImpact      : 'recovery_priority',
+                },
+                rollbackAvailable: false,
+                resimRequired: true,
+              });
+            }
+
+            // Proposal C: ladder progression (ladder 3 → 4, stage≥3, floor vet sufficient)
+            for (const e of _ep_allArr.filter(e => e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.isProtected)) {
+              const floorVetCount = _ep_veterans.filter(v => v.deptId === e.deptId).length;
+              _ep_proposals.push({
+                proposalId   : `ladderUp_${e.s.id}`,
+                type         : 'ladder_progression',
+                target       : `${e.s.name} (${e.deptLabel})`,
+                description  : `ladder ${e.ladder}→4 昇格 (stage=${e.stage})`,
+                currentState : { ladder: e.ladder, stage: e.stage, floorVetCount },
+                previewOutcome: {
+                  burnoutTrajectory  : 'stable',
+                  supportCoverageDelta: +1,
+                  recoveryContinuity : floorVetCount >= 2 ? 'maintained' : 'at_risk',
+                  uncovNightsDelta   : floorVetCount >= 2 ? '-1〜2' : '0',
+                  overallImpact      : floorVetCount >= 2 ? 'controlled_improvement' : 'conditional',
+                },
+                rollbackAvailable: true,
+                resimRequired: floorVetCount < 2,
+              });
+            }
+
+            // Proposal D: veteran redistribution to gap depts
+            const _ep_gapDepts = Object.entries(_ep_deptData)
+              .filter(([, { arr }]) => arr.some(e => e.supportReq && e.nightOk) &&
+                                      !arr.some(e => e.isVeteran && e.nightOk))
+              .map(([deptId]) => deptId);
+            if (_ep_gapDepts.length > 0 && _ep_veterans.length > 0) {
+              _ep_proposals.push({
+                proposalId   : 'crossFloor_vetRedistrib',
+                type         : 'cross_floor_vet_redistribution',
+                target       : `${_ep_gapDepts.map(id => _ep_deptData[id]?.d.label).join(' / ')}`,
+                description  : `vet cross-floor support体制再構築`,
+                currentState : { gapDeptCount: _ep_gapDepts.length, vetCount: _ep_veterans.length },
+                previewOutcome: {
+                  burnoutTrajectory  : 'stable',
+                  supportCoverageDelta: +_ep_gapDepts.length,
+                  recoveryContinuity : 'at_risk',
+                  uncovNightsDelta   : `-${_ep_gapDepts.length}`,
+                  overallImpact      : 'structural_improvement',
+                },
+                rollbackAvailable: true,
+                resimRequired: true,
+              });
+            }
+
+            // ── Layer 2: Multi-Horizon Impact Projection ────────────────────────
+            {
+              // Project each proposal across 4 time horizons: now / 1m / 3m / 6m
+              // Uses simple linear trajectory models (shadow simulation, read-only)
+              const _ep_horizons = _ep_proposals.map(p => {
+                // Burnout trajectory over time
+                const burnoutNow = p.currentState.burnoutTrajectory ?? 'stable';
+                const burnout1m  =
+                  p.type === 'burnout_night_removal' ? 'recovering'
+                  : p.type === 'veteran_night_reduction' && p.currentState.utilRate > 1.3 ? 'MEDIUM'
+                  : burnoutNow;
+                const burnout3m  =
+                  p.type === 'burnout_night_removal' ? 'low'
+                  : p.type === 'veteran_night_reduction' ? 'LOW'
+                  : burnout1m;
+                const burnout6m  =
+                  p.type === 'burnout_night_removal' || p.type === 'veteran_night_reduction' ? 'stable'
+                  : burnout3m;
+
+                // Support coverage delta accumulation
+                const delta = p.previewOutcome.supportCoverageDelta ?? 0;
+                const support1m = delta > 0 ? 'improving' : delta < 0 ? 'gap_risk' : 'stable';
+                const support3m = delta > 0 ? 'stable' : delta < 0 ? 'compensated' : 'stable';
+                const support6m = 'stable';
+
+                // Veteran dependency trajectory
+                const vetDep6m =
+                  p.type === 'ladder_progression' ? 'decreasing'
+                  : p.type === 'cross_floor_vet_redistribution' ? 'balanced'
+                  : 'unchanged';
+
+                // Uncovered nights trajectory
+                const uncovNow  = Object.values(_ep_dayMap).filter(d => d.uncovCount > 0).length;
+                const uncov1m   = p.type === 'burnout_night_removal' ? uncovNow + 1 : uncovNow;
+                const uncov3m   = p.type === 'cross_floor_vet_redistribution' ? Math.max(0, uncovNow - _ep_gapDepts.length)
+                                : p.type === 'ladder_progression' ? Math.max(0, uncovNow - 1)
+                                : uncov1m;
+                const uncov6m   = Math.max(0, uncov3m - 1);
+
+                return {
+                  proposalId: p.proposalId,
+                  target: p.target,
+                  description: p.description,
+                  now : { burnout: burnoutNow, support: 'current', uncovDays: uncovNow },
+                  m1  : { burnout: burnout1m,  support: support1m, uncovDays: uncov1m },
+                  m3  : { burnout: burnout3m,  support: support3m, uncovDays: uncov3m },
+                  m6  : { burnout: burnout6m,  support: support6m, uncovDays: uncov6m, vetDependency: vetDep6m },
+                  shortTermOnly: burnout1m !== burnout6m && burnout3m === burnout6m ? false : burnout1m === 'LOW' && burnout6m !== 'LOW',
+                };
+              });
+
+              const _ep_shortTermOnlyRisks = _ep_horizons.filter(h => h.shortTermOnly);
+
+              // ── Layer 3: Protected Structure Impact Scan ───────────────────
+              {
+                const _ep_structureScan = _ep_proposals.map(p => {
+                  const threats = [];
+
+                  // safeSequence: proposals touching paired staff (stage ≤ 3)
+                  if (p.type === 'cross_floor_vet_redistribution') {
+                    const pairedVets = _ep_veterans.filter(e => e.hasPair && e.stage <= 3);
+                    if (pairedVets.length > 0) {
+                      threats.push({
+                        structure: 'safeSequence',
+                        risk: 'HIGH',
+                        detail: `vetの${pairedVets.length}名がsafeSequence構築中 — 再配置でsequence断絶リスク`,
+                      });
+                    }
+                  }
+
+                  // burnout recovery: removing from nights while burnout recovery is needed
+                  if (p.type === 'veteran_night_reduction') {
+                    const staff = _ep_allArr.find(e => p.proposalId.includes(e.s.id));
+                    if (staff?.isProtected) {
+                      threats.push({
+                        structure: 'burnout_recovery',
+                        risk: 'HIGH',
+                        detail: `protected状態のvet夜勤削減 — recovery disruption risk`,
+                      });
+                    }
+                  }
+
+                  // support rebuilding: burnout removal reduces coverage for SR staff
+                  if (p.type === 'burnout_night_removal') {
+                    const uncovIncrease = _ep_supportReqs.some(sr => {
+                      for (let day = 1; day <= _ep_days; day++) {
+                        if (_ep_dayMap[day].vetOnNight.length === 1) return true;
+                      }
+                      return false;
+                    });
+                    if (uncovIncrease) {
+                      threats.push({
+                        structure: 'support_rebuilding',
+                        risk: 'MEDIUM',
+                        detail: '夜勤削減でsole-vet夜が増加 — SR coverage gap拡大リスク',
+                      });
+                    }
+                  }
+
+                  // ladder stabilization: ladder progression bypasses normal timeline
+                  if (p.type === 'ladder_progression') {
+                    threats.push({
+                      structure: 'ladder_stabilization',
+                      risk: p.previewOutcome.overallImpact === 'conditional' ? 'HIGH' : 'LOW',
+                      detail: p.previewOutcome.overallImpact === 'conditional'
+                        ? 'floor vet不足 — 早期昇格でladder不安定化リスク'
+                        : 'floor vet十分 — ladder stabilization risk low',
+                    });
+                  }
+
+                  // protected hold continuity: any proposal touching protected staff
+                  const touchesProtected = _ep_allArr.some(e =>
+                    e.isProtected && p.target.includes(e.s.name));
+                  if (touchesProtected) {
+                    threats.push({
+                      structure: 'protected_hold_continuity',
+                      risk: 'HIGH',
+                      detail: 'protected staff対象 — hold continuity disruption',
+                    });
+                  }
+
+                  const maxRisk   = threats.some(t => t.risk === 'HIGH') ? 'HIGH'
+                                  : threats.some(t => t.risk === 'MEDIUM') ? 'MEDIUM' : 'NONE';
+                  const scanResult =
+                    maxRisk === 'HIGH'   ? 'RESIM_REQUIRED'
+                    : maxRisk === 'MEDIUM' ? 'REVIEW_BEFORE_APPLY'
+                    :                        'CLEAR';
+
+                  return { proposalId: p.proposalId, target: p.target, threats, maxRisk, scanResult };
+                });
+
+                const _ep_resimRequired  = _ep_structureScan.filter(s => s.scanResult === 'RESIM_REQUIRED');
+                const _ep_reviewRequired = _ep_structureScan.filter(s => s.scanResult === 'REVIEW_BEFORE_APPLY');
+
+                // ── Layer 4: Recovery Continuity Forecast ──────────────────
+                {
+                  // Forecast whether recovery-in-progress staff remain stable under each proposal
+                  const _ep_recoveryForecast = [];
+
+                  const _ep_recoveryStaff = _ep_allArr.filter(e => e.isProtected);
+                  for (const e of _ep_recoveryStaff) {
+                    // Check if any proposal affects this staff's workload
+                    const affectingProposals = _ep_proposals.filter(p =>
+                      p.target.includes(e.s.name) ||
+                      (p.type === 'cross_floor_vet_redistribution' && e.deptId === e.deptId) ||
+                      (p.type === 'burnout_night_removal' && e.isBurnout)
+                    );
+
+                    const reboundRisk =
+                      affectingProposals.some(p => p.type !== 'burnout_night_removal' && e.isBurnout) ? 'HIGH'
+                      : affectingProposals.some(p => p.previewOutcome.recoveryContinuity === 'at_risk') ? 'MEDIUM'
+                      : 'LOW';
+
+                    const forecast =
+                      reboundRisk === 'HIGH'   ? 'burnout_rebound_risk'
+                      : reboundRisk === 'MEDIUM' ? 'recovery_at_risk'
+                      :                            'recovery_stable';
+
+                    _ep_recoveryForecast.push({
+                      staffId: e.s.id, staffName: e.s.name,
+                      deptId: e.deptId, deptLabel: e.deptLabel,
+                      recoveryType: e.isBurnout ? 'burnout' : e.inLadder ? 'ladder' : e.inReloc ? 'relocation' : 'safeSequence',
+                      reboundRisk, forecast,
+                      affectedByCount: affectingProposals.length,
+                    });
+                  }
+
+                  const _ep_highReboundStaff = _ep_recoveryForecast.filter(f => f.reboundRisk === 'HIGH');
+                  const _ep_atRiskStaff      = _ep_recoveryForecast.filter(f => f.reboundRisk === 'MEDIUM');
+
+                  // ── Layer 5: Human Execution Guidance ─────────────────────
+                  {
+                    const _ep_executionGuide = [];
+
+                    // Step 1: protected structure check first
+                    if (_ep_resimRequired.length > 0) {
+                      for (const s of _ep_resimRequired.slice(0, 2)) {
+                        _ep_executionGuide.push({
+                          step: 1, action: 'PROTECTED_STRUCTURE_CHECK',
+                          label: `${s.target}: ${s.threats[0]?.structure} risk=${s.maxRisk} → ${s.scanResult}`,
+                          urgency: 'before_apply',
+                        });
+                      }
+                    } else {
+                      _ep_executionGuide.push({
+                        step: 1, action: 'PROTECTED_STRUCTURE_CHECK',
+                        label: 'protected structure RESIM不要 ✓',
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 2: rollback availability check
+                    const _ep_needRollback = _ep_proposals.filter(p => p.rollbackAvailable);
+                    if (_ep_needRollback.length > 0) {
+                      _ep_executionGuide.push({
+                        step: 2, action: 'ROLLBACK_CONFIRM',
+                        label: `${_ep_needRollback.length}件でrollback可能 — 前月シフト参照可否を確認`,
+                        urgency: 'before_apply',
+                      });
+                    }
+
+                    // Step 3: 3m impact horizon confirmation
+                    if (_ep_horizons.length > 0) {
+                      const worst3m = _ep_horizons.reduce((acc, h) =>
+                        h.m3.uncovDays > (acc?.m3.uncovDays ?? -1) ? h : acc, _ep_horizons[0]);
+                      if (worst3m) {
+                        _ep_executionGuide.push({
+                          step: 3, action: '3M_IMPACT_CONFIRM',
+                          label: `3m worst case: ${worst3m.target} uncovDays=${worst3m.m3.uncovDays} burnout=${worst3m.m3.burnout}`,
+                          urgency: 'review',
+                        });
+                      }
+                    }
+
+                    // Step 4: recovery continuity check
+                    if (_ep_highReboundStaff.length > 0) {
+                      for (const f of _ep_highReboundStaff.slice(0, 2)) {
+                        _ep_executionGuide.push({
+                          step: 4, action: 'RECOVERY_CONTINUITY_CONFIRM',
+                          label: `${f.staffName} (${f.deptLabel}): ${f.forecast} — 採用前に個別確認`,
+                          urgency: 'before_apply',
+                        });
+                      }
+                    } else {
+                      _ep_executionGuide.push({
+                        step: 4, action: 'RECOVERY_CONTINUITY_CONFIRM',
+                        label: 'recovery continuity HIGH risk なし ✓',
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 5: next cycle monitoring reservation
+                    const _ep_resimCount = _ep_proposals.filter(p => p.resimRequired).length;
+                    _ep_executionGuide.push({
+                      step: 5, action: 'NEXT_CYCLE_MONITOR',
+                      label: `採用後: ${_ep_resimCount}件をnext cycleでresim確認 + recovery trackingを継続`,
+                      urgency: 'planning',
+                    });
+
+                    // ── Layer 6: Execution Preview Audit ────────────────────
+                    {
+                      const _ep_totalProposals = _ep_proposals.length;
+                      // Future overconfidence: too many proposals rated "controlled_improvement"
+                      const _ep_overconfident = _ep_proposals.filter(p =>
+                        p.previewOutcome.overallImpact === 'controlled_improvement').length;
+                      const _ep_futureOverconf = _ep_totalProposals > 0
+                        && _ep_overconfident / _ep_totalProposals > 0.7;
+                      // Recovery neglect: no recovery forecast generated despite protected staff
+                      const _ep_recoveryNeglect = _ep_recoveryStaff.length > 0
+                        && _ep_recoveryForecast.length === 0;
+                      // Preview complexity
+                      const _ep_guideLength = _ep_executionGuide.length;
+                      const _ep_previewComplexity =
+                        _ep_guideLength <= 4 ? 'manageable ✓'
+                        : _ep_guideLength <= 7 ? 'moderate'
+                        :                        'complex ⚠';
+                      // Rollback visibility: majority of proposals have rollback available
+                      const _ep_rollbackCount = _ep_proposals.filter(p => p.rollbackAvailable).length;
+                      const _ep_rollbackVisible = _ep_totalProposals === 0 || _ep_rollbackCount / _ep_totalProposals >= 0.5;
+                      // Anxiety amplification: RESIM_REQUIRED > 60% of proposals
+                      const _ep_anxietyRisk = _ep_totalProposals > 0
+                        && _ep_resimRequired.length / _ep_totalProposals > 0.6;
+                      // Explainability: all proposals have previewOutcome
+                      const _ep_explainable = _ep_proposals.every(p => p.previewOutcome?.overallImpact);
+
+                      const _ep_overallAudit =
+                        (!_ep_futureOverconf && !_ep_recoveryNeglect && _ep_rollbackVisible && _ep_explainable)
+                          ? 'humanCenteredExecutionPreview'
+                        : _ep_futureOverconf  ? 'futureOverconfidenceRisk'
+                        : _ep_recoveryNeglect ? 'recoveryNeglectRisk'
+                        : !_ep_rollbackVisible ? 'rollbackVisibilityGap'
+                        :                        'needsReview';
+
+                      const _ep_finalSummary = {
+                        dept: cd.id, year, month,
+                        proposalCount     : _ep_totalProposals,
+                        horizonCount      : _ep_horizons.length,
+                        shortTermOnlyCount: _ep_shortTermOnlyRisks.length,
+                        resimRequiredCount: _ep_resimRequired.length,
+                        reviewRequiredCount: _ep_reviewRequired.length,
+                        highReboundCount  : _ep_highReboundStaff.length,
+                        atRiskCount       : _ep_atRiskStaff.length,
+                        rollbackAvailCount: _ep_rollbackCount,
+                        executionGuide    : _ep_executionGuide.map(g =>
+                          `Step${g.step}[${g.action}/${g.urgency}] ${g.label}`),
+                        audit: {
+                          futureOverconfidence: _ep_futureOverconf  ? 'risk ⚠' : 'low ✓',
+                          recoveryNeglect     : _ep_recoveryNeglect ? 'risk ⚠' : 'covered ✓',
+                          previewComplexity   : _ep_previewComplexity,
+                          rollbackVisibility  : _ep_rollbackVisible  ? 'clear ✓' : 'gap ⚠',
+                          anxietyAmplification: _ep_anxietyRisk      ? 'risk ⚠' : 'controlled ✓',
+                          explainability      : _ep_explainable       ? 'high ✓' : 'partial ⚠',
+                          overall             : _ep_overallAudit,
+                        },
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_ep_] Recommendation Execution Preview System:', _ep_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Recommendation Execution Preview System / _ep_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
