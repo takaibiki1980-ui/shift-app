@@ -24259,6 +24259,316 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Governance Drift Observation System / _gd_] ここまで ══
 
+        // ══ [Governance Resilience Observation System / _gr_] ここから ══
+        {
+          {
+            // === Layer 1: Governance Resilience Registry ===
+            const _gr_days = getDays(year, month);
+            const _gr_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk ?? 'normal';
+                const ladder     = s.nightLadder ?? 0;
+                const stage      = s.growthStage ?? 0;
+                const fl         = s.floorYears ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = s.nightMax ?? 4;
+                const nightCount = _gr_days.filter(day =>
+                  nset.has(shifts[`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`])
+                ).length;
+                const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate, deptId: d.id, deptLabel: d.label };
+              });
+              _gr_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gr_allArr      = Object.values(_gr_deptData).flatMap(dd => dd.arr);
+            const _gr_veterans    = _gr_allArr.filter(e => e.isVeteran && e.nightOk);
+            const _gr_burnouts    = _gr_allArr.filter(e => e.isBurnout);
+            const _gr_protected   = _gr_allArr.filter(e => e.isProtected);
+            const _gr_supportReqs = _gr_allArr.filter(e => e.supportReq && e.nightOk);
+            const _gr_resLevel = score =>
+              score >= 0.8 ? 'resilient'
+              : score >= 0.6 ? 'adaptive'
+              : score >= 0.4 ? 'stable'
+              : score >= 0.2 ? 'strained'
+              : 'fragile';
+            // Dim 1: Burnout Resilience
+            const _gr_totalNight      = _gr_allArr.filter(e => e.nightOk).length;
+            const _gr_burnoutNight    = _gr_allArr.filter(e => e.nightOk && e.isBurnout).length;
+            const _gr_burnoutResScore = _gr_totalNight > 0
+              ? Math.max(0, (_gr_totalNight - _gr_burnoutNight * 2) / _gr_totalNight) : 0;
+            // Dim 2: Support Redundancy (per-dept avg)
+            const _gr_suppRedPerDept = depts.map(d => {
+              const dArr  = _gr_deptData[d.id].arr;
+              const dVets = dArr.filter(e => e.isVeteran && e.nightOk).length;
+              const dSupp = dArr.filter(e => e.supportReq && e.nightOk).length;
+              if (dSupp === 0) return 1.0;
+              return Math.min(1, dVets / (dSupp * 2));
+            });
+            const _gr_suppRedScore = _gr_suppRedPerDept.length > 0
+              ? _gr_suppRedPerDept.reduce((a,b)=>a+b,0) / _gr_suppRedPerDept.length : 1.0;
+            // Dim 3: Veteran Replacement Flexibility
+            const _gr_nearVets     = _gr_allArr.filter(e => e.nightOk && e.ladder >= 3 && !e.isVeteran && !e.isBurnout);
+            const _gr_vetReplScore = _gr_veterans.length > 0
+              ? Math.min(1, _gr_nearVets.length / _gr_veterans.length)
+              : (_gr_nearVets.length > 0 ? 1 : 0);
+            // Dim 4: Recovery Continuity Stability
+            const _gr_recContStable = _gr_protected.filter(e => e.utilRate <= 0.7).length;
+            const _gr_recContScore  = _gr_protected.length > 0
+              ? _gr_recContStable / _gr_protected.length : 1.0;
+            // Dim 5: Cross-Floor Adaptability
+            const _gr_floorsWithVets = depts.filter(d =>
+              _gr_deptData[d.id].arr.some(e => e.isVeteran && e.nightOk)
+            ).length;
+            const _gr_crossFloorScore = depts.length > 0 ? _gr_floorsWithVets / depts.length : 0;
+            // Dim 6: SafeSequence Resilience
+            const _gr_ladderStaff  = _gr_allArr.filter(e => e.inLadder);
+            const _gr_safeLadder   = _gr_ladderStaff.filter(e => e.utilRate <= 0.6).length;
+            const _gr_safeSeqScore = _gr_ladderStaff.length > 0
+              ? _gr_safeLadder / _gr_ladderStaff.length : 1.0;
+            const _gr_dimMap = {
+              burnout_resilience            : { score: _gr_burnoutResScore, level: _gr_resLevel(_gr_burnoutResScore) },
+              support_redundancy            : { score: _gr_suppRedScore,    level: _gr_resLevel(_gr_suppRedScore)    },
+              veteran_replacement_flexibility:{ score: _gr_vetReplScore,    level: _gr_resLevel(_gr_vetReplScore)    },
+              recovery_continuity_stability : { score: _gr_recContScore,    level: _gr_resLevel(_gr_recContScore)    },
+              cross_floor_adaptability      : { score: _gr_crossFloorScore, level: _gr_resLevel(_gr_crossFloorScore) },
+              safeSequence_resilience       : { score: _gr_safeSeqScore,    level: _gr_resLevel(_gr_safeSeqScore)    },
+            };
+            const _gr_dimScores    = Object.values(_gr_dimMap).map(v => v.score);
+            const _gr_overallScore = _gr_dimScores.reduce((a,b)=>a+b,0) / _gr_dimScores.length;
+            const _gr_overallLevel = _gr_resLevel(_gr_overallScore);
+            const _gr_strongDims   = Object.entries(_gr_dimMap).filter(([,v])=>v.score>=0.6).map(([k])=>k);
+            const _gr_fragilesDims = Object.entries(_gr_dimMap).filter(([,v])=>v.score<0.4).map(([k])=>k);
+
+            // === Layer 2: Burnout Shock Absorption Observation ===
+            {
+              const _gr_bsaSuppLow    = _gr_suppRedScore < 0.4;
+              const _gr_bsaBuffer     = _gr_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate < 0.5 && e.ladder >= 2);
+              const _gr_bsaBufLow     = _gr_bsaBuffer.length < 2;
+              const _gr_nightCoreCnt  = _gr_allArr.filter(e => e.ladder >= 4 && e.nightOk && !e.isBurnout).length;
+              const _gr_nightCoreConc = _gr_totalNight > 0 ? _gr_nightCoreCnt / _gr_totalNight : 0;
+              const _gr_bsaCoreConc   = _gr_nightCoreConc > 0.6;
+              const _gr_nearBurnout   = _gr_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate > 0.9).length;
+              const _gr_bsaPropRisk   = _gr_nearBurnout >= 2;
+              const _gr_vetFallback   = _gr_veterans.filter(e => e.utilRate < 0.7).length;
+              const _gr_bsaFallLow    = _gr_vetFallback < 1;
+              const _gr_bsaStressCnt  = [_gr_bsaSuppLow,_gr_bsaBufLow,_gr_bsaCoreConc,_gr_bsaPropRisk,_gr_bsaFallLow].filter(Boolean).length;
+              const _gr_bsaScore      = Math.max(0, 1 - _gr_bsaStressCnt * 0.2);
+              const _gr_bsaLevel      = _gr_resLevel(_gr_bsaScore);
+
+              // === Layer 3: Veteran Absence Resilience ===
+              {
+                const _gr_varSVFloors  = depts.filter(d => {
+                  const vets = _gr_deptData[d.id].arr.filter(e => e.isVeteran && e.nightOk);
+                  return vets.length === 1;
+                }).length;
+                const _gr_varSVHigh    = _gr_varSVFloors >= Math.ceil(depts.length * 0.5);
+                const _gr_ladder3      = _gr_allArr.filter(e => e.nightOk && e.ladder === 3 && !e.isBurnout).length;
+                const _gr_varBkpDepth  = _gr_veterans.length > 0 ? _gr_ladder3 / _gr_veterans.length : 0;
+                const _gr_varBkpWeak   = _gr_varBkpDepth < 0.5;
+                const _gr_nearIndep    = _gr_allArr.filter(e => e.nightOk && e.hasPair && e.stage >= 4).length;
+                const _gr_varSuccLow   = _gr_nearIndep < 1;
+                const _gr_multiVetFl   = depts.filter(d =>
+                  _gr_deptData[d.id].arr.filter(e => e.isVeteran && e.nightOk).length >= 2
+                ).length;
+                const _gr_varCFLimited = _gr_multiVetFl < Math.ceil(depts.length * 0.3);
+                const _gr_unsafeFloors = depts.filter(d => {
+                  const dA = _gr_deptData[d.id].arr;
+                  return dA.some(e => e.isVeteran && e.nightOk)
+                    && !dA.some(e => e.nightOk && e.ladder >= 3 && !e.isVeteran && !e.isBurnout);
+                }).length;
+                const _gr_varUnsafeHi  = _gr_unsafeFloors >= Math.ceil(depts.length * 0.4);
+                const _gr_varStressCnt = [_gr_varSVHigh,_gr_varBkpWeak,_gr_varSuccLow,_gr_varCFLimited,_gr_varUnsafeHi].filter(Boolean).length;
+                const _gr_varScore     = Math.max(0, 1 - _gr_varStressCnt * 0.2);
+                const _gr_varLevel     = _gr_resLevel(_gr_varScore);
+
+                // === Layer 4: Recovery Continuity Resilience ===
+                {
+                  const _gr_holdDurable  = _gr_protected.filter(e => e.utilRate <= 0.65).length;
+                  const _gr_rcrHoldFrag  = _gr_protected.length > 0
+                    ? _gr_holdDurable / _gr_protected.length < 0.5 : false;
+                  const _gr_rcrSSRisk    = _gr_safeSeqScore < 0.4;
+                  const _gr_bReboundCnt  = _gr_burnouts.filter(e => e.utilRate < 0.3).length;
+                  const _gr_rcrRebWeak   = _gr_burnouts.length > 0
+                    && _gr_bReboundCnt / _gr_burnouts.length < 0.5;
+                  const _gr_inReloc      = _gr_allArr.filter(e => e.inReloc);
+                  const _gr_relocStable  = _gr_inReloc.filter(e => e.utilRate <= 0.5).length;
+                  const _gr_rcrRelocRisk = _gr_inReloc.length > 0
+                    && _gr_relocStable / _gr_inReloc.length < 0.5;
+                  const _gr_rcrSuppRisk  = _gr_suppRedScore < 0.3;
+                  const _gr_rcrStressCnt = [_gr_rcrHoldFrag,_gr_rcrSSRisk,_gr_rcrRebWeak,_gr_rcrRelocRisk,_gr_rcrSuppRisk].filter(Boolean).length;
+                  const _gr_rcrScore     = Math.max(0, 1 - _gr_rcrStressCnt * 0.2);
+                  const _gr_rcrLevel     = _gr_resLevel(_gr_rcrScore);
+
+                  // === Layer 5: Human Resilience Insight ===
+                  {
+                    const _gr_insights = [];
+                    _gr_insights.push({
+                      topic        : 'burnout_shock_absorption',
+                      observation  : `burnout shock耐性: ${_gr_bsaLevel} (${(_gr_bsaScore*100).toFixed(0)}%)`,
+                      caution      : _gr_bsaStressCnt >= 3
+                        ? 'burnout増加時にsupport体制が崩壊するリスクあり。fallback確保を人間が検討してください'
+                        : _gr_bsaStressCnt >= 1
+                          ? 'burnout shock時の予備力にやや不足。余裕確保の検討を推奨'
+                          : 'burnout増加への吸収力は現状維持中',
+                      recommendation: _gr_bsaFallLow
+                        ? 'veteran fallbackが不足。夜勤可能ベテランの余裕確保を人間が判断してください'
+                        : 'support redundancyを維持してください',
+                      actionable   : _gr_bsaStressCnt >= 3,
+                    });
+                    _gr_insights.push({
+                      topic        : 'veteran_absence_resilience',
+                      observation  : `veteran欠勤耐性: ${_gr_varLevel} (${(_gr_varScore*100).toFixed(0)}%)`,
+                      caution      : _gr_varSVHigh
+                        ? `${_gr_varSVFloors}フロアがveteran 1名依存。欠勤時に夜勤体制が即時崩壊するリスクあり`
+                        : _gr_varBkpWeak
+                          ? 'ladder3バックアップ層が薄い。veteran突然欠員時の代替が限定的です'
+                          : 'veteran欠員への対応力は現状維持中',
+                      recommendation: _gr_varSVHigh || _gr_varBkpWeak
+                        ? 'ladder3人材の育成加速を人間が検討してください。cross-floor fallback整備も有効です'
+                        : 'veteran代替構造を継続維持してください',
+                      actionable   : _gr_varStressCnt >= 3,
+                    });
+                    _gr_insights.push({
+                      topic        : 'recovery_continuity_strength',
+                      observation  : `recovery継続強度: ${_gr_rcrLevel} (${(_gr_rcrScore*100).toFixed(0)}%)`,
+                      caution      : _gr_rcrHoldFrag
+                        ? 'protected staffのhold耐性が低下中。障害発生時にrecovery構造が壊れるリスクあり'
+                        : _gr_rcrRebWeak
+                          ? 'burnout → recovery遷移が遅い。リバウンドリスクが残存しています'
+                          : 'recovery継続構造は現状安定中',
+                      recommendation: _gr_rcrHoldFrag
+                        ? 'protected staffの夜勤負荷を人間が直接確認してください'
+                        : 'recovery構造の継続監視を推奨',
+                      actionable   : _gr_rcrStressCnt >= 3,
+                    });
+                    _gr_insights.push({
+                      topic        : 'support_redundancy_status',
+                      observation  : `support redundancy: ${_gr_resLevel(_gr_suppRedScore)} (${(_gr_suppRedScore*100).toFixed(0)}%)`,
+                      caution      : _gr_suppRedScore < 0.3
+                        ? 'support_req staffへの夜勤カバーが構造的に不足。緊急時に即座に崩壊するリスクあり'
+                        : _gr_suppRedScore < 0.5
+                          ? 'support体制の余裕が限定的。追加負荷への耐性が低い'
+                          : 'support redundancyは現状維持中',
+                      recommendation: _gr_suppRedScore < 0.4
+                        ? 'veteran夜勤可能人数とsupport_req人数のバランスを人間が確認してください'
+                        : 'support体制を継続維持してください',
+                      actionable   : _gr_suppRedScore < 0.3,
+                    });
+                    if (_gr_crossFloorScore < 0.6 || _gr_floorsWithVets < depts.length) {
+                      _gr_insights.push({
+                        topic        : 'cross_floor_fallback_strength',
+                        observation  : `cross-floor fallback: ${_gr_resLevel(_gr_crossFloorScore)} (${(_gr_crossFloorScore*100).toFixed(0)}%)`,
+                        caution      : _gr_floorsWithVets < depts.length
+                          ? `${depts.length - _gr_floorsWithVets}フロアにveteran夜勤不在。cross-floor補完が機能しない可能性あり`
+                          : 'cross-floor fallbackに一部制約あり',
+                        recommendation: 'veteran夜勤をフロア間で均等配置するよう人間が検討してください',
+                        actionable   : _gr_floorsWithVets < depts.length * 0.7,
+                      });
+                    }
+                    const _gr_actionableInsights = _gr_insights.filter(i => i.actionable);
+                    const _gr_overallInsight =
+                      _gr_overallScore >= 0.7
+                        ? '施設の全体的な回復力は維持されています。継続観察を推奨します'
+                        : _gr_overallScore >= 0.45
+                          ? '一部の回復力次元に懸念あり。人間による定期的な確認が有効です'
+                          : '複数の回復力次元に脆弱性あり。管理者による優先的な検討を推奨します';
+
+                    // === Layer 6: Governance Resilience Audit ===
+                    {
+                      const _gr_audCollapse  = _gr_fragilesDims.length >= 5;
+                      const _gr_critWeak     = ['burnout_resilience','veteran_replacement_flexibility','support_redundancy']
+                        .filter(k => (_gr_dimMap[k]?.score ?? 1) < 0.3);
+                      const _gr_audOverconf  = _gr_strongDims.length >= 4 && _gr_critWeak.length >= 2;
+                      const _gr_audVetBlame  = _gr_varLevel === 'fragile' && _gr_resLevel(_gr_burnoutResScore) !== 'fragile';
+                      const _gr_audRecUnder  = (_gr_rcrLevel === 'resilient' || _gr_rcrLevel === 'adaptive')
+                        && _gr_insights.every(i => i.topic !== 'recovery_continuity_strength' || i.actionable);
+                      const _gr_audOperReal  = _gr_allArr.length > 0;
+                      const _gr_audPrepSup   = _gr_actionableInsights.length > 0 || _gr_overallScore >= 0.65;
+                      const _gr_audExplain   = Object.keys(_gr_dimMap).length >= 6 && _gr_insights.length >= 4;
+                      const _gr_auditFlags   = [_gr_audCollapse,_gr_audOverconf,_gr_audVetBlame,_gr_audRecUnder].filter(Boolean).length;
+                      const _gr_overallAudit =
+                        _gr_auditFlags === 0  ? 'humanGovernanceResilienceSystem'
+                        : _gr_audCollapse     ? 'collapseParanoiaRisk'
+                        : _gr_audOverconf     ? 'resilienceOverconfidenceRisk'
+                        : _gr_audVetBlame     ? 'veteranBlameAmplificationRisk'
+                        : _gr_audRecUnder     ? 'recoveryUndervaluationRisk'
+                        :                       'needsReview';
+                      const _gr_finalSummary = {
+                        system            : 'Governance Resilience Observation System',
+                        dept: cd.id, year, month,
+                        overallResilience : { score: _gr_overallScore.toFixed(3), level: _gr_overallLevel },
+                        dimensions        : Object.fromEntries(
+                          Object.entries(_gr_dimMap).map(([k,v])=>[k,{ score: v.score.toFixed(3), level: v.level }])
+                        ),
+                        strongDimensions  : _gr_strongDims,
+                        fragileDimensions : _gr_fragilesDims,
+                        burnoutShockAbsorption: {
+                          level           : _gr_bsaLevel,
+                          score           : _gr_bsaScore.toFixed(3),
+                          stressSignals   : _gr_bsaStressCnt,
+                          fallbackLow     : _gr_bsaFallLow,
+                          coreConcentrated: _gr_bsaCoreConc,
+                          propagationRisk : _gr_bsaPropRisk,
+                        },
+                        veteranAbsenceResilience: {
+                          level              : _gr_varLevel,
+                          score              : _gr_varScore.toFixed(3),
+                          singleVetFloors    : _gr_varSVFloors,
+                          backupDepth        : _gr_varBkpDepth.toFixed(2),
+                          successionAvailable: _gr_nearIndep,
+                          unsafeOverlapFloors: _gr_unsafeFloors,
+                        },
+                        recoveryContinuityResilience: {
+                          level      : _gr_rcrLevel,
+                          score      : _gr_rcrScore.toFixed(3),
+                          holdFragile: _gr_rcrHoldFrag,
+                          reboundWeak: _gr_rcrRebWeak,
+                          relocRisk  : _gr_rcrRelocRisk,
+                        },
+                        humanInsights     : _gr_insights.map(i => ({
+                          topic      : i.topic,
+                          observation: i.observation,
+                          caution    : i.caution,
+                          actionable : i.actionable,
+                        })),
+                        actionableCount   : _gr_actionableInsights.length,
+                        overallInsight    : _gr_overallInsight,
+                        audit: {
+                          collapseParanoia         : _gr_audCollapse  ? 'risk ⚠' : 'low ✓',
+                          resilienceOverconfidence : _gr_audOverconf  ? 'risk ⚠' : 'none ✓',
+                          veteranBlameAmplification: _gr_audVetBlame  ? 'risk ⚠' : 'low ✓',
+                          recoveryUndervaluation   : _gr_audRecUnder  ? 'undervalued ⚠' : 'maintained ✓',
+                          operationalRealism       : _gr_audOperReal  ? 'high ✓' : 'partial ⚠',
+                          humanPreparednessSupport : _gr_audPrepSup   ? 'high ✓' : 'partial ⚠',
+                          explainability           : _gr_audExplain   ? 'high ✓' : 'partial ⚠',
+                          overall                  : _gr_overallAudit,
+                        },
+                      };
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_gr_] Governance Resilience Observation System:', _gr_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Resilience Observation System / _gr_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
