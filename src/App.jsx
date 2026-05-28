@@ -21115,6 +21115,408 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Governance Queue System / _gq_] ここまで ══
 
+        // ══ [Human Approval Workflow System / _hw_] ここから ══
+        {
+          // ── Layer 1: Approval Decision Queue (shared data + decision classes) ──
+          {
+            const _hw_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _hw_ scope)
+            const _hw_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const inRecovery = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                return { s, bo, ladder, stage, fl, hasPair, nightOk,
+                         supportReq, isVeteran, isBurnout, inLadder, inReloc, inRecovery,
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _hw_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _hw_allArr      = Object.values(_hw_deptData).flatMap(dd => dd.arr);
+            const _hw_veterans    = _hw_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _hw_supportReqs = _hw_allArr.filter(e => e.supportReq && e.nightOk);
+            const _hw_inRecovery  = _hw_allArr.filter(e => e.inRecovery);
+
+            // Per-day snapshot
+            const _hw_dayMap = {};
+            for (let day = 1; day <= _hw_days; day++) {
+              const srOnNight = [];
+              for (const sr of _hw_supportReqs) {
+                const { shifts, nset } = _hw_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push({ ...sr, day });
+              }
+              const vetOnNight = _hw_veterans.filter(vet => {
+                const { shifts, nset } = _hw_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovered = vetOnNight.length === 0 ? [...srOnNight] : [];
+              _hw_dayMap[day] = { srOnNight, vetOnNight, uncovered };
+            }
+
+            // Per-vet utilisation
+            const _hw_vetStats = _hw_veterans.map(vet => {
+              const { shifts, nset } = _hw_deptData[vet.deptId];
+              const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+              let nc = 0, maxRun = 0, curRun = 0, soleVetDays = 0;
+              for (let day = 1; day <= _hw_days; day++) {
+                if (nset.has(shifts[vet.s.id]?.[day] ?? '')) {
+                  nc++;
+                  curRun++;
+                  if (curRun > maxRun) maxRun = curRun;
+                  const allVetsToday = _hw_veterans.filter(v => {
+                    const { shifts: vs, nset: vn } = _hw_deptData[v.deptId];
+                    return vn.has(vs[v.s.id]?.[day] ?? '');
+                  });
+                  if (_hw_dayMap[day].srOnNight.length > 0 && allVetsToday.length === 1) soleVetDays++;
+                } else {
+                  curRun = 0;
+                }
+              }
+              const utilRate = targetNc > 0 ? nc / targetNc : 0;
+              return {
+                staffId: vet.s.id, staffName: vet.s.name,
+                deptId: vet.deptId, deptLabel: vet.deptLabel,
+                nightCount: nc, targetNc, utilRate: +utilRate.toFixed(3),
+                maxConsecRun: maxRun, soleVetDays,
+              };
+            });
+
+            // Build Approval Decision Queue
+            // Decision classes: APPROVE_CANDIDATE / REVIEW_REQUIRED /
+            //   HOLD_RECOMMENDED / REJECT_RECOMMENDED / RESIM_REQUIRED
+            const _hw_approvalQueue = [];
+
+            // HOLD_RECOMMENDED: all recovery/adaptation staff
+            for (const e of _hw_inRecovery) {
+              const holdReason =
+                e.isBurnout  ? 'burnout recovery中'
+                : e.inReloc  ? `フロア配属${(e.fl * 12).toFixed(0)}ヶ月 relocation adaptation`
+                : e.inLadder ? `夜勤 ladder ${e.ladder} support rebuilding`
+                :              `safeSequence構築中 stage=${e.stage}`;
+              _hw_approvalQueue.push({
+                decisionClass: 'HOLD_RECOMMENDED',
+                subject: `${e.s.name} (${e.deptLabel})`,
+                reason: holdReason,
+                reviewETA: 'next cycle確認推奨',
+                staffId: e.s.id,
+              });
+            }
+
+            // REJECT_RECOMMENDED: unsafe progression — low-ladder SR on night, no vet
+            for (let day = 1; day <= _hw_days; day++) {
+              const { uncovered, vetOnNight } = _hw_dayMap[day];
+              const unsafeLow = uncovered.filter(e => e.ladder < 3);
+              if (unsafeLow.length > 0 && vetOnNight.length === 0) {
+                _hw_approvalQueue.push({
+                  decisionClass: 'REJECT_RECOMMENDED',
+                  subject: `${unsafeLow[0].deptLabel} ${day}日`,
+                  reason: `unsafe progression: uncovered+lowLadder=${unsafeLow.length}`,
+                  reviewETA: '即日確認',
+                  day,
+                });
+              }
+            }
+
+            // RESIM_REQUIRED: veteran overload high — benefit clear but propagation risk
+            for (const v of _hw_vetStats.filter(v => v.utilRate > 1.3 || v.soleVetDays >= 5)) {
+              _hw_approvalQueue.push({
+                decisionClass: 'RESIM_REQUIRED',
+                subject: `${v.staffName} (${v.deptLabel}) 夜勤再配分`,
+                reason: `utilRate=${(v.utilRate*100).toFixed(0)}% soleVet=${v.soleVetDays}日 — support gap propagation risk`,
+                reviewETA: '再simulation後に判断',
+                staffId: v.staffId,
+              });
+            }
+
+            // REVIEW_REQUIRED: coverage gap (vet on night but ladder concern) or moderate overload
+            for (const v of _hw_vetStats.filter(v => v.utilRate > 0.9 && v.utilRate <= 1.3 && v.soleVetDays >= 3)) {
+              _hw_approvalQueue.push({
+                decisionClass: 'REVIEW_REQUIRED',
+                subject: `${v.staffName} (${v.deptLabel}) veteran overload改善`,
+                reason: `utilRate=${(v.utilRate*100).toFixed(0)}% — support continuity影響あり`,
+                reviewETA: 'monthly review',
+                staffId: v.staffId,
+              });
+            }
+
+            // APPROVE_CANDIDATE: low-risk graduated interventions
+            // Ladder 3 → 4 ready staff where floor has ≥2 vets
+            for (const e of _hw_allArr.filter(e => e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.inRecovery)) {
+              const floorVetCount = _hw_vetStats.filter(v => v.deptId === e.deptId).length;
+              if (floorVetCount >= 2) {
+                _hw_approvalQueue.push({
+                  decisionClass: 'APPROVE_CANDIDATE',
+                  subject: `${e.s.name} (${e.deptLabel}) ladder 4昇格`,
+                  reason: `stage=${e.stage} floorVet=${floorVetCount}名 — 低リスク段階的昇格候補`,
+                  reviewETA: '来月計画に組み込み可',
+                  staffId: e.s.id,
+                });
+              }
+            }
+
+            const _hw_holdItems   = _hw_approvalQueue.filter(q => q.decisionClass === 'HOLD_RECOMMENDED');
+            const _hw_rejectItems = _hw_approvalQueue.filter(q => q.decisionClass === 'REJECT_RECOMMENDED');
+            const _hw_resimItems  = _hw_approvalQueue.filter(q => q.decisionClass === 'RESIM_REQUIRED');
+            const _hw_reviewItems = _hw_approvalQueue.filter(q => q.decisionClass === 'REVIEW_REQUIRED');
+            const _hw_approveItems = _hw_approvalQueue.filter(q => q.decisionClass === 'APPROVE_CANDIDATE');
+
+            // ── Layer 2: Approval Risk Classification ───────────────────────────
+            {
+              // Per approval-queue item: classify the side-effect risk of acting on it
+              const _hw_riskClassified = _hw_approvalQueue.map(item => {
+                let sideEffectRisk = 'LOW';
+                const reasons = [];
+
+                if (item.decisionClass === 'REJECT_RECOMMENDED') {
+                  sideEffectRisk = 'HIGH';
+                  reasons.push('unsafe ladder progression');
+                  reasons.push('support disruption risk if unaddressed');
+                }
+                if (item.decisionClass === 'RESIM_REQUIRED') {
+                  sideEffectRisk = 'MEDIUM';
+                  reasons.push('cross-floor propagation possible');
+                  reasons.push('safeSequence impact unverified');
+                }
+                if (item.decisionClass === 'HOLD_RECOMMENDED') {
+                  sideEffectRisk = 'MEDIUM';
+                  reasons.push('recovery interruption if acted upon');
+                  reasons.push('burnout rebound risk');
+                }
+                if (item.decisionClass === 'REVIEW_REQUIRED') {
+                  sideEffectRisk = 'MEDIUM';
+                  reasons.push('support continuity impact unclear');
+                }
+                if (item.decisionClass === 'APPROVE_CANDIDATE') {
+                  sideEffectRisk = 'LOW';
+                  reasons.push('graduated — floor vet count sufficient');
+                }
+
+                const rollbackAvailable =
+                  item.decisionClass === 'APPROVE_CANDIDATE' ||
+                  item.decisionClass === 'REVIEW_REQUIRED';
+
+                return {
+                  ...item,
+                  sideEffectRisk,
+                  sideEffectReasons: reasons,
+                  rollbackAvailable,
+                };
+              });
+
+              const _hw_highRiskItems = _hw_riskClassified.filter(r => r.sideEffectRisk === 'HIGH');
+              const _hw_medRiskItems  = _hw_riskClassified.filter(r => r.sideEffectRisk === 'MEDIUM');
+
+              // ── Layer 3: Re-Simulation Request Flow ───────────────────────
+              {
+                const _hw_resimFlow = [];
+
+                // RESIM items from approval queue
+                for (const item of _hw_resimItems) {
+                  _hw_resimFlow.push({
+                    requestType: 'veteran_redistribution',
+                    subject: item.subject,
+                    concern: item.reason,
+                    action: 'sandbox re-simulation推奨 — support gap影響を確認後に承認',
+                  });
+                }
+
+                // Uncovered nights that persist — governance conflict
+                const uncovDays = [];
+                for (let day = 1; day <= _hw_days; day++) {
+                  if (_hw_dayMap[day].uncovered.length > 0 && _hw_dayMap[day].vetOnNight.length === 0) {
+                    uncovDays.push(day);
+                  }
+                }
+                if (uncovDays.length >= 3) {
+                  _hw_resimFlow.push({
+                    requestType: 'chronic_uncovered_resim',
+                    subject: `施設全体 uncovered ${uncovDays.length}日`,
+                    concern: 'veteran配置変更による改善可能性あり',
+                    action: 'vet配置変更 sandbox検証後に再判断',
+                  });
+                }
+
+                // Burnout staff on nights — future instability
+                for (const e of _hw_allArr.filter(e => e.isBurnout && e.nightOk)) {
+                  const { shifts, nset } = _hw_deptData[e.deptId];
+                  let nc = 0;
+                  for (let day = 1; day <= _hw_days; day++) {
+                    if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+                  }
+                  if (nc >= 2) {
+                    _hw_resimFlow.push({
+                      requestType: 'burnout_future_instability',
+                      subject: `${e.s.name} (${e.deptLabel})`,
+                      concern: `burnout高 + 夜勤${nc}回 — future instability risk`,
+                      action: '夜勤削減後のシフト構造を sandbox検証',
+                    });
+                  }
+                }
+
+                // ── Layer 4: Protected Hold Workflow ───────────────────────
+                {
+                  // Formalise each hold item into workflow decision record
+                  const _hw_holdWorkflow = _hw_holdItems.map(item => ({
+                    holdDecision   : 'HOLD',
+                    subject        : item.subject,
+                    reason         : item.reason,
+                    reviewETA      : item.reviewETA,
+                    interventionGate: 'next cycle安定確認後に再評価',
+                    overrideAllowed: false,
+                  }));
+
+                  // Additional hold: any dept where protected staff are in night schedule
+                  // — flag the dept as "hold cross-floor intervention"
+                  const _hw_protectedDepts = new Set(_hw_inRecovery.map(e => e.deptId));
+                  const _hw_deptHoldFlags = [..._hw_protectedDepts].map(deptId => {
+                    const { d } = _hw_deptData[deptId];
+                    return {
+                      holdDecision: 'HOLD_DEPT',
+                      subject: `${d.label} フロア全体介入`,
+                      reason: 'recovery/adaptation中スタッフ在籍 — フロア単位介入は保留',
+                      reviewETA: 'next cycle後に再確認',
+                      overrideAllowed: false,
+                    };
+                  });
+
+                  // ── Layer 5: Human Decision Guidance ──────────────────────
+                  {
+                    const _hw_decisionGuide = [];
+
+                    // Step 1: immediate — reject/unsafe items first
+                    if (_hw_rejectItems.length > 0) {
+                      for (const item of _hw_rejectItems.slice(0, 3)) {
+                        _hw_decisionGuide.push({
+                          step: 1, action: 'REJECT_REVIEW',
+                          label: `${item.subject}: ${item.reason}`,
+                          urgency: 'immediate',
+                        });
+                      }
+                    } else {
+                      _hw_decisionGuide.push({ step: 1, action: 'REJECT_REVIEW', label: '即日対応不要 ✓', urgency: 'none' });
+                    }
+
+                    // Step 2: protected hold confirmation
+                    if (_hw_holdWorkflow.length > 0 || _hw_deptHoldFlags.length > 0) {
+                      _hw_decisionGuide.push({
+                        step: 2, action: 'HOLD_CONFIRM',
+                        label: `${_hw_holdWorkflow.length}名 + ${_hw_deptHoldFlags.length}フロアの hold継続確認`,
+                        urgency: 'this_cycle',
+                      });
+                    } else {
+                      _hw_decisionGuide.push({ step: 2, action: 'HOLD_CONFIRM', label: 'hold対象なし ✓', urgency: 'none' });
+                    }
+
+                    // Step 3: re-simulation items
+                    if (_hw_resimFlow.length > 0) {
+                      for (const r of _hw_resimFlow.slice(0, 2)) {
+                        _hw_decisionGuide.push({
+                          step: 3, action: 'RESIM_REQUEST',
+                          label: `${r.subject}: ${r.action}`,
+                          urgency: 'before_approval',
+                        });
+                      }
+                    } else {
+                      _hw_decisionGuide.push({ step: 3, action: 'RESIM_REQUEST', label: '再simulation不要 ✓', urgency: 'none' });
+                    }
+
+                    // Step 4: review-required items (monthly)
+                    for (const item of _hw_reviewItems.slice(0, 2)) {
+                      _hw_decisionGuide.push({
+                        step: 4, action: 'MONTHLY_REVIEW',
+                        label: `${item.subject}: ${item.reason}`,
+                        urgency: 'monthly',
+                      });
+                    }
+
+                    // Step 5: approve candidates
+                    if (_hw_approveItems.length > 0) {
+                      _hw_decisionGuide.push({
+                        step: 5, action: 'APPROVE_CANDIDATE',
+                        label: `${_hw_approveItems.length}件の低リスク承認候補 — 来月計画組み込み可`,
+                        urgency: 'planning',
+                      });
+                    }
+
+                    // ── Layer 6: Approval Workflow Audit ──────────────────
+                    {
+                      const _hw_totalItems = _hw_approvalQueue.length;
+                      // over-approval pressure: too many REVIEW/RESIM items
+                      const _hw_pressureItems = _hw_reviewItems.length + _hw_resimItems.length;
+                      const _hw_overApprovalPressure = _hw_pressureItems > 5;
+                      // reject bias: >50% of items are REJECT
+                      const _hw_rejectBias = _hw_totalItems > 0
+                        && _hw_rejectItems.length / _hw_totalItems > 0.5;
+                      // recovery protection maintained
+                      const _hw_recoveryProtected = _hw_holdItems.length > 0;
+                      // review complexity: decision guide steps > 6
+                      const _hw_reviewComplexity =
+                        _hw_decisionGuide.length <= 4 ? 'manageable ✓'
+                        : _hw_decisionGuide.length <= 7 ? 'moderate'
+                        :                                 'complex ⚠';
+                      // explainability: all items have reason
+                      const _hw_explainable = _hw_approvalQueue.every(q => q.reason);
+                      // anxiety amplification
+                      const _hw_anxietyRisk = _hw_highRiskItems.length > 3 || _hw_rejectBias;
+
+                      const _hw_overallAudit =
+                        (!_hw_overApprovalPressure && !_hw_rejectBias && _hw_recoveryProtected && _hw_explainable)
+                          ? 'humanCenteredApprovalWorkflow'
+                        : _hw_overApprovalPressure ? 'approvalPressureRisk'
+                        : _hw_rejectBias           ? 'rejectBiasDetected'
+                        : !_hw_explainable         ? 'explainabilityGap'
+                        :                            'needsReview';
+
+                      const _hw_finalSummary = {
+                        dept: cd.id, year, month,
+                        approvalQueueCount : _hw_totalItems,
+                        holdCount          : _hw_holdItems.length,
+                        rejectCount        : _hw_rejectItems.length,
+                        resimCount         : _hw_resimItems.length,
+                        reviewCount        : _hw_reviewItems.length,
+                        approveCount       : _hw_approveItems.length,
+                        highRiskCount      : _hw_highRiskItems.length,
+                        medRiskCount       : _hw_medRiskItems.length,
+                        resimFlowCount     : _hw_resimFlow.length,
+                        holdWorkflowCount  : _hw_holdWorkflow.length,
+                        deptHoldCount      : _hw_deptHoldFlags.length,
+                        decisionGuide      : _hw_decisionGuide.map(g => `Step${g.step}[${g.action}/${g.urgency}] ${g.label}`),
+                        audit: {
+                          overApprovalPressure: _hw_overApprovalPressure ? 'risk ⚠' : 'low ✓',
+                          rejectBias          : _hw_rejectBias           ? 'detected ⚠' : 'balanced ✓',
+                          recoveryProtection  : _hw_recoveryProtected    ? 'maintained ✓' : 'none detected',
+                          reviewComplexity    : _hw_reviewComplexity,
+                          operationalRealism  : _hw_anxietyRisk          ? 'anxiety risk ⚠' : 'high ✓',
+                          explainability      : _hw_explainable           ? 'high ✓' : 'partial ⚠',
+                          overall             : _hw_overallAudit,
+                        },
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_hw_] Human Approval Workflow System:', _hw_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Human Approval Workflow System / _hw_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
