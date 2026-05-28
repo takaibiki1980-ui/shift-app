@@ -20403,6 +20403,300 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Cross-Floor Night Safety Engine / _cf_] ここまで ══
 
+        // ══ [Cross-Floor Risk Prioritization Engine / _cp_] ここから ══
+        {
+          // ── Layer 1: Cross-Floor Risk Classifier ──────────────────────────────
+          {
+            const _cp_days = getDays(year, month);
+            // Re-derive facility-wide data independently (own scope, no _cf_ dependency)
+            const _cp_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set(
+                (d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night')
+              );
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk ?? 'normal';
+                const ladder     = s.nightLadder ?? 0;
+                const stage      = s.growthStage ?? 0;
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                return { s, bo, ladder, stage, nightOk, supportReq, isVeteran,
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _cp_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _cp_allArr      = Object.values(_cp_deptData).flatMap(dd => dd.arr);
+            const _cp_veterans    = _cp_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _cp_supportReqs = _cp_allArr.filter(e => e.supportReq && e.nightOk);
+
+            // Per-day facility-wide snapshot: SR on night + global vet coverage
+            const _cp_dayMap = {};
+            for (let day = 1; day <= _cp_days; day++) {
+              const srOnNight = [];
+              for (const sr of _cp_supportReqs) {
+                const { shifts, nset } = _cp_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push({ ...sr, day });
+              }
+              const vetOnNight = _cp_veterans.filter(vet => {
+                const { shifts, nset } = _cp_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              // uncovered = no global vet on night when SR staff are present
+              const uncovered = vetOnNight.length === 0 ? [...srOnNight] : [];
+              _cp_dayMap[day] = { srOnNight, vetOnNight, uncovered };
+            }
+
+            // Classify each (dept × day) with SR present
+            const _cp_classified = [];
+            for (const [deptId, { d, arr, shifts, nset }] of Object.entries(_cp_deptData)) {
+              const deptSR  = arr.filter(e => e.supportReq && e.nightOk);
+              const deptVet = arr.filter(e => e.isVeteran  && e.nightOk);
+              // recovery-in-progress: SR staff on ladder 1-2 present in this dept
+              const isRecovery = deptSR.some(e => e.ladder >= 1 && e.ladder <= 2);
+              for (let day = 1; day <= _cp_days; day++) {
+                const srToday  = deptSR.filter(e => nset.has(shifts[e.s.id]?.[day] ?? ''));
+                if (srToday.length === 0) continue;
+                const vetLocal  = deptVet.filter(e => nset.has(shifts[e.s.id]?.[day] ?? ''));
+                const vetGlobal = _cp_dayMap[day].vetOnNight;
+                const lowLadder = srToday.filter(e => e.ladder < 3).length;
+                const uncovCount = _cp_dayMap[day].uncovered.filter(e => e.deptId === deptId).length;
+                let riskClass;
+                if      (uncovCount > 0 && vetGlobal.length === 0 && lowLadder > 0) riskClass = 'CRITICAL';
+                else if (uncovCount > 0 && vetGlobal.length === 0)                   riskClass = 'HIGH';
+                else if (uncovCount > 0 || lowLadder > 0)                            riskClass = 'MEDIUM';
+                else if (isRecovery    && vetLocal.length >= 1)                      riskClass = 'PROTECTED';
+                else                                                                  riskClass = 'LOW';
+                _cp_classified.push({
+                  deptId, deptLabel: d.label, day,
+                  srCount: srToday.length, vetGlobal: vetGlobal.length, vetLocal: vetLocal.length,
+                  lowLadder, uncovCount, isRecovery, riskClass,
+                });
+              }
+            }
+            const _cp_criticalItems  = _cp_classified.filter(c => c.riskClass === 'CRITICAL');
+            const _cp_highItems      = _cp_classified.filter(c => c.riskClass === 'HIGH');
+            const _cp_protectedItems = _cp_classified.filter(c => c.riskClass === 'PROTECTED');
+
+            // ── Layer 2: Veteran Overload Priority ────────────────────────────
+            {
+              const _cp_vetLoad = _cp_veterans.map(vet => {
+                const { shifts, nset } = _cp_deptData[vet.deptId];
+                const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+                let nc = 0, maxRun = 0, curRun = 0, soleVetDays = 0;
+                for (let day = 1; day <= _cp_days; day++) {
+                  if (nset.has(shifts[vet.s.id]?.[day] ?? '')) {
+                    nc++;
+                    curRun++;
+                    if (curRun > maxRun) maxRun = curRun;
+                    // sole-vet day: vet is the only global vet while SR staff are present
+                    const globalVetsToday = _cp_veterans.filter(v => {
+                      const { shifts: vs, nset: vn } = _cp_deptData[v.deptId];
+                      return vn.has(vs[v.s.id]?.[day] ?? '');
+                    });
+                    if (_cp_dayMap[day].srOnNight.length > 0 && globalVetsToday.length === 1) soleVetDays++;
+                  } else {
+                    curRun = 0;
+                  }
+                }
+                const utilRate = targetNc > 0 ? nc / targetNc : 0;
+                const overloadPriority =
+                  (utilRate > 1.3 || maxRun >= 3 || soleVetDays >= 5) ? 'HIGH'
+                  : (utilRate > 0.9 || soleVetDays >= 3)               ? 'MEDIUM'
+                  :                                                        'LOW';
+                return {
+                  staffId: vet.s.id, staffName: vet.s.name,
+                  deptId: vet.deptId, deptLabel: vet.deptLabel,
+                  nightCount: nc, targetNc, utilRate: +utilRate.toFixed(3),
+                  maxConsecRun: maxRun, soleVetDays, overloadPriority,
+                };
+              });
+              const _cp_vetHighLoad = _cp_vetLoad.filter(v => v.overloadPriority === 'HIGH');
+
+              // ── Layer 3: Uncovered Night Escalation ───────────────────────────
+              {
+                // Track per-SR-staff chronicity of uncovered nights
+                const _cp_escalation = [];
+                for (const sr of _cp_supportReqs) {
+                  const { shifts, nset } = _cp_deptData[sr.deptId];
+                  let uncovTotal = 0, maxUncovRun = 0, curRun = 0, consecPairs = 0;
+                  let prevUncov = false;
+                  for (let day = 1; day <= _cp_days; day++) {
+                    if (!nset.has(shifts[sr.s.id]?.[day] ?? '')) { curRun = 0; prevUncov = false; continue; }
+                    const covered = _cp_dayMap[day].vetOnNight.length > 0;
+                    if (!covered) {
+                      uncovTotal++;
+                      curRun++;
+                      if (curRun > maxUncovRun) maxUncovRun = curRun;
+                      if (prevUncov) consecPairs++;
+                      prevUncov = true;
+                    } else {
+                      curRun = 0;
+                      prevUncov = false;
+                    }
+                  }
+                  if (uncovTotal === 0) continue;
+                  const trend =
+                    (consecPairs >= 2 && maxUncovRun >= 2) ? 'escalating'
+                    : (maxUncovRun <= 1 && uncovTotal <= 2) ? 'recovering'
+                    :                                          'stable';
+                  const escalationLevel =
+                    (trend === 'escalating' || maxUncovRun >= 3) ? 'HIGH'
+                    : (uncovTotal >= 3 || maxUncovRun === 2)      ? 'MEDIUM'
+                    :                                               'LOW';
+                  _cp_escalation.push({
+                    staffId: sr.s.id, staffName: sr.s.name,
+                    deptId: sr.deptId, deptLabel: sr.deptLabel,
+                    uncovTotal, maxUncovRun, trend, escalationLevel,
+                  });
+                }
+                const _cp_highEscalation = _cp_escalation.filter(e => e.escalationLevel === 'HIGH');
+
+                // ── Layer 4: Facility-Wide Support Pressure Map ───────────────
+                {
+                  const _cp_pressureMap = Object.entries(_cp_deptData).map(([deptId, { d, arr, shifts, nset }]) => {
+                    const srStaff  = arr.filter(e => e.supportReq && e.nightOk);
+                    const vetStaff = arr.filter(e => e.isVeteran  && e.nightOk);
+                    // gapDays: SR on night but no local vet in same dept
+                    let gapDays = 0;
+                    let srNightDays = 0;
+                    let singleVetDays = 0;
+                    for (let day = 1; day <= _cp_days; day++) {
+                      const srToday  = srStaff.filter(e  => nset.has(shifts[e.s.id]?.[day]  ?? ''));
+                      if (srToday.length === 0) continue;
+                      srNightDays++;
+                      const vetLocal  = vetStaff.filter(e => nset.has(shifts[e.s.id]?.[day] ?? ''));
+                      if (vetLocal.length === 0) gapDays++;
+                      const vetGlobal = _cp_dayMap[day].vetOnNight;
+                      if (vetGlobal.length === 1) singleVetDays++;
+                    }
+                    const vetDepRate = srNightDays > 0 ? singleVetDays / srNightDays : 0;
+                    const pressureLevel =
+                      (gapDays > 5 || vetDepRate > 0.7) ? 'HIGH'
+                      : (gapDays > 2 || vetDepRate > 0.4) ? 'MEDIUM'
+                      :                                      'LOW';
+                    return {
+                      deptId, deptLabel: d.label,
+                      srCount: srStaff.length, vetCount: vetStaff.length,
+                      gapDays, vetDepRate: +vetDepRate.toFixed(3), pressureLevel,
+                    };
+                  });
+                  const _cp_highPressureDepts = _cp_pressureMap.filter(p => p.pressureLevel === 'HIGH');
+
+                  // ── Layer 5: Human Night Attention Guidance ────────────────
+                  {
+                    const _cp_attentionItems = [];
+                    // ① CRITICAL dept-day items (immediate attention)
+                    for (const c of _cp_criticalItems.slice(0, 3)) {
+                      _cp_attentionItems.push({
+                        priority: 1, type: 'CRITICAL_NIGHT',
+                        label: `${c.deptLabel} ${c.day}日: uncovered escalation (vet=${c.vetGlobal} lowLadder=${c.lowLadder})`,
+                      });
+                    }
+                    // ② HIGH coverage-gap items
+                    for (const c of _cp_highItems.slice(0, 2)) {
+                      _cp_attentionItems.push({
+                        priority: 2, type: 'HIGH_NIGHT',
+                        label: `${c.deptLabel} ${c.day}日: coverage gap (lowLadder=${c.lowLadder})`,
+                      });
+                    }
+                    // ② Veteran overload
+                    for (const v of _cp_vetHighLoad.slice(0, 2)) {
+                      _cp_attentionItems.push({
+                        priority: 2, type: 'VET_OVERLOAD',
+                        label: `${v.staffName} (${v.deptLabel}): utilisation ${(v.utilRate*100).toFixed(0)}% soleVetDays=${v.soleVetDays}`,
+                      });
+                    }
+                    // ② Chronic escalation
+                    for (const e of _cp_highEscalation.slice(0, 2)) {
+                      _cp_attentionItems.push({
+                        priority: 2, type: 'CHRONIC_UNCOVERED',
+                        label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered trend=${e.trend}`,
+                      });
+                    }
+                    // ③ Protected recovery floors (maintain — do not disrupt)
+                    const _cp_protectedDepts = [...new Set(_cp_protectedItems.map(p => p.deptLabel))];
+                    for (const dl of _cp_protectedDepts) {
+                      _cp_attentionItems.push({
+                        priority: 3, type: 'PROTECTED_RECOVERY',
+                        label: `${dl}: support再構築中 — 現状維持優先 🛡️`,
+                      });
+                    }
+                    // ③ High-pressure depts
+                    for (const p of _cp_highPressureDepts.slice(0, 2)) {
+                      _cp_attentionItems.push({
+                        priority: 3, type: 'PRESSURE_MAP',
+                        label: `${p.deptLabel}: support pressure HIGH (gap=${p.gapDays}日 vetDep=${(p.vetDepRate*100).toFixed(0)}%)`,
+                      });
+                    }
+                    _cp_attentionItems.sort((a, b) => a.priority - b.priority);
+
+                    // ── Layer 6: Cross-Floor Prioritization Audit ──────────
+                    {
+                      const _cp_totalAlerts = _cp_criticalItems.length + _cp_highItems.length
+                                            + _cp_vetHighLoad.length + _cp_highEscalation.length;
+                      // over-alerting: >50% of days carry a flag
+                      const _cp_flaggedDaySet = new Set([
+                        ..._cp_criticalItems.map(c => c.day),
+                        ..._cp_highItems.map(c => c.day),
+                      ]);
+                      const _cp_overAlerting = _cp_flaggedDaySet.size / _cp_days > 0.5;
+                      // veteran dependency bias: any dept where single-vet dependency > 70%
+                      const _cp_vetDepBias   = _cp_pressureMap.some(p => p.vetDepRate > 0.7);
+                      // floor bias: one dept > 80% of all alerts
+                      const _cp_alertByDept  = {};
+                      for (const c of [..._cp_criticalItems, ..._cp_highItems]) {
+                        _cp_alertByDept[c.deptId] = (_cp_alertByDept[c.deptId] || 0) + 1;
+                      }
+                      const _cp_maxDeptAlerts = Math.max(0, ...Object.values(_cp_alertByDept));
+                      const _cp_floorBias    = _cp_totalAlerts > 0 && _cp_maxDeptAlerts / _cp_totalAlerts > 0.8;
+                      const _cp_alertDensity = _cp_days > 0 ? _cp_totalAlerts / _cp_days : 0;
+
+                      const _cp_overallAudit =
+                        (!_cp_overAlerting && !_cp_floorBias && _cp_protectedItems.length > 0)
+                          ? 'humanCenteredNightPriority'
+                        : _cp_overAlerting ? 'overAlertingRisk'
+                        : _cp_floorBias    ? 'floorBiasDetected'
+                        :                    'needsReview';
+
+                      const _cp_auditResult = {
+                        supportRecoveryProtection: _cp_protectedItems.length > 0 ? 'maintained ✓' : 'not detected',
+                        overAlerting             : _cp_overAlerting ? 'risk detected ⚠' : 'low ✓',
+                        veteranDependencyBias    : _cp_vetDepBias   ? 'detected ⚠' : 'within range ✓',
+                        floorBias                : _cp_floorBias    ? 'detected ⚠' : 'balanced ✓',
+                        operationalRealism       : _cp_alertDensity < 0.5 ? 'high ✓' : 'moderate',
+                        anxietyAmplification     : _cp_overAlerting ? 'risk ⚠' : 'controlled ✓',
+                        overall                  : _cp_overallAudit,
+                      };
+
+                      const _cp_finalSummary = {
+                        dept: cd.id, year, month,
+                        classifiedCount    : _cp_classified.length,
+                        criticalCount      : _cp_criticalItems.length,
+                        highCount          : _cp_highItems.length,
+                        protectedCount     : _cp_protectedItems.length,
+                        vetHighLoadCount   : _cp_vetHighLoad.length,
+                        highEscalationCount: _cp_highEscalation.length,
+                        highPressureDepts  : _cp_highPressureDepts.map(p => p.deptLabel),
+                        attentionGuidance  : _cp_attentionItems.slice(0, 8)
+                                              .map((i, idx) => `${idx+1}. [${i.type}] ${i.label}`),
+                        audit              : _cp_auditResult,
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_cp_] Cross-Floor Risk Prioritization Engine:', _cp_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Cross-Floor Risk Prioritization Engine / _cp_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
