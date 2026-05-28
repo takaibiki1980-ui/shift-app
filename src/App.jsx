@@ -3616,6 +3616,19 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             </div>
           </div>
         </div>
+        {form.nightOk&&(
+          <div style={{marginBottom:14}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"6px 8px",background:"#f0e8ff",borderRadius:6,border:"1px solid #c8a0d8"}}>
+              <input type="checkbox" checked={!!form.foreignNightSupportRequired}
+                     onChange={e=>set("foreignNightSupportRequired",e.target.checked)}
+                     style={{width:14,height:14,accentColor:"#7a5590"}}/>
+              <div>
+                <div style={{color:"#7a5590",fontSize:12,fontWeight:700}}>夜勤サポート体制を厚くしたい</div>
+                <div style={{color:"#9a69b0",fontSize:10}}>cross-floor安全監査対象（国籍とは無関係の運営安全属性）</div>
+              </div>
+            </label>
+          </div>
+        )}
         <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
         <div style={{background:"#fff8e6",border:"1px solid #f0c040",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
@@ -20210,6 +20223,185 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           });
         }
         // ══ [Temporal-Console-UI] ここまで ══
+
+        // ══ [Cross-Floor Night Safety Engine / _cf_] ここから ══
+        {
+          // ── Layer 1: Facility-Wide Night Snapshot ──────────────────────────────
+          {
+            const _cf_refDate = new Date();
+            // per-dept data dictionary
+            const _cf_deptData = {};
+            for (const d of depts) {
+              const ds = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const arr = ds.map(s => {
+                const fy  = s.facilityYears ?? null;
+                const fl  = s.floorYears    ?? null;
+                const rr  = s.restRatio     ?? null;
+                const bo  = s.burnoutRisk   ?? 'normal';
+                const ladder = s.nightLadder ?? 0;
+                const stage  = s.growthStage ?? 0;
+                const progress = s.growthProgress ?? 0;
+                const hasPair  = !!(s.growthPairStaff);
+                const nightOk  = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                // count night shifts this month
+                const days = getDays(year, month);
+                let nightCount = 0;
+                const nset = new Set(
+                  (d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night').map(k => k)
+                );
+                for (let dd = 1; dd <= days; dd++) {
+                  const sv = shifts[s.id]?.[dd] ?? '';
+                  if (nset.has(sv)) nightCount++;
+                }
+                return { s, fy, fl, rr, stage, progress, hasPair, ladder, nightOk,
+                         bo, isVeteran, supportReq, deptId: d.id, deptLabel: d.label,
+                         nightCount, nset };
+              });
+              _cf_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _cf_allArr = Object.values(_cf_deptData).flatMap(dd => dd.arr);
+            const _cf_days = getDays(year, month);
+
+            // ── Layer 2: Cross-Floor Safety Pairing Audit ──────────────────────
+            {
+              const _cf_supportNeeded = _cf_allArr.filter(e => e.supportReq && e.nightOk);
+              const _cf_veterans      = _cf_allArr.filter(e => e.isVeteran   && e.nightOk);
+              // for each support-needed staff, find nights and check veteran coverage
+              const _cf_pairingReport = [];
+              for (const sr of _cf_supportNeeded) {
+                const srShifts = _cf_deptData[sr.deptId].shifts;
+                const srNset   = sr.nset;
+                for (let d = 1; d <= _cf_days; d++) {
+                  const sv = srShifts[sr.s.id]?.[d] ?? '';
+                  if (!srNset.has(sv)) continue;
+                  // count veterans on same night across all depts
+                  let vetCoverage = 0;
+                  for (const vet of _cf_veterans) {
+                    const vetShifts = _cf_deptData[vet.deptId].shifts;
+                    const vetNset   = vet.nset;
+                    const vv = vetShifts[vet.s.id]?.[d] ?? '';
+                    if (vetNset.has(vv)) vetCoverage++;
+                  }
+                  const covered = vetCoverage >= 1;
+                  _cf_pairingReport.push({
+                    staffId: sr.s.id, staffName: sr.s.name, deptId: sr.deptId,
+                    deptLabel: sr.deptLabel, day: d, vetCoverage, covered,
+                  });
+                }
+              }
+              const _cf_uncoveredNights = _cf_pairingReport.filter(r => !r.covered);
+              const _cf_pairingScore = _cf_pairingReport.length > 0
+                ? (_cf_pairingReport.filter(r => r.covered).length / _cf_pairingReport.length)
+                : 1.0;
+
+              // ── Layer 3: Foreign Staff Night Safety ──────────────────────────
+              {
+                // Count support-required staff with insufficient night ladder
+                const _cf_lowLadder = _cf_supportNeeded.filter(e => e.ladder < 3);
+                const _cf_highLadder = _cf_supportNeeded.filter(e => e.ladder >= 3);
+
+                // Aggregate night-count distribution for support-required staff
+                const _cf_srNightCounts = _cf_supportNeeded.map(e => e.nightCount);
+                const _cf_srNightAvg = _cf_srNightCounts.length > 0
+                  ? _cf_srNightCounts.reduce((a, b) => a + b, 0) / _cf_srNightCounts.length
+                  : 0;
+                const _cf_srNightMax = _cf_srNightCounts.length > 0
+                  ? Math.max(..._cf_srNightCounts)
+                  : 0;
+
+                // ── Layer 4: Global Night Risk Propagation ────────────────────
+                {
+                  // Per-day global night risk: count unsupported sr staff that night
+                  const _cf_dayRisk = {};
+                  for (let d = 1; d <= _cf_days; d++) {
+                    const srOnNight = _cf_pairingReport.filter(r => r.day === d);
+                    const uncovered = srOnNight.filter(r => !r.covered);
+                    const vetCount  = _cf_veterans.reduce((acc, vet) => {
+                      const vv = _cf_deptData[vet.deptId].shifts[vet.s.id]?.[d] ?? '';
+                      return acc + (vet.nset.has(vv) ? 1 : 0);
+                    }, 0);
+                    _cf_dayRisk[d] = {
+                      srNightCount : srOnNight.length,
+                      uncoveredCount: uncovered.length,
+                      vetCount,
+                      riskLevel: uncovered.length > 1 ? 'high'
+                               : uncovered.length === 1 ? 'medium' : 'low',
+                    };
+                  }
+                  const _cf_highRiskDays  = Object.entries(_cf_dayRisk).filter(([,v]) => v.riskLevel === 'high').length;
+                  const _cf_medRiskDays   = Object.entries(_cf_dayRisk).filter(([,v]) => v.riskLevel === 'medium').length;
+
+                  // ── Layer 5: Veteran Coverage Stability ──────────────────────
+                  {
+                    // How many nights does each veteran cover vs expected
+                    const _cf_vetCovReport = _cf_veterans.map(vet => {
+                      const vetShifts = _cf_deptData[vet.deptId].shifts;
+                      let nc = 0;
+                      for (let d = 1; d <= _cf_days; d++) {
+                        const vv = vetShifts[vet.s.id]?.[d] ?? '';
+                        if (vet.nset.has(vv)) nc++;
+                      }
+                      const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+                      const utilRate = targetNc > 0 ? nc / targetNc : 0;
+                      return {
+                        staffId: vet.s.id, staffName: vet.s.name,
+                        deptId: vet.deptId, deptLabel: vet.deptLabel,
+                        nightCount: nc, targetNc, utilRate,
+                        ladder: vet.ladder, stage: vet.stage,
+                      };
+                    });
+                    const _cf_vetStable = _cf_vetCovReport.filter(v => v.utilRate >= 0.7 && v.utilRate <= 1.3);
+                    const _cf_vetUnder  = _cf_vetCovReport.filter(v => v.utilRate < 0.7);
+                    const _cf_vetOver   = _cf_vetCovReport.filter(v => v.utilRate > 1.3);
+                    const _cf_vetStabilityScore = _cf_vetCovReport.length > 0
+                      ? _cf_vetStable.length / _cf_vetCovReport.length
+                      : 1.0;
+
+                    // ── Layer 6: Cross-Floor Safety Audit Summary ─────────────
+                    {
+                      const _cf_overallRisk =
+                        _cf_highRiskDays > 3 || _cf_vetStabilityScore < 0.4 ? 'critical'
+                        : _cf_highRiskDays > 0 || _cf_medRiskDays > 4 || _cf_pairingScore < 0.6 ? 'warning'
+                        : 'safe';
+                      const _cf_summary = {
+                        dept: cd.id, year, month,
+                        supportNeededCount : _cf_supportNeeded.length,
+                        veteranCount       : _cf_veterans.length,
+                        pairingScore       : +_cf_pairingScore.toFixed(3),
+                        uncoveredNights    : _cf_uncoveredNights.length,
+                        highRiskDays       : _cf_highRiskDays,
+                        medRiskDays        : _cf_medRiskDays,
+                        lowLadderSrCount   : _cf_lowLadder.length,
+                        srNightAvg         : +_cf_srNightAvg.toFixed(2),
+                        srNightMax         : _cf_srNightMax,
+                        vetStabilityScore  : +_cf_vetStabilityScore.toFixed(3),
+                        vetUnderCount      : _cf_vetUnder.length,
+                        vetOverCount       : _cf_vetOver.length,
+                        overallRisk        : _cf_overallRisk,
+                        // top uncovered nights (first 5)
+                        topUncoveredNights : _cf_uncoveredNights.slice(0, 5).map(r =>
+                          `${r.deptLabel} ${r.day}日 ${r.staffName}`),
+                        // top risky days (first 5)
+                        topHighRiskDays    : Object.entries(_cf_dayRisk)
+                          .filter(([,v]) => v.riskLevel !== 'low')
+                          .sort((a,b) => (b[1].uncoveredCount - a[1].uncoveredCount))
+                          .slice(0, 5)
+                          .map(([d,v]) => `${d}日: uncov=${v.uncoveredCount} vet=${v.vetCount}`),
+                      };
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_cf_] Cross-Floor Night Safety Engine:', _cf_summary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Cross-Floor Night Safety Engine / _cf_] ここまで ══
 
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
