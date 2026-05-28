@@ -20697,6 +20697,424 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Cross-Floor Risk Prioritization Engine / _cp_] ここまで ══
 
+        // ══ [Governance Queue System / _gq_] ここから ══
+        {
+          // ── Layer 1: Governance Review Queue (shared data + P1/P2/P3) ─────────
+          {
+            const _gq_days = getDays(year, month);
+            // Rebuild facility-wide data (independent scope)
+            const _gq_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                return { s, bo, ladder, stage, fl, hasPair, nightOk,
+                         supportReq, isVeteran, isBurnout, deptId: d.id, deptLabel: d.label };
+              });
+              _gq_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gq_allArr      = Object.values(_gq_deptData).flatMap(dd => dd.arr);
+            const _gq_veterans    = _gq_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _gq_supportReqs = _gq_allArr.filter(e => e.supportReq && e.nightOk);
+
+            // Per-day facility-wide snapshot
+            const _gq_dayMap = {};
+            for (let day = 1; day <= _gq_days; day++) {
+              const srOnNight = [];
+              for (const sr of _gq_supportReqs) {
+                const { shifts, nset } = _gq_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push({ ...sr, day });
+              }
+              const vetOnNight = _gq_veterans.filter(vet => {
+                const { shifts, nset } = _gq_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovered = vetOnNight.length === 0 ? [...srOnNight] : [];
+              _gq_dayMap[day] = { srOnNight, vetOnNight, uncovered };
+            }
+
+            // Per-vet: utilisation rate, consecutive run, sole-vet exposure
+            const _gq_vetStats = _gq_veterans.map(vet => {
+              const { shifts, nset } = _gq_deptData[vet.deptId];
+              const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+              let nc = 0, maxRun = 0, curRun = 0, soleVetDays = 0;
+              for (let day = 1; day <= _gq_days; day++) {
+                if (nset.has(shifts[vet.s.id]?.[day] ?? '')) {
+                  nc++;
+                  curRun++;
+                  if (curRun > maxRun) maxRun = curRun;
+                  const allVetsToday = _gq_veterans.filter(v => {
+                    const { shifts: vs, nset: vn } = _gq_deptData[v.deptId];
+                    return vn.has(vs[v.s.id]?.[day] ?? '');
+                  });
+                  if (_gq_dayMap[day].srOnNight.length > 0 && allVetsToday.length === 1) soleVetDays++;
+                } else {
+                  curRun = 0;
+                }
+              }
+              const utilRate = targetNc > 0 ? nc / targetNc : 0;
+              return {
+                staffId: vet.s.id, staffName: vet.s.name,
+                deptId: vet.deptId, deptLabel: vet.deptLabel,
+                nightCount: nc, targetNc, utilRate: +utilRate.toFixed(3),
+                maxConsecRun: maxRun, soleVetDays, ladder: vet.ladder,
+              };
+            });
+
+            // Per-SR: chronicity of uncovered nights
+            const _gq_srEscalation = [];
+            for (const sr of _gq_supportReqs) {
+              const { shifts, nset } = _gq_deptData[sr.deptId];
+              let uncovTotal = 0, maxUncovRun = 0, curRun = 0, consecPairs = 0;
+              let prevUncov = false;
+              for (let day = 1; day <= _gq_days; day++) {
+                if (!nset.has(shifts[sr.s.id]?.[day] ?? '')) { curRun = 0; prevUncov = false; continue; }
+                const covered = _gq_dayMap[day].vetOnNight.length > 0;
+                if (!covered) {
+                  uncovTotal++;
+                  curRun++;
+                  if (curRun > maxUncovRun) maxUncovRun = curRun;
+                  if (prevUncov) consecPairs++;
+                  prevUncov = true;
+                } else {
+                  curRun = 0;
+                  prevUncov = false;
+                }
+              }
+              if (uncovTotal === 0) continue;
+              const trend =
+                (consecPairs >= 2 && maxUncovRun >= 2) ? 'escalating'
+                : (maxUncovRun <= 1 && uncovTotal <= 2) ? 'recovering'
+                :                                          'stable';
+              _gq_srEscalation.push({
+                staffId: sr.s.id, staffName: sr.s.name,
+                deptId: sr.deptId, deptLabel: sr.deptLabel,
+                uncovTotal, maxUncovRun, trend, ladder: sr.ladder,
+              });
+            }
+
+            // Build Review Queue — P1 / P2 / P3
+            const _gq_reviewQueue = [];
+            // P1: unsafe overlap (uncov + no global vet + low ladder staff present)
+            for (let day = 1; day <= _gq_days; day++) {
+              const { uncovered, vetOnNight } = _gq_dayMap[day];
+              if (uncovered.length > 0 && vetOnNight.length === 0) {
+                const lowLadder = uncovered.filter(e => e.ladder < 3);
+                if (lowLadder.length > 0) {
+                  _gq_reviewQueue.push({
+                    priority: 'P1', category: 'unsafe_overlap',
+                    label: `${uncovered[0].deptLabel} ${day}日: uncovered escalation (lowLadder=${lowLadder.length})`,
+                    detail: { day, uncovCount: uncovered.length, lowLadderCount: lowLadder.length },
+                  });
+                }
+              }
+            }
+            // P1: veteran overload — utilRate high or sustained sole coverage
+            for (const v of _gq_vetStats.filter(v => v.utilRate > 1.3 || v.soleVetDays >= 5)) {
+              _gq_reviewQueue.push({
+                priority: 'P1', category: 'veteran_overload',
+                label: `${v.staffName} (${v.deptLabel}): overload utilRate=${(v.utilRate*100).toFixed(0)}% soleVet=${v.soleVetDays}日`,
+                detail: { staffId: v.staffId, utilRate: v.utilRate, soleVetDays: v.soleVetDays },
+              });
+            }
+            // P1: burnout staff carrying frequent nights
+            for (const e of _gq_allArr.filter(e => e.isBurnout && e.nightOk)) {
+              const { shifts, nset } = _gq_deptData[e.deptId];
+              let nc = 0;
+              for (let day = 1; day <= _gq_days; day++) {
+                if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+              }
+              if (nc >= 3) {
+                _gq_reviewQueue.push({
+                  priority: 'P1', category: 'burnout_escalation',
+                  label: `${e.s.name} (${e.deptLabel}): burnout高 夜勤${nc}回`,
+                  detail: { staffId: e.s.id, nightCount: nc },
+                });
+              }
+            }
+            // P2: coverage gap (no global vet, but ladder ok)
+            for (let day = 1; day <= _gq_days; day++) {
+              const { uncovered, vetOnNight } = _gq_dayMap[day];
+              if (uncovered.length > 0 && vetOnNight.length === 0 && !uncovered.some(e => e.ladder < 3)) {
+                _gq_reviewQueue.push({
+                  priority: 'P2', category: 'coverage_gap',
+                  label: `${uncovered[0].deptLabel} ${day}日: coverage gap (ladder ok)`,
+                  detail: { day, uncovCount: uncovered.length },
+                });
+              }
+            }
+            // P2: chronic uncovered escalation
+            for (const e of _gq_srEscalation.filter(e => e.trend === 'escalating')) {
+              _gq_reviewQueue.push({
+                priority: 'P2', category: 'chronic_uncovered',
+                label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered 慢性化`,
+                detail: { staffId: e.staffId, uncovTotal: e.uncovTotal, maxUncovRun: e.maxUncovRun },
+              });
+            }
+            // P2: veteran overload watch
+            for (const v of _gq_vetStats.filter(v => v.utilRate > 0.9 && v.utilRate <= 1.3 && v.soleVetDays >= 3)) {
+              _gq_reviewQueue.push({
+                priority: 'P2', category: 'veteran_overload_watch',
+                label: `${v.staffName} (${v.deptLabel}): utilRate=${(v.utilRate*100).toFixed(0)}% 要経過観察`,
+                detail: { staffId: v.staffId, utilRate: v.utilRate, soleVetDays: v.soleVetDays },
+              });
+            }
+            // P3: moderate uncovered watchlist
+            for (const e of _gq_srEscalation.filter(e => e.trend === 'stable' && e.uncovTotal >= 2)) {
+              _gq_reviewQueue.push({
+                priority: 'P3', category: 'uncovered_watch',
+                label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered watchlist`,
+                detail: { staffId: e.staffId, uncovTotal: e.uncovTotal },
+              });
+            }
+            const _gq_p1Items = _gq_reviewQueue.filter(q => q.priority === 'P1');
+            const _gq_p2Items = _gq_reviewQueue.filter(q => q.priority === 'P2');
+            const _gq_p3Items = _gq_reviewQueue.filter(q => q.priority === 'P3');
+
+            // ── Layer 2: Protected Hold Queue ───────────────────────────────────
+            {
+              const _gq_holdQueue = [];
+              // Burnout recovery: hold all intervention
+              for (const e of _gq_allArr.filter(e => e.isBurnout)) {
+                _gq_holdQueue.push({
+                  holdType: 'burnout_recovery',
+                  label: `${e.s.name} (${e.deptLabel}): burnout recovery中 — hold intervention`,
+                  reason: '燃え尽き回復優先', staffId: e.s.id,
+                });
+              }
+              // Relocation adaptation: floor tenure < 6 months
+              for (const e of _gq_allArr.filter(e => e.fl !== null && e.fl < 0.5)) {
+                _gq_holdQueue.push({
+                  holdType: 'relocation_adaptation',
+                  label: `${e.s.name} (${e.deptLabel}): フロア配属${(e.fl * 12).toFixed(0)}ヶ月 — adaptation継続`,
+                  reason: 'フロア適応継続優先', staffId: e.s.id,
+                });
+              }
+              // Night introduction phase: ladder 1-2 with nightOk → support structure rebuilding
+              for (const e of _gq_allArr.filter(e => e.nightOk && e.ladder >= 1 && e.ladder <= 2)) {
+                _gq_holdQueue.push({
+                  holdType: 'ladder_stabilization',
+                  label: `${e.s.name} (${e.deptLabel}): 夜勤 ladder ${e.ladder} — support体制構築中`,
+                  reason: 'Night ladder 安定化優先', staffId: e.s.id,
+                });
+              }
+              // safeSequence rebuilding: paired + stage <= 3 (not already held above)
+              for (const e of _gq_allArr.filter(e => e.hasPair && e.stage <= 3)) {
+                if (!_gq_holdQueue.some(h => h.staffId === e.s.id)) {
+                  _gq_holdQueue.push({
+                    holdType: 'safe_sequence_rebuilding',
+                    label: `${e.s.name} (${e.deptLabel}): safeSequence構築中 stage=${e.stage}`,
+                    reason: 'ペアサポート継続優先', staffId: e.s.id,
+                  });
+                }
+              }
+
+              // ── Layer 3: Escalation Tracking Queue ─────────────────────────
+              {
+                const _gq_escalationQueue = [];
+                // Repeated uncovered nights (escalating trend)
+                for (const e of _gq_srEscalation) {
+                  if (e.trend === 'escalating') {
+                    _gq_escalationQueue.push({
+                      escalationType: 'repeated_uncovered',
+                      label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered — escalating ⚠`,
+                      severity: 'HIGH', trend: e.trend,
+                      detail: { uncovTotal: e.uncovTotal, maxUncovRun: e.maxUncovRun },
+                    });
+                  } else if (e.uncovTotal >= 3) {
+                    _gq_escalationQueue.push({
+                      escalationType: 'support_drift',
+                      label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered — drift注意`,
+                      severity: 'MEDIUM', trend: e.trend,
+                      detail: { uncovTotal: e.uncovTotal, maxUncovRun: e.maxUncovRun },
+                    });
+                  }
+                }
+                // Veteran dependency growth: sole-vet days accumulating
+                for (const v of _gq_vetStats.filter(v => v.soleVetDays >= 3)) {
+                  _gq_escalationQueue.push({
+                    escalationType: 'veteran_dependency_growth',
+                    label: `${v.staffName}: sole-vet coverage ${v.soleVetDays}日 — dependency rising`,
+                    severity: v.soleVetDays >= 5 ? 'HIGH' : 'MEDIUM', trend: 'rising',
+                    detail: { soleVetDays: v.soleVetDays, utilRate: v.utilRate },
+                  });
+                }
+                // Burnout worsening: high burnout + active night shifts
+                for (const e of _gq_allArr.filter(e => e.isBurnout && e.nightOk)) {
+                  const { shifts, nset } = _gq_deptData[e.deptId];
+                  let nc = 0;
+                  for (let day = 1; day <= _gq_days; day++) {
+                    if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+                  }
+                  if (nc >= 2) {
+                    _gq_escalationQueue.push({
+                      escalationType: 'burnout_worsening',
+                      label: `${e.s.name} (${e.deptLabel}): burnout高 + 夜勤${nc}回 worsening ⚠`,
+                      severity: 'HIGH', trend: 'worsening', detail: { nightCount: nc },
+                    });
+                  }
+                }
+                const _gq_highEscalations = _gq_escalationQueue.filter(e => e.severity === 'HIGH');
+
+                // ── Layer 4: Deferred Intervention Queue ───────────────────
+                {
+                  const _gq_deferredQueue = [];
+                  // Pair dependency reduction — valid goal, but recovery continuity first
+                  for (const e of _gq_allArr.filter(e => e.hasPair && e.stage <= 3)) {
+                    _gq_deferredQueue.push({
+                      deferType: 'pair_dependency_reduction',
+                      label: `${e.s.name} (${e.deptLabel}): pair dependency reduction`,
+                      deferReason: 'recovery continuity優先 — stage上昇後に再検討',
+                      targetStage: 4, staffId: e.s.id, deptId: e.deptId,
+                    });
+                  }
+                  // Veteran redistribution — valid but dept has recovery-in-progress staff
+                  for (const v of _gq_vetStats.filter(v => v.utilRate > 0.9)) {
+                    const deptHasRecovery = _gq_allArr
+                      .filter(e => e.deptId === v.deptId && e.hasPair && e.stage <= 3)
+                      .length > 0;
+                    if (deptHasRecovery) {
+                      _gq_deferredQueue.push({
+                        deferType: 'veteran_redistribution',
+                        label: `${v.staffName} (${v.deptLabel}): 夜勤再配分`,
+                        deferReason: '同フロアにrecovery中スタッフ在籍 — 安定後に再配分推奨',
+                        staffId: v.staffId, deptId: v.deptId,
+                      });
+                    }
+                  }
+                  // Ladder progression — ladder 3 staff ready but floor vet count too thin
+                  for (const e of _gq_allArr.filter(e => e.ladder === 3 && e.nightOk && e.stage >= 3)) {
+                    const { shifts, nset } = _gq_deptData[e.deptId];
+                    let nc = 0;
+                    for (let day = 1; day <= _gq_days; day++) {
+                      if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+                    }
+                    const floorVetCount = _gq_vetStats.filter(v => v.deptId === e.deptId).length;
+                    if (floorVetCount < 2 && nc >= 2) {
+                      _gq_deferredQueue.push({
+                        deferType: 'ladder_progression',
+                        label: `${e.s.name} (${e.deptLabel}): ladder 4昇格候補`,
+                        deferReason: `フロアvet=${floorVetCount}名 — vet体制補強後に昇格推奨`,
+                        staffId: e.s.id, deptId: e.deptId,
+                      });
+                    }
+                  }
+                  // Cross-floor balancing — pressure imbalance but hold queue is active
+                  const _gq_gapDepts = Object.entries(_gq_deptData).filter(([, { arr }]) => {
+                    const srCount  = arr.filter(e => e.supportReq && e.nightOk).length;
+                    const vetCount = arr.filter(e => e.isVeteran  && e.nightOk).length;
+                    return srCount > 0 && vetCount === 0;
+                  });
+                  if (_gq_gapDepts.length > 0 && _gq_holdQueue.length > 0) {
+                    _gq_deferredQueue.push({
+                      deferType: 'cross_floor_balancing',
+                      label: `施設cross-floor支援体制再均衡`,
+                      deferReason: `${_gq_holdQueue.length}名のrecovery/adaptation中 — 均衡調整は安定後推奨`,
+                      staffId: null, deptId: null,
+                    });
+                  }
+
+                  // ── Layer 5: Human Review Flow ───────────────────────────
+                  {
+                    const _gq_reviewFlow = [];
+                    // Step 1: immediate review
+                    if (_gq_p1Items.length > 0) {
+                      for (const item of _gq_p1Items.slice(0, 3)) {
+                        _gq_reviewFlow.push({ step: 1, action: 'immediate_review', label: item.label });
+                      }
+                    } else {
+                      _gq_reviewFlow.push({ step: 1, action: 'immediate_review', label: '緊急確認項目なし ✓' });
+                    }
+                    // Step 2: protected confirmation — verify hold items are intact
+                    if (_gq_holdQueue.length > 0) {
+                      _gq_reviewFlow.push({
+                        step: 2, action: 'protected_confirm',
+                        label: `${_gq_holdQueue.length}名のrecovery/hold状態を確認 — 現状維持・介入保留`,
+                      });
+                    } else {
+                      _gq_reviewFlow.push({ step: 2, action: 'protected_confirm', label: 'hold対象なし ✓' });
+                    }
+                    // Step 3: chronic escalation check
+                    if (_gq_highEscalations.length > 0) {
+                      for (const e of _gq_highEscalations.slice(0, 2)) {
+                        _gq_reviewFlow.push({ step: 3, action: 'escalation_review', label: e.label });
+                      }
+                    } else {
+                      _gq_reviewFlow.push({ step: 3, action: 'escalation_review', label: 'chronic escalation なし ✓' });
+                    }
+                    // Step 4: deferred planning confirmation
+                    if (_gq_deferredQueue.length > 0) {
+                      _gq_reviewFlow.push({
+                        step: 4, action: 'deferred_planning',
+                        label: `${_gq_deferredQueue.length}件のdeferred intervention — 将来計画として保留`,
+                      });
+                    } else {
+                      _gq_reviewFlow.push({ step: 4, action: 'deferred_planning', label: '保留介入なし ✓' });
+                    }
+
+                    // ── Layer 6: Governance Queue Audit ─────────────────────
+                    {
+                      const _gq_totalReviewItems = _gq_p1Items.length + _gq_p2Items.length;
+                      const _gq_reviewLoadLevel =
+                        _gq_totalReviewItems <= 3 ? 'manageable ✓'
+                        : _gq_totalReviewItems <= 7 ? 'moderate'
+                        :                            'overloaded ⚠';
+                      // alert fatigue: P1 items exceed 30% of days
+                      const _gq_alertFatigue   = _gq_p1Items.length / _gq_days > 0.3;
+                      const _gq_reviewOverload  = _gq_reviewQueue.length > 10;
+                      const _gq_recProtected    = _gq_holdQueue.length > 0;
+                      const _gq_explainable     = _gq_highEscalations.every(e => e.label && e.escalationType);
+
+                      const _gq_overallAudit =
+                        (!_gq_alertFatigue && !_gq_reviewOverload && _gq_recProtected)
+                          ? 'humanGovernedQueue'
+                        : _gq_alertFatigue   ? 'alertFatigueRisk'
+                        : _gq_reviewOverload ? 'reviewOverloadRisk'
+                        :                      'needsReview';
+
+                      const _gq_finalSummary = {
+                        dept: cd.id, year, month,
+                        p1Count         : _gq_p1Items.length,
+                        p2Count         : _gq_p2Items.length,
+                        p3Count         : _gq_p3Items.length,
+                        holdCount       : _gq_holdQueue.length,
+                        escalationCount : _gq_escalationQueue.length,
+                        highEscalCount  : _gq_highEscalations.length,
+                        deferredCount   : _gq_deferredQueue.length,
+                        reviewFlow      : _gq_reviewFlow.map(f => `Step${f.step}[${f.action}] ${f.label}`),
+                        audit: {
+                          reviewLoad              : _gq_reviewLoadLevel,
+                          protectedHold           : _gq_recProtected   ? 'maintained ✓' : 'none detected',
+                          alertFatigue            : _gq_alertFatigue   ? 'risk ⚠' : 'low ✓',
+                          escalationExplainability: _gq_explainable    ? 'high ✓' : 'partial',
+                          reviewOverload          : _gq_reviewOverload ? 'risk ⚠' : 'within range ✓',
+                          anxietyAmplification    : _gq_alertFatigue   ? 'risk ⚠' : 'controlled ✓',
+                          overall                 : _gq_overallAudit,
+                        },
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_gq_] Governance Queue System:', _gq_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Queue System / _gq_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
