@@ -3333,8 +3333,7 @@ function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 1
 }
 
 // ── Explainable Temporal Console UI ──────────────────────────────────────────
-function TemporalConsolePanel({ data }) {
-  const [openSection, setOpenSection] = useState(null);
+function TemporalConsolePanel({ data, consoleSection, setConsoleSection }) {
   if (!data) return (
     <div style={{padding:32,textAlign:"center",color:"#7a9a97",fontSize:13}}>
       シフト生成後にコンソールが表示されます。<br/>
@@ -3342,7 +3341,7 @@ function TemporalConsolePanel({ data }) {
     </div>
   );
 
-  const toggle = key => setOpenSection(s => s === key ? null : key);
+  const toggle = key => setConsoleSection(s => s === key ? null : key);
 
   const badge = (level, text) => {
     const colors = {
@@ -3363,12 +3362,12 @@ function TemporalConsolePanel({ data }) {
   };
 
   const SectionHeader = ({ id, icon, title, summary, verdict }) => (
-    <div onClick={() => toggle(id)} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:openSection===id?"#e0f3f2":"#f0faf9",borderBottom:"1px solid #c5e8e5",cursor:"pointer",userSelect:"none",borderRadius:openSection===id?"6px 6px 0 0":"6px"}}>
+    <div onClick={() => toggle(id)} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:consoleSection===id?"#e0f3f2":"#f0faf9",borderBottom:"1px solid #c5e8e5",cursor:"pointer",userSelect:"none",borderRadius:consoleSection===id?"6px 6px 0 0":"6px"}}>
       <span style={{fontSize:14}}>{icon}</span>
       <span style={{fontWeight:700,fontSize:12,color:"#1a4a47",flex:1}}>{title}</span>
       {summary && <span style={{fontSize:10,color:"#5a8a87"}}>{summary}</span>}
       {verdict && badge(verdict.level, verdict.text)}
-      <span style={{color:"#2BBFBA",fontSize:14,marginLeft:4}}>{openSection===id?"▲":"▼"}</span>
+      <span style={{color:"#2BBFBA",fontSize:14,marginLeft:4}}>{consoleSection===id?"▲":"▼"}</span>
     </div>
   );
 
@@ -3398,7 +3397,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="risk" icon="🔍" title="Temporal Risk Dashboard"
           summary={`課題 ${riskDash.totalIssues}件`}
           verdict={riskDash.totalIssues===0?{level:"low",text:"STABLE"}:riskDash.critical>0?{level:"high",text:"CRITICAL"}:{level:"medium",text:"ADVISORY"}}/>
-        {openSection==="risk"&&(
+        {consoleSection==="risk"&&(
           <div style={{background:"#fff",padding:8}}>
             <Row label="🔴 burnout high" value={riskDash.burnoutHigh.length===0?"なし":riskDash.burnoutHigh.join("、")} level={riskDash.burnoutHigh.length>0?"high":null}/>
             <Row label="🟠 support risk" value={riskDash.supportRisk.length===0?"なし":riskDash.supportRisk.join("、")} level={riskDash.supportRisk.length>0?"medium":null}/>
@@ -3416,7 +3415,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="timeline" icon="📈" title="Future Timeline Panel"
           summary="現在 → 1m → 3m → 6m"
           verdict={futureTimeline.t6.coreCount>=futureTimeline.now.coreCount?{level:"low",text:"IMPROVING"}:{level:"medium",text:"WATCH"}}/>
-        {openSection==="timeline"&&(
+        {consoleSection==="timeline"&&(
           <div style={{background:"#fff",padding:8}}>
             {[["now","現在",futureTimeline.now],["t1","1ヶ月後",futureTimeline.t1],["t3","3ヶ月後",futureTimeline.t3],["t6","6ヶ月後",futureTimeline.t6]].map(([k,label,pt])=>(
               <div key={k} style={{borderBottom:"1px solid #edf7f6",padding:"4px 6px"}}>
@@ -3439,7 +3438,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="reco" icon="💡" title="Recommendation Console"
           summary={`${recommendations.length}件の提案`}
           verdict={recommendations.length===0?{level:"low",text:"NONE"}:{level:"medium",text:`${recommendations.length}件`}}/>
-        {openSection==="reco"&&(
+        {consoleSection==="reco"&&(
           <div style={{background:"#fff",padding:8}}>
             {recommendations.length===0&&<div style={{padding:8,color:"#7a9a97",fontSize:11,textAlign:"center"}}>提案なし（全スタッフ安定）</div>}
             {recommendations.map((r,i)=>(
@@ -3462,7 +3461,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="sandbox" icon="🔬" title="Sandbox Comparison View"
           summary="介入前後比較"
           verdict={sandboxComp.newRisks.length===0?{level:"low",text:"SAFE"}:{level:"medium",text:`risk+${sandboxComp.newRisks.length}`}}/>
-        {openSection==="sandbox"&&(
+        {consoleSection==="sandbox"&&(
           <div style={{background:"#fff",padding:8}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
               <div style={{background:"#fff4f4",border:"1px solid #f5a5a5",borderRadius:6,padding:8}}>
@@ -3489,7 +3488,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="gov" icon="🏛" title="Governance Visibility Panel"
           summary={`BLOCK ${govPanel.blockCount}件`}
           verdict={govPanel.blockCount===0?{level:"low",text:"CLEAN"}:{level:"high",text:`BLOCK ${govPanel.blockCount}`}}/>
-        {openSection==="gov"&&(
+        {consoleSection==="gov"&&(
           <div style={{background:"#fff",padding:8}}>
             {[["allow","✓ ALLOW","allow",govPanel.allow],["review","⚠ REVIEW","review",govPanel.review],["block","🚫 BLOCK","block",govPanel.block]].map(([k,label,lv,items])=>(
               <div key={k} style={{marginBottom:6}}>
@@ -3518,7 +3517,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="audit" icon="📋" title="Console Readability Audit"
           summary=""
           verdict={{level:readability.overall==="humanOperationalConsole"?"low":"medium",text:readability.overall}}/>
-        {openSection==="audit"&&(
+        {consoleSection==="audit"&&(
           <div style={{background:"#fff",padding:8}}>
             <Row label="clarity" value={readability.clarity==="high"?"high ✓":readability.clarity} level={readability.clarity==="high"?"low":"medium"}/>
             <Row label="operationalRealism" value={readability.operationalRealism?"maintained ✓":"要改善"} level={readability.operationalRealism?"low":"medium"}/>
@@ -6224,8 +6223,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const lastAutoGenRef = useRef({}); // 最後の自動生成結果（スワップパターン検出用）
   const renderAuditTargetRef = useRef(null); // ★[Render-Audit]: engine result → post-commit 比較用
   // ── Phase S-1: Lazy Temporal Architecture ────────────────────────────────
-  const innerTabRef       = useRef("shift");     // shadow of innerTab — no dep-array churn
+  const innerTabRef        = useRef("shift");     // shadow of innerTab — no dep-array churn
   const pendingTemporalRef = useRef(null);        // deferred _buildTemporalEngines closure
+  // ── Phase S-4: Per-Tab Lazy Temporal Architecture ─────────────────────────
+  const [consoleSection, setConsoleSection] = useState(null);  // lifted from TemporalConsolePanel
+  const consoleSectionRef   = useRef(null);       // shadow of consoleSection — closure-safe
+  const pendingTabBuildersRef = useRef({});        // per-section deferred engine bundles
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -7054,6 +7057,29 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       pendingTemporalRef.current = null;
     }
   }, [innerTab]);
+
+  // ── Phase S-4: Per-Tab lazy — fire section engine bundle when section opens ──
+  // Section → bundle-key map (matches _ptl_ registry inside _buildTemporalEngines)
+  useEffect(() => {
+    consoleSectionRef.current = consoleSection;
+    if (consoleSection !== null) {
+      const _ptl_sectionBundleMap = {
+        risk:     ['A'],
+        timeline: ['F'],
+        reco:     ['B', 'D'],
+        sandbox:  ['C'],
+        gov:      ['F', 'G'],
+        audit:    ['E', 'H'],
+      };
+      const _ptl_bundles = _ptl_sectionBundleMap[consoleSection] || [];
+      for (const bid of _ptl_bundles) {
+        if (pendingTabBuildersRef.current[bid]) {
+          pendingTabBuildersRef.current[bid]();
+          delete pendingTabBuildersRef.current[bid];
+        }
+      }
+    }
+  }, [consoleSection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ★[Render-Audit] 描画整合性監査 useEffect
   // setAllShifts が React に commit された直後に fire → engine result と render state を比較
@@ -20326,6 +20352,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         Object.freeze(_snap_deptData); // Phase S-2: shallow mutation guard
         // ── [Temporal Shared Snapshot] ここまで ──────────────────────────────
 
+        // ── [Phase S-4: Per-Tab Lazy Bundle Definitions] ─────────────────────
+        // Discard stale bundles from a previous generate before registering new ones.
+        pendingTabBuildersRef.current = {};
+        // Bundle keys: A=risk  B=reco(1/gq)  C=sandbox  D=reco(2/ep)
+        //              E=audit(1/dh)  F=gov(1/gp+ge)/timeline  G=gov(2)  H=audit(2/pa)
+        const _ptl_bA = () => {
         // ══ [Cross-Floor Night Safety Engine / _cf_] ここから ══
         {
           // ── Layer 1: Facility-Wide Night Snapshot ──────────────────────────────
@@ -20798,7 +20830,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Cross-Floor Risk Prioritization Engine / _cp_] ここまで ══
-
+        }; // _ptl_bA · risk
+        const _ptl_bB = () => {
         // ══ [Governance Queue System / _gq_] ここから ══
         {
           // ── Layer 1: Governance Review Queue (shared data + P1/P2/P3) ─────────
@@ -21216,7 +21249,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Queue System / _gq_] ここまで ══
-
+        }; // _ptl_bB · reco(1/gq)
+        const _ptl_bC = () => {
         // ══ [Human Approval Workflow System / _hw_] ここから ══
         {
           // ── Layer 1: Approval Decision Queue (shared data + decision classes) ──
@@ -22047,7 +22081,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Human Override Layer / _ho_] ここまで ══
-
+        }; // _ptl_bC · sandbox
+        const _ptl_bD = () => {
         // ══ [Recommendation Execution Preview System / _ep_] ここから ══
         {
           // ── Layer 1: Recommendation Execution Preview (shared data + proposals) ─
@@ -22505,7 +22540,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Recommendation Execution Preview System / _ep_] ここまで ══
-
+        }; // _ptl_bD · reco(2/ep)
+        const _ptl_bE = () => {
         // ══ [Human Decision History System / _dh_] ここから ══
         {
           // ── Layer 1: Human Decision History Registry (shared data + decision log) ─
@@ -22980,7 +23016,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Human Decision History System / _dh_] ここまで ══
-
+        }; // _ptl_bE · audit(1/dh)
+        const _ptl_bF = () => {
         // ══ [Governance Pattern Observation System / _gp_] ここから ══
         {
           // ── Layer 1: Governance Pattern Registry (shared data + tendency) ────────
@@ -23880,7 +23917,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Evolution Timeline System / _ge_] ここまで ══
-
+        }; // _ptl_bF · gov(1/gp+ge) · timeline
+        const _ptl_bG = () => {
         // ══ [Governance Drift Observation System / _gd_] ここから ══
         {
           // ── Layer 1: Governance Drift Registry (shared data + drift signals) ────
@@ -24994,7 +25032,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Shock Simulation System / _gs_] ここまで ══
-
+        }; // _ptl_bG · gov(2/gd+gr+gs)
+        const _ptl_bH = () => {
         // ══ [Temporal Performance Audit / _pa_] ここから ══
         {
           {
@@ -25140,6 +25179,36 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Temporal Performance Audit / _pa_] ここまで ══
+        }; // _ptl_bH · audit(2/pa)
+
+        // ── [Phase S-4: Per-Tab Lazy Dispatch] ───────────────────────────────
+        // Register all bundles. Fire current section's bundles immediately;
+        // defer the rest until their section opens (useEffect [consoleSection]).
+        {
+          const _ptl_allBundles = { A:_ptl_bA, B:_ptl_bB, C:_ptl_bC, D:_ptl_bD,
+                                     E:_ptl_bE, F:_ptl_bF, G:_ptl_bG, H:_ptl_bH };
+          const _ptl_sectionBundleMap = {
+            risk:     ['A'],
+            timeline: ['F'],
+            reco:     ['B', 'D'],
+            sandbox:  ['C'],
+            gov:      ['F', 'G'],
+            audit:    ['E', 'H'],
+          };
+          const _ptl_currentSection = consoleSectionRef.current;
+          const _ptl_hotBundles = new Set(
+            (_ptl_sectionBundleMap[_ptl_currentSection] || [])
+          );
+          for (const [bid, fn] of Object.entries(_ptl_allBundles)) {
+            if (_ptl_hotBundles.has(bid)) {
+              fn(); // fire immediately — section already open
+            } else {
+              pendingTabBuildersRef.current[bid] = fn; // deferred
+            }
+          }
+        }
+        // ── [Phase S-4: Per-Tab Lazy Dispatch] ここまで ──────────────────────
+
         }; // end _buildTemporalEngines
         // ── Phase S-1: dispatch ──────────────────────────────────────────────
         if (innerTabRef.current === 'console') {
@@ -25389,7 +25458,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
         {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onBulkCopy={bulkCopyPlanned} onClearZero={bulkClearZeroRec} onClearAll={async()=>{if(!window.confirm("この月の全実績を削除します。よろしいですか？"))return;await clearDeptJisseki();}} defaultTimes={jissekiDefaults[activeDeptId]||{}} onDefaultsChange={defs=>saveJissekiDefaultsForDept(activeDeptId,defs)} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
-        {innerTab==="console"&&<TemporalConsolePanel data={temporalConsole&&temporalConsole.dept===activeDeptId?temporalConsole:null}/>}
+        {innerTab==="console"&&<TemporalConsolePanel data={temporalConsole&&temporalConsole.dept===activeDeptId?temporalConsole:null} consoleSection={consoleSection} setConsoleSection={setConsoleSection}/>}
       </div>
 
       {jissekiModal&&<JissekiInputModal staffName={jissekiModal.staff.name} day={jissekiModal.day} year={year} month={month} plannedShift={jissekiModal.planned} record={allJisseki[activeDeptId]?.[jissekiModal.staff.id]?.[jissekiModal.day]} deptShiftTypes={dept?.shiftTypes||["早番","日勤","遅番","夜勤"]} onSave={rec=>{saveJisseki(jissekiModal.staff.id,jissekiModal.day,rec);setJissekiModal(null);}} onClear={()=>{clearJisseki(jissekiModal.staff.id,jissekiModal.day);setJissekiModal(null);}} onClose={()=>setJissekiModal(null)}/>}
