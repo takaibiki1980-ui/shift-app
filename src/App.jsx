@@ -24569,6 +24569,330 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Governance Resilience Observation System / _gr_] ここまで ══
 
+        // ══ [Governance Shock Simulation System / _gs_] ここから ══
+        {
+          {
+            // === Layer 1: Shock Scenario Registry ===
+            const _gs_days = getDays(year, month);
+            const _gs_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk ?? 'normal';
+                const ladder     = s.nightLadder ?? 0;
+                const stage      = s.growthStage ?? 0;
+                const fl         = s.floorYears ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = s.nightMax ?? 4;
+                const nightCount = _gs_days.filter(day =>
+                  nset.has(shifts[`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`])
+                ).length;
+                const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate, deptId: d.id, deptLabel: d.label };
+              });
+              _gs_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gs_allArr      = Object.values(_gs_deptData).flatMap(dd => dd.arr);
+            const _gs_veterans    = _gs_allArr.filter(e => e.isVeteran && e.nightOk);
+            const _gs_burnouts    = _gs_allArr.filter(e => e.isBurnout);
+            const _gs_protected   = _gs_allArr.filter(e => e.isProtected);
+            const _gs_supportReqs = _gs_allArr.filter(e => e.supportReq && e.nightOk);
+            const _gs_nearBurnout = _gs_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate > 0.85);
+            const _gs_relocating  = _gs_allArr.filter(e => e.inReloc);
+            const _gs_newStaff    = _gs_allArr.filter(e => e.stage <= 1 && e.nightOk);
+            const _gs_nightStaff  = _gs_allArr.filter(e => e.nightOk);
+            const _gs_shockScope  = score =>
+              score >= 0.75 ? 'critical'
+              : score >= 0.5  ? 'structural'
+              : score >= 0.25 ? 'propagating'
+              : 'localized';
+            // Scenario risk scores
+            const _gs_sc1_svDepts = depts.filter(d =>
+              _gs_deptData[d.id].arr.filter(e => e.isVeteran && e.nightOk).length === 1
+            ).length;
+            const _gs_sc1_score = _gs_veterans.length > 0
+              ? Math.min(1, _gs_sc1_svDepts / Math.max(depts.length,1) + (2 / _gs_veterans.length) * 0.3)
+              : 0.8;
+            const _gs_sc2_score = _gs_nightStaff.length > 0
+              ? Math.min(1, (_gs_burnouts.length + _gs_nearBurnout.length * 0.5) / _gs_nightStaff.length) : 0;
+            const _gs_sc3_score = _gs_supportReqs.length > 0
+              ? Math.min(1, _gs_supportReqs.length / Math.max(_gs_veterans.filter(e=>e.utilRate<0.8).length * 2, 1)) : 0;
+            const _gs_sc4_score = _gs_nightStaff.length > 0
+              ? Math.min(1, _gs_nearBurnout.length / _gs_nightStaff.length) : 0;
+            const _gs_sc5_score = Math.min(1,
+              (_gs_allArr.filter(e=>e.inLadder).length * 0.3 + _gs_burnouts.length * 0.4) /
+              Math.max(_gs_veterans.length, 1)
+            );
+            const _gs_floorsNoVet = depts.filter(d =>
+              !_gs_deptData[d.id].arr.some(e => e.isVeteran && e.nightOk)
+            ).length;
+            const _gs_sc6_score = depts.length > 0 ? _gs_floorsNoVet / depts.length : 0;
+            const _gs_sc7_score = _gs_nightStaff.length > 0
+              ? Math.min(1, (_gs_newStaff.length / _gs_nightStaff.length) * 2) : 0;
+            const _gs_sc8_score = _gs_allArr.length > 0
+              ? Math.min(1, (_gs_relocating.length / _gs_allArr.length) * 3) : 0;
+            const _gs_scenarios = [
+              { id: 'veteran_sudden_absence',      score: parseFloat(_gs_sc1_score.toFixed(3)), risk: 'support continuity disruption'   },
+              { id: 'simultaneous_burnout',         score: parseFloat(_gs_sc2_score.toFixed(3)), risk: 'night coverage collapse'          },
+              { id: 'support_pair_collapse',        score: parseFloat(_gs_sc3_score.toFixed(3)), risk: 'support_req staffing gap'         },
+              { id: 'chronic_shortage_escalation',  score: parseFloat(_gs_sc4_score.toFixed(3)), risk: 'utilRate overload spread'         },
+              { id: 'unsafe_overlap_spike',         score: parseFloat(_gs_sc5_score.toFixed(3)), risk: 'ladder+burnout co-coverage risk'  },
+              { id: 'cross_floor_fallback_failure', score: parseFloat(_gs_sc6_score.toFixed(3)), risk: 'floor isolation'                 },
+              { id: 'new_staff_concentration',      score: parseFloat(_gs_sc7_score.toFixed(3)), risk: 'inexperience overload'            },
+              { id: 'relocation_concentration',     score: parseFloat(_gs_sc8_score.toFixed(3)), risk: 'unstable floor tenure spread'     },
+            ].map(s => ({ ...s, scope: _gs_shockScope(s.score) }));
+            const _gs_criticalScenarios   = _gs_scenarios.filter(s => s.scope === 'critical');
+            const _gs_structuralScenarios = _gs_scenarios.filter(s => s.scope === 'structural');
+            const _gs_localizedScenarios  = _gs_scenarios.filter(s => s.scope === 'localized');
+
+            // === Layer 2: Burnout Cascade Simulation ===
+            {
+              const _gs_bcTrigVets  = _gs_veterans.filter(e => e.utilRate > 0.75);
+              const _gs_bcVetAtRisk = _gs_bcTrigVets.length;
+              const _gs_bcSuppLoss  = _gs_supportReqs.filter(e => {
+                const dArr   = _gs_deptData[e.deptId].arr;
+                const atRisk = dArr.filter(v => v.isVeteran && v.nightOk && v.utilRate > 0.75).length;
+                const total  = dArr.filter(v => v.isVeteran && v.nightOk).length;
+                return total > 0 && atRisk >= total * 0.5;
+              }).length;
+              const _gs_bcSt2      = _gs_bcSuppLoss > 0;
+              const _gs_bcFallback = _gs_veterans.filter(e => e.utilRate < 0.7).length;
+              const _gs_bcFallExh  = _gs_bcFallback < _gs_supportReqs.length;
+              const _gs_bcSt3      = _gs_bcSt2 && _gs_bcFallExh;
+              const _gs_bcUnsafeDepts = depts.filter(d => {
+                const dArr   = _gs_deptData[d.id].arr;
+                const atRisk = dArr.filter(e => e.isVeteran && e.nightOk && e.utilRate > 0.75).length;
+                const total  = dArr.filter(e => e.isVeteran && e.nightOk).length;
+                return total > 0 && atRisk >= total * 0.5 && dArr.some(e => e.inLadder);
+              }).length;
+              const _gs_bcSt4    = _gs_bcSt3 && _gs_bcUnsafeDepts > 0;
+              const _gs_bcDepth  = [_gs_bcVetAtRisk > 0, _gs_bcSt2, _gs_bcSt3, _gs_bcSt4].filter(Boolean).length;
+              const _gs_bcSeverity =
+                _gs_bcDepth >= 4 ? 'critical'
+                : _gs_bcDepth >= 3 ? 'high'
+                : _gs_bcDepth >= 2 ? 'medium'
+                : _gs_bcDepth >= 1 ? 'low'
+                : 'none';
+              const _gs_bcChain = [
+                _gs_bcVetAtRisk > 0 ? `veteran burnout risk (×${_gs_bcVetAtRisk})` : null,
+                _gs_bcSt2           ? `support overload (×${_gs_bcSuppLoss} staff)` : null,
+                _gs_bcFallExh       ? 'fallback exhaustion'                          : null,
+                _gs_bcSt4           ? `unsafe overlap spread (×${_gs_bcUnsafeDepts} depts)` : null,
+              ].filter(Boolean);
+
+              // === Layer 3: Veteran Loss Propagation ===
+              {
+                const _gs_vlTopCnt    = Math.max(1, Math.ceil(_gs_veterans.length * 0.3));
+                const _gs_vlTopVetIds = new Set(_gs_veterans.slice(0, _gs_vlTopCnt).map(e => e.s.id));
+                const _gs_vlSuppGap   = depts.filter(d => {
+                  const dArr    = _gs_deptData[d.id].arr;
+                  const remVets = dArr.filter(e => e.isVeteran && e.nightOk && !_gs_vlTopVetIds.has(e.s.id)).length;
+                  const dSupp   = dArr.filter(e => e.supportReq && e.nightOk).length;
+                  return dSupp > 0 && remVets < dSupp;
+                }).length;
+                const _gs_vlLadderStag = _gs_allArr.filter(e => {
+                  if (!e.inLadder) return false;
+                  return !_gs_deptData[e.deptId].arr.some(v =>
+                    v.isVeteran && v.nightOk && !_gs_vlTopVetIds.has(v.s.id)
+                  );
+                }).length;
+                const _gs_vlCrossDep  = depts.filter(d => {
+                  const dArr    = _gs_deptData[d.id].arr;
+                  const remVets = dArr.filter(e => e.isVeteran && e.nightOk && !_gs_vlTopVetIds.has(e.s.id)).length;
+                  return dArr.some(e => e.nightOk) && remVets === 0;
+                }).length;
+                const _gs_vlRecovDmg  = _gs_allArr.filter(e => {
+                  if (!e.isProtected || !e.nightOk) return false;
+                  return !_gs_deptData[e.deptId].arr.some(v =>
+                    v.isVeteran && v.nightOk && !_gs_vlTopVetIds.has(v.s.id)
+                  );
+                }).length;
+                const _gs_vlPropScore = Math.min(1,
+                  (_gs_vlSuppGap * 0.3 + _gs_vlLadderStag * 0.2 + _gs_vlCrossDep * 0.25 + _gs_vlRecovDmg * 0.15) /
+                  Math.max(depts.length, 1)
+                );
+                const _gs_vlPropReach =
+                  _gs_vlPropScore >= 0.6 ? 'facility-wide'
+                  : _gs_vlPropScore >= 0.3 ? 'departmental'
+                  : 'localized';
+
+                // === Layer 4: Recovery Collapse Simulation ===
+                {
+                  const _gs_rcProtAtRisk   = _gs_protected.filter(e => e.utilRate > 0.6).length;
+                  const _gs_rcHoldBreak    = _gs_rcProtAtRisk > 0 && _gs_bcSt2;
+                  const _gs_rcReboundRisk  = _gs_burnouts.filter(e => e.utilRate > 0.4).length;
+                  const _gs_rcReboundSpike = _gs_rcReboundRisk >= 1
+                    && (_gs_bcSeverity === 'high' || _gs_bcSeverity === 'critical');
+                  const _gs_rcSSBreak      = _gs_vlLadderStag >= 2
+                    || (_gs_vlLadderStag >= 1 && _gs_bcDepth >= 3);
+                  const _gs_rcRelocDestab  = _gs_relocating.filter(e => e.nightOk).length >= 2
+                    && (_gs_bcSeverity === 'high' || _gs_bcSeverity === 'critical');
+                  const _gs_rcSuppCollapse = _gs_vlSuppGap >= 2 && _gs_bcFallExh;
+                  const _gs_rcSigCnt       = [_gs_rcHoldBreak,_gs_rcReboundSpike,_gs_rcSSBreak,_gs_rcRelocDestab,_gs_rcSuppCollapse].filter(Boolean).length;
+                  const _gs_rcState        =
+                    _gs_rcSigCnt >= 4 ? 'collapsed'
+                    : _gs_rcSigCnt >= 3 ? 'unstable'
+                    : _gs_rcSigCnt >= 2 ? 'strained'
+                    : 'stable';
+
+                  // === Layer 5: Human Preparedness Insight ===
+                  {
+                    const _gs_insights = [];
+                    _gs_insights.push({
+                      scenario     : 'burnout_cascade',
+                      vulnerability: `cascade severity: ${_gs_bcSeverity}`,
+                      observation  : _gs_bcChain.length > 0
+                        ? `連鎖: ${_gs_bcChain.join(' → ')}`
+                        : 'burnout連鎖リスクは現状低い',
+                      preparedness : _gs_bcDepth >= 3
+                        ? 'veteran fallback確保と近燃え尽き職員の夜勤調整を人間が判断してください'
+                        : _gs_bcDepth >= 1
+                          ? 'burnout連鎖への注意を継続し、余裕確保の検討を推奨'
+                          : 'burnout連鎖への備えは現状維持中',
+                      actionable   : _gs_bcDepth >= 3,
+                    });
+                    _gs_insights.push({
+                      scenario     : 'veteran_sudden_absence',
+                      vulnerability: `propagation reach: ${_gs_vlPropReach}`,
+                      observation  : _gs_vlSuppGap > 0 || _gs_vlCrossDep > 0
+                        ? `support gap ${_gs_vlSuppGap}dept / cross-floor依存 ${_gs_vlCrossDep}dept`
+                        : 'veteran欠勤への対応構造は現状維持中',
+                      preparedness : _gs_vlPropReach === 'facility-wide'
+                        ? 'ladder3人材の早期独立支援とcross-floor fallback整備を人間が検討してください'
+                        : _gs_vlSuppGap > 0
+                          ? 'veteran不在時のsupport体制を人間が事前確認してください'
+                          : 'veteran代替構造は現状維持中',
+                      actionable   : _gs_vlPropReach !== 'localized',
+                    });
+                    _gs_insights.push({
+                      scenario     : 'recovery_collapse',
+                      vulnerability: `recovery state: ${_gs_rcState}`,
+                      observation  : _gs_rcSigCnt >= 2
+                        ? `障害時にrecovery構造が${_gs_rcState}になるリスク (${_gs_rcSigCnt}/5 signals)`
+                        : 'recovery構造はショック時にも概ね維持可能',
+                      preparedness : _gs_rcState === 'collapsed' || _gs_rcState === 'unstable'
+                        ? 'protected staffの過負荷防止とburnout rebound予防を人間が優先確認してください'
+                        : 'recovery構造の維持継続を推奨',
+                      actionable   : _gs_rcSigCnt >= 3,
+                    });
+                    if (_gs_vlCrossDep > 0 || _gs_sc6_score >= 0.3) {
+                      _gs_insights.push({
+                        scenario     : 'cross_floor_fallback_failure',
+                        vulnerability: `${_gs_vlCrossDep}フロアがショック時にveteran不在`,
+                        observation  : `cross-floor fallback制約: ${_gs_floorsNoVet}フロアにveteran夜勤なし`,
+                        preparedness : 'veteran夜勤分散配置の定期確認を人間が実施してください',
+                        actionable   : _gs_vlCrossDep >= 1,
+                      });
+                    }
+                    const _gs_worstScenario = [..._gs_scenarios].sort((a,b)=>b.score-a.score)[0];
+                    if (_gs_worstScenario && _gs_worstScenario.scope !== 'localized') {
+                      _gs_insights.push({
+                        scenario     : _gs_worstScenario.id,
+                        vulnerability: `最大リスクシナリオ: scope=${_gs_worstScenario.scope}`,
+                        observation  : `risk: ${_gs_worstScenario.risk} (score ${(_gs_worstScenario.score*100).toFixed(0)}%)`,
+                        preparedness : '最大リスクシナリオへの事前備えを管理者が優先検討してください',
+                        actionable   : _gs_worstScenario.scope === 'critical' || _gs_worstScenario.scope === 'structural',
+                      });
+                    }
+                    const _gs_actionablePreps = _gs_insights.filter(i => i.actionable);
+                    const _gs_overallRisk     =
+                      _gs_criticalScenarios.length >= 2     ? '複数criticalシナリオあり — 管理者の優先確認を推奨'
+                      : _gs_criticalScenarios.length === 1  ? '1件criticalシナリオあり — 事前備えの検討を推奨'
+                      : _gs_structuralScenarios.length >= 2 ? 'structuralリスクが複数 — 定期的な人間確認を推奨'
+                      : '現状のショックリスクは概ね管理可能';
+
+                    // === Layer 6: Governance Shock Audit ===
+                    {
+                      const _gs_audCatastrophe  = _gs_criticalScenarios.length >= 6;
+                      const _gs_audCollParanoia  = (_gs_criticalScenarios.length + _gs_structuralScenarios.length) >= 7;
+                      const _gs_audVetBlame      =
+                        (_gs_scenarios.find(s=>s.id==='veteran_sudden_absence')?.scope === 'critical') &&
+                        (_gs_scenarios.find(s=>s.id==='simultaneous_burnout')?.scope === 'localized');
+                      const _gs_audRecovUnder    = _gs_rcState === 'stable' && _gs_actionablePreps.length >= 3;
+                      const _gs_audOperReal      = _gs_allArr.length > 0;
+                      const _gs_audPrepSup       = _gs_actionablePreps.length > 0 || _gs_criticalScenarios.length === 0;
+                      const _gs_audExplain       = _gs_insights.length >= 3 && _gs_scenarios.length === 8;
+                      const _gs_auditFlags       = [_gs_audCatastrophe,_gs_audCollParanoia,_gs_audVetBlame,_gs_audRecovUnder].filter(Boolean).length;
+                      const _gs_overallAudit     =
+                        _gs_auditFlags === 0   ? 'humanGovernanceShockSimulation'
+                        : _gs_audCatastrophe   ? 'catastropheAmplificationRisk'
+                        : _gs_audCollParanoia  ? 'collapseParanoiaRisk'
+                        : _gs_audVetBlame      ? 'veteranBlameAmplificationRisk'
+                        : _gs_audRecovUnder    ? 'recoveryUndervaluationRisk'
+                        :                        'needsReview';
+                      const _gs_finalSummary = {
+                        system            : 'Governance Shock Simulation System',
+                        dept: cd.id, year, month,
+                        scenarios         : _gs_scenarios.map(s=>({ id: s.id, scope: s.scope, score: s.score })),
+                        criticalCount     : _gs_criticalScenarios.length,
+                        structuralCount   : _gs_structuralScenarios.length,
+                        localizedCount    : _gs_localizedScenarios.length,
+                        burnoutCascade: {
+                          severity   : _gs_bcSeverity,
+                          depth      : _gs_bcDepth,
+                          chain      : _gs_bcChain,
+                          vetAtRisk  : _gs_bcVetAtRisk,
+                          suppLoss   : _gs_bcSuppLoss,
+                          fallbackExh: _gs_bcFallExh,
+                        },
+                        veteranLoss: {
+                          propagationReach   : _gs_vlPropReach,
+                          suppGapDepts       : _gs_vlSuppGap,
+                          crossDepDepts      : _gs_vlCrossDep,
+                          ladderStagStaff    : _gs_vlLadderStag,
+                          recoveryDamageStaff: _gs_vlRecovDmg,
+                        },
+                        recoveryCollapse: {
+                          state        : _gs_rcState,
+                          signalCount  : _gs_rcSigCnt,
+                          holdBreak    : _gs_rcHoldBreak,
+                          reboundSpike : _gs_rcReboundSpike,
+                          ssBreak      : _gs_rcSSBreak,
+                          relocDestab  : _gs_rcRelocDestab,
+                          suppCollapse : _gs_rcSuppCollapse,
+                        },
+                        humanInsights     : _gs_insights.map(i=>({
+                          scenario     : i.scenario,
+                          vulnerability: i.vulnerability,
+                          preparedness : i.preparedness,
+                          actionable   : i.actionable,
+                        })),
+                        actionableCount   : _gs_actionablePreps.length,
+                        overallRisk       : _gs_overallRisk,
+                        audit: {
+                          catastropheAmplification : _gs_audCatastrophe  ? 'risk ⚠' : 'none ✓',
+                          collapseParanoia         : _gs_audCollParanoia ? 'risk ⚠' : 'low ✓',
+                          veteranBlameAmplification: _gs_audVetBlame     ? 'risk ⚠' : 'low ✓',
+                          recoveryUndervaluation   : _gs_audRecovUnder   ? 'undervalued ⚠' : 'maintained ✓',
+                          operationalRealism       : _gs_audOperReal     ? 'high ✓' : 'partial ⚠',
+                          preparednessSupport      : _gs_audPrepSup      ? 'high ✓' : 'partial ⚠',
+                          explainability           : _gs_audExplain      ? 'high ✓' : 'partial ⚠',
+                          overall                  : _gs_overallAudit,
+                        },
+                      };
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_gs_] Governance Shock Simulation System:', _gs_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Shock Simulation System / _gs_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
