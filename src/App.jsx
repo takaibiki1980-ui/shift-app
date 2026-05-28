@@ -3332,6 +3332,210 @@ function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 1
   );
 }
 
+// ── Explainable Temporal Console UI ──────────────────────────────────────────
+function TemporalConsolePanel({ data }) {
+  const [openSection, setOpenSection] = useState(null);
+  if (!data) return (
+    <div style={{padding:32,textAlign:"center",color:"#7a9a97",fontSize:13}}>
+      シフト生成後にコンソールが表示されます。<br/>
+      <span style={{fontSize:11,color:"#aaa",marginTop:8,display:"block"}}>「シフト生成」ボタンを押してください。</span>
+    </div>
+  );
+
+  const toggle = key => setOpenSection(s => s === key ? null : key);
+
+  const badge = (level, text) => {
+    const colors = {
+      high:   { bg:"#fde8e8", color:"#c0392b", border:"#f5a5a5" },
+      medium: { bg:"#fef3cd", color:"#b7770d", border:"#f5d98a" },
+      low:    { bg:"#e8f5e9", color:"#276f26", border:"#a5d6a7" },
+      block:  { bg:"#fde8e8", color:"#c0392b", border:"#f5a5a5" },
+      review: { bg:"#fef3cd", color:"#b7770d", border:"#f5d98a" },
+      allow:  { bg:"#e8f5e9", color:"#276f26", border:"#a5d6a7" },
+      info:   { bg:"#e8f0fe", color:"#1a56b0", border:"#a5c0f5" },
+    };
+    const c = colors[level] || colors.info;
+    return (
+      <span style={{display:"inline-block",background:c.bg,color:c.color,border:`1px solid ${c.border}`,borderRadius:5,padding:"1px 7px",fontSize:10,fontWeight:700,verticalAlign:"middle",marginLeft:4}}>
+        {text}
+      </span>
+    );
+  };
+
+  const SectionHeader = ({ id, icon, title, summary, verdict }) => (
+    <div onClick={() => toggle(id)} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:openSection===id?"#e0f3f2":"#f0faf9",borderBottom:"1px solid #c5e8e5",cursor:"pointer",userSelect:"none",borderRadius:openSection===id?"6px 6px 0 0":"6px"}}>
+      <span style={{fontSize:14}}>{icon}</span>
+      <span style={{fontWeight:700,fontSize:12,color:"#1a4a47",flex:1}}>{title}</span>
+      {summary && <span style={{fontSize:10,color:"#5a8a87"}}>{summary}</span>}
+      {verdict && badge(verdict.level, verdict.text)}
+      <span style={{color:"#2BBFBA",fontSize:14,marginLeft:4}}>{openSection===id?"▲":"▼"}</span>
+    </div>
+  );
+
+  const Row = ({ label, value, level }) => (
+    <div style={{display:"flex",alignItems:"center",gap:6,padding:"3px 6px",borderBottom:"1px solid #edf7f6",fontSize:11}}>
+      <span style={{color:"#5a8a87",minWidth:110,flexShrink:0}}>{label}</span>
+      <span style={{color:"#1a3635",fontWeight:600,flex:1}}>{value}</span>
+      {level && badge(level, level.toUpperCase())}
+    </div>
+  );
+
+  const { riskDash, futureTimeline, recommendations, sandboxComp, govPanel, readability } = data;
+
+  return (
+    <div style={{padding:"10px 8px",maxWidth:680,margin:"0 auto",fontFamily:"inherit"}}>
+      <div style={{background:"linear-gradient(135deg,#1a4a47,#2BBFBA)",borderRadius:10,padding:"10px 16px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:18}}>🧭</span>
+        <div>
+          <div style={{color:"#fff",fontWeight:900,fontSize:14}}>Temporal Operations Console</div>
+          <div style={{color:"#b0e8e6",fontSize:10}}>{data.dept} · {data.year}年{data.month+1}月 · {data.generatedAt?.slice(11,16)} 生成</div>
+        </div>
+        <div style={{marginLeft:"auto",background:"rgba(255,255,255,0.15)",borderRadius:6,padding:"3px 10px",color:"#fff",fontSize:11,fontWeight:700}}>{data.maturity}</div>
+      </div>
+
+      {/* ① Risk Dashboard */}
+      <div style={{marginBottom:8,borderRadius:6,border:"1px solid #c5e8e5",overflow:"hidden"}}>
+        <SectionHeader id="risk" icon="🔍" title="Temporal Risk Dashboard"
+          summary={`課題 ${riskDash.totalIssues}件`}
+          verdict={riskDash.totalIssues===0?{level:"low",text:"STABLE"}:riskDash.critical>0?{level:"high",text:"CRITICAL"}:{level:"medium",text:"ADVISORY"}}/>
+        {openSection==="risk"&&(
+          <div style={{background:"#fff",padding:8}}>
+            <Row label="🔴 burnout high" value={riskDash.burnoutHigh.length===0?"なし":riskDash.burnoutHigh.join("、")} level={riskDash.burnoutHigh.length>0?"high":null}/>
+            <Row label="🟠 support risk" value={riskDash.supportRisk.length===0?"なし":riskDash.supportRisk.join("、")} level={riskDash.supportRisk.length>0?"medium":null}/>
+            <Row label="🚫 unsafe候補" value={riskDash.unsafeCandidates.length===0?"なし ✓":riskDash.unsafeCandidates.join("、")} level={riskDash.unsafeCandidates.length>0?"high":null}/>
+            <Row label="⚡ nightCore数" value={`${riskDash.nightCoreCount}名`} level={riskDash.nightCoreCount===0?"high":null}/>
+            <Row label="🌱 growth停滞" value={riskDash.growthStagnation.length===0?"なし":riskDash.growthStagnation.join("、")} level={riskDash.growthStagnation.length>2?"medium":null}/>
+            <Row label="📍 relocationRisk" value={riskDash.relocationRisk.length===0?"なし ✓":riskDash.relocationRisk.join("、")} level={riskDash.relocationRisk.length>0?"medium":null}/>
+            <Row label="✅ safeSequence" value={riskDash.safeSeqStableCount>0?`${riskDash.safeSeqStableCount}名 安定`:`0名`} level={riskDash.safeSeqStableCount===0?"medium":null}/>
+          </div>
+        )}
+      </div>
+
+      {/* ② Future Timeline */}
+      <div style={{marginBottom:8,borderRadius:6,border:"1px solid #c5e8e5",overflow:"hidden"}}>
+        <SectionHeader id="timeline" icon="📈" title="Future Timeline Panel"
+          summary="現在 → 1m → 3m → 6m"
+          verdict={futureTimeline.t6.coreCount>=futureTimeline.now.coreCount?{level:"low",text:"IMPROVING"}:{level:"medium",text:"WATCH"}}/>
+        {openSection==="timeline"&&(
+          <div style={{background:"#fff",padding:8}}>
+            {[["now","現在",futureTimeline.now],["t1","1ヶ月後",futureTimeline.t1],["t3","3ヶ月後",futureTimeline.t3],["t6","6ヶ月後",futureTimeline.t6]].map(([k,label,pt])=>(
+              <div key={k} style={{borderBottom:"1px solid #edf7f6",padding:"4px 6px"}}>
+                <div style={{fontWeight:700,fontSize:11,color:"#1a6a67",marginBottom:2}}>{label}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,fontSize:10,color:"#3a6a67"}}>
+                  <span>burnoutHigh: <b style={{color:pt.burnoutHigh>0?"#c0392b":"#276f26"}}>{pt.burnoutHigh}名</b></span>
+                  <span>core: <b style={{color:pt.coreCount===0?"#c0392b":"#276f26"}}>{pt.coreCount}名</b></span>
+                  <span>ladder↑候補: <b>{pt.ladderUp}名</b></span>
+                  <span>support安定: <b>{pt.supportStable}名</b></span>
+                  {pt.note&&<span style={{color:"#7a5590",fontStyle:"italic"}}>{pt.note}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ③ Recommendation Console */}
+      <div style={{marginBottom:8,borderRadius:6,border:"1px solid #c5e8e5",overflow:"hidden"}}>
+        <SectionHeader id="reco" icon="💡" title="Recommendation Console"
+          summary={`${recommendations.length}件の提案`}
+          verdict={recommendations.length===0?{level:"low",text:"NONE"}:{level:"medium",text:`${recommendations.length}件`}}/>
+        {openSection==="reco"&&(
+          <div style={{background:"#fff",padding:8}}>
+            {recommendations.length===0&&<div style={{padding:8,color:"#7a9a97",fontSize:11,textAlign:"center"}}>提案なし（全スタッフ安定）</div>}
+            {recommendations.map((r,i)=>(
+              <div key={i} style={{border:"1px solid #e8f5e9",borderRadius:6,padding:"6px 8px",marginBottom:6,background:"#f8fffc"}}>
+                <div style={{fontWeight:700,fontSize:12,color:"#1a4a47",marginBottom:4}}>{r.name} — {r.rule}</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"2px 10px",fontSize:10}}>
+                  <span style={{color:"#5a8a87"}}>理由: <b style={{color:"#1a3635"}}>{r.reason}</b></span>
+                  <span style={{color:"#5a8a87"}}>代償: <b style={{color:r.tradeoff?"#b7770d":"#276f26"}}>{r.tradeoff||"なし"}</b></span>
+                  <span style={{color:"#5a8a87"}}>governance: {badge(r.govLevel==="ALLOW"?"allow":r.govLevel==="REVIEW"?"review":"block", r.govLevel)}</span>
+                  <span style={{color:"#5a8a87"}}>rollback: <b style={{color:"#276f26"}}>{r.rollbackOk?"✓ available":"⚠ 要確認"}</b></span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ④ Sandbox Comparison View */}
+      <div style={{marginBottom:8,borderRadius:6,border:"1px solid #c5e8e5",overflow:"hidden"}}>
+        <SectionHeader id="sandbox" icon="🔬" title="Sandbox Comparison View"
+          summary="介入前後比較"
+          verdict={sandboxComp.newRisks.length===0?{level:"low",text:"SAFE"}:{level:"medium",text:`risk+${sandboxComp.newRisks.length}`}}/>
+        {openSection==="sandbox"&&(
+          <div style={{background:"#fff",padding:8}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <div style={{background:"#fff4f4",border:"1px solid #f5a5a5",borderRadius:6,padding:8}}>
+                <div style={{fontWeight:700,fontSize:11,color:"#c0392b",marginBottom:4}}>Before</div>
+                <div style={{fontSize:10,color:"#5a3a3a"}}>burnoutHigh: {sandboxComp.before.burnoutHigh}名</div>
+                <div style={{fontSize:10,color:"#5a3a3a"}}>core: {sandboxComp.before.coreCount}名</div>
+                <div style={{fontSize:10,color:"#5a3a3a"}}>unsafe: {sandboxComp.before.unsafeCount}名</div>
+              </div>
+              <div style={{background:"#f0fff4",border:"1px solid #a5d6a7",borderRadius:6,padding:8}}>
+                <div style={{fontWeight:700,fontSize:11,color:"#276f26",marginBottom:4}}>Sandbox After</div>
+                <div style={{fontSize:10,color:"#1a3a1a"}}>burnoutHigh: {sandboxComp.after.burnoutHigh}名 {sandboxComp.after.burnoutHigh<sandboxComp.before.burnoutHigh?"✓":""}</div>
+                <div style={{fontSize:10,color:"#1a3a1a"}}>core: {sandboxComp.after.coreCount}名</div>
+                <div style={{fontSize:10,color:"#1a3a1a"}}>unsafe: {sandboxComp.after.unsafeCount}名 {sandboxComp.after.unsafeCount<sandboxComp.before.unsafeCount?"✓":""}</div>
+              </div>
+            </div>
+            <Row label="✅ preserved" value={sandboxComp.preserved.length>0?sandboxComp.preserved.join(" · "):"なし"}/>
+            <Row label="⚠ new risks" value={sandboxComp.newRisks.length>0?sandboxComp.newRisks.join(" · "):"なし ✓"} level={sandboxComp.newRisks.length>0?"medium":null}/>
+          </div>
+        )}
+      </div>
+
+      {/* ⑤ Governance Visibility Panel */}
+      <div style={{marginBottom:8,borderRadius:6,border:"1px solid #c5e8e5",overflow:"hidden"}}>
+        <SectionHeader id="gov" icon="🏛" title="Governance Visibility Panel"
+          summary={`BLOCK ${govPanel.blockCount}件`}
+          verdict={govPanel.blockCount===0?{level:"low",text:"CLEAN"}:{level:"high",text:`BLOCK ${govPanel.blockCount}`}}/>
+        {openSection==="gov"&&(
+          <div style={{background:"#fff",padding:8}}>
+            {[["allow","✓ ALLOW","allow",govPanel.allow],["review","⚠ REVIEW","review",govPanel.review],["block","🚫 BLOCK","block",govPanel.block]].map(([k,label,lv,items])=>(
+              <div key={k} style={{marginBottom:6}}>
+                <div style={{fontWeight:700,fontSize:11,marginBottom:3}}>{label}</div>
+                {items.length===0
+                  ? <div style={{fontSize:10,color:"#9a9a9a",paddingLeft:8}}>該当なし</div>
+                  : items.map((it,i)=>(
+                    <div key={i} style={{fontSize:10,color:"#3a6a67",paddingLeft:8,padding:"2px 8px",borderLeft:`3px solid ${lv==="allow"?"#a5d6a7":lv==="review"?"#f5d98a":"#f5a5a5"}`}}>
+                      <b>{it.name}</b> — {it.rule}　<span style={{color:"#7a7a7a"}}>{it.reason}</span>
+                    </div>
+                  ))
+                }
+              </div>
+            ))}
+            {govPanel.mandatoryApprovals.length>0&&(
+              <div style={{marginTop:6,padding:"4px 8px",background:"#fef3cd",borderRadius:4,fontSize:10,color:"#7a5500"}}>
+                <b>⚠ 要承認スタッフ:</b> {govPanel.mandatoryApprovals.join("、")}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ⑥ Console Readability Audit */}
+      <div style={{marginBottom:8,borderRadius:6,border:"1px solid #c5e8e5",overflow:"hidden"}}>
+        <SectionHeader id="audit" icon="📋" title="Console Readability Audit"
+          summary=""
+          verdict={{level:readability.overall==="humanOperationalConsole"?"low":"medium",text:readability.overall}}/>
+        {openSection==="audit"&&(
+          <div style={{background:"#fff",padding:8}}>
+            <Row label="clarity" value={readability.clarity==="high"?"high ✓":readability.clarity} level={readability.clarity==="high"?"low":"medium"}/>
+            <Row label="operationalRealism" value={readability.operationalRealism?"maintained ✓":"要改善"} level={readability.operationalRealism?"low":"medium"}/>
+            <Row label="AI dominance" value={`${readability.aiDominance} ${readability.aiDominance==="low"?"✓":""}`} level={readability.aiDominance==="low"?"low":readability.aiDominance==="medium"?"medium":"high"}/>
+            <Row label="info overload" value={readability.infoOverload?"⚠ 情報過多":"正常 ✓"} level={readability.infoOverload?"medium":"low"}/>
+            <Row label="tradeoff visible" value={readability.tradeoffVisible?"✓":"要改善"} level={readability.tradeoffVisible?"low":"medium"}/>
+            <div style={{marginTop:6,padding:"6px 8px",background:"#e8f5e9",borderRadius:4,fontSize:11,fontWeight:700,color:"#276f26",textAlign:"center"}}>
+              {readability.overall}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const deriveYears = (dateStr, refDate) => {
   if (!dateStr) return null;
   const d = new Date(dateStr);
@@ -5882,6 +6086,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [deptSettingModal, setDeptSettingModal] = useState(null);
   const [activeDeptId, setActiveDeptId] = useState("kaigo1");
   const [innerTab, setInnerTab] = useState("shift");
+  const [temporalConsole, setTemporalConsole] = useState(null);
 
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
@@ -19737,6 +19942,274 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // ══ [Intervention-Permission-Matrix / Human-Approval-Boundary / Temporal-Risk-Governance /
         //    Rollback-Enforcement-Policy / Explainability-Governance / Governance-Stability-Audit] ここまで ══
 
+        // ══ [Temporal-Console-UI] ══
+        {
+          const _uc_ds    = cs.filter(s => s.dept === cd.id);
+          const _uc_days  = getDays(year, month);
+          const _uc_tailN = Math.max(3, Math.round(_uc_days * 0.15));
+          const _uc_nset  = new Set(['夜勤']);
+          if (cd.shiftTypes) cd.shiftTypes.forEach(k => { if (k === '夜勤' || k.startsWith('夜勤')) _uc_nset.add(k); });
+          const _uc_isNight = sh => _uc_nset.has(sh);
+          const _uc_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _uc_isWork  = sh => !!(sh && !_uc_isRest(sh) && sh !== '明け' && sh !== '');
+          const _uc_fw      = sh => _uc_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _uc_boOf    = totF => totF >= _uc_days * 2.0 ? 'high' : totF >= _uc_days * 1.2 ? 'medium' : 'low';
+          const _uc_trd     = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+          const _uc_metric  = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, leSq=0;
+            for (let d = 1; d <= _uc_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _uc_fw(sh);
+              if (d > _uc_days - _uc_tailN) tlF += _uc_fw(sh);
+              if (_uc_isNight(sh)) nCnt++;
+              if (_uc_isRest(sh))  rCnt++;
+              if (sh === '明け' && _uc_isNight(pv)) {
+                if (_uc_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番') cSq++;
+                else if (_uc_isWork(nx)) { /* dSq */ }
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _uc_boOf(totF);
+            const co = tlF >= _uc_tailN * 3.0 ? 'high' : tlF >= _uc_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _uc_days * 0.25 * 0.7 ? 'high' : rCnt < _uc_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, leSq, bo, co, rd };
+          };
+          const _uc_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _UC_FL_G   = 0.08;
+          const _UC_RANGES = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _uc_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _UC_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+          const _uc_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasPair) => {
+            if (!nightOk)                                   return 0;
+            if (stage >= 5 && bo !== 'high')                return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')  return 4;
+            if (nCnt >= 1)                                  return 3;
+            if (stage >= 3 && progress >= 0.6 && hasPair)  return 2;
+            if (stage >= 2 && fl >= 0.5)                   return 1;
+            return 0;
+          };
+          const _uc_futBo = (bo, co, sSq, cSq, t) => {
+            const ord = { low:0, medium:1, high:2 };
+            let v = ord[bo];
+            if (co === 'high' && cSq > 0)        v = Math.min(2, v + Math.floor(t / 2));
+            else if (co === 'high' && sSq > 0)   v = Math.min(2, v + Math.floor(t / 3));
+            else if (bo === 'high' && sSq > 0)   v = Math.max(0, v - Math.floor(t / 2));
+            else if (bo === 'medium' && sSq > 0) v = Math.max(0, v - Math.floor(t / 3));
+            return ['low','medium','high'][Math.max(0, Math.min(2, v))];
+          };
+
+          // pair co-occurrence
+          const _uc_pco = {};
+          for (let d = 1; d <= _uc_days; d++) {
+            const nw = _uc_ds.filter(s => _uc_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _uc_pco[pk] = (_uc_pco[pk] || 0) + 1;
+              }
+          }
+          const _uc_fp = Object.entries(_uc_pco).filter(([, n]) => n >= _uc_days * 0.4).map(([k]) => k.split('×'));
+
+          // per-staff state
+          const _uc_arr = [];
+          for (const s of _uc_ds) {
+            const m     = _uc_metric(result[s.id] || {});
+            const tr    = _uc_trd(s.name);
+            const wk    = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy    = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl    = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr    = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _uc_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _uc_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _uc_fp.some(p => p.includes(s.name));
+            const ladder   = _uc_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _uc_arr.push({ s, fy, fl, rr, stage, progress, hasPair, ladder, nightOk: !!s.nightOk, isNew, ...m });
+          }
+
+          // ── Layer 1: Risk Dashboard ──
+          const _uc_boH    = _uc_arr.filter(st => st.bo === 'high').map(st => st.s.name);
+          const _uc_supR   = _uc_arr.filter(st => st.hasPair && st.bo === 'high').map(st => st.s.name);
+          const _uc_unsafe = _uc_arr.filter(st => (st.stage <= 1 || st.rr === 'high') && st.nCnt >= 1).map(st => st.s.name);
+          const _uc_core   = _uc_arr.filter(st => st.ladder >= 4 && st.bo !== 'high');
+          const _uc_growSt = _uc_arr.filter(st => st.ladder >= 1 && st.ladder <= 2 && st.progress < 0.4).map(st => st.s.name);
+          const _uc_reloc  = _uc_arr.filter(st => st.rr === 'high').map(st => st.s.name);
+          const _uc_safeN  = _uc_arr.filter(st => st.sSq > 0 && st.cSq === 0).length;
+          const _uc_critical = _uc_unsafe.length + (_uc_core.length === 0 ? 1 : 0);
+
+          const riskDash = {
+            burnoutHigh: _uc_boH,
+            supportRisk: _uc_supR,
+            unsafeCandidates: _uc_unsafe,
+            nightCoreCount: _uc_core.length,
+            growthStagnation: _uc_growSt,
+            relocationRisk: _uc_reloc,
+            safeSeqStableCount: _uc_safeN,
+            totalIssues: _uc_boH.length + _uc_supR.length + _uc_unsafe.length + _uc_growSt.length,
+            critical: _uc_critical,
+          };
+
+          // ── Layer 2: Future Timeline ──
+          const _uc_timePoint = t => {
+            const burnoutHigh  = _uc_arr.filter(st => _uc_futBo(st.bo, st.co, st.sSq, st.cSq, t) === 'high').length;
+            const coreCount    = _uc_arr.filter(st => {
+              const ffl  = st.fl + _UC_FL_G * t, fFy = st.fy + t / 12;
+              const fBo  = _uc_futBo(st.bo, st.co, st.sSq, st.cSq, t);
+              const fRr  = (fFy >= 2 && ffl < 0.5) ? 'high' : (fFy >= 1 && ffl < 0.3) ? 'medium' : 'low';
+              const fStg = _uc_stageOf(fFy, ffl, st.nCnt, fRr);
+              const fPrg = _uc_progOf(fStg, ffl, st.sSq, st.cSq, fBo, st.co, st.leSq);
+              const fLad = _uc_ladderOf(fStg, ffl, st.nCnt, fBo, fPrg, st.nightOk, st.hasPair);
+              return fLad >= 4 && fBo !== 'high';
+            }).length;
+            const ladderUp     = _uc_arr.filter(st => {
+              const ffl  = st.fl + _UC_FL_G * t;
+              const fBo  = _uc_futBo(st.bo, st.co, st.sSq, st.cSq, t);
+              const fRr  = ((st.fy + t/12) >= 2 && ffl < 0.5) ? 'high' : ((st.fy + t/12) >= 1 && ffl < 0.3) ? 'medium' : 'low';
+              const fStg = _uc_stageOf(st.fy + t/12, ffl, st.nCnt, fRr);
+              const fPrg = _uc_progOf(fStg, ffl, st.sSq, st.cSq, fBo, st.co, st.leSq);
+              const fLad = _uc_ladderOf(fStg, ffl, st.nCnt, fBo, fPrg, st.nightOk, st.hasPair);
+              return fLad > st.ladder;
+            }).length;
+            const supportStable = _uc_arr.filter(st => _uc_futBo(st.bo, st.co, st.sSq, st.cSq, t) !== 'high' && st.ladder >= 2).length;
+            const note = t === 1 && burnoutHigh < riskDash.burnoutHigh.length ? '回復傾向あり' :
+                         t === 3 && coreCount > _uc_core.length ? 'core候補増加見込み' :
+                         t === 6 && ladderUp > 0 ? `ladder上昇候補 ${ladderUp}名` : '';
+            return { burnoutHigh, coreCount, ladderUp, supportStable, note };
+          };
+          const futureTimeline = {
+            now: _uc_timePoint(0),
+            t1:  _uc_timePoint(1),
+            t3:  _uc_timePoint(3),
+            t6:  _uc_timePoint(6),
+          };
+
+          // ── Layer 3: Recommendations ──
+          const recommendations = [];
+          for (const st of _uc_arr) {
+            if (st.bo === 'high' && st.nCnt >= 1 && st.stage >= 3) {
+              recommendations.push({
+                name: st.s.name,
+                rule: `夜勤 ${st.nCnt}→${Math.max(0, st.nCnt - 1)}回`,
+                reason: 'burnout高: 緩やかな削減推奨',
+                tradeoff: _uc_core.some(c => c.s.name === st.s.name) ? 'core欠員リスク' : '',
+                govLevel: 'ALLOW',
+                rollbackOk: true,
+              });
+            } else if (st.ladder >= 1 && st.ladder <= 2 && st.progress >= 0.75 && st.bo !== 'high') {
+              recommendations.push({
+                name: st.s.name,
+                rule: `ladder ${st.ladder}→${st.ladder + 1} 準備開始`,
+                reason: `progress ${(st.progress * 100).toFixed(0)}% 達成`,
+                tradeoff: st.hasPair ? 'supportペア調整必要' : '',
+                govLevel: 'REVIEW',
+                rollbackOk: true,
+              });
+            }
+          }
+
+          // ── Layer 4: Sandbox Comparison ──
+          const _uc_sbBo    = _uc_arr.filter(st => st.bo === 'high' && st.nCnt >= 1 && st.stage >= 3).length;
+          const _uc_sbAfter = Math.max(0, _uc_sbBo - recommendations.filter(r => r.govLevel === 'ALLOW').length);
+          const sandboxComp = {
+            before: {
+              burnoutHigh: _uc_boH.length,
+              coreCount:   _uc_core.length,
+              unsafeCount: _uc_unsafe.length,
+            },
+            after: {
+              burnoutHigh: Math.max(0, _uc_boH.length - _uc_sbBo + _uc_sbAfter),
+              coreCount:   _uc_core.length,
+              unsafeCount: _uc_unsafe.length,
+            },
+            preserved: [
+              ...((_uc_core.length > 0) ? ['nightCore構造'] : []),
+              ...(_uc_arr.filter(st => st.sSq > 0 && st.cSq === 0).length > 0 ? ['safeSequence'] : []),
+            ],
+            newRisks: [
+              ...(_uc_core.length === 0 ? ['core欠員'] : []),
+              ...(_uc_unsafe.length > 0 ? ['unsafe継続'] : []),
+            ],
+          };
+
+          // ── Layer 5: Governance Panel ──
+          const _uc_permRules = [
+            { id:'gradualNightReduction', test:st=>st.bo==='high'&&st.nCnt>=1&&st.stage>=3, perm:'ALLOW', reason:'burnout回復・リスク低' },
+            { id:'burnoutRecoveryAdd',    test:st=>st.bo==='high'&&st.sSq===0,              perm:'ALLOW', reason:'safeSeq補填' },
+            { id:'supportPairChange',     test:st=>st.hasPair&&st.ladder>=2,                perm:'REVIEW',reason:'support continuity影響' },
+            { id:'ladderAcceleration',    test:st=>st.ladder>=1&&st.ladder<=3&&st.progress>=0.7&&st.bo!=='high', perm:'REVIEW', reason:'段階飛ばしリスク' },
+            { id:'nightCoreChange',       test:st=>st.ladder>=4,                            perm:'REVIEW',reason:'運用影響大' },
+            { id:'unsafeNightPromotion',  test:st=>(st.stage<=1||st.rr==='high')&&st.nCnt===0&&!!st.nightOk, perm:'BLOCK', reason:'stage不足/relocation中' },
+            { id:'burnoutRecoveryDestroy',test:st=>st.bo==='high'&&st.sSq>0&&st.cSq>0,     perm:'BLOCK', reason:'回復シーケンス破壊禁止' },
+          ];
+          const govPanel = {
+            allow: [], review: [], block: [],
+            mandatoryApprovals: _uc_arr.filter(st => st.bo==='high'||st.ladder>=4||st.rr==='high').map(st=>st.s.name),
+            blockCount: 0,
+          };
+          for (const rule of _uc_permRules) {
+            const affected = _uc_arr.filter(st => rule.test(st));
+            for (const st of affected) {
+              const entry = { name: st.s.name, rule: rule.id, reason: rule.reason };
+              if (rule.perm === 'ALLOW')  govPanel.allow.push(entry);
+              if (rule.perm === 'REVIEW') govPanel.review.push(entry);
+              if (rule.perm === 'BLOCK')  { govPanel.block.push(entry); }
+            }
+          }
+          govPanel.blockCount = govPanel.block.length;
+
+          // ── Layer 6: Readability Audit ──
+          const _uc_bbCount    = _uc_arr.filter(st => {
+            const sc = (st.bo!=='low'?1:0)+(st.cSq>0?1:0)+(st.sSq>0?1:0)+(st.leSq>0?1:0)+(st.rr!=='low'?1:0);
+            return sc >= 4;
+          }).length;
+          const _uc_govScore   = [
+            true,                          // humanControl always maintained
+            _uc_unsafe.length === 0,       // unsafeBlock
+            _uc_core.length > 0,           // operationalRealism
+            govPanel.blockCount === 0,     // block clean
+            _uc_bbCount <= 2,              // explainability
+          ].filter(Boolean).length;
+          const readability = {
+            clarity:            recommendations.length <= 5 ? 'high' : 'medium',
+            operationalRealism: _uc_core.length >= (cd.minStaff?.['夜勤'] ?? 1),
+            aiDominance:        recommendations.length <= 2 ? 'low' : recommendations.length <= 5 ? 'medium' : 'high',
+            infoOverload:       _uc_ds.length > 15 && riskDash.totalIssues > 8,
+            tradeoffVisible:    recommendations.every(r => r.tradeoff !== undefined),
+            overall:            _uc_govScore >= 4 ? 'humanOperationalConsole' : _uc_govScore >= 2 ? 'partialConsole' : 'aiDominant',
+          };
+
+          // ── maturity label ──
+          const _uc_maturity = _uc_critical === 0 && _uc_unsafe.length === 0
+            ? 'STABLE' : _uc_critical >= 2 ? 'CRITICAL' : 'ADVISORY';
+
+          setTemporalConsole({
+            dept: cd.id, year, month,
+            generatedAt: new Date().toISOString(),
+            maturity: _uc_maturity,
+            riskDash, futureTimeline, recommendations, sandboxComp, govPanel, readability,
+          });
+        }
+        // ══ [Temporal-Console-UI] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
@@ -19924,6 +20397,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* INNER TABS */}
       <div style={{background:"#eaf8f6",borderBottom:isMobile&&innerTab==="shift"?"none":"2px solid #2BBFBA",display:"flex",padding:"0 6px",gap:2,alignItems:"center",overflowX:"auto"}}>
         {[["shift",isMobile?"📅 シフト":"📅 シフト表"],["staff",isMobile?"👥 スタッフ":"👥 スタッフ"],["jisseki","📋 実績"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab===k?800:600,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
+        <button onClick={()=>setInnerTab("console")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab==="console"?"#7a35b0":"#2a6a67",borderBottom:innerTab==="console"?"2px solid #9b59b6":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab==="console"?800:600,whiteSpace:"nowrap",flexShrink:0}}>🧭 コンソール</button>
         {profile?.plan==='free'
           ? <button onClick={()=>alert("📋 予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:"#9ca3af",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>🔒 予定表</button>
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab==="yotei"?"#1a9e9a":"#2a6a67",borderBottom:innerTab==="yotei"?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab==="yotei"?800:600,whiteSpace:"nowrap",flexShrink:0}}>📋 予定表</button>
@@ -19973,6 +20447,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
         {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onBulkCopy={bulkCopyPlanned} onClearZero={bulkClearZeroRec} onClearAll={async()=>{if(!window.confirm("この月の全実績を削除します。よろしいですか？"))return;await clearDeptJisseki();}} defaultTimes={jissekiDefaults[activeDeptId]||{}} onDefaultsChange={defs=>saveJissekiDefaultsForDept(activeDeptId,defs)} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
+        {innerTab==="console"&&<TemporalConsolePanel data={temporalConsole&&temporalConsole.dept===activeDeptId?temporalConsole:null}/>}
       </div>
 
       {jissekiModal&&<JissekiInputModal staffName={jissekiModal.staff.name} day={jissekiModal.day} year={year} month={month} plannedShift={jissekiModal.planned} record={allJisseki[activeDeptId]?.[jissekiModal.staff.id]?.[jissekiModal.day]} deptShiftTypes={dept?.shiftTypes||["早番","日勤","遅番","夜勤"]} onSave={rec=>{saveJisseki(jissekiModal.staff.id,jissekiModal.day,rec);setJissekiModal(null);}} onClear={()=>{clearJisseki(jissekiModal.staff.id,jissekiModal.day);setJissekiModal(null);}} onClose={()=>setJissekiModal(null)}/>}
