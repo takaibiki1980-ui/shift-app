@@ -22404,6 +22404,481 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Recommendation Execution Preview System / _ep_] ここまで ══
 
+        // ══ [Human Decision History System / _dh_] ここから ══
+        {
+          // ── Layer 1: Human Decision History Registry (shared data + decision log) ─
+          {
+            const _dh_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _dh_ scope)
+            const _dh_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk   ?? 'normal';
+                const ladder     = s.nightLadder   ?? 0;
+                const stage      = s.growthStage   ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears    ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                let nightCount = 0;
+                for (let day = 1; day <= _dh_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _dh_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _dh_allArr      = Object.values(_dh_deptData).flatMap(dd => dd.arr);
+            const _dh_veterans    = _dh_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _dh_supportReqs = _dh_allArr.filter(e => e.supportReq && e.nightOk);
+            const _dh_protected   = _dh_allArr.filter(e => e.isProtected);
+            const _dh_burnout     = _dh_allArr.filter(e => e.isBurnout);
+
+            // Per-day snapshot
+            const _dh_dayMap = {};
+            for (let day = 1; day <= _dh_days; day++) {
+              const srOnNight = [];
+              for (const sr of _dh_supportReqs) {
+                const { shifts, nset } = _dh_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _dh_veterans.filter(vet => {
+                const { shifts, nset } = _dh_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovCount = vetOnNight.length === 0 ? srOnNight.length : 0;
+              _dh_dayMap[day] = { srOnNight, vetOnNight, uncovCount };
+            }
+
+            // Synthesise current-month decision candidates as a history registry
+            // (read-only: models "what decisions were implicitly made this cycle")
+            const _dh_registry = [];
+
+            // HOLD decisions: all protected staff not disturbed this cycle
+            for (const e of _dh_protected) {
+              const reason =
+                e.isBurnout  ? 'burnout recovery継続 — 夜勤介入回避'
+                : e.inReloc  ? `relocation adaptation (${(e.fl * 12).toFixed(0)}ヶ月) — schedule安定化`
+                : e.inLadder ? `ladder ${e.ladder} stabilization — 過負荷回避`
+                :              `safeSequence構築中 stage=${e.stage} — ペア継続`;
+              _dh_registry.push({
+                decisionType   : 'HOLD',
+                target         : `${e.s.name} (${e.deptLabel})`,
+                decisionReason : reason,
+                governanceClass: 'HOLD_RECOMMENDED',
+                protectedImpact: 'recovery maintained',
+                rollbackSuggested: false,
+                reviewCycle    : 'next_month',
+                staffId        : e.s.id,
+                deptId         : e.deptId,
+              });
+            }
+
+            // REJECT decisions: uncovered nights with low-ladder SR staff (unsafe progression)
+            const _dh_unsafeDays = [];
+            for (let day = 1; day <= _dh_days; day++) {
+              const { uncovCount, vetOnNight, srOnNight } = _dh_dayMap[day];
+              if (uncovCount > 0 && vetOnNight.length === 0) {
+                const lowLadder = srOnNight.filter(e => e.ladder < 3);
+                if (lowLadder.length > 0) _dh_unsafeDays.push({ day, lowLadder });
+              }
+            }
+            if (_dh_unsafeDays.length > 0) {
+              _dh_registry.push({
+                decisionType   : 'REJECT',
+                target         : `unsafe night progression (${_dh_unsafeDays.length}日)`,
+                decisionReason : `lowLadder SR uncovered — 承認不可`,
+                governanceClass: 'REJECT_RECOMMENDED',
+                protectedImpact: 'unsafe_blocked',
+                rollbackSuggested: false,
+                reviewCycle    : 'immediate',
+                staffId        : null,
+                deptId         : null,
+              });
+            }
+
+            // RESIM decisions: veteran overload items that need verification
+            for (const e of _dh_veterans.filter(e => e.utilRate > 1.2)) {
+              _dh_registry.push({
+                decisionType   : 'RESIM',
+                target         : `${e.s.name} (${e.deptLabel}) veteran redistribution`,
+                decisionReason : `utilRate=${(e.utilRate*100).toFixed(0)}% — 再配分前にsandbox検証必要`,
+                governanceClass: 'RESIM_REQUIRED',
+                protectedImpact: 'support_continuity_unverified',
+                rollbackSuggested: true,
+                reviewCycle    : 'this_cycle',
+                staffId        : e.s.id,
+                deptId         : e.deptId,
+              });
+            }
+
+            // APPROVE decisions: low-risk ladder progression candidates
+            for (const e of _dh_allArr.filter(e => e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.isProtected)) {
+              const floorVetCount = _dh_veterans.filter(v => v.deptId === e.deptId).length;
+              if (floorVetCount >= 2) {
+                _dh_registry.push({
+                  decisionType   : 'APPROVE',
+                  target         : `${e.s.name} (${e.deptLabel}) ladder 4昇格`,
+                  decisionReason : `stage=${e.stage} floorVet=${floorVetCount} — 低リスク承認候補`,
+                  governanceClass: 'APPROVE_CANDIDATE',
+                  protectedImpact: 'none',
+                  rollbackSuggested: true,
+                  reviewCycle    : 'next_month',
+                  staffId        : e.s.id,
+                  deptId         : e.deptId,
+                });
+              }
+            }
+
+            // OVERRIDE decisions: emergency scenarios (burnout on nights, shortage days)
+            for (const e of _dh_burnout.filter(e => e.nightOk && e.nightCount >= 2)) {
+              _dh_registry.push({
+                decisionType   : 'OVERRIDE',
+                target         : `${e.s.name} (${e.deptLabel})`,
+                decisionReason : `burnout高 + 夜勤${e.nightCount}回 — emergency継続中`,
+                governanceClass: 'EMERGENCY_OVERRIDE',
+                protectedImpact: 'burnout_continuation_risk',
+                rollbackSuggested: true,
+                reviewCycle    : 'immediate',
+                staffId        : e.s.id,
+                deptId         : e.deptId,
+              });
+            }
+
+            const _dh_holdDecisions     = _dh_registry.filter(r => r.decisionType === 'HOLD');
+            const _dh_rejectDecisions   = _dh_registry.filter(r => r.decisionType === 'REJECT');
+            const _dh_resimDecisions    = _dh_registry.filter(r => r.decisionType === 'RESIM');
+            const _dh_approveDecisions  = _dh_registry.filter(r => r.decisionType === 'APPROVE');
+            const _dh_overrideDecisions = _dh_registry.filter(r => r.decisionType === 'OVERRIDE');
+
+            // ── Layer 2: Decision Outcome Timeline ─────────────────────────────
+            {
+              // Trace current observable outcomes of each decision class
+              // (projection of "what has this month's implicit decision structure produced")
+              const _dh_outcomeTimeline = [];
+
+              // HOLD outcomes: is recovery actually progressing?
+              for (const e of _dh_protected) {
+                const recovering =
+                  e.isBurnout  ? e.nightCount === 0  // no nights = good
+                  : e.inLadder ? e.progress > 0.3    // showing progress
+                  : e.inReloc  ? e.fl !== null && e.fl >= 0.25 // 3+ months, adapting
+                  :              e.stage >= 2;         // safeSequence advancing
+                _dh_outcomeTimeline.push({
+                  decisionType   : 'HOLD',
+                  target         : `${e.s.name} (${e.deptLabel})`,
+                  currentOutcome : recovering ? 'recovery_progressing ✓' : 'recovery_stalled ⚠',
+                  burnoutTrajectory : e.isBurnout ? (e.nightCount === 0 ? 'stabilizing' : 'HIGH') : 'stable',
+                  supportStability  : 'maintained',
+                  outcomeClass   : recovering ? 'HOLD_BENEFICIAL' : 'HOLD_MONITORING',
+                  staffId        : e.s.id,
+                });
+              }
+
+              // REJECT outcomes: uncovered nights — has it been addressed?
+              if (_dh_unsafeDays.length > 0) {
+                const totalUncovDays = Object.values(_dh_dayMap).filter(d => d.uncovCount > 0).length;
+                _dh_outcomeTimeline.push({
+                  decisionType   : 'REJECT',
+                  target         : 'unsafe night progression',
+                  currentOutcome : totalUncovDays > 0
+                    ? `未解決 ${totalUncovDays}日継続中 ⚠`
+                    : 'resolved — safe coverage restored ✓',
+                  burnoutTrajectory : 'n/a',
+                  supportStability  : totalUncovDays > 0 ? 'gap_persists' : 'stable',
+                  outcomeClass   : totalUncovDays > 0 ? 'REJECT_UNRESOLVED' : 'REJECT_RESOLVED',
+                  staffId        : null,
+                });
+              }
+
+              // RESIM outcomes: veteran redistribution — has utilisation improved?
+              for (const e of _dh_veterans.filter(e => e.utilRate > 1.2)) {
+                _dh_outcomeTimeline.push({
+                  decisionType   : 'RESIM',
+                  target         : `${e.s.name} (${e.deptLabel})`,
+                  currentOutcome : `utilRate=${(e.utilRate*100).toFixed(0)}% — resim pending`,
+                  burnoutTrajectory : e.utilRate > 1.4 ? 'HIGH' : 'MEDIUM',
+                  supportStability  : 'at_risk',
+                  outcomeClass   : 'RESIM_PENDING',
+                  staffId        : e.s.id,
+                });
+              }
+
+              // OVERRIDE outcomes: burnout staff still on nights = override continuation
+              for (const e of _dh_burnout.filter(e => e.nightOk && e.nightCount >= 2)) {
+                _dh_outcomeTimeline.push({
+                  decisionType   : 'OVERRIDE',
+                  target         : `${e.s.name} (${e.deptLabel})`,
+                  currentOutcome : `夜勤${e.nightCount}回継続 — burnout rebound risk`,
+                  burnoutTrajectory : 'HIGH',
+                  supportStability  : 'override_dependent',
+                  outcomeClass   : 'OVERRIDE_CONSEQUENCE_ACTIVE',
+                  staffId        : e.s.id,
+                });
+              }
+
+              const _dh_beneficialHolds   = _dh_outcomeTimeline.filter(o => o.outcomeClass === 'HOLD_BENEFICIAL');
+              const _dh_stalledHolds      = _dh_outcomeTimeline.filter(o => o.outcomeClass === 'HOLD_MONITORING');
+              const _dh_activeConsequences = _dh_outcomeTimeline.filter(o => o.outcomeClass === 'OVERRIDE_CONSEQUENCE_ACTIVE');
+
+              // ── Layer 3: Override Consequence Tracking ──────────────────────
+              {
+                const _dh_overrideTracking = [];
+
+                // Emergency normalization check: are override scenarios recurring?
+                const _dh_recurringUnsafe = _dh_unsafeDays.length >= 5;
+                if (_dh_recurringUnsafe) {
+                  _dh_overrideTracking.push({
+                    consequenceType : 'emergency_normalization',
+                    severity        : 'HIGH',
+                    description     : `unsafe overlap ${_dh_unsafeDays.length}日 — 緊急対応の常態化リスク`,
+                    followUpRequired: true,
+                    rollbackEffect  : 'n/a — structural issue',
+                  });
+                }
+
+                // Burnout rebound: burnout staff still carrying nights
+                for (const e of _dh_burnout.filter(e => e.nightOk && e.nightCount >= 2)) {
+                  _dh_overrideTracking.push({
+                    consequenceType : 'burnout_rebound',
+                    severity        : 'HIGH',
+                    description     : `${e.s.name} (${e.deptLabel}): burnout継続 + 夜勤${e.nightCount}回`,
+                    followUpRequired: true,
+                    rollbackEffect  : '夜勤削減で回復可能 (rollback推奨)',
+                  });
+                }
+
+                // Support drift: uncovered nights persistent
+                const _dh_totalUncov = Object.values(_dh_dayMap).filter(d => d.uncovCount > 0).length;
+                if (_dh_totalUncov >= 3) {
+                  _dh_overrideTracking.push({
+                    consequenceType : 'chronic_unsafe_overlap',
+                    severity        : _dh_totalUncov >= 7 ? 'HIGH' : 'MEDIUM',
+                    description     : `施設全体 uncovered ${_dh_totalUncov}日 — support drift継続`,
+                    followUpRequired: true,
+                    rollbackEffect  : 'vet配置見直しで改善可能',
+                  });
+                }
+
+                // Veteran dependency solidification
+                for (const e of _dh_veterans.filter(e => e.utilRate > 1.3)) {
+                  _dh_overrideTracking.push({
+                    consequenceType : 'veteran_dependency',
+                    severity        : 'MEDIUM',
+                    description     : `${e.s.name}: utilRate=${(e.utilRate*100).toFixed(0)}% 依存固定化`,
+                    followUpRequired: false,
+                    rollbackEffect  : '負荷分散でgradual解消可能',
+                  });
+                }
+
+                const _dh_highConsequences = _dh_overrideTracking.filter(c => c.severity === 'HIGH');
+
+                // ── Layer 4: Recovery Preservation Memory ────────────────────
+                {
+                  const _dh_preservationMemory = [];
+
+                  // Successful holds: recovery progressing
+                  for (const o of _dh_beneficialHolds) {
+                    const staff = _dh_protected.find(e => e.s.id === o.staffId);
+                    if (!staff) continue;
+                    const holdType =
+                      staff.isBurnout ? 'burnout_recovery'
+                      : staff.inLadder ? 'ladder_stabilization'
+                      : staff.inReloc  ? 'relocation_adaptation'
+                      :                  'safeSequence_preservation';
+                    _dh_preservationMemory.push({
+                      memoryType  : 'HOLD_SUCCESS',
+                      target      : o.target,
+                      holdType,
+                      result      : 'recovery progressing — intervention avoided ✓',
+                      governanceValue: 'protected structure maintained',
+                      staffId     : o.staffId,
+                    });
+                  }
+
+                  // Stalled holds: still protecting but not yet progressing
+                  for (const o of _dh_stalledHolds) {
+                    _dh_preservationMemory.push({
+                      memoryType  : 'HOLD_MONITORING',
+                      target      : o.target,
+                      holdType    : 'monitoring',
+                      result      : 'hold継続中 — next cycle再評価推奨',
+                      governanceValue: 'disruption avoided, progress pending',
+                      staffId     : o.staffId,
+                    });
+                  }
+
+                  // Implicit safeSequence preservation
+                  const _dh_pairedStable = _dh_allArr.filter(e => e.hasPair && e.stage >= 3 && !e.isBurnout);
+                  for (const e of _dh_pairedStable) {
+                    _dh_preservationMemory.push({
+                      memoryType  : 'SAFE_SEQUENCE_PRESERVED',
+                      target      : `${e.s.name} (${e.deptLabel})`,
+                      holdType    : 'safeSequence',
+                      result      : `stage=${e.stage} safeSequence安定継続 ✓`,
+                      governanceValue: 'pair structure sustained — future independence trajectory',
+                      staffId     : e.s.id,
+                    });
+                  }
+
+                  // Relocation success: floor tenure >= 0.5yr with no burnout
+                  const _dh_relocSuccess = _dh_allArr.filter(e =>
+                    e.fl !== null && e.fl >= 0.5 && e.fl < 1.0 && !e.isBurnout && e.nightOk);
+                  for (const e of _dh_relocSuccess) {
+                    _dh_preservationMemory.push({
+                      memoryType  : 'RELOCATION_STABILIZED',
+                      target      : `${e.s.name} (${e.deptLabel})`,
+                      holdType    : 'relocation_adaptation',
+                      result      : `フロア配属${(e.fl * 12).toFixed(0)}ヶ月 — adaptation成功軌道 ✓`,
+                      governanceValue: 'floor adaptation on track — no burnout',
+                      staffId     : e.s.id,
+                    });
+                  }
+
+                  const _dh_holdSuccessCount = _dh_preservationMemory.filter(m => m.memoryType === 'HOLD_SUCCESS').length;
+                  const _dh_seqPreserveCount = _dh_preservationMemory.filter(m => m.memoryType === 'SAFE_SEQUENCE_PRESERVED').length;
+
+                  // ── Layer 5: Human Governance Reflection ─────────────────
+                  {
+                    const _dh_reflections = [];
+
+                    // Reflection: successful holds suppressed rebound
+                    if (_dh_holdSuccessCount > 0) {
+                      _dh_reflections.push({
+                        observation: `recovery中介入を避けた判断 ${_dh_holdSuccessCount}件が burnout rebound抑制に寄与`,
+                        recommendation: '現在のrecovery hold維持 — 継続観察',
+                        learningType: 'hold_effectiveness',
+                        actionable: true,
+                      });
+                    }
+
+                    // Reflection: override consequences that need follow-up
+                    if (_dh_highConsequences.length > 0) {
+                      _dh_reflections.push({
+                        observation: `${_dh_highConsequences.length}件の high-severity override consequenceが未解決`,
+                        recommendation: '緊急対応をone-offで終わらせず recovery follow-upを設定',
+                        learningType: 'override_followup_needed',
+                        actionable: true,
+                      });
+                    }
+
+                    // Reflection: safe sequence preservation trend
+                    if (_dh_seqPreserveCount > 0) {
+                      _dh_reflections.push({
+                        observation: `safeSequence ${_dh_seqPreserveCount}件が stage 3以上で安定継続中`,
+                        recommendation: 'pair構造の継続保護 — 独立運用移行timing を next cycle確認',
+                        learningType: 'sequence_preservation_success',
+                        actionable: false,
+                      });
+                    }
+
+                    // Reflection: stalled holds need re-evaluation
+                    if (_dh_stalledHolds.length > 0) {
+                      _dh_reflections.push({
+                        observation: `hold中 ${_dh_stalledHolds.length}件で progress停滞 — hold理由の再評価が必要`,
+                        recommendation: 'next cycle: hold理由が有効か個別確認 + 状況変化があれば判断更新',
+                        learningType: 'stalled_hold_reeval',
+                        actionable: true,
+                      });
+                    }
+
+                    // Reflection: chronic uncovered nights = structural gap
+                    if (_dh_totalUncov >= 5) {
+                      _dh_reflections.push({
+                        observation: `uncovered nights ${_dh_totalUncov}日 — 構造的support gap の可能性`,
+                        recommendation: 'veteran育成 or cross-floor support再構築を中期計画に組み込む',
+                        learningType: 'structural_gap_recognition',
+                        actionable: true,
+                      });
+                    }
+
+                    const _dh_actionableReflections = _dh_reflections.filter(r => r.actionable);
+
+                    // ── Layer 6: Decision History Audit ─────────────────────
+                    {
+                      const _dh_totalDecisions = _dh_registry.length;
+                      // Hindsight bias: penalising overrides that were situationally necessary
+                      const _dh_overrideRatio = _dh_totalDecisions > 0
+                        ? _dh_overrideDecisions.length / _dh_totalDecisions : 0;
+                      // Blame amplification: OVERRIDE/REJECT dominate the history
+                      const _dh_blameAmplRisk = _dh_overrideRatio > 0.4
+                        && _dh_holdDecisions.length < _dh_overrideDecisions.length;
+                      // Recovery undervaluation: few hold successes recorded
+                      const _dh_recoveryUnderval = _dh_holdSuccessCount === 0 && _dh_protected.length > 0;
+                      // Override stigma: override events flagged without follow-up path
+                      const _dh_overrideStigmaRisk = _dh_overrideDecisions.some(d => !d.rollbackSuggested);
+                      // Human learning support: reflections are actionable
+                      const _dh_learningSupportLevel =
+                        _dh_actionableReflections.length >= 2 ? 'high ✓'
+                        : _dh_actionableReflections.length === 1 ? 'moderate'
+                        :                                           'low ⚠';
+                      // Explainability: all registry entries have decisionReason
+                      const _dh_explainable = _dh_registry.every(r => r.decisionReason);
+
+                      const _dh_overallAudit =
+                        (!_dh_blameAmplRisk && !_dh_recoveryUnderval && _dh_explainable)
+                          ? 'humanGovernedDecisionHistory'
+                        : _dh_blameAmplRisk     ? 'blameAmplificationRisk'
+                        : _dh_recoveryUnderval  ? 'recoveryUndervaluationRisk'
+                        : _dh_overrideStigmaRisk ? 'overrideStigmaRisk'
+                        :                          'needsReview';
+
+                      const _dh_finalSummary = {
+                        dept: cd.id, year, month,
+                        totalDecisions      : _dh_totalDecisions,
+                        holdCount           : _dh_holdDecisions.length,
+                        rejectCount         : _dh_rejectDecisions.length,
+                        resimCount          : _dh_resimDecisions.length,
+                        approveCount        : _dh_approveDecisions.length,
+                        overrideCount       : _dh_overrideDecisions.length,
+                        beneficialHoldCount : _dh_beneficialHolds.length,
+                        stalledHoldCount    : _dh_stalledHolds.length,
+                        activeConsequenceCount: _dh_activeConsequences.length,
+                        highConsequenceCount: _dh_highConsequences.length,
+                        preservationCount   : _dh_preservationMemory.length,
+                        holdSuccessCount    : _dh_holdSuccessCount,
+                        seqPreserveCount    : _dh_seqPreserveCount,
+                        reflectionCount     : _dh_reflections.length,
+                        actionableReflCount : _dh_actionableReflections.length,
+                        topReflections      : _dh_reflections.slice(0, 4).map(r =>
+                          `[${r.learningType}] ${r.observation}`),
+                        audit: {
+                          blameAmplification    : _dh_blameAmplRisk      ? 'risk ⚠' : 'low ✓',
+                          recoveryRecognition   : _dh_recoveryUnderval   ? 'undervalued ⚠' : 'maintained ✓',
+                          overrideStigma        : _dh_overrideStigmaRisk ? 'risk ⚠' : 'none ✓',
+                          humanLearningSupport  : _dh_learningSupportLevel,
+                          operationalRealism    : _dh_highConsequences.length <= 2 ? 'high ✓' : 'review needed',
+                          explainability        : _dh_explainable         ? 'high ✓' : 'partial ⚠',
+                          overall               : _dh_overallAudit,
+                        },
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_dh_] Human Decision History System:', _dh_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Human Decision History System / _dh_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
