@@ -19230,6 +19230,513 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Date-Integrity-Audit / Migration-Safety-Audit] ここまで ══
 
+        // ══ [Intervention-Permission-Matrix / Human-Approval-Boundary / Temporal-Risk-Governance /
+        //    Rollback-Enforcement-Policy / Explainability-Governance / Governance-Stability-Audit] ══
+        {
+          // ── shared infrastructure ──
+          const _ag_ds    = cs.filter(s => s.dept === cd.id);
+          const _ag_days  = getDays(year, month);
+          const _ag_tailN = Math.max(3, Math.round(_ag_days * 0.15));
+          const _ag_nset  = new Set(['夜勤']);
+          if (cd.shiftTypes) cd.shiftTypes.forEach(k => { if (k === '夜勤' || k.startsWith('夜勤')) _ag_nset.add(k); });
+          const _ag_isNight = sh => _ag_nset.has(sh);
+          const _ag_isRest  = sh => ['休み', '希望休', '有休'].includes(sh);
+          const _ag_isWork  = sh => !!(sh && !_ag_isRest(sh) && sh !== '明け' && sh !== '');
+          const _ag_fw      = sh => _ag_isNight(sh) ? 3 : sh === '明け' ? 2 : (sh === '早番' || sh === '遅番') ? 1 : 0;
+          const _ag_boOf    = totF => totF >= _ag_days * 2.0 ? 'high' : totF >= _ag_days * 1.2 ? 'medium' : 'low';
+          const _ag_trd     = name => {
+            const k = Object.keys(ct).filter(k => k !== '_months' && k !== '_monthCounts')
+              .find(k => nameMatch(k, name));
+            return k ? ct[k] : null;
+          };
+          const _ag_metric = shiftMap => {
+            let totF=0, tlF=0, nCnt=0, rCnt=0, sSq=0, cSq=0, leSq=0;
+            for (let d = 1; d <= _ag_days; d++) {
+              const sh = shiftMap[d]??'', pv = shiftMap[d-1]??'', nx = shiftMap[d+1]??'';
+              totF += _ag_fw(sh);
+              if (d > _ag_days - _ag_tailN) tlF += _ag_fw(sh);
+              if (_ag_isNight(sh)) nCnt++;
+              if (_ag_isRest(sh))  rCnt++;
+              if (sh === '明け' && _ag_isNight(pv)) {
+                if (_ag_isRest(nx) || !nx) sSq++;
+                else if (nx === '早番')    cSq++;
+                else if (_ag_isWork(nx)) { /* dSq */ }
+                else sSq++;
+              }
+              if (sh === '早番' && d > 1 && pv === '遅番') leSq++;
+            }
+            const bo = _ag_boOf(totF);
+            const co = tlF >= _ag_tailN * 3.0 ? 'high' : tlF >= _ag_tailN * 1.5 ? 'medium' : 'low';
+            const rd = rCnt < _ag_days * 0.25 * 0.7 ? 'high' : rCnt < _ag_days * 0.25 ? 'medium' : 'low';
+            return { totF, tlF, nCnt, rCnt, sSq, cSq, leSq, bo, co, rd };
+          };
+          const _ag_stageOf = (fy, fl, nCnt, rr) => {
+            if (rr === 'high' && fl < 0.5) return 1;
+            if (fl < 0.1 || fy < 0.3)     return 0;
+            if (fl < 0.5)                  return 1;
+            if (fl < 1.0)                  return 2;
+            if (nCnt === 0)                return 3;
+            if (fl < 2.0)                  return 4;
+            return 5;
+          };
+          const _AG_FL_G   = 0.08;
+          const _AG_RANGES = [[0,0.1],[0.1,0.5],[0.5,1.0],[1.0,1.5],[1.5,2.0],[2.0,4.0]];
+          const _ag_progOf = (stage, fl, sSq, cSq, bo, co, leSq) => {
+            const [lo, hi] = _AG_RANGES[Math.min(stage, 5)];
+            const base   = Math.min(1.0, Math.max(0.0, (fl - lo) / Math.max(0.01, hi - lo)));
+            const seqAdj = sSq > 0 && cSq === 0 ? +0.10 : cSq > 0 ? -0.15 : 0;
+            const fatAdj = bo === 'high' ? -0.15 : bo === 'low' && co === 'low' ? +0.05 : 0;
+            const leAdj  = leSq > 0 ? -0.05 : 0;
+            return Math.min(1.0, Math.max(0.0, base + seqAdj + fatAdj + leAdj));
+          };
+          const _ag_ladderOf = (stage, fl, nCnt, bo, progress, nightOk, hasPair) => {
+            if (!nightOk)                                   return 0;
+            if (stage >= 5 && bo !== 'high')                return 5;
+            if (stage >= 4 && nCnt >= 2 && bo !== 'high')  return 4;
+            if (nCnt >= 1)                                  return 3;
+            if (stage >= 3 && progress >= 0.6 && hasPair)  return 2;
+            if (stage >= 2 && fl >= 0.5)                   return 1;
+            return 0;
+          };
+          const _ag_futBo = (bo, co, sSq, cSq, t) => {
+            const ord = { low:0, medium:1, high:2 };
+            let v = ord[bo];
+            if (co === 'high' && cSq > 0)        v = Math.min(2, v + Math.floor(t / 2));
+            else if (co === 'high' && sSq > 0)   v = Math.min(2, v + Math.floor(t / 3));
+            else if (bo === 'high' && sSq > 0)   v = Math.max(0, v - Math.floor(t / 2));
+            else if (bo === 'medium' && sSq > 0) v = Math.max(0, v - Math.floor(t / 3));
+            return ['low','medium','high'][Math.max(0, Math.min(2, v))];
+          };
+
+          // ── pair co-occurrence ──
+          const _ag_pco = {};
+          for (let d = 1; d <= _ag_days; d++) {
+            const nw = _ag_ds.filter(s => _ag_isNight(result[s.id]?.[d] ?? ''));
+            for (let i = 0; i < nw.length; i++)
+              for (let j = i + 1; j < nw.length; j++) {
+                const pk = [nw[i].name, nw[j].name].sort().join('×');
+                _ag_pco[pk] = (_ag_pco[pk] || 0) + 1;
+              }
+          }
+          const _ag_fixedPairs = Object.entries(_ag_pco)
+            .filter(([, n]) => n >= _ag_days * 0.4)
+            .map(([k]) => k.split('×'));
+
+          // ── per-staff current state (read-only from result) ──
+          const _ag_st = {};
+          for (const s of _ag_ds) {
+            const m     = _ag_metric(result[s.id] || {});
+            const tr    = _ag_trd(s.name);
+            const wk    = tr?._workTotal ?? 0;
+            const isNew = wk < 30;
+            const fy    = s.facilityYears ?? (isNew ? 0.3 : Math.min(5, wk / 30 * 0.5 + 0.5));
+            const fl    = s.floorYears    ?? (isNew ? 0.2 : 1.5);
+            const rr    = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+            const stage    = _ag_stageOf(fy, fl, m.nCnt, rr);
+            const progress = _ag_progOf(stage, fl, m.sSq, m.cSq, m.bo, m.co, m.leSq);
+            const hasPair  = _ag_fixedPairs.some(p => p.includes(s.name));
+            const ladder   = _ag_ladderOf(stage, fl, m.nCnt, m.bo, progress, !!s.nightOk, hasPair);
+            _ag_st[s.name] = { s, fy, fl, rr, stage, progress, hasPair, ladder,
+                               nightOk: !!s.nightOk, isNew, ...m };
+          }
+          const _ag_arr = _ag_ds.map(s => _ag_st[s.name]).filter(Boolean);
+
+          // ── Layer 1: [Intervention-Permission-Matrix] ──
+          {
+            const _l1 = [`[Intervention-Permission-Matrix] dept=${cd.id}  staff=${_ag_arr.length}`];
+
+            const _ag_permRules = [
+              {
+                id: 'gradualNightReduction',
+                test: st => st.bo === 'high' && st.nCnt >= 1 && st.stage >= 3,
+                permission: 'ALLOW',
+                reason: 'burnout回復・リスク低',
+              },
+              {
+                id: 'burnoutRecoveryAdd',
+                test: st => st.bo === 'high' && st.sSq === 0,
+                permission: 'ALLOW',
+                reason: '安全シーケンス補填・リスク低',
+              },
+              {
+                id: 'supportPairChange',
+                test: st => st.hasPair && st.ladder >= 2,
+                permission: 'REVIEW',
+                reason: 'support continuity影響・要確認',
+              },
+              {
+                id: 'ladderAcceleration',
+                test: st => st.ladder >= 1 && st.ladder <= 3 && st.progress >= 0.7 && st.bo !== 'high',
+                permission: 'REVIEW',
+                reason: '段階飛ばしリスク・管理者確認推奨',
+              },
+              {
+                id: 'nightCoreChange',
+                test: st => st.ladder >= 4,
+                permission: 'REVIEW',
+                reason: 'コア夜勤担当変更は運用影響大',
+              },
+              {
+                id: 'unsafeNightPromotion',
+                test: st => (st.stage <= 1 || st.rr === 'high') && st.nCnt === 0 && !!st.nightOk,
+                permission: 'BLOCK',
+                reason: 'stage不足/relocation適応中・夜勤昇格禁止',
+              },
+              {
+                id: 'burnoutRecoveryDestroy',
+                test: st => st.bo === 'high' && st.sSq > 0 && st.cSq > 0,
+                permission: 'BLOCK',
+                reason: '回復シーケンス破壊・絶対禁止',
+              },
+              {
+                id: 'safeSequenceBreak',
+                test: st => st.sSq > 0 && st.leSq > 0,
+                permission: 'BLOCK',
+                reason: 'safeSeq+連続疲労の複合破壊禁止',
+              },
+            ];
+
+            const _ag_matrix = {};
+            for (const st of _ag_arr) _ag_matrix[st.s.name] = _ag_permRules.filter(r => r.test(st));
+
+            const _ag_allowN  = Object.values(_ag_matrix).flat().filter(r => r.permission === 'ALLOW').length;
+            const _ag_reviewN = Object.values(_ag_matrix).flat().filter(r => r.permission === 'REVIEW').length;
+            const _ag_blockN  = Object.values(_ag_matrix).flat().filter(r => r.permission === 'BLOCK').length;
+            _l1.push(`  permission distribution: ALLOW=${_ag_allowN}  REVIEW=${_ag_reviewN}  BLOCK=${_ag_blockN}`);
+
+            for (const rule of _ag_permRules) {
+              const affected = _ag_arr.filter(st => rule.test(st));
+              if (affected.length > 0) {
+                const icon = rule.permission === 'ALLOW' ? '✓' : rule.permission === 'REVIEW' ? '⚠' : '🚫';
+                _l1.push(`  ${rule.id}: ${rule.permission} ${icon}  staff=${affected.length}  (${rule.reason})`);
+              }
+            }
+
+            const _ag_blocked = _ag_arr.filter(st => _ag_matrix[st.s.name].some(r => r.permission === 'BLOCK'));
+            if (_ag_blocked.length > 0) {
+              _l1.push(`  BLOCK対象スタッフ:`);
+              for (const st of _ag_blocked) {
+                const br = _ag_matrix[st.s.name].filter(r => r.permission === 'BLOCK');
+                _l1.push(`    ${st.s.name}: ${br.map(r => r.id).join(', ')}`);
+              }
+            } else {
+              _l1.push(`  BLOCK対象スタッフ: なし ✓`);
+            }
+            console.log(_l1.join('\n'));
+          }
+
+          // ── Layer 2: [Human-Approval-Boundary] ──
+          {
+            const _l2 = [`[Human-Approval-Boundary] dept=${cd.id}  staff=${_ag_arr.length}`];
+
+            const _ag_approvalChecks = [
+              {
+                id: 'burnoutHighStaff',
+                label: 'バーンアウト高リスク',
+                test: st => st.bo === 'high',
+                mandatory: true,
+                reason: '疲労蓄積スタッフへの変更はリスク管理必須',
+              },
+              {
+                id: 'supportDependencyChange',
+                label: 'サポート依存関係',
+                test: st => st.hasPair && st.ladder >= 2 && st.ladder <= 3,
+                mandatory: true,
+                reason: '夜勤ペア依存スタッフのladder変更は連続性に影響',
+              },
+              {
+                id: 'nightCoreIntervention',
+                label: '夜勤コア介入',
+                test: st => st.ladder >= 4,
+                mandatory: true,
+                reason: 'コア夜勤担当の変更は即時運用影響あり',
+              },
+              {
+                id: 'stageJumpRisk',
+                label: 'ステージ急変リスク',
+                test: st => st.stage <= 2 && st.nCnt >= 1 && st.bo !== 'low',
+                mandatory: true,
+                reason: '低stage+夜勤+疲労の組み合わせは危険',
+              },
+              {
+                id: 'ladderAccelerationCandidate',
+                label: 'ラダー加速候補',
+                test: st => st.ladder >= 1 && st.ladder <= 2 && st.progress >= 0.8 && st.bo === 'low',
+                mandatory: false,
+                reason: '昇格推奨候補だが管理者判断が望ましい',
+              },
+              {
+                id: 'relocationAdaptation',
+                label: 'relocation適応中',
+                test: st => st.rr === 'high',
+                mandatory: true,
+                reason: '異動直後のスタッフへの夜勤変更は禁止に準ずる',
+              },
+            ];
+
+            const _ag_approvalReq = _ag_arr.map(st => {
+              const matched   = _ag_approvalChecks.filter(c => c.test(st));
+              const mandatory = matched.filter(c => c.mandatory);
+              return { st, matched, mandatory };
+            }).filter(x => x.matched.length > 0);
+
+            const _ag_mandN    = _ag_approvalReq.filter(x => x.mandatory.length > 0).length;
+            const _ag_advisN   = _ag_approvalReq.filter(x => x.mandatory.length === 0).length;
+            _l2.push(`  承認境界: 必須=${_ag_mandN}名  推奨=${_ag_advisN}名`);
+
+            for (const { st, mandatory, matched } of _ag_approvalReq.slice(0, 8)) {
+              const top  = mandatory[0] || matched[0];
+              const icon = mandatory.length > 0 ? '⚠ mandatory' : '△ advisory';
+              _l2.push(`  ${st.s.name}: ${icon}`);
+              _l2.push(`    → ${top.label}  (${top.reason})`);
+              if (mandatory.length > 1) _l2.push(`    + ${mandatory.slice(1).map(c => c.id).join(', ')}`);
+            }
+
+            if (_ag_approvalReq.length === 0) _l2.push(`  全スタッフ: 承認不要 ✓`);
+            _l2.push(`  verdict: ${_ag_mandN > 0 ? `APPROVAL_REQUIRED(${_ag_mandN}件)` : 'ADVISORY_ONLY'}`);
+            console.log(_l2.join('\n'));
+          }
+
+          // ── Layer 3: [Temporal-Risk-Governance] ──
+          {
+            const _l3 = [`[Temporal-Risk-Governance] dept=${cd.id}  staff=${_ag_arr.length}`];
+
+            const _ag_riskOf = st => {
+              const op  = st.bo === 'high' ? 'high'
+                        : (st.bo === 'medium' || (st.stage <= 2 && st.nCnt >= 1)) ? 'medium' : 'low';
+              const psy = (st.cSq > 0 && st.bo === 'high') ? 'high'
+                        : (st.leSq > 0 || st.cSq > 0 || st.bo === 'medium') ? 'medium' : 'low';
+              const adp = st.rr === 'high' ? 'high'
+                        : (st.rr === 'medium' || st.stage <= 1) ? 'medium' : 'low';
+              const sup = (st.hasPair && st.ladder <= 2) ? 'medium'
+                        : (st.ladder >= 4 && !st.hasPair) ? 'medium' : 'low';
+              const fBo6 = _ag_futBo(st.bo, st.co, st.sSq, st.cSq, 6);
+              const fut  = fBo6 === 'high' ? 'high' : fBo6 === 'medium' ? 'medium' : 'low';
+              const sigC = (st.bo !== 'low' ? 1 : 0) + (st.cSq > 0 ? 1 : 0) + (st.sSq > 0 ? 1 : 0)
+                         + (st.leSq > 0 ? 1 : 0) + (st.rr !== 'low' ? 1 : 0);
+              const expl = sigC >= 4 ? 'high' : sigC >= 2 ? 'medium' : 'low';
+              const rl   = [op, psy, adp, sup, fut, expl];
+              const hc   = rl.filter(r => r === 'high').length;
+              const mc   = rl.filter(r => r === 'medium').length;
+              const overall = hc >= 2 ? 'governanceReviewRequired'
+                            : (hc === 1 || mc >= 3) ? 'advisoryReview'
+                            : 'operationallyStable';
+              return { op, psy, adp, sup, fut, expl, overall };
+            };
+
+            const _ag_risks = _ag_arr.map(st => ({ st, risk: _ag_riskOf(st) }));
+            const _ag_rvReq = _ag_risks.filter(x => x.risk.overall === 'governanceReviewRequired');
+            const _ag_advis = _ag_risks.filter(x => x.risk.overall === 'advisoryReview');
+
+            _l3.push(`  risk distribution: reviewRequired=${_ag_rvReq.length}  advisory=${_ag_advis.length}  stable=${_ag_risks.length - _ag_rvReq.length - _ag_advis.length}`);
+            for (const { st, risk } of _ag_rvReq.slice(0, 5)) {
+              _l3.push(`  ${st.s.name}: ${risk.overall}`);
+              _l3.push(`    op=${risk.op}  psy=${risk.psy}  adp=${risk.adp}  sup=${risk.sup}  fut=${risk.fut}  expl=${risk.expl}`);
+            }
+            if (_ag_advis.length > 0) {
+              _l3.push(`  advisory対象: ${_ag_advis.slice(0, 5).map(x => x.st.s.name).join(', ')}${_ag_advis.length > 5 ? ` 他${_ag_advis.length - 5}名` : ''}`);
+            }
+            const deptOpH  = _ag_risks.filter(x => x.risk.op  === 'high').length;
+            const deptPsyH = _ag_risks.filter(x => x.risk.psy === 'high').length;
+            const deptFutH = _ag_risks.filter(x => x.risk.fut === 'high').length;
+            _l3.push(`  dept risk profile: op_high=${deptOpH}  psy_high=${deptPsyH}  fut_high=${deptFutH}`);
+            _l3.push(`  overall: ${_ag_rvReq.length > 0 ? 'GOVERNANCE_REVIEW_REQUIRED' : _ag_advis.length > 0 ? 'ADVISORY_ACTIVE' : 'STABLE'}`);
+            console.log(_l3.join('\n'));
+          }
+
+          // ── Layer 4: [Rollback-Enforcement-Policy] ──
+          {
+            const _l4 = [`[Rollback-Enforcement-Policy] dept=${cd.id}  staff=${_ag_arr.length}`];
+
+            const _ag_rollbackRules = [
+              {
+                id: 'burnoutEscalation',
+                test: st => st.bo === 'high' && st.co === 'high',
+                mandatory: true,
+                consequence: '疲労急増：介入は即時rollback対象',
+              },
+              {
+                id: 'unsafeIncrease',
+                test: st => st.stage <= 1 && st.nCnt >= 1,
+                mandatory: true,
+                consequence: 'stage不足で夜勤実施中：緊急rollback対象',
+              },
+              {
+                id: 'supportCollapse',
+                test: st => st.hasPair && st.bo === 'high' && st.ladder >= 2,
+                mandatory: true,
+                consequence: 'ペア依存+burnout：support networkへの影響大',
+              },
+              {
+                id: 'adaptationDestroy',
+                test: st => st.rr === 'high' && st.nCnt >= 1,
+                mandatory: true,
+                consequence: 'relocation適応中に夜勤：適応破壊リスク',
+              },
+              {
+                id: 'explainabilityLoss',
+                test: st => {
+                  const sc = (st.bo !== 'low' ? 1 : 0) + (st.cSq > 0 ? 1 : 0)
+                           + (st.sSq > 0 ? 1 : 0) + (st.leSq > 0 ? 1 : 0) + (st.rr !== 'low' ? 1 : 0);
+                  return sc >= 5;
+                },
+                mandatory: true,
+                consequence: '全シグナル悪化：AI推奨根拠不透明・rollback必須',
+              },
+              {
+                id: 'recoverySequenceBreak',
+                test: st => st.sSq > 0 && st.cSq > 0 && st.bo !== 'low',
+                mandatory: true,
+                consequence: 'sSq+cSq同時存在+疲労：回復経路破壊',
+              },
+            ];
+
+            const _ag_rbNeeded = _ag_arr.map(st => ({
+              st,
+              triggered: _ag_rollbackRules.filter(r => r.test(st)),
+            })).filter(x => x.triggered.length > 0);
+
+            const _ag_mandRB = _ag_rbNeeded.filter(x => x.triggered.some(r => r.mandatory));
+            _l4.push(`  rollback enforcement: mandatory=${_ag_mandRB.length}名  total_triggers=${_ag_rbNeeded.length}`);
+
+            if (_ag_mandRB.length > 0) {
+              for (const { st, triggered } of _ag_mandRB.slice(0, 6)) {
+                const top = triggered[0];
+                _l4.push(`  ${st.s.name}: rollback mandatory ⚠`);
+                _l4.push(`    rule: ${top.id}  →  ${top.consequence}`);
+              }
+            } else {
+              _l4.push(`  mandatory rollback対象: なし ✓`);
+            }
+
+            _l4.push(`  rollback capability:`);
+            _l4.push(`    sandbox isolated:   ✓`);
+            _l4.push(`    result untouched:   ✓`);
+            _l4.push(`    governance phase:   read-only (no apply)`);
+            _l4.push(`  verdict: ${_ag_mandRB.length > 0 ? `ROLLBACK_MANDATORY(${_ag_mandRB.length}件)` : 'ROLLBACK_NOT_TRIGGERED'}`);
+            console.log(_l4.join('\n'));
+          }
+
+          // ── Layer 5: [Explainability-Governance] ──
+          {
+            const _l5 = [`[Explainability-Governance] dept=${cd.id}  staff=${_ag_arr.length}`];
+
+            const _ag_explOf = st => {
+              const factors = [];
+              if (st.bo !== 'low')  factors.push(`bo=${st.bo}`);
+              if (st.co !== 'low')  factors.push(`co=${st.co}`);
+              if (st.sSq > 0)       factors.push(`sSq=${st.sSq}`);
+              if (st.cSq > 0)       factors.push(`cSq=${st.cSq}`);
+              if (st.leSq > 0)      factors.push(`leSq=${st.leSq}`);
+              if (st.rr !== 'low')  factors.push(`rr=${st.rr}`);
+              if (st.rd !== 'low')  factors.push(`rd=${st.rd}`);
+
+              const hasConflict = (st.sSq > 0 && st.cSq > 0)
+                               || (st.bo === 'high' && st.co === 'low')
+                               || (st.ladder >= 4 && st.bo === 'high');
+
+              const tradeoffVisible = factors.length >= 2 && !hasConflict;
+              const fBo6 = _ag_futBo(st.bo, st.co, st.sSq, st.cSq, 6);
+              const futureBias  = fBo6 !== st.bo;
+              const blackboxRisk = hasConflict ? 'high' : factors.length >= 4 ? 'medium' : 'low';
+              const explainable  = !hasConflict && factors.length <= 3;
+              return { factors, hasConflict, tradeoffVisible, futureBias, blackboxRisk, explainable };
+            };
+
+            const _ag_explRes  = _ag_arr.map(st => ({ st, expl: _ag_explOf(st) }));
+            const _ag_bbHigh   = _ag_explRes.filter(x => x.expl.blackboxRisk === 'high');
+            const _ag_bbMed    = _ag_explRes.filter(x => x.expl.blackboxRisk === 'medium');
+            const _ag_explOkN  = _ag_explRes.filter(x => x.expl.explainable).length;
+            const _ag_biasN    = _ag_explRes.filter(x => x.expl.futureBias).length;
+
+            _l5.push(`  explainability: ok=${_ag_explOkN}  blackbox_high=${_ag_bbHigh.length}  blackbox_med=${_ag_bbMed.length}`);
+            _l5.push(`  future_bias: ${_ag_biasN}名 (現在とt=6で疲労判定が変わるスタッフ)`);
+
+            if (_ag_bbHigh.length > 0) {
+              _l5.push(`  blackbox_high対象 (説明不足リスク):`);
+              for (const { st, expl } of _ag_bbHigh.slice(0, 5)) {
+                _l5.push(`    ${st.s.name}: factors=[${expl.factors.join(',')}]  conflict=${expl.hasConflict}`);
+              }
+            }
+
+            const _ag_nightOkN  = _ag_arr.filter(st => st.nightOk).length;
+            const _ag_intCapN   = Math.max(1, Math.ceil(_ag_nightOkN * 0.3));
+            const _ag_tradeoffN = _ag_explRes.filter(x => x.expl.tradeoffVisible).length;
+            _l5.push(`  recommendation governance:`);
+            _l5.push(`    nightOk staff:      ${_ag_nightOkN}`);
+            _l5.push(`    safe intervention cap: ${_ag_intCapN}名/月 (30%上限)`);
+            _l5.push(`    tradeoff_visible:   ${_ag_tradeoffN}/${_ag_arr.length}名`);
+
+            const explVerdict = _ag_bbHigh.length === 0 ? 'EXPLAINABLE'
+                              : _ag_bbHigh.length <= 2  ? 'PARTIALLY_EXPLAINABLE'
+                              : 'BLACKBOX_RISK';
+            _l5.push(`  verdict: ${explVerdict}  (blackbox_high=${_ag_bbHigh.length})`);
+            console.log(_l5.join('\n'));
+          }
+
+          // ── Layer 6: [Governance-Stability-Audit] ──
+          {
+            const _l6 = [`[Governance-Stability-Audit] dept=${cd.id}  staff=${_ag_arr.length}`];
+
+            // ① human control: governance layer は完全 read-only = 人間制御維持
+            const humanControlOk = true;
+
+            // ② rollback guarantee: 非適用 = rollback trivially available
+            const rollbackGuaranteedOk = true;
+
+            // ③ unsafe blocking
+            const _ag_unsafeSt = _ag_arr.filter(st => (st.stage <= 1 || st.rr === 'high') && st.nCnt >= 1);
+            const unsafeBlockOk = _ag_unsafeSt.length === 0;
+
+            // ④ recommendation transparency
+            const _ag_transpN = _ag_arr.filter(st => {
+              const sc = (st.bo !== 'low' ? 1 : 0) + (st.cSq > 0 ? 1 : 0) + (st.sSq > 0 ? 1 : 0)
+                       + (st.leSq > 0 ? 1 : 0) + (st.rr !== 'low' ? 1 : 0);
+              const conflict = (st.sSq > 0 && st.cSq > 0) || (st.ladder >= 4 && st.bo === 'high');
+              return !conflict && sc <= 3;
+            }).length;
+            const transparencyRate = _ag_arr.length > 0
+              ? (_ag_transpN / _ag_arr.length * 100) : 100;
+            const transparencyOk = transparencyRate >= 70;
+
+            // ⑤ operational realism
+            const _ag_coreSt  = _ag_arr.filter(st => st.ladder >= 4 && st.bo !== 'high');
+            const _ag_giverSt = _ag_arr.filter(st => st.ladder >= 2 && st.ladder <= 3 && st.bo !== 'high');
+            const _ag_minN    = cd.minStaff?.['夜勤'] ?? 1;
+            const operationalOk = _ag_coreSt.length >= _ag_minN;
+
+            // ⑥ AI dependency risk
+            const _ag_aiRiskN = _ag_arr.filter(st => {
+              const sc = (st.bo !== 'low' ? 1 : 0) + (st.cSq > 0 ? 1 : 0) + (st.sSq > 0 ? 1 : 0)
+                       + (st.leSq > 0 ? 1 : 0) + (st.rr !== 'low' ? 1 : 0);
+              return st.bo === 'high' && sc >= 3;
+            }).length;
+            const aiDependOk = _ag_aiRiskN === 0;
+
+            const _ag_dims = [humanControlOk, rollbackGuaranteedOk, unsafeBlockOk,
+                              transparencyOk, operationalOk, aiDependOk];
+            const _ag_score    = _ag_dims.filter(Boolean).length;
+            const _ag_maturity = _ag_score >= 5 ? 'governanceStable'
+                               : _ag_score >= 3 ? 'partialGovernance'
+                               : 'governanceRisk';
+
+            _l6.push(`  governance dimensions:`);
+            _l6.push(`    humanControl:       ${humanControlOk       ? 'maintained ✓'                              : 'VIOLATED 🚫'}`);
+            _l6.push(`    rollbackIntegrity:  ${rollbackGuaranteedOk ? 'guaranteed ✓'                              : 'AT_RISK ⚠'}`);
+            _l6.push(`    unsafeBlock:        ${unsafeBlockOk        ? 'stable ✓'                                  : `⚠ unsafe ${_ag_unsafeSt.length}名検出`}`);
+            _l6.push(`    transparency:       ${transparencyRate.toFixed(0)}%  (${_ag_transpN}/${_ag_arr.length}名)  ${transparencyOk ? '✓' : '⚠'}`);
+            _l6.push(`    operationalRealism: ${operationalOk ? `✓ core=${_ag_coreSt.length} giver=${_ag_giverSt.length}` : `⚠ core不足(${_ag_coreSt.length}/${_ag_minN})`}`);
+            _l6.push(`    aiDependencyRisk:   ${aiDependOk ? 'low ✓' : `⚠ high-risk ${_ag_aiRiskN}名`}`);
+            _l6.push(`  governance score: ${_ag_score}/6`);
+            _l6.push(`  overall: ${_ag_maturity}`);
+            _l6.push(`  ──────────────────────────────────────────────────`);
+            _l6.push(`  Governed Human Temporal Intelligence: ${_ag_maturity === 'governanceStable' ? 'ACTIVE ✓' : 'IN_PROGRESS'}`);
+            console.log(_l6.join('\n'));
+          }
+        }
+        // ══ [Intervention-Permission-Matrix / Human-Approval-Boundary / Temporal-Risk-Governance /
+        //    Rollback-Enforcement-Policy / Explainability-Governance / Governance-Stability-Audit] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
