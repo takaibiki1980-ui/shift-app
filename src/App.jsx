@@ -6223,6 +6223,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const seqAtLastRemoteLoad = useRef(-1);
   const lastAutoGenRef = useRef({}); // 最後の自動生成結果（スワップパターン検出用）
   const renderAuditTargetRef = useRef(null); // ★[Render-Audit]: engine result → post-commit 比較用
+  // ── Phase S-1: Lazy Temporal Architecture ────────────────────────────────
+  const innerTabRef       = useRef("shift");     // shadow of innerTab — no dep-array churn
+  const pendingTemporalRef = useRef(null);        // deferred _buildTemporalEngines closure
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -7043,6 +7046,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [deptShifts, staffList, dept, year, month, shiftTrend, learnedTrend, activeDeptId]);
 
   // ══════════════════════════════════════════════════════════════════════════
+  // ── Phase S-1: keep innerTabRef in sync + fire lazy Temporal engines ────────
+  useEffect(() => {
+    innerTabRef.current = innerTab;
+    if (innerTab === 'console' && pendingTemporalRef.current) {
+      pendingTemporalRef.current();
+      pendingTemporalRef.current = null;
+    }
+  }, [innerTab]);
+
   // ★[Render-Audit] 描画整合性監査 useEffect
   // setAllShifts が React に commit された直後に fire → engine result と render state を比較
   // 「内部正しい ≠ 画面正しい」を検出する最終防衛ライン
@@ -20227,6 +20239,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Console-UI] ここまで ══
 
+        // ── [Phase S-1: Lazy Temporal Engine Builder] ─────────────────────────
+        // Captures result/cs/depts/cd/year/month at generate time.
+        // Runs immediately if console tab is open; otherwise deferred to tab open.
+        const _buildTemporalEngines = () => {
         // ── [Temporal Shared Snapshot / _snap_] ──────────────────────────────
         // Read-only shared pre-computation for the Temporal engine chain.
         // All _xx_ engines MAY reference _snap_* to eliminate redundant rebuilds.
@@ -20268,6 +20284,46 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const _snap_supportReqs = _snap_allArr.filter(e => e.supportReq && e.nightOk);
         const _snap_nearBurnout = _snap_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate > 0.85);
         const _snap_nightStaff  = _snap_allArr.filter(e => e.nightOk);
+        // ── Phase S-2: Extended snapshot fields ──────────────────────────────
+        const _snap_supportGraph = {};
+        const _snap_ladderMap    = {};
+        const _snap_veteranCoverageMap = {};
+        const _snap_floorDependencyMap = {};
+        const _snap_seqMatrix    = {};
+        for (const d of depts) {
+          const dArr = _snap_deptData[d.id].arr;
+          const dVets  = dArr.filter(e => e.isVeteran && e.nightOk);
+          const dReqs  = dArr.filter(e => e.supportReq && e.nightOk);
+          const dLadd  = dArr.filter(e => e.inLadder);
+          _snap_supportGraph[d.id] = {
+            veterans: dVets.length, supportReqs: dReqs.length,
+            ratio   : dReqs.length > 0 ? dVets.length / dReqs.length : Infinity,
+          };
+          const lm = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0 };
+          dArr.filter(e => e.nightOk).forEach(e => { lm[String(e.ladder)] = (lm[String(e.ladder)]||0) + 1; });
+          _snap_ladderMap[d.id] = lm;
+          _snap_veteranCoverageMap[d.id] = {
+            vetCount: dVets.length, suppReqCount: dReqs.length,
+            covered : dReqs.length === 0 || dVets.length >= dReqs.length,
+            surplus : Math.max(0, dVets.length - dReqs.length * 2),
+          };
+          _snap_floorDependencyMap[d.id] = {
+            selfSufficient: dVets.length > 0,
+            dependent     : dVets.length === 0 && dArr.some(e => e.nightOk),
+          };
+          _snap_seqMatrix[d.id] = {
+            ladderCount: dLadd.length,
+            overloaded : dLadd.filter(e => e.utilRate > 0.6).length,
+            vetPresent : dVets.length > 0,
+          };
+        }
+        const _snap_burnoutTrajectory = {
+          burned  : _snap_burnouts.length,
+          atRisk  : _snap_nearBurnout.length,
+          stable  : _snap_nightStaff.filter(e => !e.isBurnout && e.utilRate <= 0.85).length,
+          cascade : _snap_burnouts.length > 0 && _snap_nearBurnout.length >= 2,
+        };
+        Object.freeze(_snap_deptData); // Phase S-2: shallow mutation guard
         // ── [Temporal Shared Snapshot] ここまで ──────────────────────────────
 
         // ══ [Cross-Floor Night Safety Engine / _cf_] ここから ══
@@ -25084,6 +25140,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Temporal Performance Audit / _pa_] ここまで ══
+        }; // end _buildTemporalEngines
+        // ── Phase S-1: dispatch ──────────────────────────────────────────────
+        if (innerTabRef.current === 'console') {
+          // Console visible at generate time — run immediately
+          _buildTemporalEngines();
+          pendingTemporalRef.current = null;
+        } else {
+          // Console hidden — defer until tab open (useEffect fires _buildTemporalEngines)
+          pendingTemporalRef.current = _buildTemporalEngines;
+        }
+        // ────────────────────────────────────────────────────────────────────
 
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
