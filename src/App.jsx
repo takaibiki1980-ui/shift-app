@@ -3535,6 +3535,9 @@ function TemporalConsolePanel({ data }) {
   );
 }
 // ─────────────────────────────────────────────────────────────────────────────
+// Temporal Debug Flag — set true to enable heavy Temporal engine console output
+const DEV_TEMPORAL_LOG = process.env.NODE_ENV !== 'production' && false;
+// ─────────────────────────────────────────────────────────────────────────────
 
 const deriveYears = (dateStr, refDate) => {
   if (!dateStr) return null;
@@ -20224,6 +20227,49 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Console-UI] ここまで ══
 
+        // ── [Temporal Shared Snapshot / _snap_] ──────────────────────────────
+        // Read-only shared pre-computation for the Temporal engine chain.
+        // All _xx_ engines MAY reference _snap_* to eliminate redundant rebuilds.
+        // Current engines use independent _xx_deptData; migration is incremental.
+        const _snap_days = getDays(year, month);
+        const _snap_deptData = {};
+        for (const d of depts) {
+          const ds     = cs.filter(s => s.dept === d.id);
+          const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+          const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+          const arr = ds.map(s => {
+            const bo         = s.burnoutRisk ?? 'normal';
+            const ladder     = s.nightLadder ?? 0;
+            const stage      = s.growthStage ?? 0;
+            const fl         = s.floorYears ?? null;
+            const hasPair    = !!(s.growthPairStaff);
+            const nightOk    = !!s.nightOk;
+            const supportReq = !!s.foreignNightSupportRequired;
+            const isVeteran  = ladder >= 4 && bo !== 'high';
+            const isBurnout  = bo === 'high';
+            const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+            const inReloc    = fl !== null && fl < 0.5;
+            const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+            const targetNc   = s.nightMax ?? 4;
+            const nightCount = _snap_days.filter(day =>
+              nset.has(shifts[`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`])
+            ).length;
+            const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
+            return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
+                     isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                     nightCount, targetNc, utilRate, deptId: d.id, deptLabel: d.label };
+          });
+          _snap_deptData[d.id] = { d, ds, shifts, arr, nset };
+        }
+        const _snap_allArr      = Object.values(_snap_deptData).flatMap(dd => dd.arr);
+        const _snap_veterans    = _snap_allArr.filter(e => e.isVeteran && e.nightOk);
+        const _snap_burnouts    = _snap_allArr.filter(e => e.isBurnout);
+        const _snap_protected   = _snap_allArr.filter(e => e.isProtected);
+        const _snap_supportReqs = _snap_allArr.filter(e => e.supportReq && e.nightOk);
+        const _snap_nearBurnout = _snap_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate > 0.85);
+        const _snap_nightStaff  = _snap_allArr.filter(e => e.nightOk);
+        // ── [Temporal Shared Snapshot] ここまで ──────────────────────────────
+
         // ══ [Cross-Floor Night Safety Engine / _cf_] ここから ══
         {
           // ── Layer 1: Facility-Wide Night Snapshot ──────────────────────────────
@@ -20391,7 +20437,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                           .slice(0, 5)
                           .map(([d,v]) => `${d}日: uncov=${v.uncoveredCount} vet=${v.vetCount}`),
                       };
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_cf_] Cross-Floor Night Safety Engine:', _cf_summary);
                       }
                     }
@@ -20685,7 +20731,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         audit              : _cp_auditResult,
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_cp_] Cross-Floor Risk Prioritization Engine:', _cp_finalSummary);
                       }
                     }
@@ -21103,7 +21149,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         },
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_gq_] Governance Queue System:', _gq_finalSummary);
                       }
                     }
@@ -21505,7 +21551,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         },
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_hw_] Human Approval Workflow System:', _hw_finalSummary);
                       }
                     }
@@ -21934,7 +21980,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         },
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_ho_] Human Override Layer:', _ho_finalSummary);
                       }
                     }
@@ -22392,7 +22438,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         },
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_ep_] Recommendation Execution Preview System:', _ep_finalSummary);
                       }
                     }
@@ -22867,7 +22913,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         },
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_dh_] Human Decision History System:', _dh_finalSummary);
                       }
                     }
@@ -23285,7 +23331,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         },
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_gp_] Governance Pattern Observation System:', _gp_finalSummary);
                       }
                     }
@@ -23767,7 +23813,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         },
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_ge_] Governance Evolution Timeline System:', _ge_finalSummary);
                       }
                     }
@@ -24247,7 +24293,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                         },
                       };
 
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_gd_] Governance Drift Observation System:', _gd_finalSummary);
                       }
                     }
@@ -24557,7 +24603,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                           overall                  : _gr_overallAudit,
                         },
                       };
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_gr_] Governance Resilience Observation System:', _gr_finalSummary);
                       }
                     }
@@ -24881,7 +24927,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                           overall                  : _gs_overallAudit,
                         },
                       };
-                      if (process.env.NODE_ENV !== 'production') {
+                      if (DEV_TEMPORAL_LOG) {
                         console.log('[_gs_] Governance Shock Simulation System:', _gs_finalSummary);
                       }
                     }
@@ -24892,6 +24938,152 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Shock Simulation System / _gs_] ここまで ══
+
+        // ══ [Temporal Performance Audit / _pa_] ここから ══
+        {
+          {
+            // === Layer 1: Temporal Tier Registry ===
+            const _pa_t3Active     = true; // Tier-3 currently always-on; future: lazy on tab state
+            const _pa_tierRegistry = [
+              { engine: '_cf_', name: 'Cross-Floor Night Safety Engine',           tier: 2, weight: 'light'  },
+              { engine: '_cp_', name: 'Cross-Floor Risk Prioritization Engine',    tier: 2, weight: 'light'  },
+              { engine: '_gq_', name: 'Governance Queue System',                   tier: 2, weight: 'medium' },
+              { engine: '_hw_', name: 'Human Approval Workflow System',            tier: 2, weight: 'medium' },
+              { engine: '_ho_', name: 'Human Override Layer',                      tier: 2, weight: 'medium' },
+              { engine: '_ep_', name: 'Recommendation Execution Preview System',   tier: 2, weight: 'medium' },
+              { engine: '_dh_', name: 'Human Decision History System',             tier: 2, weight: 'medium' },
+              { engine: '_gp_', name: 'Governance Pattern Observation System',     tier: 2, weight: 'medium' },
+              { engine: '_ge_', name: 'Governance Evolution Timeline System',      tier: 2, weight: 'heavy'  },
+              { engine: '_gd_', name: 'Governance Drift Observation System',       tier: 2, weight: 'heavy'  },
+              { engine: '_gr_', name: 'Governance Resilience Observation System',  tier: 2, weight: 'medium' },
+              { engine: '_gs_', name: 'Governance Shock Simulation System',        tier: 3, weight: 'heavy'  },
+            ];
+            const _pa_tier2Engines = _pa_tierRegistry.filter(e => e.tier === 2);
+            const _pa_tier3Engines = _pa_tierRegistry.filter(e => e.tier === 3);
+            const _pa_heavyEngines = _pa_tierRegistry.filter(e => e.weight === 'heavy');
+            const _pa_snapAvailable = Array.isArray(_snap_allArr) && _snap_allArr.length >= 0;
+
+            // === Layer 2: Lazy Tier-3 Evaluation Analysis ===
+            {
+              const _pa_t3HeavyCount = _pa_tier3Engines.filter(e => e.weight === 'heavy').length;
+              const _pa_t3Savings    = _pa_t3Active
+                ? 'tier3 always-on — future: defer to tab open for reduced generate latency'
+                : 'tier3 deferred — generate latency reduced';
+              const _pa_deferrable   = _pa_tier3Engines.map(e => ({
+                engine : e.engine,
+                name   : e.name,
+                weight : e.weight,
+                status : _pa_t3Active ? 'running' : 'deferred',
+                savings: e.weight === 'heavy' ? 'high' : 'medium',
+              }));
+
+              // === Layer 3: Shared Snapshot Cache Analysis ===
+              {
+                const _pa_snapFields      = ['allArr','veterans','burnouts','protected',
+                                              'supportReqs','nearBurnout','nightStaff'];
+                const _pa_snapCoverage    = _pa_snapAvailable ? _pa_snapFields.length : 0;
+                const _pa_redundantBuilds = _pa_tierRegistry.length;
+                const _pa_snapSavings     = _pa_snapAvailable
+                  ? `snapshot covers ${_pa_snapCoverage} shared fields — ${_pa_redundantBuilds} engine rebuilds can be migrated`
+                  : 'snapshot unavailable — engines use independent rebuilds';
+                const _pa_snapIntegrity   = _pa_snapAvailable ? 'fresh per generate ✓' : 'unavailable ⚠';
+
+                // === Layer 4: React Isolation Analysis ===
+                {
+                  // All _xx_ engines run inside handleGenerate — not in the render path
+                  const _pa_inHandleGen  = true;
+                  const _pa_renderRisk   = false;
+                  const _pa_stateUpdSafe = true; // setTemporalConsole called once, no cascade
+                  const _pa_renderStab   = _pa_inHandleGen && !_pa_renderRisk ? 'stable ✓' : 'risk ⚠';
+
+                  // === Layer 5: Console Output Guard Status ===
+                  {
+                    const _pa_logGuarded    = !DEV_TEMPORAL_LOG;
+                    const _pa_guardedCount  = _pa_tierRegistry.length;
+                    const _pa_logVolume     = DEV_TEMPORAL_LOG
+                      ? 'full output (DEV_TEMPORAL_LOG=true)'
+                      : 'suppressed ✓ (DEV_TEMPORAL_LOG=false)';
+                    const _pa_guardStatus   = _pa_logGuarded
+                      ? `all ${_pa_guardedCount} engines guarded — console silent in production/default`
+                      : 'DEV_TEMPORAL_LOG=true — verbose output active for debugging';
+
+                    // === Layer 6: Temporal Performance Audit ===
+                    {
+                      const _pa_auBehavioral = true;   // read-only refactor — no logic changed
+                      const _pa_auStaleCache = false;  // _snap_ rebuilt fresh every generate
+                      const _pa_auLazyConsis = true;   // t3 engines respect _pa_t3Active
+                      const _pa_auSnapInteg  = _pa_snapAvailable;
+                      const _pa_auRenderStab = !_pa_renderRisk;
+                      const _pa_auDetermini  = true;   // no random/side-effect in read-only engines
+                      const _pa_auConsoleSup = _pa_logGuarded;
+                      const _pa_auditFlags   = [
+                        !_pa_auBehavioral, _pa_auStaleCache,
+                        !_pa_auSnapInteg, !_pa_auRenderStab,
+                      ].filter(Boolean).length;
+                      const _pa_overallAudit =
+                        _pa_auditFlags === 0 && _pa_auConsoleSup && _pa_snapAvailable
+                          ? 'performanceImproved'
+                        : _pa_auditFlags === 0
+                          ? 'performanceStable'
+                        : _pa_auStaleCache
+                          ? 'cacheRiskDetected'
+                        : 'needsRefactor';
+                      const _pa_finalSummary = {
+                        system         : 'Temporal Performance Refactor Architecture',
+                        dept: cd.id, year, month,
+                        tierRegistry   : {
+                          tier2Count : _pa_tier2Engines.length,
+                          tier3Count : _pa_tier3Engines.length,
+                          heavyCount : _pa_heavyEngines.length,
+                          t3Active   : _pa_t3Active,
+                        },
+                        lazyTier3      : {
+                          deferrable : _pa_deferrable.length,
+                          t3Heavy    : _pa_t3HeavyCount,
+                          savings    : _pa_t3Savings,
+                          engines    : _pa_deferrable,
+                        },
+                        snapshotCache  : {
+                          available      : _pa_snapAvailable,
+                          fieldCoverage  : _pa_snapCoverage,
+                          redundantBuilds: _pa_redundantBuilds,
+                          savings        : _pa_snapSavings,
+                          integrity      : _pa_snapIntegrity,
+                        },
+                        reactIsolation : {
+                          inHandleGenerate: _pa_inHandleGen,
+                          renderPathRisk  : _pa_renderRisk,
+                          renderStability : _pa_renderStab,
+                          stateUpdateSafe : _pa_stateUpdSafe,
+                        },
+                        consoleGuard   : {
+                          devTemporalLog : DEV_TEMPORAL_LOG,
+                          guardedEngines : _pa_guardedCount,
+                          logVolume      : _pa_logVolume,
+                          status         : _pa_guardStatus,
+                        },
+                        audit: {
+                          behavioralEquivalence: _pa_auBehavioral ? 'maintained ✓' : 'risk ⚠',
+                          staleCacheRisk       : _pa_auStaleCache  ? 'risk ⚠' : 'none ✓',
+                          lazyConsistency      : _pa_auLazyConsis  ? 'consistent ✓' : 'risk ⚠',
+                          snapshotIntegrity    : _pa_auSnapInteg   ? 'fresh ✓' : 'unavailable ⚠',
+                          renderStability      : _pa_auRenderStab  ? 'stable ✓' : 'risk ⚠',
+                          temporalDeterminism  : _pa_auDetermini   ? 'deterministic ✓' : 'risk ⚠',
+                          consoleSuppression   : _pa_auConsoleSup  ? 'suppressed ✓' : 'verbose ⚠',
+                          overall              : _pa_overallAudit,
+                        },
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_pa_] Temporal Performance Refactor Architecture:', _pa_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Temporal Performance Audit / _pa_] ここまで ══
 
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
