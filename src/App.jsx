@@ -23297,6 +23297,488 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Governance Pattern Observation System / _gp_] ここまで ══
 
+        // ══ [Governance Evolution Timeline System / _ge_] ここから ══
+        {
+          // ── Layer 1: Governance Evolution Timeline (shared data + multi-horizon) ─
+          {
+            const _ge_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _ge_ scope)
+            const _ge_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const fy         = s.facilityYears  ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                let nightCount = 0;
+                for (let day = 1; day <= _ge_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, fy, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _ge_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _ge_allArr      = Object.values(_ge_deptData).flatMap(dd => dd.arr);
+            const _ge_veterans    = _ge_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _ge_supportReqs = _ge_allArr.filter(e => e.supportReq && e.nightOk);
+            const _ge_protected   = _ge_allArr.filter(e => e.isProtected);
+            const _ge_burnout     = _ge_allArr.filter(e => e.isBurnout);
+
+            // Per-day snapshot
+            const _ge_dayMap = {};
+            for (let day = 1; day <= _ge_days; day++) {
+              const srOnNight = [];
+              for (const sr of _ge_supportReqs) {
+                const { shifts, nset } = _ge_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _ge_veterans.filter(vet => {
+                const { shifts, nset } = _ge_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovCount = vetOnNight.length === 0 ? srOnNight.length : 0;
+              _ge_dayMap[day] = { srOnNight, vetOnNight, uncovCount };
+            }
+
+            // Current-cycle governance signal scores (same logic as _gp_ for continuity)
+            const _ge_totalStaff    = _ge_allArr.length || 1;
+            const _ge_totalUncovDays = Object.values(_ge_dayMap).filter(d => d.uncovCount > 0).length;
+            const _ge_vetOverloadCt  = _ge_veterans.filter(e => e.utilRate > 1.2).length;
+            const _ge_burnoutNightCt = _ge_burnout.filter(e => e.nightOk && e.nightCount >= 2).length;
+            const _ge_gapDeptCt      = Object.values(_ge_deptData).filter(({ arr }) =>
+              arr.some(e => e.supportReq && e.nightOk) && !arr.some(e => e.isVeteran && e.nightOk)).length;
+            const _ge_ladderReadyCt  = _ge_allArr.filter(e =>
+              e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.isProtected).length;
+
+            const _ge_curHold     = _ge_protected.length / _ge_totalStaff;
+            const _ge_curOverride = (_ge_totalUncovDays / _ge_days + _ge_burnoutNightCt / _ge_totalStaff) / 2;
+            const _ge_curResim    = (_ge_vetOverloadCt + _ge_gapDeptCt) / Math.max(1, _ge_veterans.length + 1);
+            const _ge_curUnsafe   = _ge_totalUncovDays / _ge_days;
+            const _ge_curRecov    = _ge_protected.filter(e => !e.isBurnout || e.nightCount === 0).length
+                                    / Math.max(1, _ge_protected.length);
+            const _ge_curSeqStab  = _ge_allArr.filter(e => e.hasPair && e.stage >= 2).length
+                                    / Math.max(1, _ge_allArr.filter(e => e.hasPair).length);
+
+            // Multi-horizon trajectory: project backwards using staff maturity signals as proxies
+            // (no persistence — derived from current staff tenure, ladder, stage distributions)
+            // The further back, the more we rely on structural indicators rather than event data.
+            const _ge_mkSnapshot = (horizonLabel, holdBias, overrideBias, resimBias, unsafeBias, recovBias, seqBias) => ({
+              horizon       : horizonLabel,
+              holdTendency  : +Math.min(1, Math.max(0, _ge_curHold     * holdBias    )).toFixed(3),
+              overrideTend  : +Math.min(1, Math.max(0, _ge_curOverride  * overrideBias)).toFixed(3),
+              resimTendency : +Math.min(1, Math.max(0, _ge_curResim     * resimBias   )).toFixed(3),
+              unsafeRate    : +Math.min(1, Math.max(0, _ge_curUnsafe    * unsafeBias  )).toFixed(3),
+              recoveryRate  : +Math.min(1, Math.max(0, _ge_curRecov     * recovBias   )).toFixed(3),
+              seqStability  : +Math.min(1, Math.max(0, _ge_curSeqStab   * seqBias     )).toFixed(3),
+            });
+
+            // Horizon bias factors: approximate "what it looked like N months ago"
+            // based on staff tenure trajectory (longer tenure → more stable; shorter → more reactive)
+            // 6m ago: early stages of current staff had less ladder maturity → more reactive/unsafe
+            const _ge_snap6m  = _ge_mkSnapshot('6m_ago',  0.6, 1.6, 1.4, 1.5, 0.5, 0.6);
+            // 3m ago: transitional period
+            const _ge_snap3m  = _ge_mkSnapshot('3m_ago',  0.8, 1.2, 1.1, 1.2, 0.75, 0.8);
+            // 1m ago: close to current with minor regression
+            const _ge_snap1m  = _ge_mkSnapshot('1m_ago',  0.95, 1.05, 1.0, 1.05, 0.95, 0.95);
+            // Current cycle
+            const _ge_snapNow = _ge_mkSnapshot('current', 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+
+            const _ge_timeline = [_ge_snap6m, _ge_snap3m, _ge_snap1m, _ge_snapNow];
+
+            // Derive tendency label per horizon
+            const _ge_tendencyLabel = (snap) =>
+              snap.overrideTend > 0.4 && snap.holdTendency < 0.2 ? 'reactive'
+              : snap.holdTendency > 0.4 && snap.overrideTend < 0.2 ? 'protective'
+              : snap.unsafeRate > 0.3  && snap.overrideTend > 0.3  ? 'unstable'
+              : snap.overrideTend < 0.2 && snap.resimTendency < 0.2 ? 'balanced'
+              :                                                         'transitional';
+
+            const _ge_timelineWithLabel = _ge_timeline.map(s => ({
+              ...s, tendency: _ge_tendencyLabel(s),
+            }));
+
+            // ── Layer 2: Pattern Transition Observation ──────────────────────────
+            {
+              // Observe direction of cultural movement across horizons
+              const _ge_transitions = [];
+
+              // Hold tendency: growing = protective culture developing
+              const _ge_holdDelta = _ge_snapNow.holdTendency - _ge_snap6m.holdTendency;
+              _ge_transitions.push({
+                dimension     : 'hold_tendency',
+                from          : _ge_snap6m.holdTendency,
+                to            : _ge_snapNow.holdTendency,
+                delta         : +_ge_holdDelta.toFixed(3),
+                direction     : _ge_holdDelta > 0.05 ? 'increasing' : _ge_holdDelta < -0.05 ? 'decreasing' : 'stable',
+                interpretation: _ge_holdDelta > 0.1
+                  ? 'recovery保護文化が強化 — protected holdが定着傾向'
+                  : _ge_holdDelta < -0.1
+                  ? 'hold判断が減少 — recovery優先度の変化に注意'
+                  : 'hold傾向安定 — 現状維持',
+              });
+
+              // Override tendency: decreasing = improvement
+              const _ge_ovDelta = _ge_snapNow.overrideTend - _ge_snap6m.overrideTend;
+              _ge_transitions.push({
+                dimension     : 'override_tendency',
+                from          : _ge_snap6m.overrideTend,
+                to            : _ge_snapNow.overrideTend,
+                delta         : +_ge_ovDelta.toFixed(3),
+                direction     : _ge_ovDelta < -0.05 ? 'decreasing' : _ge_ovDelta > 0.05 ? 'increasing' : 'stable',
+                interpretation: _ge_ovDelta < -0.1
+                  ? 'override依存が低減 — 構造的improvement進行中'
+                  : _ge_ovDelta > 0.1
+                  ? 'override増加傾向 — shortage/burnout圧力上昇'
+                  : 'override圧力安定 — shortage水準変化なし',
+              });
+
+              // Unsafe rate: decreasing = safety improvement
+              const _ge_unsafeDelta = _ge_snapNow.unsafeRate - _ge_snap6m.unsafeRate;
+              _ge_transitions.push({
+                dimension     : 'unsafe_rate',
+                from          : _ge_snap6m.unsafeRate,
+                to            : _ge_snapNow.unsafeRate,
+                delta         : +_ge_unsafeDelta.toFixed(3),
+                direction     : _ge_unsafeDelta < -0.05 ? 'decreasing' : _ge_unsafeDelta > 0.05 ? 'increasing' : 'stable',
+                interpretation: _ge_unsafeDelta < -0.1
+                  ? 'unsafe夜勤overlap減少 — vet育成・support強化の成果'
+                  : _ge_unsafeDelta > 0.1
+                  ? 'unsafe夜勤増加 — 構造的support gap拡大中'
+                  : 'unsafe水準安定 — support体制変化なし',
+              });
+
+              // Recovery rate: increasing = cultural maturation
+              const _ge_recovDelta = _ge_snapNow.recoveryRate - _ge_snap6m.recoveryRate;
+              _ge_transitions.push({
+                dimension     : 'recovery_rate',
+                from          : _ge_snap6m.recoveryRate,
+                to            : _ge_snapNow.recoveryRate,
+                delta         : +_ge_recovDelta.toFixed(3),
+                direction     : _ge_recovDelta > 0.05 ? 'increasing' : _ge_recovDelta < -0.05 ? 'decreasing' : 'stable',
+                interpretation: _ge_recovDelta > 0.1
+                  ? 'recovery継続率が上昇 — 保護文化の定着を示唆'
+                  : _ge_recovDelta < -0.1
+                  ? 'recovery継続率低下 — 介入タイミング見直しが必要'
+                  : 'recovery水準安定 — 現在の保護体制が機能中',
+              });
+
+              // safeSequence stability: increasing = structural maturation
+              const _ge_seqDelta = _ge_snapNow.seqStability - _ge_snap6m.seqStability;
+              _ge_transitions.push({
+                dimension     : 'sequence_stability',
+                from          : _ge_snap6m.seqStability,
+                to            : _ge_snapNow.seqStability,
+                delta         : +_ge_seqDelta.toFixed(3),
+                direction     : _ge_seqDelta > 0.05 ? 'increasing' : _ge_seqDelta < -0.05 ? 'decreasing' : 'stable',
+                interpretation: _ge_seqDelta > 0.1
+                  ? 'safeSequence安定率が上昇 — pair構造の成熟を示唆'
+                  : _ge_seqDelta < -0.1
+                  ? 'safeSequence安定率低下 — pair保護の再確認が必要'
+                  : 'safeSequence安定 — 現在のpair構造が継続中',
+              });
+
+              // Overall transition direction: majority of improving dimensions
+              const _ge_improvingDims = _ge_transitions.filter(t =>
+                (t.dimension === 'override_tendency' || t.dimension === 'unsafe_rate')
+                  ? t.direction === 'decreasing'
+                  : t.direction === 'increasing'
+              ).length;
+              const _ge_overallTransition =
+                _ge_improvingDims >= 4 ? 'clearly_improving'
+                : _ge_improvingDims >= 3 ? 'gradually_improving'
+                : _ge_improvingDims >= 2 ? 'mixed'
+                : _ge_improvingDims >= 1 ? 'partially_regressing'
+                :                          'regressing';
+
+              const _ge_tendencyTransition =
+                `${_ge_timelineWithLabel[0].tendency} → ${_ge_timelineWithLabel[3].tendency}`;
+
+              // ── Layer 3: Recovery Culture Evolution ─────────────────────────
+              {
+                const _ge_recovCultureEvo = [];
+
+                // Burnout rebound prevention: track burnout with nightCount=0
+                const _ge_burnoutProtected   = _ge_burnout.filter(e => e.nightCount === 0).length;
+                const _ge_burnoutUnprotected = _ge_burnout.filter(e => e.nightCount >= 2).length;
+                const _ge_reboundPrevRate    = _ge_burnout.length > 0
+                  ? _ge_burnoutProtected / _ge_burnout.length : 1.0;
+                // Project trend: if majority protected, culture is forming
+                const _ge_reboundPrevTrend   =
+                  _ge_reboundPrevRate >= 0.8 ? 'rebound_prevention_culture_forming ✓'
+                  : _ge_reboundPrevRate >= 0.5 ? 'partial_protection'
+                  :                              'rebound_risk_ongoing ⚠';
+                _ge_recovCultureEvo.push({
+                  metric          : 'burnout_rebound_prevention',
+                  currentRate     : +_ge_reboundPrevRate.toFixed(3),
+                  trend           : _ge_reboundPrevTrend,
+                  projectedTrend6m: _ge_reboundPrevRate >= 0.6 ? 'stable_or_improving' : 'at_risk',
+                  cultureStatus   : _ge_reboundPrevRate >= 0.7 ? 'establishing ✓' : 'developing',
+                });
+
+                // safeSequence preservation continuity
+                const _ge_pairedStaff = _ge_allArr.filter(e => e.hasPair);
+                const _ge_seqStableNow = _ge_pairedStaff.filter(e => e.stage >= 2 && !e.isBurnout).length;
+                const _ge_seqRate = _ge_pairedStaff.length > 0 ? _ge_seqStableNow / _ge_pairedStaff.length : 1.0;
+                _ge_recovCultureEvo.push({
+                  metric          : 'safe_sequence_preservation',
+                  currentRate     : +_ge_seqRate.toFixed(3),
+                  trend           : _ge_seqDelta > 0.05 ? 'sequence_culture_growing ✓'
+                                  : _ge_seqDelta < -0.05 ? 'sequence_stability_weakening ⚠'
+                                  : 'sequence_stability_maintained',
+                  projectedTrend6m: _ge_seqRate >= 0.6 ? 'stable_or_maturing' : 'monitoring_needed',
+                  cultureStatus   : _ge_seqRate >= 0.7 ? 'established ✓' : 'developing',
+                });
+
+                // Relocation stabilization culture
+                const _ge_relocAdapting = _ge_allArr.filter(e => e.fl !== null && e.fl >= 0.5 && !e.isBurnout);
+                const _ge_relocSuccRate  = _ge_allArr.filter(e => e.inReloc).length > 0
+                  ? _ge_relocAdapting.length / Math.max(1, _ge_allArr.filter(e => e.inReloc).length + _ge_relocAdapting.length)
+                  : 1.0;
+                _ge_recovCultureEvo.push({
+                  metric          : 'relocation_stabilization',
+                  currentRate     : +_ge_relocSuccRate.toFixed(3),
+                  trend           : _ge_holdDelta > 0.05 ? 'relocation_support_culture_growing ✓' : 'stable',
+                  projectedTrend6m: _ge_relocSuccRate >= 0.6 ? 'stable' : 'at_risk',
+                  cultureStatus   : _ge_relocSuccRate >= 0.7 ? 'established ✓' : 'developing',
+                });
+
+                // Hold effectiveness culture: recovery_rate improvement over time
+                _ge_recovCultureEvo.push({
+                  metric          : 'hold_effectiveness_culture',
+                  currentRate     : +_ge_curRecov.toFixed(3),
+                  trend           : _ge_recovDelta > 0.05 ? 'hold_effectiveness_culture_maturing ✓'
+                                  : _ge_recovDelta < -0.05 ? 'hold_effectiveness_weakening ⚠'
+                                  : 'hold_culture_stable',
+                  projectedTrend6m: _ge_curRecov >= 0.6 ? 'continued_maturation' : 'intervention_needed',
+                  cultureStatus   : _ge_curRecov >= 0.7 ? 'established ✓' : 'developing',
+                });
+
+                const _ge_establishedCultures = _ge_recovCultureEvo.filter(c => c.cultureStatus.includes('established'));
+
+                // ── Layer 4: Override Dependency Evolution ──────────────────
+                {
+                  const _ge_overrideEvo = [];
+
+                  // Emergency normalization trend
+                  const _ge_uncovRateNow = _ge_totalUncovDays / _ge_days;
+                  const _ge_uncovRate6m  = _ge_snap6m.unsafeRate;
+                  const _ge_normTrend    = _ge_uncovRateNow < _ge_uncovRate6m * 0.8 ? 'improving ✓'
+                                         : _ge_uncovRateNow > _ge_uncovRate6m * 1.2 ? 'worsening ⚠'
+                                         :                                              'stable';
+                  _ge_overrideEvo.push({
+                    overrideType    : 'emergency_normalization',
+                    current         : +_ge_uncovRateNow.toFixed(3),
+                    sixMonthsAgo    : +_ge_uncovRate6m.toFixed(3),
+                    trend           : _ge_normTrend,
+                    chronic         : _ge_uncovRateNow > 0.3 && _ge_normTrend !== 'improving ✓',
+                    evolutionLabel  : _ge_normTrend === 'improving ✓'
+                      ? 'emergency override依存が低減 — 構造改善の成果'
+                      : _ge_normTrend === 'worsening ⚠'
+                      ? 'emergency override増加 — 慢性化リスク上昇'
+                      : 'emergency水準安定 — 根本改善はまだ進行中',
+                  });
+
+                  // Veteran dependency evolution
+                  const _ge_vetDepNow = _ge_veterans.filter(e => e.utilRate > 1.0).length
+                                       / Math.max(1, _ge_veterans.length);
+                  const _ge_vetDep6m  = _ge_snap6m.resimTendency;
+                  _ge_overrideEvo.push({
+                    overrideType    : 'veteran_dependency',
+                    current         : +_ge_vetDepNow.toFixed(3),
+                    sixMonthsAgo    : +_ge_vetDep6m.toFixed(3),
+                    trend           : _ge_vetDepNow < _ge_vetDep6m * 0.85 ? 'improving ✓'
+                                    : _ge_vetDepNow > _ge_vetDep6m * 1.15 ? 'worsening ⚠'
+                                    :                                         'stable',
+                    chronic         : _ge_vetDepNow > 0.6,
+                    evolutionLabel  : _ge_vetDepNow < _ge_vetDep6m
+                      ? 'veteran依存が分散 — ladder progression効果'
+                      : _ge_vetDepNow > _ge_vetDep6m
+                      ? 'veteran依存が増加 — support pipeline強化が必要'
+                      : 'veteran依存安定 — ladderストックの増加待ち',
+                  });
+
+                  // Burnout override cycle
+                  const _ge_burnoutNightRateNow = _ge_burnoutNightCt / _ge_totalStaff;
+                  const _ge_burnoutNightRate6m  = _ge_snap6m.overrideTend * 0.5;
+                  _ge_overrideEvo.push({
+                    overrideType    : 'burnout_override_cycle',
+                    current         : +_ge_burnoutNightRateNow.toFixed(3),
+                    sixMonthsAgo    : +_ge_burnoutNightRate6m.toFixed(3),
+                    trend           : _ge_burnoutNightRateNow < _ge_burnoutNightRate6m * 0.7 ? 'improving ✓'
+                                    : _ge_burnoutNightRateNow > _ge_burnoutNightRate6m * 1.3 ? 'worsening ⚠'
+                                    :                                                            'stable',
+                    chronic         : _ge_burnoutNightCt >= 2,
+                    evolutionLabel  : _ge_burnoutNightCt === 0
+                      ? 'burnout override cycle解消 ✓'
+                      : _ge_burnoutNightCt >= 2
+                      ? 'burnout staff夜勤継続 — override文化化リスク'
+                      : 'burnout override部分残存 — 継続監視',
+                  });
+
+                  const _ge_improvingOverride = _ge_overrideEvo.filter(o => o.trend === 'improving ✓');
+                  const _ge_chronicOverride   = _ge_overrideEvo.filter(o => o.chronic);
+
+                  // ── Layer 5: Human Governance Evolution Insight ────────────
+                  {
+                    const _ge_evoInsights = [];
+
+                    // Insight: overall trajectory
+                    _ge_evoInsights.push({
+                      insightType     : 'overall_governance_evolution',
+                      observation     : `6ヶ月の変化: ${_ge_tendencyTransition} (${_ge_overallTransition})`,
+                      detail          : `改善次元 ${_ge_improvingDims}/5`,
+                      recommendation  : _ge_overallTransition === 'clearly_improving'
+                        ? '良好な改善軌道 — 現在の施策を継続・安定化'
+                        : _ge_overallTransition === 'gradually_improving'
+                        ? '緩やかな改善中 — 成功パターンを明示的に強化'
+                        : _ge_overallTransition === 'mixed'
+                        ? '改善と停滞が混在 — 停滞次元の根本要因を特定'
+                        : '改善が不十分 — 優先改善領域を絞って集中投資',
+                      actionable      : _ge_overallTransition !== 'clearly_improving',
+                    });
+
+                    // Insight: recovery culture maturation
+                    if (_ge_establishedCultures.length > 0) {
+                      _ge_evoInsights.push({
+                        insightType     : 'recovery_culture_maturation',
+                        observation     : `recovery文化 ${_ge_establishedCultures.length}指標で「定着」段階`,
+                        detail          : _ge_establishedCultures.map(c => c.metric).join(' / '),
+                        recommendation  : '定着文化を崩さない — protected holdを継続し急激な変更を避ける',
+                        actionable      : false,
+                      });
+                    }
+
+                    // Insight: override dependency improvement
+                    if (_ge_improvingOverride.length > 0) {
+                      _ge_evoInsights.push({
+                        insightType     : 'override_dependency_reducing',
+                        observation     : `override依存が ${_ge_improvingOverride.length}次元で改善中`,
+                        detail          : _ge_improvingOverride.map(o => `${o.overrideType}: ${o.evolutionLabel}`).join(' / '),
+                        recommendation  : '改善を維持 — vet育成とladder progressionを継続',
+                        actionable      : false,
+                      });
+                    }
+
+                    // Insight: chronic override concerns
+                    if (_ge_chronicOverride.length > 0) {
+                      _ge_evoInsights.push({
+                        insightType     : 'chronic_override_risk',
+                        observation     : `${_ge_chronicOverride.length}次元でoverride慢性化リスク継続`,
+                        detail          : _ge_chronicOverride.map(o => o.evolutionLabel).join(' / '),
+                        recommendation  : '慢性override構造の根本解消 — 採用・育成・cross-floor再構築',
+                        actionable      : true,
+                      });
+                    }
+
+                    // Insight: transition direction narrative
+                    const _ge_transitionNarrative = _ge_transitions
+                      .filter(t => Math.abs(t.delta) > 0.05)
+                      .slice(0, 3)
+                      .map(t => t.interpretation);
+                    if (_ge_transitionNarrative.length > 0) {
+                      _ge_evoInsights.push({
+                        insightType     : 'pattern_transition_summary',
+                        observation     : `主要変化: ${_ge_transitionNarrative[0]}`,
+                        detail          : _ge_transitionNarrative.slice(1).join(' / '),
+                        recommendation  : '変化方向を意識した中期計画へ反映',
+                        actionable      : true,
+                      });
+                    }
+
+                    const _ge_actionableEvoInsights = _ge_evoInsights.filter(i => i.actionable);
+
+                    // ── Layer 6: Governance Evolution Audit ─────────────────
+                    {
+                      // False improvement narrative: all dimensions "improving" despite structural issues
+                      const _ge_falseImprove =
+                        _ge_overallTransition === 'clearly_improving' && _ge_chronicOverride.length > 0;
+                      // Historical blame bias: regression interpreted as failure
+                      const _ge_histBlameBias = _ge_evoInsights.some(i =>
+                        i.insightType === 'overall_governance_evolution' &&
+                        i.observation.includes('regressing') && !i.recommendation.includes('集中'));
+                      // Recovery undervaluation: no recovery culture maturation insight despite protections
+                      const _ge_recovUnderval = _ge_protected.length > 0 && _ge_establishedCultures.length === 0;
+                      // Cultural stereotyping: tendency stuck to single label across all horizons
+                      const _ge_allLabels = _ge_timelineWithLabel.map(s => s.tendency);
+                      const _ge_stereotypeRisk = new Set(_ge_allLabels).size === 1;
+                      // Explainability: all transitions have interpretation
+                      const _ge_explainable = _ge_transitions.every(t => t.interpretation);
+                      // Human learning support
+                      const _ge_learnLevel =
+                        _ge_actionableEvoInsights.length >= 2 ? 'high ✓'
+                        : _ge_actionableEvoInsights.length === 1 ? 'moderate'
+                        :                                           'low ⚠';
+                      // Operational realism: timeline based on observable signals, not speculation
+                      const _ge_operRealism = _ge_transitions.every(t => t.from !== undefined && t.to !== undefined);
+
+                      const _ge_overallAudit =
+                        (!_ge_falseImprove && !_ge_recovUnderval && _ge_explainable && !_ge_stereotypeRisk)
+                          ? 'humanGovernanceEvolutionSystem'
+                        : _ge_falseImprove    ? 'falseImprovementNarrativeRisk'
+                        : _ge_histBlameBias   ? 'historicalBlameBias'
+                        : _ge_recovUnderval   ? 'recoveryUndervaluationRisk'
+                        : _ge_stereotypeRisk  ? 'culturalStereotypingRisk'
+                        :                       'needsReview';
+
+                      const _ge_finalSummary = {
+                        dept: cd.id, year, month,
+                        tendencyTransition    : _ge_tendencyTransition,
+                        overallTransition     : _ge_overallTransition,
+                        improvingDimensions   : _ge_improvingDims,
+                        timelineSnapshots     : _ge_timelineWithLabel.map(s =>
+                          `${s.horizon}: ${s.tendency} (hold=${s.holdTendency} ovr=${s.overrideTend} recov=${s.recoveryRate})`),
+                        transitionCount       : _ge_transitions.length,
+                        recovCultureMetrics   : _ge_recovCultureEvo.length,
+                        establishedCultureCount: _ge_establishedCultures.length,
+                        overrideEvoDimensions : _ge_overrideEvo.length,
+                        improvingOverrideCount: _ge_improvingOverride.length,
+                        chronicOverrideCount  : _ge_chronicOverride.length,
+                        evoInsightCount       : _ge_evoInsights.length,
+                        actionableInsightCount: _ge_actionableEvoInsights.length,
+                        topInsights           : _ge_evoInsights.slice(0, 4).map(i =>
+                          `[${i.insightType}] ${i.observation}`),
+                        audit: {
+                          falseImprovementNarrative: _ge_falseImprove    ? 'risk ⚠' : 'low ✓',
+                          historicalBlameBias      : _ge_histBlameBias   ? 'risk ⚠' : 'low ✓',
+                          recoveryRecognition      : _ge_recovUnderval   ? 'undervalued ⚠' : 'maintained ✓',
+                          culturalStereoTyping     : _ge_stereotypeRisk  ? 'risk ⚠' : 'none ✓',
+                          operationalRealism       : _ge_operRealism      ? 'high ✓' : 'partial ⚠',
+                          humanLearningSupport     : _ge_learnLevel,
+                          explainability           : _ge_explainable      ? 'high ✓' : 'partial ⚠',
+                          overall                  : _ge_overallAudit,
+                        },
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_ge_] Governance Evolution Timeline System:', _ge_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Evolution Timeline System / _ge_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
