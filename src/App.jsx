@@ -23779,6 +23779,486 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Governance Evolution Timeline System / _ge_] ここまで ══
 
+        // ══ [Governance Drift Observation System / _gd_] ここから ══
+        {
+          // ── Layer 1: Governance Drift Registry (shared data + drift signals) ────
+          {
+            const _gd_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _gd_ scope)
+            const _gd_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const fy         = s.facilityYears  ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                let nightCount = 0;
+                for (let day = 1; day <= _gd_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, fy, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _gd_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gd_allArr      = Object.values(_gd_deptData).flatMap(dd => dd.arr);
+            const _gd_veterans    = _gd_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _gd_supportReqs = _gd_allArr.filter(e => e.supportReq && e.nightOk);
+            const _gd_protected   = _gd_allArr.filter(e => e.isProtected);
+            const _gd_burnout     = _gd_allArr.filter(e => e.isBurnout);
+
+            // Per-day snapshot
+            const _gd_dayMap = {};
+            for (let day = 1; day <= _gd_days; day++) {
+              const srOnNight = [];
+              for (const sr of _gd_supportReqs) {
+                const { shifts, nset } = _gd_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _gd_veterans.filter(vet => {
+                const { shifts, nset } = _gd_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovCount = vetOnNight.length === 0 ? srOnNight.length : 0;
+              _gd_dayMap[day] = { srOnNight, vetOnNight, uncovCount };
+            }
+
+            // Compute current-cycle drift signal indicators
+            const _gd_totalStaff     = _gd_allArr.length || 1;
+            const _gd_uncovDays      = Object.values(_gd_dayMap).filter(d => d.uncovCount > 0).length;
+            const _gd_vetOverloaded  = _gd_veterans.filter(e => e.utilRate > 1.1).length;
+            const _gd_burnoutOnNight = _gd_burnout.filter(e => e.nightOk && e.nightCount >= 2).length;
+            const _gd_gapDepts       = Object.values(_gd_deptData).filter(({ arr }) =>
+              arr.some(e => e.supportReq && e.nightOk) && !arr.some(e => e.isVeteran && e.nightOk)).length;
+            const _gd_ladderStalled  = _gd_allArr.filter(e =>
+              e.nightOk && e.ladder >= 2 && e.ladder <= 3 && e.stage <= 2 && e.progress < 0.2).length;
+            const _gd_longHold       = _gd_protected.filter(e =>
+              (e.fl !== null && e.fl > 1.0 && e.inReloc) ||    // reloc hold > 12m
+              (e.inLadder && e.progress < 0.1)                 // ladder hold, no progress
+            ).length;
+            const _gd_resimSuppressed = _gd_vetOverloaded > 0 && _gd_uncovDays > 5;
+            // Reactive pressure score: combination of shortage + burnout override
+            const _gd_reactivePressure = (_gd_uncovDays / _gd_days + _gd_burnoutOnNight / _gd_totalStaff) / 2;
+            // Override dependency score: gap depts + vet overload normalisation
+            const _gd_overrideDep = Math.min(1,
+              (_gd_gapDepts + _gd_vetOverloaded) / Math.max(1, _gd_veterans.length + 1));
+            // Stagnation score: long holds + ladder stalls
+            const _gd_stagnScore  = Math.min(1,
+              (_gd_longHold + _gd_ladderStalled) / Math.max(1, _gd_protected.length + 1));
+
+            // Registry: classify observed drifts
+            const _gd_registry = [];
+
+            const _gd_driftLevel = (score) =>
+              score >= 0.5 ? 'structural_drift'
+              : score >= 0.35 ? 'high_drift'
+              : score >= 0.2  ? 'moderate_drift'
+              : score >= 0.08 ? 'minor_drift'
+              :                  'stable';
+
+            // balanced → reactive drift
+            _gd_registry.push({
+              driftType   : 'balanced_to_reactive',
+              score       : +_gd_reactivePressure.toFixed(3),
+              level       : _gd_driftLevel(_gd_reactivePressure),
+              description : `reactive圧力 ${(_gd_reactivePressure*100).toFixed(0)}% — uncov${_gd_uncovDays}日+burnoutNight${_gd_burnoutOnNight}名`,
+              direction   : 'balanced → reactive',
+            });
+
+            // protective → stagnation drift
+            _gd_registry.push({
+              driftType   : 'protective_to_stagnation',
+              score       : +_gd_stagnScore.toFixed(3),
+              level       : _gd_driftLevel(_gd_stagnScore),
+              description : `停滞スコア ${(_gd_stagnScore*100).toFixed(0)}% — longHold${_gd_longHold}名+ladderStall${_gd_ladderStalled}名`,
+              direction   : 'protective → stagnation',
+            });
+
+            // resim → override drift: resim culture is being bypassed for direct override
+            const _gd_resimBypassScore = _gd_resimSuppressed
+              ? Math.min(1, (_gd_uncovDays / _gd_days) * (_gd_vetOverloaded / Math.max(1, _gd_veterans.length)))
+              : 0;
+            _gd_registry.push({
+              driftType   : 'resim_to_override',
+              score       : +_gd_resimBypassScore.toFixed(3),
+              level       : _gd_driftLevel(_gd_resimBypassScore),
+              description : _gd_resimSuppressed
+                ? `resim必要なのにuncov${_gd_uncovDays}日継続 — override直行リスク`
+                : 'resim→override bypass なし',
+              direction   : 'resim → override',
+            });
+
+            // stable → overload drift: veteran burden creeping up
+            const _gd_overloadDriftScore = _gd_veterans.length > 0
+              ? _gd_vetOverloaded / _gd_veterans.length : 0;
+            _gd_registry.push({
+              driftType   : 'stable_to_overload',
+              score       : +_gd_overloadDriftScore.toFixed(3),
+              level       : _gd_driftLevel(_gd_overloadDriftScore),
+              description : `vet ${_gd_veterans.length}名中 ${_gd_vetOverloaded}名がutilRate>110% — 過負荷drift`,
+              direction   : 'stable → overload',
+            });
+
+            // recovery → dependency drift
+            _gd_registry.push({
+              driftType   : 'recovery_to_dependency',
+              score       : +_gd_overrideDep.toFixed(3),
+              level       : _gd_driftLevel(_gd_overrideDep),
+              description : `override依存スコア ${(_gd_overrideDep*100).toFixed(0)}% — gapDept${_gd_gapDepts}F+vetOverload${_gd_vetOverloaded}名`,
+              direction   : 'recovery → dependency',
+            });
+
+            const _gd_structuralDrifts = _gd_registry.filter(r => r.level === 'structural_drift' || r.level === 'high_drift');
+            const _gd_moderateDrifts   = _gd_registry.filter(r => r.level === 'moderate_drift');
+            const _gd_stableDimensions = _gd_registry.filter(r => r.level === 'stable' || r.level === 'minor_drift');
+
+            // ── Layer 2: Reactive Drift Observation ─────────────────────────────
+            {
+              const _gd_reactiveSignals = [];
+
+              // Signal 1: emergency override frequency (uncov days as proxy)
+              const _gd_uncovRate = _gd_uncovDays / _gd_days;
+              _gd_reactiveSignals.push({
+                signal      : 'emergency_override_frequency',
+                value       : +_gd_uncovRate.toFixed(3),
+                threshold   : 0.25,
+                drifting    : _gd_uncovRate > 0.25,
+                description : `uncovered nights ${(_gd_uncovRate*100).toFixed(0)}% — ${_gd_uncovRate > 0.25 ? 'emergency override依存傾向 ⚠' : '許容範囲内'}`,
+              });
+
+              // Signal 2: resim culture suppression (vet overload + no gap closure)
+              _gd_reactiveSignals.push({
+                signal      : 'resim_culture_suppression',
+                value       : _gd_resimSuppressed ? 1 : 0,
+                threshold   : 0.5,
+                drifting    : _gd_resimSuppressed,
+                description : _gd_resimSuppressed
+                  ? 'vet overload+uncov継続でresim飛ばしoverride化リスク ⚠'
+                  : 'resim culture抑制なし',
+              });
+
+              // Signal 3: burnout override normalization
+              const _gd_burnoutNormRate = _gd_burnoutOnNight / _gd_totalStaff;
+              _gd_reactiveSignals.push({
+                signal      : 'burnout_override_normalization',
+                value       : +_gd_burnoutNormRate.toFixed(3),
+                threshold   : 0.05,
+                drifting    : _gd_burnoutNormRate > 0.05,
+                description : _gd_burnoutNightCount > 0
+                  ? `burnout staff ${_gd_burnoutOnNight}名が夜勤継続 — 慢性override傾向 ⚠`
+                  : 'burnout override なし',
+              });
+
+              // Signal 4: immediate intervention preference (no resim before action)
+              const _gd_immediateRate = _gd_gapDepts > 0 && _gd_vetOverloaded === 0 ? 0.3 : 0;
+              _gd_reactiveSignals.push({
+                signal      : 'immediate_intervention_preference',
+                value       : +_gd_immediateRate.toFixed(3),
+                threshold   : 0.2,
+                drifting    : _gd_immediateRate > 0.2,
+                description : _gd_immediateRate > 0.2
+                  ? 'gap deptにvet不在かつoverload軽減なし — 即介入傾向 ⚠'
+                  : 'immediate intervention傾向なし',
+              });
+
+              const _gd_reactiveDriftCount = _gd_reactiveSignals.filter(s => s.drifting).length;
+              const _gd_reactiveDriftLevel  =
+                _gd_reactiveDriftCount >= 3 ? 'high_reactive_drift'
+                : _gd_reactiveDriftCount >= 2 ? 'moderate_reactive_drift'
+                : _gd_reactiveDriftCount >= 1 ? 'minor_reactive_drift'
+                :                               'no_reactive_drift';
+
+              // ── Layer 3: Recovery-to-Stagnation Drift ──────────────────────
+              {
+                const _gd_stagnSignals = [];
+
+                // Signal 1: prolonged hold (reloc > 12m still "inReloc" — shouldn't happen, but proxy)
+                _gd_stagnSignals.push({
+                  signal      : 'prolonged_hold',
+                  count       : _gd_longHold,
+                  threshold   : 2,
+                  drifting    : _gd_longHold >= 2,
+                  description : `${_gd_longHold}名のhold長期化 — recovery保護と停滞の境界確認推奨`,
+                });
+
+                // Signal 2: ladder stagnation (ladder 2-3 + stage ≤ 2, no progress)
+                _gd_stagnSignals.push({
+                  signal      : 'ladder_progression_stall',
+                  count       : _gd_ladderStalled,
+                  threshold   : 2,
+                  drifting    : _gd_ladderStalled >= 2,
+                  description : `ladder停滞 ${_gd_ladderStalled}名 — 成長促進機会が見落とされている可能性`,
+                });
+
+                // Signal 3: support fixation (same veteran covers SR every night they work)
+                let _gd_fixatedVets = 0;
+                for (const vet of _gd_veterans) {
+                  const { shifts, nset } = _gd_deptData[vet.deptId];
+                  let vetNights = 0, srCoveredNights = 0;
+                  for (let day = 1; day <= _gd_days; day++) {
+                    if (!nset.has(shifts[vet.s.id]?.[day] ?? '')) continue;
+                    vetNights++;
+                    if (_gd_dayMap[day].srOnNight.length > 0) srCoveredNights++;
+                  }
+                  if (vetNights >= 4 && srCoveredNights / Math.max(1, vetNights) > 0.8) _gd_fixatedVets++;
+                }
+                _gd_stagnSignals.push({
+                  signal      : 'support_fixation',
+                  count       : _gd_fixatedVets,
+                  threshold   : 1,
+                  drifting    : _gd_fixatedVets >= 1,
+                  description : `${_gd_fixatedVets}名のvetが>80%夜勤でSR coverage固定 — support固定化兆候`,
+                });
+
+                // Signal 4: intervention avoidance (ladder-ready staff not progressing)
+                const _gd_overdueLadder = _gd_allArr.filter(e =>
+                  e.ladder === 3 && e.nightOk && e.stage >= 4 && !e.isProtected).length;
+                _gd_stagnSignals.push({
+                  signal      : 'intervention_avoidance',
+                  count       : _gd_overdueLadder,
+                  threshold   : 1,
+                  drifting    : _gd_overdueLadder >= 1,
+                  description : `ladder 4昇格適性staff ${_gd_overdueLadder}名が未昇格 — 介入回避 drift兆候`,
+                });
+
+                const _gd_stagnDriftCount = _gd_stagnSignals.filter(s => s.drifting).length;
+                const _gd_stagnDriftLevel  =
+                  _gd_stagnDriftCount >= 3 ? 'high_stagnation_drift'
+                  : _gd_stagnDriftCount >= 2 ? 'moderate_stagnation_drift'
+                  : _gd_stagnDriftCount >= 1 ? 'minor_stagnation_drift'
+                  :                            'no_stagnation_drift';
+
+                // ── Layer 4: Override Dependency Drift ─────────────────────────
+                {
+                  const _gd_overrideDepSignals = [];
+
+                  // Signal 1: repeated emergency cycles (uncov days accumulating)
+                  _gd_overrideDepSignals.push({
+                    signal      : 'repeated_emergency_handling',
+                    value       : _gd_uncovDays,
+                    threshold   : Math.round(_gd_days * 0.2),
+                    drifting    : _gd_uncovDays > _gd_days * 0.2,
+                    culturalized: _gd_uncovDays > _gd_days * 0.4,
+                    description : `uncovered ${_gd_uncovDays}日/${_gd_days}日 — ${
+                      _gd_uncovDays > _gd_days * 0.4 ? '緊急対応の文化化 ⚠'
+                      : _gd_uncovDays > _gd_days * 0.2 ? '繰り返し傾向あり ⚠'
+                      : '許容範囲内'}`,
+                  });
+
+                  // Signal 2: veteran dependency normalization
+                  const _gd_vetDepNormalized = _gd_veterans.length > 0 &&
+                    _gd_vetOverloaded / _gd_veterans.length > 0.6;
+                  _gd_overrideDepSignals.push({
+                    signal      : 'veteran_dependency_normalization',
+                    value       : _gd_veterans.length > 0 ? +(_gd_vetOverloaded / _gd_veterans.length).toFixed(3) : 0,
+                    threshold   : 0.6,
+                    drifting    : _gd_vetDepNormalized,
+                    culturalized: _gd_veterans.length > 0 && _gd_vetOverloaded / _gd_veterans.length > 0.8,
+                    description : `vet ${_gd_vetOverloaded}/${_gd_veterans.length}名がutilRate>110% — ${
+                      _gd_vetDepNormalized ? '依存の常態化 ⚠' : '依存固定化なし'}`,
+                  });
+
+                  // Signal 3: unsafe overlap tolerance (high uncov without structural response)
+                  const _gd_unsafeToleranceScore = _gd_uncovDays > 3 && _gd_gapDepts > 0 ? 0.6 : 0;
+                  _gd_overrideDepSignals.push({
+                    signal      : 'unsafe_overlap_tolerance',
+                    value       : +_gd_unsafeToleranceScore.toFixed(3),
+                    threshold   : 0.5,
+                    drifting    : _gd_unsafeToleranceScore > 0.5,
+                    culturalized: _gd_uncovDays > _gd_days * 0.3 && _gd_gapDepts > 1,
+                    description : _gd_unsafeToleranceScore > 0.5
+                      ? `uncov${_gd_uncovDays}日+gapDept${_gd_gapDepts}F — unsafe許容drift ⚠`
+                      : 'unsafe tolerance drift なし',
+                  });
+
+                  // Signal 4: burnout override recurrence
+                  _gd_overrideDepSignals.push({
+                    signal      : 'burnout_override_recurrence',
+                    value       : _gd_burnoutOnNight,
+                    threshold   : 1,
+                    drifting    : _gd_burnoutOnNight >= 1,
+                    culturalized: _gd_burnoutOnNight >= 2,
+                    description : _gd_burnoutOnNight >= 2
+                      ? `burnout ${_gd_burnoutOnNight}名が夜勤継続 — override文化化リスク ⚠`
+                      : _gd_burnoutOnNight === 1
+                      ? 'burnout staff 1名が夜勤継続 — 個別確認推奨'
+                      : 'burnout override再発なし',
+                  });
+
+                  const _gd_overrideDepDriftCount  = _gd_overrideDepSignals.filter(s => s.drifting).length;
+                  const _gd_overrideDepCultureCount = _gd_overrideDepSignals.filter(s => s.culturalized).length;
+                  const _gd_overrideDriftLevel =
+                    _gd_overrideDepCultureCount >= 2 ? 'structural_override_dependency'
+                    : _gd_overrideDepDriftCount >= 3  ? 'high_override_drift'
+                    : _gd_overrideDepDriftCount >= 2  ? 'moderate_override_drift'
+                    : _gd_overrideDepDriftCount >= 1  ? 'minor_override_drift'
+                    :                                    'no_override_drift';
+
+                  // ── Layer 5: Human Drift Insight ────────────────────────────
+                  {
+                    const _gd_driftInsights = [];
+
+                    // Overall drift summary
+                    const _gd_totalDriftingDims = _gd_structuralDrifts.length + _gd_moderateDrifts.length;
+                    _gd_driftInsights.push({
+                      insightType     : 'overall_drift_status',
+                      observation     : _gd_totalDriftingDims === 0
+                        ? '施設運営文化のドリフトなし — 安定中 ✓'
+                        : `${_gd_totalDriftingDims}次元でドリフト観測中 — 方向確認推奨`,
+                      caution         : _gd_structuralDrifts.length > 0
+                        ? `構造的ドリフト: ${_gd_structuralDrifts.map(r => r.direction).join(' / ')}`
+                        : null,
+                      recommendation  : _gd_totalDriftingDims === 0
+                        ? '現在の運営判断傾向を継続'
+                        : _gd_structuralDrifts.length > 0
+                        ? '構造的ドリフトを優先確認 — 根本原因の特定と段階的修正'
+                        : '軽微なドリフトを観察 — 急激な修正より継続観測を優先',
+                      actionable      : _gd_totalDriftingDims > 0,
+                    });
+
+                    // Reactive drift insight
+                    if (_gd_reactiveDriftLevel !== 'no_reactive_drift') {
+                      _gd_driftInsights.push({
+                        insightType     : 'reactive_drift_signal',
+                        observation     : `reactive drift: ${_gd_reactiveDriftLevel} (${_gd_reactiveDriftCount}/${_gd_reactiveSignals.length}シグナル)`,
+                        caution         : '「忙しい月」と「reactive culture化」を混同しないよう注意',
+                        recommendation  : _gd_reactiveDriftCount >= 3
+                          ? 'shortage根本原因の構造解消を優先 — emergency handling常態化を防ぐ'
+                          : 'resim cultureの維持を意識 — 即対応を reflexに選ばない',
+                        actionable      : _gd_reactiveDriftCount >= 2,
+                      });
+                    }
+
+                    // Stagnation drift insight
+                    if (_gd_stagnDriftLevel !== 'no_stagnation_drift') {
+                      _gd_driftInsights.push({
+                        insightType     : 'stagnation_drift_signal',
+                        observation     : `stagnation drift: ${_gd_stagnDriftLevel} (${_gd_stagnDriftCount}/${_gd_stagnSignals.length}シグナル)`,
+                        caution         : '「守る」と「止まる」の境界 — recovery holdが成長阻害になっていないか確認',
+                        recommendation  : _gd_stagnDriftCount >= 3
+                          ? 'hold理由の個別再評価 + 昇格タイミング見直しを優先'
+                          : 'ladder readyのスタッフの進捗を次cycleで確認',
+                        actionable      : _gd_stagnDriftCount >= 2,
+                      });
+                    }
+
+                    // Override dependency drift insight
+                    if (_gd_overrideDriftLevel !== 'no_override_drift') {
+                      _gd_driftInsights.push({
+                        insightType     : 'override_dependency_drift',
+                        observation     : `override依存drift: ${_gd_overrideDriftLevel} (culturalized=${_gd_overrideDepCultureCount})`,
+                        caution         : 'override dependency は「文化化」すると可視化が困難 — 早期発見が重要',
+                        recommendation  : _gd_overrideDepCultureCount >= 2
+                          ? 'vet育成・採用を中期計画に即時組み込み + burnout staff夜勤削減'
+                          : 'override発生ごとにfollow-up計画を設定する習慣を強化',
+                        actionable      : true,
+                      });
+                    }
+
+                    // Support fixation drift insight
+                    if (_gd_fixatedVets >= 1) {
+                      _gd_driftInsights.push({
+                        insightType     : 'support_fixation_drift',
+                        observation     : `${_gd_fixatedVets}名のvetがSR coverageに固定化 — support構造の多様化が停滞`,
+                        caution         : '特定vetへのSR依存は burnout overload の前兆である場合が多い',
+                        recommendation  : 'ladder progressionでSR coverage担い手を増やす計画を立案',
+                        actionable      : true,
+                      });
+                    }
+
+                    const _gd_actionableInsights = _gd_driftInsights.filter(i => i.actionable);
+
+                    // ── Layer 6: Governance Drift Audit ───────────────────────
+                    {
+                      // Over-pathologizing: too many drift signals flagged without evidence
+                      const _gd_allDriftSignalCount = _gd_reactiveSignals.filter(s => s.drifting).length
+                        + _gd_stagnSignals.filter(s => s.drifting).length
+                        + _gd_overrideDepSignals.filter(s => s.drifting).length;
+                      const _gd_overPathologizing = _gd_allDriftSignalCount > 8
+                        && _gd_structuralDrifts.length === 0;
+                      // Drift paranoia: moderate drift flagged as structural
+                      const _gd_driftParanoia = _gd_structuralDrifts.some(r => r.score < 0.3);
+                      // Recovery undervaluation: stable protected staff not recognised
+                      const _gd_recovUnderval = _gd_protected.length > 0
+                        && _gd_stagnDriftCount === _gd_stagnSignals.length
+                        && _gd_protected.filter(e => !e.isBurnout || e.nightCount === 0).length > 0;
+                      // Cultural blame amplification: only negative drifts surfaced
+                      const _gd_blameAmpl = _gd_stableDimensions.length === 0 && _gd_structuralDrifts.length > 0;
+                      // Explainability
+                      const _gd_explainable = _gd_registry.every(r => r.description) &&
+                        _gd_driftInsights.every(i => i.caution);
+                      // Human self-awareness support
+                      const _gd_selfAwarenessLevel =
+                        _gd_actionableInsights.length >= 2 ? 'high ✓'
+                        : _gd_actionableInsights.length >= 1 ? 'moderate'
+                        :                                       'low ⚠';
+                      // Operational realism: drift levels are proportionate to signal count
+                      const _gd_operRealism = !_gd_overPathologizing && !_gd_driftParanoia;
+
+                      const _gd_overallAudit =
+                        (!_gd_overPathologizing && !_gd_driftParanoia && !_gd_blameAmpl && _gd_explainable)
+                          ? 'humanGovernanceDriftSystem'
+                        : _gd_overPathologizing ? 'overPathologizingRisk'
+                        : _gd_driftParanoia     ? 'driftParanoiaRisk'
+                        : _gd_blameAmpl         ? 'culturalBlameAmplification'
+                        : _gd_recovUnderval     ? 'recoveryUndervaluationRisk'
+                        :                          'needsReview';
+
+                      const _gd_finalSummary = {
+                        dept: cd.id, year, month,
+                        registryCount         : _gd_registry.length,
+                        structuralDriftCount  : _gd_structuralDrifts.length,
+                        moderateDriftCount    : _gd_moderateDrifts.length,
+                        stableDimensionCount  : _gd_stableDimensions.length,
+                        reactiveDriftLevel    : _gd_reactiveDriftLevel,
+                        stagnDriftLevel       : _gd_stagnDriftLevel,
+                        overrideDriftLevel    : _gd_overrideDriftLevel,
+                        fixatedVetCount       : _gd_fixatedVets,
+                        totalDriftSignals     : _gd_allDriftSignalCount,
+                        actionableInsightCount: _gd_actionableInsights.length,
+                        topInsights           : _gd_driftInsights.slice(0, 4).map(i =>
+                          `[${i.insightType}] ${i.observation}`),
+                        audit: {
+                          overPathologizing     : _gd_overPathologizing ? 'risk ⚠' : 'none ✓',
+                          driftParanoia         : _gd_driftParanoia     ? 'risk ⚠' : 'low ✓',
+                          recoveryRecognition   : _gd_recovUnderval     ? 'undervalued ⚠' : 'maintained ✓',
+                          culturalBlameAmpl     : _gd_blameAmpl         ? 'risk ⚠' : 'low ✓',
+                          operationalRealism    : _gd_operRealism        ? 'high ✓' : 'partial ⚠',
+                          selfAwarenessSupport  : _gd_selfAwarenessLevel,
+                          explainability        : _gd_explainable        ? 'high ✓' : 'partial ⚠',
+                          overall               : _gd_overallAudit,
+                        },
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_gd_] Governance Drift Observation System:', _gd_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Drift Observation System / _gd_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
