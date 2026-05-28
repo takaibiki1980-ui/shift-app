@@ -21517,6 +21517,435 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Human Approval Workflow System / _hw_] ここまで ══
 
+        // ══ [Human Override Layer / _ho_] ここから ══
+        {
+          // ── Layer 1: Human Override Registry (shared data + override candidates) ─
+          {
+            const _ho_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _ho_ scope)
+            const _ho_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk   ?? 'normal';
+                const ladder     = s.nightLadder   ?? 0;
+                const stage      = s.growthStage   ?? 0;
+                const fl         = s.floorYears    ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _ho_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _ho_allArr      = Object.values(_ho_deptData).flatMap(dd => dd.arr);
+            const _ho_veterans    = _ho_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _ho_supportReqs = _ho_allArr.filter(e => e.supportReq && e.nightOk);
+            const _ho_protected   = _ho_allArr.filter(e => e.isProtected);
+
+            // Per-day snapshot (uncovered nights = primary override trigger)
+            const _ho_dayMap = {};
+            for (let day = 1; day <= _ho_days; day++) {
+              const srOnNight = [];
+              for (const sr of _ho_supportReqs) {
+                const { shifts, nset } = _ho_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push({ ...sr, day });
+              }
+              const vetOnNight = _ho_veterans.filter(vet => {
+                const { shifts, nset } = _ho_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovered = vetOnNight.length === 0 ? [...srOnNight] : [];
+              _ho_dayMap[day] = { srOnNight, vetOnNight, uncovered };
+            }
+
+            // Per-vet utilisation (needed for redistribution override scenarios)
+            const _ho_vetStats = _ho_veterans.map(vet => {
+              const { shifts, nset } = _ho_deptData[vet.deptId];
+              const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+              let nc = 0, maxRun = 0, curRun = 0;
+              for (let day = 1; day <= _ho_days; day++) {
+                if (nset.has(shifts[vet.s.id]?.[day] ?? '')) {
+                  nc++;
+                  curRun++;
+                  if (curRun > maxRun) maxRun = curRun;
+                } else {
+                  curRun = 0;
+                }
+              }
+              const utilRate = targetNc > 0 ? nc / targetNc : 0;
+              return {
+                staffId: vet.s.id, staffName: vet.s.name,
+                deptId: vet.deptId, deptLabel: vet.deptLabel,
+                nightCount: nc, targetNc, utilRate: +utilRate.toFixed(3), maxConsecRun: maxRun,
+              };
+            });
+
+            // Build override candidate registry — model potential human override events
+            // (read-only: these are SCENARIOS, not actual overrides applied)
+            const _ho_registry = [];
+
+            // Scenario A: emergency night assignment — uncovered + no vet
+            for (let day = 1; day <= _ho_days; day++) {
+              const { uncovered, vetOnNight } = _ho_dayMap[day];
+              if (uncovered.length > 0 && vetOnNight.length === 0) {
+                const touchesProtected = uncovered.some(e => e.isProtected);
+                _ho_registry.push({
+                  overrideType      : 'emergency_night_assignment',
+                  target            : `${uncovered[0].deptLabel} ${day}日`,
+                  reason            : `shortage emergency — uncovered SR staff`,
+                  governanceImpact  : touchesProtected ? 'protectedHold bypass' : 'governance maintained',
+                  protectedBypass   : touchesProtected,
+                  emergencyFlag     : true,
+                  rollbackRecommended: true,
+                  day,
+                });
+              }
+            }
+
+            // Scenario B: veteran redistribution — overloaded vet load rebalance
+            for (const v of _ho_vetStats.filter(v => v.utilRate > 1.2 || v.maxConsecRun >= 3)) {
+              const deptHasProtected = _ho_allArr
+                .filter(e => e.deptId === v.deptId && e.isProtected).length > 0;
+              _ho_registry.push({
+                overrideType       : 'veteran_redistribution',
+                target             : `${v.staffName} (${v.deptLabel})`,
+                reason             : `utilRate=${(v.utilRate*100).toFixed(0)}% overload軽減`,
+                governanceImpact   : deptHasProtected ? 'support continuity + protected structure impact' : 'support continuity change',
+                protectedBypass    : deptHasProtected,
+                emergencyFlag      : false,
+                rollbackRecommended: true,
+                staffId            : v.staffId,
+              });
+            }
+
+            // Scenario C: burnout staff removal from night schedule
+            for (const e of _ho_allArr.filter(e => e.isBurnout && e.nightOk)) {
+              const { shifts, nset } = _ho_deptData[e.deptId];
+              let nc = 0;
+              for (let day = 1; day <= _ho_days; day++) {
+                if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+              }
+              if (nc >= 1) {
+                _ho_registry.push({
+                  overrideType       : 'burnout_night_removal',
+                  target             : `${e.s.name} (${e.deptLabel})`,
+                  reason             : `burnout高 夜勤${nc}回 — recovery優先`,
+                  governanceImpact   : 'coverage gap risk — replacement planning needed',
+                  protectedBypass    : false,
+                  emergencyFlag      : false,
+                  rollbackRecommended: false,
+                  staffId            : e.s.id,
+                });
+              }
+            }
+
+            // Scenario D: ladder bypass — advance staff ahead of normal progression
+            for (const e of _ho_allArr.filter(e => e.ladder === 2 && e.nightOk && e.stage >= 3 && !e.isBurnout)) {
+              _ho_registry.push({
+                overrideType       : 'ladder_bypass',
+                target             : `${e.s.name} (${e.deptLabel})`,
+                reason             : `ladder ${e.ladder}→3 前倒し (stage=${e.stage})`,
+                governanceImpact   : 'safeSequence disruption risk — ladder稳定化阻害の可能性',
+                protectedBypass    : e.isProtected,
+                emergencyFlag      : false,
+                rollbackRecommended: true,
+                staffId            : e.s.id,
+              });
+            }
+
+            const _ho_emergencyItems = _ho_registry.filter(r => r.emergencyFlag);
+            const _ho_protectedBypassItems = _ho_registry.filter(r => r.protectedBypass);
+
+            // ── Layer 2: Governance Override Classification ─────────────────────
+            {
+              const _ho_classified = _ho_registry.map(item => {
+                let overrideClass;
+                let impactSummary;
+
+                if (item.emergencyFlag && item.protectedBypass) {
+                  overrideClass = 'EMERGENCY_OVERRIDE';
+                  impactSummary = 'unsafe許容 + protected構造bypass — recovery review mandatory';
+                } else if (item.emergencyFlag) {
+                  overrideClass = 'EMERGENCY_OVERRIDE';
+                  impactSummary = 'unsafe許容 — emergency follow-up mandatory';
+                } else if (item.protectedBypass) {
+                  overrideClass = 'HIGH_IMPACT_OVERRIDE';
+                  impactSummary = 'protected構造影響あり — resimulation推奨';
+                } else if (item.overrideType === 'veteran_redistribution' || item.overrideType === 'ladder_bypass') {
+                  overrideClass = 'CONTROLLED_OVERRIDE';
+                  impactSummary = 'support continuity変更 — review推奨';
+                } else {
+                  overrideClass = 'SAFE_OVERRIDE';
+                  impactSummary = 'governance影響小 — 通常判断範囲';
+                }
+
+                return { ...item, overrideClass, impactSummary };
+              });
+
+              const _ho_emergencyClass  = _ho_classified.filter(c => c.overrideClass === 'EMERGENCY_OVERRIDE');
+              const _ho_highImpactClass = _ho_classified.filter(c => c.overrideClass === 'HIGH_IMPACT_OVERRIDE');
+              const _ho_controlledClass = _ho_classified.filter(c => c.overrideClass === 'CONTROLLED_OVERRIDE');
+              const _ho_safeClass       = _ho_classified.filter(c => c.overrideClass === 'SAFE_OVERRIDE');
+
+              // ── Layer 3: Emergency Override Flow ────────────────────────────
+              {
+                const _ho_emergencyFlow = [];
+
+                // Uncovered nights — primary emergency scenario
+                const _ho_uncovDays = [];
+                for (let day = 1; day <= _ho_days; day++) {
+                  const { uncovered, vetOnNight } = _ho_dayMap[day];
+                  if (uncovered.length > 0 && vetOnNight.length === 0) _ho_uncovDays.push(day);
+                }
+                if (_ho_uncovDays.length > 0) {
+                  _ho_emergencyFlow.push({
+                    event       : 'shortage_emergency',
+                    affectedDays: _ho_uncovDays.slice(0, 5),
+                    action      : 'temporary unsafe overlap許容 (human authorisation required)',
+                    followUp    : 'recovery review mandatory — next cycle',
+                    normalisation: 'PROHIBITED — 緊急対応を常態化させない',
+                  });
+                }
+
+                // Veteran absence risk — high utilRate + maxRun (absence would cause collapse)
+                for (const v of _ho_vetStats.filter(v => v.utilRate > 1.1 && v.maxConsecRun >= 3)) {
+                  _ho_emergencyFlow.push({
+                    event       : 'veteran_absence_risk',
+                    target      : `${v.staffName} (${v.deptLabel})`,
+                    action      : '代替vet確保 or 一時的 ladder bypass検討',
+                    followUp    : `${v.staffName} 負荷軽減 + 後続vet育成計画`,
+                    normalisation: 'PROHIBITED',
+                  });
+                }
+
+                // Simultaneous burnout risk — multiple burnout staff on same night dept
+                const _ho_burnoutByDept = {};
+                for (const e of _ho_allArr.filter(e => e.isBurnout && e.nightOk)) {
+                  _ho_burnoutByDept[e.deptId] = (_ho_burnoutByDept[e.deptId] || 0) + 1;
+                }
+                for (const [deptId, count] of Object.entries(_ho_burnoutByDept)) {
+                  if (count >= 2) {
+                    const { d } = _ho_deptData[deptId];
+                    _ho_emergencyFlow.push({
+                      event       : 'simultaneous_burnout_risk',
+                      target      : `${d.label} (${count}名)`,
+                      action      : '夜勤削減 + cross-floor support要請',
+                      followUp    : '全員recovery計画 — 夜勤復帰timing個別管理',
+                      normalisation: 'PROHIBITED',
+                    });
+                  }
+                }
+
+                // ── Layer 4: Protected Structure Override Guard ─────────────
+                {
+                  // For each potential override, identify which protected structures it touches
+                  const _ho_guardReport = _ho_classified.map(item => {
+                    const threats = [];
+
+                    // safeSequence disruption: if target is a paired staff
+                    if (item.staffId) {
+                      const staff = _ho_allArr.find(e => e.s.id === item.staffId);
+                      if (staff?.hasPair && staff.stage <= 3) {
+                        threats.push({ structure: 'safeSequence', risk: 'HIGH',
+                          detail: `stage=${staff.stage} ペア継続中 — 中断で ladder 停滞リスク` });
+                      }
+                      // burnout rebound: overriding hold for burnout staff
+                      if (staff?.isBurnout && item.overrideType !== 'burnout_night_removal') {
+                        threats.push({ structure: 'burnout_recovery', risk: 'HIGH',
+                          detail: 'burnout回復中 — 介入でrebound確率上昇' });
+                      }
+                      // ladder instability: bypass or forced assignment for ladder 1-2
+                      if (staff?.inLadder) {
+                        threats.push({ structure: 'ladder_stabilization', risk: 'MEDIUM',
+                          detail: `ladder ${staff.ladder} 安定化中 — 負荷増加で停滞リスク` });
+                      }
+                      // relocation adaptation
+                      if (staff?.inReloc) {
+                        threats.push({ structure: 'relocation_adaptation', risk: 'MEDIUM',
+                          detail: `フロア配属${(staff.fl * 12).toFixed(0)}ヶ月 — 適応期に夜勤追加で習熟阻害` });
+                      }
+                    }
+
+                    // cross-floor propagation: emergency changes that affect support structure
+                    if (item.emergencyFlag && item.day) {
+                      const dayData = _ho_dayMap[item.day];
+                      if (dayData && dayData.uncovered.some(e => e.isProtected)) {
+                        threats.push({ structure: 'cross_floor_propagation', risk: 'HIGH',
+                          detail: 'protected スタッフへの夜勤追加 — 回復構造全体への波及' });
+                      }
+                    }
+
+                    const maxRisk = threats.some(t => t.risk === 'HIGH') ? 'HIGH'
+                                  : threats.some(t => t.risk === 'MEDIUM') ? 'MEDIUM' : 'NONE';
+                    const recommendation =
+                      maxRisk === 'HIGH'   ? 'resimulation before override'
+                      : maxRisk === 'MEDIUM' ? 'review impact before override'
+                      :                        'override permissible';
+
+                    return { ...item, threats, maxRisk, recommendation };
+                  });
+
+                  const _ho_highGuardItems = _ho_guardReport.filter(g => g.maxRisk === 'HIGH');
+                  const _ho_medGuardItems  = _ho_guardReport.filter(g => g.maxRisk === 'MEDIUM');
+
+                  // ── Layer 5: Human Responsibility Guidance ──────────────
+                  {
+                    const _ho_responsibilityGuide = [];
+
+                    // Step 1: emergency confirmation
+                    if (_ho_emergencyFlow.length > 0) {
+                      for (const ef of _ho_emergencyFlow.slice(0, 2)) {
+                        _ho_responsibilityGuide.push({
+                          step: 1, action: 'EMERGENCY_CONFIRM',
+                          label: `[${ef.event}] ${ef.action}`,
+                          followUp: ef.followUp,
+                          urgency: 'immediate',
+                        });
+                      }
+                    } else {
+                      _ho_responsibilityGuide.push({
+                        step: 1, action: 'EMERGENCY_CONFIRM',
+                        label: '緊急事態なし ✓',
+                        followUp: null,
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 2: protected structure confirmation
+                    if (_ho_highGuardItems.length > 0) {
+                      for (const g of _ho_highGuardItems.slice(0, 2)) {
+                        const threat = g.threats[0];
+                        _ho_responsibilityGuide.push({
+                          step: 2, action: 'PROTECTED_STRUCTURE_CHECK',
+                          label: `${g.target}: ${threat.structure} risk=${threat.risk} — ${g.recommendation}`,
+                          followUp: 'override前にresimulation実施',
+                          urgency: 'before_override',
+                        });
+                      }
+                    } else {
+                      _ho_responsibilityGuide.push({
+                        step: 2, action: 'PROTECTED_STRUCTURE_CHECK',
+                        label: 'HIGH risk protected構造なし ✓',
+                        followUp: null,
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 3: rollback availability check
+                    const _ho_rollbackNeeded = _ho_classified.filter(c => c.rollbackRecommended);
+                    if (_ho_rollbackNeeded.length > 0) {
+                      _ho_responsibilityGuide.push({
+                        step: 3, action: 'ROLLBACK_CONFIRM',
+                        label: `${_ho_rollbackNeeded.length}件のoverride候補でrollback推奨 — 前月シフトを参照可能か確認`,
+                        followUp: 'rollback不可の場合はoverride保留',
+                        urgency: 'before_override',
+                      });
+                    } else {
+                      _ho_responsibilityGuide.push({
+                        step: 3, action: 'ROLLBACK_CONFIRM',
+                        label: 'rollback required items なし ✓',
+                        followUp: null,
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 4: recovery follow-up planning
+                    if (_ho_emergencyItems.length > 0 || _ho_protectedBypassItems.length > 0) {
+                      _ho_responsibilityGuide.push({
+                        step: 4, action: 'RECOVERY_FOLLOWUP_PLAN',
+                        label: `emergency ${_ho_emergencyItems.length}件 + protected bypass ${_ho_protectedBypassItems.length}件 — recovery follow-up計画必須`,
+                        followUp: 'next cycle開始時にreview予約',
+                        urgency: 'this_cycle',
+                      });
+                    }
+
+                    // Step 5: next cycle review reservation
+                    const _ho_nextCycleItems = _ho_classified.filter(c =>
+                      c.overrideClass === 'EMERGENCY_OVERRIDE' || c.overrideClass === 'HIGH_IMPACT_OVERRIDE');
+                    if (_ho_nextCycleItems.length > 0) {
+                      _ho_responsibilityGuide.push({
+                        step: 5, action: 'NEXT_CYCLE_REVIEW',
+                        label: `${_ho_nextCycleItems.length}件のhigh-impact override — next cycle review予約`,
+                        followUp: 'override後の安全構造変化を追跡',
+                        urgency: 'planning',
+                      });
+                    }
+
+                    // ── Layer 6: Override Governance Audit ────────────────
+                    {
+                      const _ho_totalOverrides = _ho_registry.length;
+                      // Override overuse: > 40% of all scenarios are emergency
+                      const _ho_overuseRisk    = _ho_totalOverrides > 0
+                        && _ho_emergencyItems.length / _ho_totalOverrides > 0.4;
+                      // Emergency normalisation risk: many emergency items with no protected bypass concern
+                      const _ho_emergNormalRisk = _ho_emergencyItems.length > 4;
+                      // Protected bypass abuse: > 30% bypass protected structures
+                      const _ho_bypassAbuseRisk = _ho_totalOverrides > 0
+                        && _ho_protectedBypassItems.length / _ho_totalOverrides > 0.3;
+                      // Governance erosion: high-impact + emergency dominate
+                      const _ho_govErosionRisk =
+                        (_ho_emergencyClass.length + _ho_highImpactClass.length) >
+                        (_ho_controlledClass.length + _ho_safeClass.length);
+                      // Human accountability: all items have reason + rollback flag
+                      const _ho_humanAccountable = _ho_registry.every(r => r.reason && r.rollbackRecommended !== undefined);
+                      // Explainability: all classified items have impactSummary
+                      const _ho_explainable = _ho_classified.every(c => c.impactSummary);
+
+                      const _ho_overallAudit =
+                        (!_ho_overuseRisk && !_ho_emergNormalRisk && !_ho_bypassAbuseRisk && _ho_humanAccountable)
+                          ? 'humanGovernedOverrideSystem'
+                        : _ho_emergNormalRisk  ? 'emergencyNormalizationRisk'
+                        : _ho_bypassAbuseRisk  ? 'protectedBypassAbuse'
+                        : _ho_overuseRisk      ? 'overrideOveruseRisk'
+                        : _ho_govErosionRisk   ? 'governanceErosionRisk'
+                        :                        'needsReview';
+
+                      const _ho_finalSummary = {
+                        dept: cd.id, year, month,
+                        totalOverrideScenarios : _ho_totalOverrides,
+                        emergencyCount         : _ho_emergencyItems.length,
+                        protectedBypassCount   : _ho_protectedBypassItems.length,
+                        emergencyClassCount    : _ho_emergencyClass.length,
+                        highImpactClassCount   : _ho_highImpactClass.length,
+                        controlledClassCount   : _ho_controlledClass.length,
+                        safeClassCount         : _ho_safeClass.length,
+                        highGuardCount         : _ho_highGuardItems.length,
+                        emergencyFlowCount     : _ho_emergencyFlow.length,
+                        responsibilityGuide    : _ho_responsibilityGuide.map(g =>
+                          `Step${g.step}[${g.action}/${g.urgency}] ${g.label}`),
+                        audit: {
+                          overrideOveruse          : _ho_overuseRisk      ? 'risk ⚠' : 'low ✓',
+                          emergencyNormalization   : _ho_emergNormalRisk  ? 'risk ⚠' : 'low ✓',
+                          protectedBypassAbuse     : _ho_bypassAbuseRisk  ? 'detected ⚠' : 'none ✓',
+                          governanceErosion        : _ho_govErosionRisk   ? 'risk ⚠' : 'maintained ✓',
+                          humanAccountability      : _ho_humanAccountable ? 'maintained ✓' : 'gap ⚠',
+                          explainability           : _ho_explainable      ? 'high ✓' : 'partial ⚠',
+                          overall                  : _ho_overallAudit,
+                        },
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_ho_] Human Override Layer:', _ho_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Human Override Layer / _ho_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
