@@ -22879,6 +22879,424 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Human Decision History System / _dh_] ここまで ══
 
+        // ══ [Governance Pattern Observation System / _gp_] ここから ══
+        {
+          // ── Layer 1: Governance Pattern Registry (shared data + tendency) ────────
+          {
+            const _gp_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _gp_ scope)
+            const _gp_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                let nightCount = 0;
+                for (let day = 1; day <= _gp_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _gp_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gp_allArr      = Object.values(_gp_deptData).flatMap(dd => dd.arr);
+            const _gp_veterans    = _gp_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _gp_supportReqs = _gp_allArr.filter(e => e.supportReq && e.nightOk);
+            const _gp_protected   = _gp_allArr.filter(e => e.isProtected);
+            const _gp_burnout     = _gp_allArr.filter(e => e.isBurnout);
+
+            // Per-day snapshot
+            const _gp_dayMap = {};
+            for (let day = 1; day <= _gp_days; day++) {
+              const srOnNight = [];
+              for (const sr of _gp_supportReqs) {
+                const { shifts, nset } = _gp_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _gp_veterans.filter(vet => {
+                const { shifts, nset } = _gp_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovCount = vetOnNight.length === 0 ? srOnNight.length : 0;
+              _gp_dayMap[day] = { srOnNight, vetOnNight, uncovCount };
+            }
+
+            // Count observable decision signals this cycle
+            const _gp_totalUncovDays = Object.values(_gp_dayMap).filter(d => d.uncovCount > 0).length;
+            const _gp_vetOverloadCount = _gp_veterans.filter(e => e.utilRate > 1.2).length;
+            const _gp_burnoutNightCount = _gp_burnout.filter(e => e.nightOk && e.nightCount >= 2).length;
+            const _gp_ladderReadyCount = _gp_allArr.filter(e =>
+              e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.isProtected).length;
+            const _gp_protectedHoldCount = _gp_protected.length;
+            const _gp_gapDeptCount = Object.values(_gp_deptData).filter(({ arr }) =>
+              arr.some(e => e.supportReq && e.nightOk) && !arr.some(e => e.isVeteran && e.nightOk)).length;
+
+            // Synthesise cycle-level decision ratios (implicit from risk signals)
+            // HOLD-tendency score: protected staff / total staff
+            const _gp_totalStaff   = _gp_allArr.length || 1;
+            const _gp_holdScore    = _gp_protectedHoldCount / _gp_totalStaff;
+            // OVERRIDE-tendency score: emergency signals (uncov + burnout-on-night)
+            const _gp_overrideScore = (_gp_totalUncovDays / _gp_days + _gp_burnoutNightCount / _gp_totalStaff) / 2;
+            // RESIM-tendency score: vet overload + gap depts
+            const _gp_resimScore    = (_gp_vetOverloadCount + _gp_gapDeptCount) / (_gp_veterans.length + 1);
+            // REJECT-tendency score: unsafe days / total days
+            const _gp_rejectScore   = _gp_totalUncovDays > 0
+              ? Math.min(1, Object.values(_gp_dayMap).filter(d =>
+                  d.uncovCount > 0 && d.srOnNight.some(e => e.ladder < 3)).length / _gp_days)
+              : 0;
+            // APPROVE-tendency score: ladder-ready candidates present
+            const _gp_approveScore  = Math.min(1, _gp_ladderReadyCount / Math.max(1, _gp_veterans.length));
+
+            // Derive facility governance tendency
+            const _gp_facilityTendency =
+              _gp_overrideScore > 0.4  && _gp_holdScore < 0.2   ? 'reactive'
+              : _gp_holdScore > 0.4    && _gp_overrideScore < 0.2 ? 'protective'
+              : _gp_rejectScore > 0.3  && _gp_overrideScore > 0.3 ? 'unstable'
+              : _gp_approveScore > 0.5 && _gp_overrideScore < 0.3 ? 'aggressive'
+              :                                                        'balanced';
+
+            const _gp_tendencyFeatures = [];
+            if (_gp_holdScore > 0.3)    _gp_tendencyFeatures.push('HOLD比率高 — recovery重視傾向');
+            if (_gp_overrideScore > 0.3) _gp_tendencyFeatures.push('override頻度高 — shortage対応依存');
+            if (_gp_resimScore > 0.4)    _gp_tendencyFeatures.push('RESIM多発 — 構造的vet不足');
+            if (_gp_rejectScore > 0.2)   _gp_tendencyFeatures.push('unsafe overlap慢性 — REJECT必要状態');
+            if (_gp_approveScore > 0.4)  _gp_tendencyFeatures.push('ladder昇格候補多 — 成長期加速中');
+
+            // ── Layer 2: Intervention Tendency Observation ──────────────────────
+            {
+              // Observe which conditions drive which decision types
+              const _gp_tendencyObs = [];
+
+              // Burnout → HOLD increase
+              if (_gp_burnout.length > 0) {
+                const burnoutHoldRate = _gp_burnout.filter(e => e.isProtected).length / _gp_burnout.length;
+                _gp_tendencyObs.push({
+                  condition       : 'burnout_present',
+                  observedTendency: burnoutHoldRate > 0.7 ? 'HOLD_dominant' : 'HOLD_partial',
+                  conditionCount  : _gp_burnout.length,
+                  triggerScore    : +burnoutHoldRate.toFixed(3),
+                  description     : `burnout ${_gp_burnout.length}名 → HOLD率${(burnoutHoldRate*100).toFixed(0)}%`,
+                });
+              }
+
+              // Shortage (uncov nights) → OVERRIDE increase
+              if (_gp_totalUncovDays > 0) {
+                const overridePressure = _gp_totalUncovDays / _gp_days;
+                _gp_tendencyObs.push({
+                  condition       : 'shortage_escalation',
+                  observedTendency: overridePressure > 0.3 ? 'OVERRIDE_dominant' : 'OVERRIDE_moderate',
+                  conditionCount  : _gp_totalUncovDays,
+                  triggerScore    : +overridePressure.toFixed(3),
+                  description     : `uncovered ${_gp_totalUncovDays}日 (${(overridePressure*100).toFixed(0)}%) → override圧力`,
+                });
+              }
+
+              // Vet shortage → RESIM increase
+              if (_gp_vetOverloadCount > 0 || _gp_gapDeptCount > 0) {
+                const resimPressure = (_gp_vetOverloadCount + _gp_gapDeptCount) / Math.max(1, _gp_veterans.length + 1);
+                _gp_tendencyObs.push({
+                  condition       : 'veteran_shortage',
+                  observedTendency: resimPressure > 0.5 ? 'RESIM_dominant' : 'RESIM_moderate',
+                  conditionCount  : _gp_vetOverloadCount + _gp_gapDeptCount,
+                  triggerScore    : +resimPressure.toFixed(3),
+                  description     : `vetOverload ${_gp_vetOverloadCount}名 + gapDept ${_gp_gapDeptCount}F → resim圧力`,
+                });
+              }
+
+              // Unsafe overlap → REJECT increase
+              const _gp_unsafeDayCount = Object.values(_gp_dayMap).filter(d =>
+                d.uncovCount > 0 && d.srOnNight.some(e => e.ladder < 3)).length;
+              if (_gp_unsafeDayCount > 0) {
+                _gp_tendencyObs.push({
+                  condition       : 'unsafe_overlap_chronic',
+                  observedTendency: _gp_unsafeDayCount >= 5 ? 'REJECT_dominant' : 'REJECT_moderate',
+                  conditionCount  : _gp_unsafeDayCount,
+                  triggerScore    : +(_gp_unsafeDayCount / _gp_days).toFixed(3),
+                  description     : `unsafe overlap ${_gp_unsafeDayCount}日 → REJECT必要信号`,
+                });
+              }
+
+              // Ladder stagnation → APPROVE increase
+              if (_gp_ladderReadyCount > 0) {
+                _gp_tendencyObs.push({
+                  condition       : 'ladder_progression_ready',
+                  observedTendency: _gp_ladderReadyCount >= 3 ? 'APPROVE_pressure' : 'APPROVE_candidate',
+                  conditionCount  : _gp_ladderReadyCount,
+                  triggerScore    : +(_gp_ladderReadyCount / Math.max(1, _gp_veterans.length)).toFixed(3),
+                  description     : `ladder 3→4候補 ${_gp_ladderReadyCount}名 → 昇格タイミング到来`,
+                });
+              }
+
+              const _gp_dominantConditions = _gp_tendencyObs.filter(t =>
+                t.observedTendency.includes('dominant'));
+
+              // ── Layer 3: Recovery Preservation Pattern ──────────────────────
+              {
+                const _gp_preservPatterns = [];
+
+                // HOLD success pattern: recovery progressing
+                const _gp_burnoutHeld = _gp_burnout.filter(e => e.nightCount === 0);
+                if (_gp_burnoutHeld.length > 0) {
+                  _gp_preservPatterns.push({
+                    patternType : 'hold_prevents_rebound',
+                    count       : _gp_burnoutHeld.length,
+                    description : `burnout ${_gp_burnoutHeld.length}名が夜勤0 — rebound抑制成功パターン`,
+                    outcome     : 'burnout_rebound_suppressed ✓',
+                    successRate : 1.0,
+                  });
+                }
+
+                // safeSequence preservation: paired + stage advancing
+                const _gp_seqAdvancing = _gp_allArr.filter(e => e.hasPair && e.stage >= 2 && !e.isBurnout);
+                if (_gp_seqAdvancing.length > 0) {
+                  _gp_preservPatterns.push({
+                    patternType : 'safe_sequence_sustained',
+                    count       : _gp_seqAdvancing.length,
+                    description : `safeSequence ${_gp_seqAdvancing.length}名がstage 2以上で継続`,
+                    outcome     : 'pair_structure_maintained ✓',
+                    successRate : _gp_seqAdvancing.length / Math.max(1, _gp_allArr.filter(e => e.hasPair).length),
+                  });
+                }
+
+                // Relocation stabilization: fl 0.5-1.5yr, no burnout
+                const _gp_relocStable = _gp_allArr.filter(e =>
+                  e.fl !== null && e.fl >= 0.5 && e.fl < 1.5 && !e.isBurnout);
+                if (_gp_relocStable.length > 0) {
+                  _gp_preservPatterns.push({
+                    patternType : 'relocation_stabilization',
+                    count       : _gp_relocStable.length,
+                    description : `フロア配属 6〜18ヶ月の ${_gp_relocStable.length}名 adaptation安定中`,
+                    outcome     : 'relocation_adaptation_on_track ✓',
+                    successRate : _gp_relocStable.filter(e => !e.isBurnout).length / Math.max(1, _gp_relocStable.length),
+                  });
+                }
+
+                // Support rebuilding success: ladder 1-2 advancing (progress > 0.3)
+                const _gp_ladderAdv = _gp_allArr.filter(e => e.inLadder && e.progress > 0.3);
+                if (_gp_ladderAdv.length > 0) {
+                  _gp_preservPatterns.push({
+                    patternType : 'support_rebuilding_progress',
+                    count       : _gp_ladderAdv.length,
+                    description : `夜勤ladder 1-2の ${_gp_ladderAdv.length}名がprogress > 30%`,
+                    outcome     : 'night_support_pipeline_active ✓',
+                    successRate : _gp_ladderAdv.length / Math.max(1, _gp_allArr.filter(e => e.inLadder).length),
+                  });
+                }
+
+                const _gp_highSuccessPatterns = _gp_preservPatterns.filter(p => p.successRate >= 0.7);
+
+                // ── Layer 4: Override Escalation Pattern ──────────────────────
+                {
+                  const _gp_escalPatterns = [];
+
+                  // Emergency normalization: uncov days > 30% of month
+                  const _gp_uncovRate = _gp_totalUncovDays / _gp_days;
+                  if (_gp_uncovRate > 0.3) {
+                    _gp_escalPatterns.push({
+                      patternType    : 'emergency_normalization',
+                      severity       : _gp_uncovRate > 0.5 ? 'HIGH' : 'MEDIUM',
+                      trend          : 'normalizing',
+                      description    : `uncovered ${(_gp_uncovRate*100).toFixed(0)}%日 — 緊急対応が常態化リスク`,
+                      culturalRisk   : '緊急override依存文化への移行リスク',
+                      breakPattern   : 'veteran育成 + ladder progression加速',
+                    });
+                  }
+
+                  // Veteran dependency escalation: overloaded vet count growing
+                  const _gp_vetDepRate = _gp_veterans.length > 0
+                    ? _gp_veterans.filter(e => e.utilRate > 1.0).length / _gp_veterans.length : 0;
+                  if (_gp_vetDepRate > 0.5) {
+                    _gp_escalPatterns.push({
+                      patternType    : 'veteran_dependency_escalation',
+                      severity       : _gp_vetDepRate > 0.8 ? 'HIGH' : 'MEDIUM',
+                      trend          : 'escalating',
+                      description    : `veteran ${(_gp_vetDepRate*100).toFixed(0)}%が utilRate>100% — 依存集中`,
+                      culturalRisk   : '特定veteranへの構造的依存固定化',
+                      breakPattern   : 'ladder 3→4昇格 + cross-floor support分散',
+                    });
+                  }
+
+                  // Burnout override cycle: burnout staff still on nights
+                  if (_gp_burnoutNightCount > 0) {
+                    _gp_escalPatterns.push({
+                      patternType    : 'burnout_override_cycle',
+                      severity       : _gp_burnoutNightCount >= 2 ? 'HIGH' : 'MEDIUM',
+                      trend          : 'recurring',
+                      description    : `burnout ${_gp_burnoutNightCount}名が夜勤継続 — override cycle固定化`,
+                      culturalRisk   : 'burnout要員を恒常的支柱として使用する文化',
+                      breakPattern   : '即時夜勤削減 + 代替support確保',
+                    });
+                  }
+
+                  // Chronic unsafe overlap: gap depts persist
+                  if (_gp_gapDeptCount >= 2) {
+                    _gp_escalPatterns.push({
+                      patternType    : 'chronic_shortage_override',
+                      severity       : 'HIGH',
+                      trend          : 'chronic',
+                      description    : `${_gp_gapDeptCount}フロアでvet不在常態化 — 構造的support欠如`,
+                      culturalRisk   : '運営がvot不在を前提とした構造に依存',
+                      breakPattern   : 'cross-floor support再構築 + 採用・育成計画',
+                    });
+                  }
+
+                  const _gp_highEscalPatterns = _gp_escalPatterns.filter(p => p.severity === 'HIGH');
+
+                  // ── Layer 5: Human Governance Insight ─────────────────────
+                  {
+                    const _gp_insights = [];
+
+                    // Insight from facility tendency
+                    _gp_insights.push({
+                      insightType   : 'facility_governance_culture',
+                      observation   : `施設運営傾向: ${_gp_facilityTendency}`,
+                      features      : _gp_tendencyFeatures,
+                      recommendation: _gp_facilityTendency === 'reactive'
+                        ? 'shortage根本原因の構造解決を優先 — support pipeline強化'
+                        : _gp_facilityTendency === 'protective'
+                        ? 'recovery保護は機能中 — stagnation化していないか定期確認'
+                        : _gp_facilityTendency === 'unstable'
+                        ? '緊急対応とunsafe状態が混在 — 優先順位付き整理が必要'
+                        : _gp_facilityTendency === 'aggressive'
+                        ? '昇格促進傾向 — recovery保護との両立を確認'
+                        : '全体バランス良好 — 現状維持と継続観察',
+                      actionable: _gp_facilityTendency !== 'balanced',
+                    });
+
+                    // Insight from dominant conditions
+                    for (const t of _gp_dominantConditions.slice(0, 2)) {
+                      _gp_insights.push({
+                        insightType   : `condition_${t.condition}`,
+                        observation   : t.description,
+                        features      : [],
+                        recommendation: t.condition === 'shortage_escalation'
+                          ? 'veteran育成・採用計画を中期計画に組み込む'
+                          : t.condition === 'veteran_shortage'
+                          ? 'ladder 3→4昇格 + cross-floor vet分散で依存軽減'
+                          : t.condition === 'burnout_present'
+                          ? '燃え尽き予防のための負荷上限設定を検討'
+                          : 'unsafe日を構造的に解消する support再配置計画',
+                        actionable: true,
+                      });
+                    }
+
+                    // Insight from preservation successes
+                    if (_gp_highSuccessPatterns.length > 0) {
+                      _gp_insights.push({
+                        insightType   : 'recovery_preservation_success',
+                        observation   : `${_gp_highSuccessPatterns.length}パターンで recovery/構造保護が成功中`,
+                        features      : _gp_highSuccessPatterns.map(p => `${p.patternType} (${(p.successRate*100).toFixed(0)}%)`),
+                        recommendation: '成功パターンを維持 — 急変は避け継続観察',
+                        actionable: false,
+                      });
+                    }
+
+                    // Insight from escalation patterns
+                    if (_gp_highEscalPatterns.length > 0) {
+                      for (const ep of _gp_highEscalPatterns.slice(0, 2)) {
+                        _gp_insights.push({
+                          insightType   : `escalation_${ep.patternType}`,
+                          observation   : ep.description,
+                          features      : [ep.culturalRisk],
+                          recommendation: ep.breakPattern,
+                          actionable: true,
+                        });
+                      }
+                    }
+
+                    const _gp_actionableInsights = _gp_insights.filter(i => i.actionable);
+
+                    // ── Layer 6: Governance Pattern Audit ─────────────────────
+                    {
+                      const _gp_totalInsights = _gp_insights.length;
+                      // Over-interpretation: too many actionable insights (analysis paralysis risk)
+                      const _gp_overInterpret = _gp_actionableInsights.length > 5;
+                      // Blame amplification: escalation patterns dominate over preservation
+                      const _gp_blameAmplRisk = _gp_escalPatterns.length > _gp_preservPatterns.length * 2;
+                      // Governance stereotyping: tendency locked to single label
+                      const _gp_stereotypeRisk = _gp_tendencyFeatures.length <= 1;
+                      // Recovery undervaluation: no preservation patterns found
+                      const _gp_recoveryUnderval = _gp_preservPatterns.length === 0 && _gp_protected.length > 0;
+                      // Operational realism: insights are grounded in data signals
+                      const _gp_operationalRealism = _gp_insights.every(i => i.observation && i.recommendation);
+                      // Human learning support: actionable recommendations present
+                      const _gp_learningSupportLevel =
+                        _gp_actionableInsights.length >= 3 ? 'high ✓'
+                        : _gp_actionableInsights.length >= 1 ? 'moderate'
+                        :                                       'low ⚠';
+                      // Explainability: all insights have features or observation
+                      const _gp_explainable = _gp_insights.every(i => i.observation);
+
+                      const _gp_overallAudit =
+                        (!_gp_overInterpret && !_gp_blameAmplRisk && !_gp_recoveryUnderval && _gp_explainable)
+                          ? 'humanGovernancePatternSystem'
+                        : _gp_overInterpret    ? 'overInterpretationRisk'
+                        : _gp_blameAmplRisk    ? 'blameAmplificationRisk'
+                        : _gp_recoveryUnderval ? 'recoveryUndervaluationRisk'
+                        : _gp_stereotypeRisk   ? 'governanceStereotypingRisk'
+                        :                        'needsReview';
+
+                      const _gp_finalSummary = {
+                        dept: cd.id, year, month,
+                        facilityTendency     : _gp_facilityTendency,
+                        tendencyFeatureCount : _gp_tendencyFeatures.length,
+                        holdScore            : +_gp_holdScore.toFixed(3),
+                        overrideScore        : +_gp_overrideScore.toFixed(3),
+                        resimScore           : +_gp_resimScore.toFixed(3),
+                        rejectScore          : +_gp_rejectScore.toFixed(3),
+                        approveScore         : +_gp_approveScore.toFixed(3),
+                        tendencyObsCount     : _gp_tendencyObs.length,
+                        dominantCondCount    : _gp_dominantConditions.length,
+                        preservPatternCount  : _gp_preservPatterns.length,
+                        highSuccessPatCount  : _gp_highSuccessPatterns.length,
+                        escalPatternCount    : _gp_escalPatterns.length,
+                        highEscalPatCount    : _gp_highEscalPatterns.length,
+                        insightCount         : _gp_totalInsights,
+                        actionableInsightCount: _gp_actionableInsights.length,
+                        topInsights          : _gp_insights.slice(0, 4).map(i =>
+                          `[${i.insightType}] ${i.observation}`),
+                        audit: {
+                          overInterpretation    : _gp_overInterpret     ? 'risk ⚠' : 'low ✓',
+                          blameAmplification    : _gp_blameAmplRisk     ? 'risk ⚠' : 'low ✓',
+                          governanceStereoType  : _gp_stereotypeRisk    ? 'risk ⚠' : 'none ✓',
+                          recoveryRecognition   : _gp_recoveryUnderval  ? 'undervalued ⚠' : 'maintained ✓',
+                          operationalRealism    : _gp_operationalRealism ? 'high ✓' : 'partial ⚠',
+                          humanLearningSupport  : _gp_learningSupportLevel,
+                          explainability        : _gp_explainable        ? 'high ✓' : 'partial ⚠',
+                          overall               : _gp_overallAudit,
+                        },
+                      };
+
+                      if (process.env.NODE_ENV !== 'production') {
+                        console.log('[_gp_] Governance Pattern Observation System:', _gp_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Pattern Observation System / _gp_] ここまで ══
+
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
           const _ra_ds   = cs.filter(s => s.dept === cd.id);
