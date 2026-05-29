@@ -25517,6 +25517,196 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Incremental Temporal Engine Architecture / _ite_] ここまで ══
 
+        // ══ [Temporal Sampling & Scaling Analysis Framework / _sa_] ここから ══
+        {
+          {
+            // === Layer 1: Scaling Registry ===
+            // Observe current input dimensions and classify facility scale.
+            const _sa_totalStaff      = _snap_allArr.length;
+            const _sa_nightStaff      = _snap_nightStaff.length;
+            const _sa_supportReqCount = _snap_supportReqs.length;
+            const _sa_departmentCount = depts.length;
+            const _sa_veteranCount    = _snap_veterans.length;
+            const _sa_burnoutCount    = _snap_burnouts.length;
+            const _sa_nightUtilRate   = _sa_totalStaff > 0
+              ? +(_sa_nightStaff / _sa_totalStaff).toFixed(3) : 0;
+
+            const _sa_sizeClass =
+              _sa_totalStaff < 15 ? 'small'
+              : _sa_totalStaff < 30 ? 'medium'
+              : _sa_totalStaff < 50 ? 'large'
+              : 'xlarge';
+
+            // === Layer 2: Runtime Scaling Analysis ===
+            {
+              const _sa_p           = profilerRef.current;
+              const _sa_engTimes    = _sa_p?.engineTimes || {};
+              const _sa_bundleTimes = _sa_p?.bundleTimes || {};
+              const _sa_engRecorded = Object.keys(_sa_engTimes).length;
+              const _sa_totalEngMs  = +Object.values(_sa_engTimes)
+                .reduce((s, v) => s + v, 0).toFixed(3);
+              const _sa_msPerStaff  = _sa_totalStaff > 0 && _sa_totalEngMs > 0
+                ? +(_sa_totalEngMs / _sa_totalStaff).toFixed(4) : null;
+              const _sa_msPerDept   = _sa_departmentCount > 0 && _sa_totalEngMs > 0
+                ? +(_sa_totalEngMs / _sa_departmentCount).toFixed(4) : null;
+              const _sa_msPerNight  = _sa_nightStaff > 0 && _sa_totalEngMs > 0
+                ? +(_sa_totalEngMs / _sa_nightStaff).toFixed(4) : null;
+
+              // === Layer 3: Complexity Observation ===
+              {
+                // Complexity classification based on algorithm structure.
+                // Observation only — not empirically regressed.
+                // _gs_: propagation matrix over n×scenarios → quadraticRisk O(n²·s)
+                // _gr_,_ge_,_gp_,_gd_: per-dept nested iteration → nearLinear O(n·d)
+                // _cf_,_cp_: cross-floor nset scan → nearLinear O(n·d)
+                // _hw_,_ho_,_ep_,_dh_,_gq_: sequential scan → linear O(n)
+                // _pa_,_sa_: meta read → constant-ish
+                const _sa_complexityMap = {
+                  '_cf_': 'nearLinear',
+                  '_cp_': 'nearLinear',
+                  '_gq_': 'linear',
+                  '_hw_': 'linear',
+                  '_ho_': 'linear',
+                  '_ep_': 'linear',
+                  '_dh_': 'linear',
+                  '_gp_': 'nearLinear',
+                  '_ge_': 'nearLinear',
+                  '_gd_': 'nearLinear',
+                  '_gr_': 'nearLinear',
+                  '_gs_': 'quadraticRisk',
+                  '_pa_': 'linear',
+                };
+                const _sa_quadRiskEngines = Object.entries(_sa_complexityMap)
+                  .filter(([, c]) => c === 'quadraticRisk' || c === 'cubicRisk')
+                  .map(([e]) => e);
+
+                // === Layer 4: Engine Growth Tracking ===
+                {
+                  // For each heavy engine, estimate buildMs growth when staff doubles.
+                  // growthFactor: theoretical multiplier when n×2
+                  //   linear       → ×2.0
+                  //   nearLinear   → ×2.2  (n·dept; dept grows slowly)
+                  //   quadraticRisk → ×4.0 (n²)
+                  const _sa_growthFactor = (cplx) =>
+                    cplx === 'quadraticRisk' ? 4.0
+                    : cplx === 'nearLinear'  ? 2.2
+                    : 2.0;
+
+                  const _sa_focusEngines = ['_gs_', '_gr_', '_ge_', '_gp_', '_gd_'];
+                  const _sa_growthProfile = _sa_focusEngines.map(eng => {
+                    const ms   = _sa_engTimes[eng] ?? null;
+                    const cplx = _sa_complexityMap[eng] || 'linear';
+                    const gf   = _sa_growthFactor(cplx);
+                    return {
+                      engine:          eng,
+                      buildMs:         ms,
+                      complexity:      cplx,
+                      growthOnDouble:  `×${gf}`,
+                      projAt2xStaff:   ms != null ? +(ms * gf).toFixed(3) : null,
+                      bottleneckRisk:  cplx === 'quadraticRisk' ? 'HIGH'
+                                       : cplx === 'nearLinear'  ? 'MEDIUM' : 'LOW',
+                      status:          ms == null ? 'pending-idle' : 'measured',
+                    };
+                  });
+
+                  // === Layer 5: Capacity Projection ===
+                  {
+                    // Project total engine ms at target staff sizes.
+                    // Uses theoretical complexity per engine; single-point extrapolation.
+                    // Observation only — no regression; treat as order-of-magnitude estimate.
+                    const _sa_curN        = Math.max(_sa_totalStaff, 1);
+                    const _sa_targetSizes = [20, 40, 60, 80];
+                    const _sa_projections = _sa_targetSizes.map(targetN => {
+                      const ratio = targetN / _sa_curN;
+                      let totalProj = 0;
+                      let heaviestEng = null;
+                      let heaviestMs  = 0;
+                      for (const [eng, ms] of Object.entries(_sa_engTimes)) {
+                        const cplx  = _sa_complexityMap[eng] || 'linear';
+                        const gf    = cplx === 'quadraticRisk' ? ratio * ratio
+                                      : cplx === 'nearLinear'  ? ratio * 1.1
+                                      : ratio;
+                        const proj  = +(ms * gf).toFixed(3);
+                        totalProj  += proj;
+                        if (proj > heaviestMs) { heaviestMs = proj; heaviestEng = eng; }
+                      }
+                      const totalProjMs = +totalProj.toFixed(3);
+                      return {
+                        targetN,
+                        totalProjMs,
+                        heaviestEngine: heaviestEng,
+                        heaviestProjMs: +heaviestMs.toFixed(3),
+                        workerRecommended: totalProjMs > 100,  // >100ms → frame-jank risk
+                        grade: totalProjMs < 16 ? 'smooth'
+                               : totalProjMs < 50  ? 'acceptable'
+                               : totalProjMs < 100 ? 'marginal'
+                               : 'workerRequired',
+                      };
+                    });
+                    const _sa_workerAt = _sa_projections.find(p => p.workerRecommended);
+
+                    // === Layer 6: Sampling Audit ===
+                    {
+                      const _sa_sampleQuality = _sa_engRecorded >= 9
+                        ? 'single-point-sufficient'
+                        : _sa_engRecorded >= 5
+                        ? 'single-point-partial'
+                        : 'insufficient';
+                      const _sa_dataCoverage         = `${_sa_engRecorded} / 13 engines`;
+                      const _sa_measureConsistency   = (_sa_p?.idleDefers?.length ?? 0) > 0
+                        ? 'p1-and-idle-included'
+                        : _sa_engRecorded > 0 ? 'p1-sync-only' : 'no-data';
+                      const _sa_projectionReliability = _sa_engRecorded >= 9
+                        ? 'theoretical-order-of-magnitude'
+                        : 'insufficient-data';
+
+                      const _sa_verdict = _sa_engRecorded >= 9
+                        ? 'samplingReliable'
+                        : _sa_engRecorded >= 5
+                        ? 'samplingPartial'
+                        : 'needsMoreData';
+
+                      const _sa_finalSummary = {
+                        // Layer 1: Scale
+                        totalStaff:            _sa_totalStaff,
+                        nightStaff:            _sa_nightStaff,
+                        supportReqCount:       _sa_supportReqCount,
+                        departmentCount:       _sa_departmentCount,
+                        veteranCount:          _sa_veteranCount,
+                        burnoutCount:          _sa_burnoutCount,
+                        nightUtilRate:         _sa_nightUtilRate,
+                        sizeClass:             _sa_sizeClass,
+                        // Layer 2: Runtime
+                        totalEngineMs:         _sa_totalEngMs,
+                        msPerStaff:            _sa_msPerStaff,
+                        msPerDept:             _sa_msPerDept,
+                        msPerNightStaff:       _sa_msPerNight,
+                        // Layer 3: Complexity
+                        quadraticRiskEngines:  _sa_quadRiskEngines,
+                        // Layer 4: Growth
+                        growthProfile:         _sa_growthProfile,
+                        // Layer 5: Capacity
+                        capacityProjections:   _sa_projections,
+                        workerRecommendedAt:   _sa_workerAt?.targetN ?? 'not-projected',
+                        // Layer 6: Audit
+                        sampleQuality:         _sa_sampleQuality,
+                        dataCoverage:          _sa_dataCoverage,
+                        measurementConsistency: _sa_measureConsistency,
+                        projectionReliability: _sa_projectionReliability,
+                        samplingVerdict:       _sa_verdict,
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_sa_] Temporal Sampling & Scaling Analysis Framework:', _sa_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Temporal Sampling & Scaling Analysis Framework / _sa_] ここまで ══
+
         }; // end _buildTemporalEngines
         // ── Phase S-1: dispatch ──────────────────────────────────────────────
         if (innerTabRef.current === 'console') {
