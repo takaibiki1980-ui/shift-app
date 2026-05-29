@@ -25341,7 +25341,179 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Shock Internal Profiling Framework / _sp_] ここまで ══
         if (profilerRef.current) profilerRef.current.engineTimes['_sp_'] = +(performance.now() - _bp_t_sp_).toFixed(3);
-        }); // _ite_schedule P3 · _gs_ + _sp_
+
+        // ══ [Cross-Care-Floor Night Observation System / _xf_] ここから ══
+        const _bp_t_xf_ = performance.now();
+        {
+          {
+            // === Layer 1: Care Floor Night Registry ===
+            const _xf_careDepts = depts.filter(d => d.label?.includes('介護'));
+            const _xf_dayCount  = getDays(year, month);
+            const _xf_days      = typeof _xf_dayCount === 'number' ? Array.from({length: _xf_dayCount}, (_, i) => i + 1) : _xf_dayCount;
+            const _xf_deptData  = {};
+            for (const d of _xf_careDepts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk ?? 'normal';
+                const ladder     = s.nightLadder ?? 0;
+                const stage      = s.growthStage ?? 0;
+                const fl         = s.floorYears ?? null;
+                const fy         = s.facilityYears ?? null;
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const inReloc    = fl !== null && fl < 0.5;
+                const rr         = (fy != null && fy >= 2 && inReloc) ? 'high' : (fy != null && fy >= 1 && fl !== null && fl < 0.3) ? 'medium' : 'low';
+                const nightReadiness =
+                  (fy == null || fy < 0.5 || fl == null || fl < 0.2) ? 'low'
+                  : (bo === 'high' || fy < 1.5 || fl < 0.5) ? 'medium'
+                  : 'high';
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const nightDays  = _xf_days.filter(day => nset.has(shifts[s.id]?.[day] ?? ''));
+                return {
+                  s, name: s.name, deptId: d.id, deptLabel: d.label,
+                  bo, ladder, stage, fl, fy, nightOk, supportReq, inReloc, rr,
+                  nightReadiness, isVeteran, nightDays, nightCount: nightDays.length,
+                };
+              });
+              _xf_deptData[d.id] = { d, ds, arr, label: d.label };
+            }
+            const _xf_allArr   = Object.values(_xf_deptData).flatMap(dd => dd.arr);
+            const _xf_dayMap   = {};
+            for (const day of _xf_days) {
+              _xf_dayMap[day] = Object.values(_xf_deptData).map(({ d, arr }) => ({
+                date : `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`,
+                floor: d.label,
+                deptId: d.id,
+                nightStaff: arr.filter(e => e.nightDays.includes(day)).map(e => ({
+                  name: e.name, stage: e.stage, rr: e.rr,
+                  nightReadiness: e.nightReadiness, supportRequired: e.supportReq, inReloc: e.inReloc,
+                })),
+              }));
+            }
+
+            // === Layer 2: Facility-Wide Night Readiness ===
+            {
+              const _xf_dayAssess = _xf_days.map(day => {
+                const floors      = _xf_dayMap[day];
+                const allNight    = floors.flatMap(f => f.nightStaff);
+                const vetCount    = allNight.filter(e => _xf_allArr.find(a => a.name === e.name)?.isVeteran).length;
+                const floorsAny   = floors.filter(f => f.nightStaff.length > 0).length;
+                const floorsVet   = floors.filter(f => f.nightStaff.some(e => _xf_allArr.find(a => a.name === e.name)?.isVeteran)).length;
+                const assess      =
+                  vetCount >= 2 && floorsAny === _xf_careDepts.length ? 'STRONG'
+                  : vetCount >= 1 && floorsAny > 0 ? 'BALANCED'
+                  : 'THIN';
+                return { day, assess, vetCount, floorsAny, floorsVet, totalCount: allNight.length };
+              });
+              const strongDays   = _xf_dayAssess.filter(d => d.assess === 'STRONG');
+              const balancedDays = _xf_dayAssess.filter(d => d.assess === 'BALANCED');
+              const thinDays     = _xf_dayAssess.filter(d => d.assess === 'THIN');
+
+              // === Layer 3: Support Coverage Observation ===
+              {
+                const _xf_suppObs = _xf_days.map(day => {
+                  const allNight    = _xf_dayMap[day].flatMap(f => f.nightStaff);
+                  const suppReqCnt  = allNight.filter(e => e.supportRequired).length;
+                  const highRdyCnt  = allNight.filter(e => e.nightReadiness === 'high').length;
+                  const coverAssess = suppReqCnt === 0 ? 'covered'
+                    : highRdyCnt >= suppReqCnt ? 'covered'
+                    : highRdyCnt > 0 ? 'thin' : 'gap';
+                  return { day, coverAssess, suppReqCnt, highRdyCnt };
+                });
+                const supportCoveredDays = _xf_suppObs.filter(d => d.coverAssess === 'covered').length;
+                const supportThinDays    = _xf_suppObs.filter(d => d.coverAssess === 'thin').length;
+                const supportGapDays     = _xf_suppObs.filter(d => d.coverAssess === 'gap').length;
+
+                // === Layer 4: Relocation Adaptation Observation ===
+                {
+                  const _xf_relocObs = _xf_days.map(day => {
+                    const relocNight = _xf_dayMap[day].flatMap(f => f.nightStaff).filter(e => e.inReloc);
+                    return { day, relocCount: relocNight.length };
+                  });
+                  const relocDays        = _xf_relocObs.filter(d => d.relocCount > 0).length;
+                  const relocOverlapDays = _xf_relocObs.filter(d => d.relocCount >= 2).length;
+                  const totalReloc       = _xf_relocObs.reduce((s, d) => s + d.relocCount, 0);
+                  const totalNightSlots  = _xf_dayAssess.reduce((s, d) => s + d.totalCount, 0);
+                  const relocConcentrationScore = totalNightSlots > 0 ? +(totalReloc / totalNightSlots).toFixed(3) : 0;
+
+                  // === Layer 5: Human Night Governance View ===
+                  {
+                    const _xf_priorityDays = thinDays.length + supportGapDays + relocOverlapDays;
+                    const nrdHigh = _xf_allArr.filter(e => e.nightReadiness === 'high').length;
+                    const nrdMed  = _xf_allArr.filter(e => e.nightReadiness === 'medium').length;
+                    const nrdLow  = _xf_allArr.filter(e => e.nightReadiness === 'low').length;
+                    const _xf_l5 = [`[Cross-Care-Floor-Night-Governance] dept=${cd.id} ${year}/${month}`];
+                    _xf_l5.push(`  対象フロア: ${_xf_careDepts.map(d => d.label).join(' / ') || 'なし'}`);
+                    _xf_l5.push(`  ── 夜勤体制日別評価 ──`);
+                    _xf_l5.push(`  安全構造日 (STRONG):   ${strongDays.length}日`);
+                    _xf_l5.push(`  バランス日 (BALANCED): ${balancedDays.length}日`);
+                    _xf_l5.push(`  観測対象日 (THIN):     ${thinDays.length}日${thinDays.length ? ' (' + thinDays.map(d => `${d.day}日`).join('/') + ')' : ''}`);
+                    _xf_l5.push(`  ── support構造 ──`);
+                    _xf_l5.push(`  support充足日:   ${supportCoveredDays}日`);
+                    _xf_l5.push(`  support薄:       ${supportThinDays}日`);
+                    _xf_l5.push(`  supportGap:      ${supportGapDays}日${supportGapDays ? ' (要確認)' : ' ✓'}`);
+                    _xf_l5.push(`  ── 異動適応観測 ──`);
+                    _xf_l5.push(`  異動適応者夜勤日: ${relocDays}日`);
+                    _xf_l5.push(`  異動適応重複日:   ${relocOverlapDays}日${relocOverlapDays ? ' (複数名同日)' : ''}`);
+                    _xf_l5.push(`  relocConcentration: ${(relocConcentrationScore * 100).toFixed(1)}%`);
+                    _xf_l5.push(`  ── nightReadiness分布 ──`);
+                    _xf_l5.push(`  high: ${nrdHigh}名  medium: ${nrdMed}名  low: ${nrdLow}名`);
+                    _xf_l5.push(`  ── 将来CrossFloor優先観測 ──`);
+                    _xf_l5.push(`  優先観測対象日数: ${_xf_priorityDays}日 (thin+supportGap+relocOverlap)`);
+                    console.log(_xf_l5.join('\n'));
+
+                    // === Layer 6: Cross-Care-Floor Audit ===
+                    {
+                      const _xf_totalDays         = _xf_days.length;
+                      const _xf_floorBias          = _xf_careDepts.length > 1 && Object.keys(_xf_deptData).some(deptId => {
+                        const deptNightDays = _xf_days.filter(day => (_xf_dayMap[day].find(f => f.deptId === deptId)?.nightStaff?.length ?? 0) === 0).length;
+                        return deptNightDays > _xf_totalDays * 0.5;
+                      });
+                      const _xf_relocBias          = relocConcentrationScore > 0.4;
+                      const _xf_supportBias        = _xf_totalDays > 0 && supportGapDays > _xf_totalDays * 0.3;
+                      const _xf_overAlerting       = _xf_totalDays > 0 && thinDays.length > _xf_totalDays * 0.5;
+                      const _xf_humanInterp        = _xf_careDepts.length >= 1 && _xf_totalDays > 0;
+                      const _xf_domainReady        = Object.keys(_xf_deptData).every(id => depts.find(d => d.id === id)?.label?.includes('介護'));
+                      const _xf_auditFlags         = [_xf_floorBias, _xf_relocBias, _xf_supportBias, _xf_overAlerting].filter(Boolean).length;
+                      const _xf_overallAudit       =
+                        !_xf_humanInterp || !_xf_domainReady   ? 'needsReview'
+                        : _xf_auditFlags >= 3                   ? 'needsReview'
+                        : _xf_auditFlags >= 1                   ? 'crossCareFloorObservationPartial'
+                        :                                         'crossCareFloorObservationStable';
+                      const _xf_finalSummary = {
+                        system              : 'Cross-Care-Floor Night Observation System',
+                        dept: cd.id, year, month,
+                        careFloors          : _xf_careDepts.map(d => ({ id: d.id, label: d.label })),
+                        coverage            : { strongDays: strongDays.length, balancedDays: balancedDays.length, thinDays: thinDays.length, thinDaysList: thinDays.map(d => d.day) },
+                        support             : { supportCoveredDays, supportThinDays, supportGapDays },
+                        relocation          : { relocDays, relocOverlapDays, relocConcentrationScore },
+                        nightReadiness      : { high: nrdHigh, medium: nrdMed, low: nrdLow },
+                        priorityObservationDays: _xf_priorityDays,
+                        audit               : {
+                          floorBias             : _xf_floorBias    ? 'detected ⚠' : 'none ✓',
+                          relocationBias        : _xf_relocBias    ? 'detected ⚠' : 'none ✓',
+                          supportBias           : _xf_supportBias  ? 'detected ⚠' : 'none ✓',
+                          overAlerting          : _xf_overAlerting ? 'risk ⚠'     : 'none ✓',
+                          humanInterpretability : _xf_humanInterp  ? 'high ✓'     : 'partial ⚠',
+                          domainIsolationReady  : _xf_domainReady  ? 'ready ✓'    : 'leakage ⚠',
+                          overall               : _xf_overallAudit,
+                        },
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_xf_] Cross-Care-Floor Night Observation System:', _xf_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Cross-Care-Floor Night Observation System / _xf_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_xf_'] = +(performance.now() - _bp_t_xf_).toFixed(3);
+        }); // _ite_schedule P3 · _gs_ + _sp_ + _xf_
         }); // _ite_schedule P2 · _gr_
         }; // _ptl_bG · gov(2/gd+gr+gs)
         const _ptl_bH = () => {
