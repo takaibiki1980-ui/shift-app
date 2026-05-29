@@ -3379,7 +3379,7 @@ function TemporalConsolePanel({ data, consoleSection, setConsoleSection }) {
     </div>
   );
 
-  const { riskDash, futureTimeline, recommendations, sandboxComp, govPanel, readability } = data;
+  const { riskDash, futureTimeline, recommendations, sandboxComp, govPanel, readability, xfData } = data;
 
   return (
     <div style={{padding:"10px 8px",maxWidth:680,margin:"0 auto",fontFamily:"inherit"}}>
@@ -3527,6 +3527,108 @@ function TemporalConsolePanel({ data, consoleSection, setConsoleSection }) {
             <div style={{marginTop:6,padding:"6px 8px",background:"#e8f5e9",borderRadius:4,fontSize:11,fontWeight:700,color:"#276f26",textAlign:"center"}}>
               {readability.overall}
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* ⑦ Cross-Care-Floor Night Observation */}
+      <div style={{marginBottom:8,borderRadius:6,border:"1px solid #c5e8e5",overflow:"hidden"}}>
+        <SectionHeader id="xf" icon="🏢" title="介護フロア夜勤観測"
+          summary={xfData ? `${xfData.careFloors?.length ?? 0}フロア · STRONG ${xfData.coverage?.strongDays ?? 0}日` : "生成後に表示"}
+          verdict={
+            !xfData ? {level:"info",text:"LOADING"}
+            : xfData.audit?.overall === 'crossCareFloorObservationStable' ? {level:"low",text:"STABLE"}
+            : xfData.audit?.overall === 'crossCareFloorObservationPartial' ? {level:"medium",text:"PARTIAL"}
+            : {level:"medium",text:"REVIEW"}
+          }
+        />
+        {consoleSection==="xf"&&(
+          <div style={{background:"#fff",padding:8}}>
+            {!xfData&&<div style={{padding:8,color:"#7a9a97",fontSize:11,textAlign:"center"}}>観測データ準備中...</div>}
+            {xfData&&(
+              <>
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,marginBottom:4,fontSize:11,fontWeight:700,color:"#1a4a47"}}>夜勤体制サマリー</div>
+                {(()=>{
+                  const cvg=xfData.coverage;
+                  const total=(cvg.strongDays||0)+(cvg.balancedDays||0)+(cvg.thinDays||0);
+                  const sp=total>0?Math.round(cvg.strongDays/total*100):0;
+                  const bp=total>0?Math.round(cvg.balancedDays/total*100):0;
+                  const tp=total>0?Math.round(cvg.thinDays/total*100):0;
+                  return(<>
+                    <Row label="🟢 STRONG" value={`${cvg.strongDays}日 (${sp}%)`} level={sp>=70?"low":sp>=40?"medium":null}/>
+                    <Row label="🟡 BALANCED" value={`${cvg.balancedDays}日 (${bp}%)`}/>
+                    <Row label="⚪ 観測対象 THIN" value={`${cvg.thinDays}日 (${tp}%)${cvg.thinDaysList?.length?` (${cvg.thinDaysList.map(d=>d+'日').join('/')})`:''}`} level={tp>30?"medium":null}/>
+                    <Row label="📊 STRONG率" value={`${sp}%`}/>
+                    <Row label="📊 THIN率" value={`${tp}%`}/>
+                  </>);
+                })()}
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>support構造観測</div>
+                {(()=>{
+                  const sup=xfData.support;
+                  const total=(xfData.coverage.strongDays||0)+(xfData.coverage.balancedDays||0)+(xfData.coverage.thinDays||0);
+                  return(<>
+                    <Row label="✅ support充足" value={`${sup.supportCoveredDays}日`} level={sup.supportCoveredDays===total?"low":null}/>
+                    <Row label="🟡 support薄" value={`${sup.supportThinDays}日`} level={sup.supportThinDays>0?"medium":null}/>
+                    <Row label="⚪ support不足" value={`${sup.supportGapDays}日${sup.supportGapDays>0?" (要確認)":""}`} level={sup.supportGapDays>0?"medium":null}/>
+                  </>);
+                })()}
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>異動適応観測</div>
+                <Row label="🔄 異動適応夜勤日" value={`${xfData.relocation.relocDays}日`}/>
+                <Row label="🔄 異動適応重複日" value={`${xfData.relocation.relocOverlapDays}日${xfData.relocation.relocOverlapDays>0?" (複数名同日)":""}`}/>
+                <Row label="📊 集中度" value={`${(xfData.relocation.relocConcentrationScore*100).toFixed(1)}%`}/>
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>nightReadiness分布</div>
+                {(()=>{
+                  const nr=xfData.nightReadiness;
+                  const total=(nr.high||0)+(nr.medium||0)+(nr.low||0);
+                  const hp=total>0?Math.round(nr.high/total*100):0;
+                  const mp=total>0?Math.round(nr.medium/total*100):0;
+                  const lp=total>0?Math.round(nr.low/total*100):0;
+                  return(<>
+                    <Row label="🟢 HIGH" value={`${nr.high}名 (${hp}%)`} level={hp>=60?"low":null}/>
+                    <Row label="🟡 MEDIUM" value={`${nr.medium}名 (${mp}%)`}/>
+                    <Row label="⚪ LOW" value={`${nr.low}名 (${lp}%)`} level={lp>30?"medium":null}/>
+                  </>);
+                })()}
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>運営観測サマリー</div>
+                {(()=>{
+                  const cvg=xfData.coverage; const sup=xfData.support; const rel=xfData.relocation;
+                  const total=(cvg.strongDays||0)+(cvg.balancedDays||0)+(cvg.thinDays||0);
+                  const sp=total>0?Math.round(cvg.strongDays/total*100):0;
+                  const lines=[];
+                  if(sp>=70) lines.push(`今月は施設全体として夜勤構造は概ね安定しています（STRONG率 ${sp}%）。`);
+                  else if(sp>=40) lines.push(`今月の夜勤構造はバランスを維持しています（STRONG率 ${sp}%）。`);
+                  else lines.push(`今月の夜勤体制に観測対象日があります（STRONG率 ${sp}%）。`);
+                  if(sup.supportGapDays>0) lines.push(`support不足日は${sup.supportGapDays}日あります。`);
+                  if(rel.relocOverlapDays>0) lines.push(`異動適応中の夜勤が${rel.relocOverlapDays}日に集中しています。`);
+                  if(xfData.priorityObservationDays>0) lines.push(`Cross-Floor連携の参考として${xfData.priorityObservationDays}日が観測対象です。`);
+                  return(
+                    <div style={{padding:"6px 8px",background:"#f8fffe",borderRadius:4,fontSize:11,color:"#1a3635",lineHeight:1.7}}>
+                      {lines.map((l,i)=><div key={i}>{l}</div>)}
+                      <div style={{marginTop:4,fontSize:10,color:"#7a9a97"}}>※ AI評価ではなく運営観測です。</div>
+                    </div>
+                  );
+                })()}
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>Console Readability Audit</div>
+                {(()=>{
+                  const aud=xfData.audit;
+                  const humanRd=aud.humanInterpretability==='high ✓'?'high':'medium';
+                  const ovAlert=aud.overAlerting==='none ✓'?'none':'detected';
+                  const domIso=aud.domainIsolationReady==='ready ✓'?'ready':'partial';
+                  const audFlags=[humanRd!=='high',ovAlert!=='none',domIso!=='ready'].filter(Boolean).length;
+                  const cv=audFlags===0?'humanReadableCrossFloorView':audFlags<=1?'partiallyReadable':'needsSimplification';
+                  return(<>
+                    <Row label="humanReadability" value={humanRd==='high'?'high ✓':'medium'} level={humanRd==='high'?'low':'medium'}/>
+                    <Row label="informationDensity" value="balanced ✓" level="low"/>
+                    <Row label="operationalInterp." value={domIso==='ready'?'high ✓':'partial ⚠'} level={domIso==='ready'?'low':'medium'}/>
+                    <Row label="overAlerting" value={ovAlert==='none'?'none ✓':'detected ⚠'} level={ovAlert==='none'?'low':'medium'}/>
+                    <Row label="consoleClarity" value="readable ✓" level="low"/>
+                    <Row label="domainIsolation" value={aud.domainIsolationReady} level={aud.domainIsolationReady==='ready ✓'?'low':'medium'}/>
+                    <Row label="CrossFloor候補日数" value={`${xfData.priorityObservationDays}日`}/>
+                    <div style={{marginTop:6,padding:"6px 8px",background:"#e8f5e9",borderRadius:4,fontSize:11,fontWeight:700,color:"#276f26",textAlign:"center"}}>{cv}</div>
+                  </>);
+                })()}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -20297,6 +20399,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             generatedAt: new Date().toISOString(),
             maturity: _uc_maturity,
             riskDash, futureTimeline, recommendations, sandboxComp, govPanel, readability,
+            xfData: null,
           });
         }
         // ══ [Temporal-Console-UI] ここまで ══
@@ -25504,6 +25607,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                       if (DEV_TEMPORAL_LOG) {
                         console.log('[_xf_] Cross-Care-Floor Night Observation System:', _xf_finalSummary);
                       }
+                      setTemporalConsole(prev => prev ? { ...prev, xfData: _xf_finalSummary } : null);
                     }
                   }
                 }
@@ -25689,6 +25793,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             sandbox:  ['C'],
             gov:      ['F', 'G'],
             audit:    ['E', 'H'],
+            xf:       ['G'],
           };
           const _ptl_currentSection = consoleSectionRef.current;
           const _ptl_hotBundles = new Set(
