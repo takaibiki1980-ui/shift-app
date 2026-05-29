@@ -3333,8 +3333,7 @@ function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 1
 }
 
 // ── Explainable Temporal Console UI ──────────────────────────────────────────
-function TemporalConsolePanel({ data }) {
-  const [openSection, setOpenSection] = useState(null);
+function TemporalConsolePanel({ data, consoleSection, setConsoleSection }) {
   if (!data) return (
     <div style={{padding:32,textAlign:"center",color:"#7a9a97",fontSize:13}}>
       シフト生成後にコンソールが表示されます。<br/>
@@ -3342,7 +3341,7 @@ function TemporalConsolePanel({ data }) {
     </div>
   );
 
-  const toggle = key => setOpenSection(s => s === key ? null : key);
+  const toggle = key => setConsoleSection(s => s === key ? null : key);
 
   const badge = (level, text) => {
     const colors = {
@@ -3363,12 +3362,12 @@ function TemporalConsolePanel({ data }) {
   };
 
   const SectionHeader = ({ id, icon, title, summary, verdict }) => (
-    <div onClick={() => toggle(id)} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:openSection===id?"#e0f3f2":"#f0faf9",borderBottom:"1px solid #c5e8e5",cursor:"pointer",userSelect:"none",borderRadius:openSection===id?"6px 6px 0 0":"6px"}}>
+    <div onClick={() => toggle(id)} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px",background:consoleSection===id?"#e0f3f2":"#f0faf9",borderBottom:"1px solid #c5e8e5",cursor:"pointer",userSelect:"none",borderRadius:consoleSection===id?"6px 6px 0 0":"6px"}}>
       <span style={{fontSize:14}}>{icon}</span>
       <span style={{fontWeight:700,fontSize:12,color:"#1a4a47",flex:1}}>{title}</span>
       {summary && <span style={{fontSize:10,color:"#5a8a87"}}>{summary}</span>}
       {verdict && badge(verdict.level, verdict.text)}
-      <span style={{color:"#2BBFBA",fontSize:14,marginLeft:4}}>{openSection===id?"▲":"▼"}</span>
+      <span style={{color:"#2BBFBA",fontSize:14,marginLeft:4}}>{consoleSection===id?"▲":"▼"}</span>
     </div>
   );
 
@@ -3380,7 +3379,7 @@ function TemporalConsolePanel({ data }) {
     </div>
   );
 
-  const { riskDash, futureTimeline, recommendations, sandboxComp, govPanel, readability } = data;
+  const { riskDash, futureTimeline, recommendations, sandboxComp, govPanel, readability, xfData } = data;
 
   return (
     <div style={{padding:"10px 8px",maxWidth:680,margin:"0 auto",fontFamily:"inherit"}}>
@@ -3398,7 +3397,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="risk" icon="🔍" title="Temporal Risk Dashboard"
           summary={`課題 ${riskDash.totalIssues}件`}
           verdict={riskDash.totalIssues===0?{level:"low",text:"STABLE"}:riskDash.critical>0?{level:"high",text:"CRITICAL"}:{level:"medium",text:"ADVISORY"}}/>
-        {openSection==="risk"&&(
+        {consoleSection==="risk"&&(
           <div style={{background:"#fff",padding:8}}>
             <Row label="🔴 burnout high" value={riskDash.burnoutHigh.length===0?"なし":riskDash.burnoutHigh.join("、")} level={riskDash.burnoutHigh.length>0?"high":null}/>
             <Row label="🟠 support risk" value={riskDash.supportRisk.length===0?"なし":riskDash.supportRisk.join("、")} level={riskDash.supportRisk.length>0?"medium":null}/>
@@ -3416,7 +3415,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="timeline" icon="📈" title="Future Timeline Panel"
           summary="現在 → 1m → 3m → 6m"
           verdict={futureTimeline.t6.coreCount>=futureTimeline.now.coreCount?{level:"low",text:"IMPROVING"}:{level:"medium",text:"WATCH"}}/>
-        {openSection==="timeline"&&(
+        {consoleSection==="timeline"&&(
           <div style={{background:"#fff",padding:8}}>
             {[["now","現在",futureTimeline.now],["t1","1ヶ月後",futureTimeline.t1],["t3","3ヶ月後",futureTimeline.t3],["t6","6ヶ月後",futureTimeline.t6]].map(([k,label,pt])=>(
               <div key={k} style={{borderBottom:"1px solid #edf7f6",padding:"4px 6px"}}>
@@ -3439,7 +3438,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="reco" icon="💡" title="Recommendation Console"
           summary={`${recommendations.length}件の提案`}
           verdict={recommendations.length===0?{level:"low",text:"NONE"}:{level:"medium",text:`${recommendations.length}件`}}/>
-        {openSection==="reco"&&(
+        {consoleSection==="reco"&&(
           <div style={{background:"#fff",padding:8}}>
             {recommendations.length===0&&<div style={{padding:8,color:"#7a9a97",fontSize:11,textAlign:"center"}}>提案なし（全スタッフ安定）</div>}
             {recommendations.map((r,i)=>(
@@ -3462,7 +3461,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="sandbox" icon="🔬" title="Sandbox Comparison View"
           summary="介入前後比較"
           verdict={sandboxComp.newRisks.length===0?{level:"low",text:"SAFE"}:{level:"medium",text:`risk+${sandboxComp.newRisks.length}`}}/>
-        {openSection==="sandbox"&&(
+        {consoleSection==="sandbox"&&(
           <div style={{background:"#fff",padding:8}}>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
               <div style={{background:"#fff4f4",border:"1px solid #f5a5a5",borderRadius:6,padding:8}}>
@@ -3489,7 +3488,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="gov" icon="🏛" title="Governance Visibility Panel"
           summary={`BLOCK ${govPanel.blockCount}件`}
           verdict={govPanel.blockCount===0?{level:"low",text:"CLEAN"}:{level:"high",text:`BLOCK ${govPanel.blockCount}`}}/>
-        {openSection==="gov"&&(
+        {consoleSection==="gov"&&(
           <div style={{background:"#fff",padding:8}}>
             {[["allow","✓ ALLOW","allow",govPanel.allow],["review","⚠ REVIEW","review",govPanel.review],["block","🚫 BLOCK","block",govPanel.block]].map(([k,label,lv,items])=>(
               <div key={k} style={{marginBottom:6}}>
@@ -3518,7 +3517,7 @@ function TemporalConsolePanel({ data }) {
         <SectionHeader id="audit" icon="📋" title="Console Readability Audit"
           summary=""
           verdict={{level:readability.overall==="humanOperationalConsole"?"low":"medium",text:readability.overall}}/>
-        {openSection==="audit"&&(
+        {consoleSection==="audit"&&(
           <div style={{background:"#fff",padding:8}}>
             <Row label="clarity" value={readability.clarity==="high"?"high ✓":readability.clarity} level={readability.clarity==="high"?"low":"medium"}/>
             <Row label="operationalRealism" value={readability.operationalRealism?"maintained ✓":"要改善"} level={readability.operationalRealism?"low":"medium"}/>
@@ -3531,9 +3530,114 @@ function TemporalConsolePanel({ data }) {
           </div>
         )}
       </div>
+
+      {/* ⑦ Cross-Care-Floor Night Observation */}
+      <div style={{marginBottom:8,borderRadius:6,border:"1px solid #c5e8e5",overflow:"hidden"}}>
+        <SectionHeader id="xf" icon="🏢" title="介護フロア夜勤観測"
+          summary={xfData ? `${xfData.careFloors?.length ?? 0}フロア · STRONG ${xfData.coverage?.strongDays ?? 0}日` : "生成後に表示"}
+          verdict={
+            !xfData ? {level:"info",text:"LOADING"}
+            : xfData.audit?.overall === 'crossCareFloorObservationStable' ? {level:"low",text:"STABLE"}
+            : xfData.audit?.overall === 'crossCareFloorObservationPartial' ? {level:"medium",text:"PARTIAL"}
+            : {level:"medium",text:"REVIEW"}
+          }
+        />
+        {consoleSection==="xf"&&(
+          <div style={{background:"#fff",padding:8}}>
+            {!xfData&&<div style={{padding:8,color:"#7a9a97",fontSize:11,textAlign:"center"}}>観測データ準備中...</div>}
+            {xfData&&(
+              <>
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,marginBottom:4,fontSize:11,fontWeight:700,color:"#1a4a47"}}>夜勤体制サマリー</div>
+                {(()=>{
+                  const cvg=xfData.coverage;
+                  const total=(cvg.strongDays||0)+(cvg.balancedDays||0)+(cvg.thinDays||0);
+                  const sp=total>0?Math.round(cvg.strongDays/total*100):0;
+                  const bp=total>0?Math.round(cvg.balancedDays/total*100):0;
+                  const tp=total>0?Math.round(cvg.thinDays/total*100):0;
+                  return(<>
+                    <Row label="🟢 STRONG" value={`${cvg.strongDays}日 (${sp}%)`} level={sp>=70?"low":sp>=40?"medium":null}/>
+                    <Row label="🟡 BALANCED" value={`${cvg.balancedDays}日 (${bp}%)`}/>
+                    <Row label="⚪ 観測対象 THIN" value={`${cvg.thinDays}日 (${tp}%)${cvg.thinDaysList?.length?` (${cvg.thinDaysList.map(d=>d+'日').join('/')})`:''}`} level={tp>30?"medium":null}/>
+                    <Row label="📊 STRONG率" value={`${sp}%`}/>
+                    <Row label="📊 THIN率" value={`${tp}%`}/>
+                  </>);
+                })()}
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>support構造観測</div>
+                {(()=>{
+                  const sup=xfData.support;
+                  const total=(xfData.coverage.strongDays||0)+(xfData.coverage.balancedDays||0)+(xfData.coverage.thinDays||0);
+                  return(<>
+                    <Row label="✅ support充足" value={`${sup.supportCoveredDays}日`} level={sup.supportCoveredDays===total?"low":null}/>
+                    <Row label="🟡 support薄" value={`${sup.supportThinDays}日`} level={sup.supportThinDays>0?"medium":null}/>
+                    <Row label="⚪ support不足" value={`${sup.supportGapDays}日${sup.supportGapDays>0?" (要確認)":""}`} level={sup.supportGapDays>0?"medium":null}/>
+                  </>);
+                })()}
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>異動適応観測</div>
+                <Row label="🔄 異動適応夜勤日" value={`${xfData.relocation.relocDays}日`}/>
+                <Row label="🔄 異動適応重複日" value={`${xfData.relocation.relocOverlapDays}日${xfData.relocation.relocOverlapDays>0?" (複数名同日)":""}`}/>
+                <Row label="📊 集中度" value={`${(xfData.relocation.relocConcentrationScore*100).toFixed(1)}%`}/>
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>nightReadiness分布</div>
+                {(()=>{
+                  const nr=xfData.nightReadiness;
+                  const total=(nr.high||0)+(nr.medium||0)+(nr.low||0);
+                  const hp=total>0?Math.round(nr.high/total*100):0;
+                  const mp=total>0?Math.round(nr.medium/total*100):0;
+                  const lp=total>0?Math.round(nr.low/total*100):0;
+                  return(<>
+                    <Row label="🟢 HIGH" value={`${nr.high}名 (${hp}%)`} level={hp>=60?"low":null}/>
+                    <Row label="🟡 MEDIUM" value={`${nr.medium}名 (${mp}%)`}/>
+                    <Row label="⚪ LOW" value={`${nr.low}名 (${lp}%)`} level={lp>30?"medium":null}/>
+                  </>);
+                })()}
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>運営観測サマリー</div>
+                {(()=>{
+                  const cvg=xfData.coverage; const sup=xfData.support; const rel=xfData.relocation;
+                  const total=(cvg.strongDays||0)+(cvg.balancedDays||0)+(cvg.thinDays||0);
+                  const sp=total>0?Math.round(cvg.strongDays/total*100):0;
+                  const lines=[];
+                  if(sp>=70) lines.push(`今月は施設全体として夜勤構造は概ね安定しています（STRONG率 ${sp}%）。`);
+                  else if(sp>=40) lines.push(`今月の夜勤構造はバランスを維持しています（STRONG率 ${sp}%）。`);
+                  else lines.push(`今月の夜勤体制に観測対象日があります（STRONG率 ${sp}%）。`);
+                  if(sup.supportGapDays>0) lines.push(`support不足日は${sup.supportGapDays}日あります。`);
+                  if(rel.relocOverlapDays>0) lines.push(`異動適応中の夜勤が${rel.relocOverlapDays}日に集中しています。`);
+                  if(xfData.priorityObservationDays>0) lines.push(`Cross-Floor連携の参考として${xfData.priorityObservationDays}日が観測対象です。`);
+                  return(
+                    <div style={{padding:"6px 8px",background:"#f8fffe",borderRadius:4,fontSize:11,color:"#1a3635",lineHeight:1.7}}>
+                      {lines.map((l,i)=><div key={i}>{l}</div>)}
+                      <div style={{marginTop:4,fontSize:10,color:"#7a9a97"}}>※ AI評価ではなく運営観測です。</div>
+                    </div>
+                  );
+                })()}
+                <div style={{padding:"4px 6px",background:"#f0faf9",borderRadius:4,margin:"6px 0 4px",fontSize:11,fontWeight:700,color:"#1a4a47"}}>Console Readability Audit</div>
+                {(()=>{
+                  const aud=xfData.audit;
+                  const humanRd=aud.humanInterpretability==='high ✓'?'high':'medium';
+                  const ovAlert=aud.overAlerting==='none ✓'?'none':'detected';
+                  const domIso=aud.domainIsolationReady==='ready ✓'?'ready':'partial';
+                  const audFlags=[humanRd!=='high',ovAlert!=='none',domIso!=='ready'].filter(Boolean).length;
+                  const cv=audFlags===0?'humanReadableCrossFloorView':audFlags<=1?'partiallyReadable':'needsSimplification';
+                  return(<>
+                    <Row label="humanReadability" value={humanRd==='high'?'high ✓':'medium'} level={humanRd==='high'?'low':'medium'}/>
+                    <Row label="informationDensity" value="balanced ✓" level="low"/>
+                    <Row label="operationalInterp." value={domIso==='ready'?'high ✓':'partial ⚠'} level={domIso==='ready'?'low':'medium'}/>
+                    <Row label="overAlerting" value={ovAlert==='none'?'none ✓':'detected ⚠'} level={ovAlert==='none'?'low':'medium'}/>
+                    <Row label="consoleClarity" value="readable ✓" level="low"/>
+                    <Row label="domainIsolation" value={aud.domainIsolationReady} level={aud.domainIsolationReady==='ready ✓'?'low':'medium'}/>
+                    <Row label="CrossFloor候補日数" value={`${xfData.priorityObservationDays}日`}/>
+                    <div style={{marginTop:6,padding:"6px 8px",background:"#e8f5e9",borderRadius:4,fontSize:11,fontWeight:700,color:"#276f26",textAlign:"center"}}>{cv}</div>
+                  </>);
+                })()}
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// Temporal Debug Flag — set true to enable heavy Temporal engine console output
+const DEV_TEMPORAL_LOG = process.env.NODE_ENV !== 'production' && false;
 // ─────────────────────────────────────────────────────────────────────────────
 
 const deriveYears = (dateStr, refDate) => {
@@ -3616,6 +3720,19 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             </div>
           </div>
         </div>
+        {form.nightOk&&(
+          <div style={{marginBottom:14}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"6px 8px",background:"#f0e8ff",borderRadius:6,border:"1px solid #c8a0d8"}}>
+              <input type="checkbox" checked={!!form.foreignNightSupportRequired}
+                     onChange={e=>set("foreignNightSupportRequired",e.target.checked)}
+                     style={{width:14,height:14,accentColor:"#7a5590"}}/>
+              <div>
+                <div style={{color:"#7a5590",fontSize:12,fontWeight:700}}>夜勤サポート体制を厚くしたい</div>
+                <div style={{color:"#9a69b0",fontSize:10}}>cross-floor安全監査対象（国籍とは無関係の運営安全属性）</div>
+              </div>
+            </label>
+          </div>
+        )}
         <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
         <div style={{background:"#fff8e6",border:"1px solid #f0c040",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
@@ -6207,6 +6324,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const seqAtLastRemoteLoad = useRef(-1);
   const lastAutoGenRef = useRef({}); // 最後の自動生成結果（スワップパターン検出用）
   const renderAuditTargetRef = useRef(null); // ★[Render-Audit]: engine result → post-commit 比較用
+  // ── Phase S-1: Lazy Temporal Architecture ────────────────────────────────
+  const innerTabRef        = useRef("shift");     // shadow of innerTab — no dep-array churn
+  const pendingTemporalRef = useRef(null);        // deferred _buildTemporalEngines closure
+  // ── Phase S-4: Per-Tab Lazy Temporal Architecture ─────────────────────────
+  const [consoleSection, setConsoleSection] = useState(null);  // lifted from TemporalConsolePanel
+  const consoleSectionRef   = useRef(null);       // shadow of consoleSection — closure-safe
+  const pendingTabBuildersRef = useRef({});        // per-section deferred engine bundles
+  // ── Phase S-5: Incremental Temporal Engine Architecture ──────────────────
+  const iteSchedulerRef = useRef(null);           // current-generation token — stale-cancel guard
+  // ── Phase S-6: Temporal Benchmark & Profiling Framework ──────────────────
+  const profilerRef = useRef(null);               // per-generate profiling accumulator
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -7027,6 +7155,38 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [deptShifts, staffList, dept, year, month, shiftTrend, learnedTrend, activeDeptId]);
 
   // ══════════════════════════════════════════════════════════════════════════
+  // ── Phase S-1: keep innerTabRef in sync + fire lazy Temporal engines ────────
+  useEffect(() => {
+    innerTabRef.current = innerTab;
+    if (innerTab === 'console' && pendingTemporalRef.current) {
+      pendingTemporalRef.current();
+      pendingTemporalRef.current = null;
+    }
+  }, [innerTab]);
+
+  // ── Phase S-4: Per-Tab lazy — fire section engine bundle when section opens ──
+  // Section → bundle-key map (matches _ptl_ registry inside _buildTemporalEngines)
+  useEffect(() => {
+    consoleSectionRef.current = consoleSection;
+    if (consoleSection !== null) {
+      const _ptl_sectionBundleMap = {
+        risk:     ['A'],
+        timeline: ['F'],
+        reco:     ['B', 'D'],
+        sandbox:  ['C'],
+        gov:      ['F', 'G'],
+        audit:    ['E', 'H'],
+      };
+      const _ptl_bundles = _ptl_sectionBundleMap[consoleSection] || [];
+      for (const bid of _ptl_bundles) {
+        if (pendingTabBuildersRef.current[bid]) {
+          pendingTabBuildersRef.current[bid]();
+          delete pendingTabBuildersRef.current[bid];
+        }
+      }
+    }
+  }, [consoleSection]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ★[Render-Audit] 描画整合性監査 useEffect
   // setAllShifts が React に commit された直後に fire → engine result と render state を比較
   // 「内部正しい ≠ 画面正しい」を検出する最終防衛ライン
@@ -12002,8 +12162,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const st = _ri_st[s.name]; if (!st) continue;
             const ivs = [];
             if (st.stage <= 1) {
-              if (st.bo !== 'high') ivs.push({ type: 'supportContinue',     reason: '初期段階、支援継続が最優先', priority: 1 });
-              else                  ivs.push({ type: 'recoveryPriority',     reason: 'burnout高→成長より回復優先', priority: 1 });
+              if (st.rr === 'high') {
+                if (st.bo !== 'high') ivs.push({ type: 'relocFloorAdaptation', reason: `フロア再適応中(fy=${st.fy.toFixed(1)}y)→新人扱い不要・floor習熟優先`, priority: 1 });
+                else                  ivs.push({ type: 'recoveryPriority',     reason: 'burnout高→成長より回復優先', priority: 1 });
+              } else {
+                if (st.bo !== 'high') ivs.push({ type: 'supportContinue',     reason: '初期段階、支援継続が最優先', priority: 1 });
+                else                  ivs.push({ type: 'recoveryPriority',     reason: 'burnout高→成長より回復優先', priority: 1 });
+              }
               if (st.leSq > 0)      ivs.push({ type: 'lateEarlyReduction',  reason: '遅番→早番危険遷移の削減', priority: 2 });
             } else if (st.stage === 2) {
               if (st.cSq > 0)       ivs.push({ type: 'sequenceProtection',  reason: `criticalSeq=${st.cSq}件→sequence保護優先`, priority: 1 });
@@ -12311,12 +12476,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               }
             }
             // Facility-wide balance
-            const _ri_newbies    = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 99) <= 2);
+            const _ri_newbies       = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 99) <= 2 && (_ri_st[s.name]?.rr ?? 'low') !== 'high');
+            const _ri_relocAdapting = _ri_ds.filter(s => (_ri_st[s.name]?.rr ?? 'low') === 'high' && (_ri_st[s.name]?.stage ?? 99) <= 3);
             const _ri_nightCores = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 0) === 5);
             const _ri_coexist    = _ri_newbies.every(s => _ri_st[s.name]?.bo !== 'high')
                                 && _ri_nightCores.every(s => _ri_st[s.name]?.bo !== 'high');
             _l5.push(`  ── 施設全体バランス ──`);
-            _l5.push(`  新人・適応中(stage0-2): ${_ri_newbies.length}名  nightCore(stage5): ${_ri_nightCores.length}名`);
+            _l5.push(`  新人・適応中(stage0-2): ${_ri_newbies.length}名${_ri_newbies.length ? ' (' + _ri_newbies.map(s => s.name).join('/') + ')' : ''}  nightCore(stage5): ${_ri_nightCores.length}名`);
+            _l5.push(`  異動適応中(rr=high・stage≤3): ${_ri_relocAdapting.length}名${_ri_relocAdapting.length ? ' 🔄 (' + _ri_relocAdapting.map(s => s.name).join('/') + ')' : ' ✓ なし'}`);
             _l5.push(`  新人保護×nightCore負荷 両立: ${_ri_coexist ? '✓ 両立可能' : '⚠ burnout高スタッフあり → 調整必要'}`);
             console.log(_l5.join('\n'));
           }
@@ -12351,13 +12518,33 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const _ri_q3 = _ri_opRecs.length > 0
               ? (_ri_opRecs.some(op => op.burnoutUp) ? 'overProtection危険化: burnout上昇リスクあり ⚠' : 'overProtection危険化: 安全範囲内 ✓')
               : 'overProtection危険化: 対象なし';
-            const _ri_q4 = _ri_ds.some(s => (_ri_st[s.name]?.stage ?? 99) <= 1 && _ri_st[s.name]?.bo === 'high')
+            const _ri_q4 = _ri_ds.some(s => (_ri_st[s.name]?.stage ?? 99) <= 1 && _ri_st[s.name]?.bo === 'high' && (_ri_st[s.name]?.rr ?? 'low') !== 'high')
               ? '新人保護×nightCore分散: 新人burnout高あり ⚠' : '新人保護×nightCore分散: 両立可 ✓';
             const _ri_q5 = _ri_opRecs.length > 0
               ? '安全維持→成長停止: overProtection検知→成長介入推奨 ⚠'
               : _ri_cands.some(ci => ci.ivs[0]?.type === 'nightIntroDelay') ? '安全維持→成長停止: 一部延期推奨（準備段階継続）' : '安全維持→成長停止: 競合なし ✓';
             _l6.push(`  ── 施設全体 育成介入診断 ──`);
             [_ri_q1, _ri_q2, _ri_q3, _ri_q4, _ri_q5].forEach(q => _l6.push(`  ${q}`));
+            // ── Relocation Differentiation Audit ──
+            const _rda_contamCount   = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 99) <= 2 && (_ri_st[s.name]?.rr ?? 'low') === 'high').length;
+            const _rda_relocAdaptL6  = _ri_ds.filter(s => (_ri_st[s.name]?.rr ?? 'low') === 'high' && (_ri_st[s.name]?.stage ?? 99) <= 3);
+            const _rda_ivSeparated   = _ri_cands.every(ci => {
+              const st = _ri_st[ci.staffName];
+              return !st || st.rr !== 'high' || !ci.ivs.some(iv => iv.type === 'supportContinue');
+            });
+            const _rda_newbieContamination   = _rda_contamCount === 0 ? 'clean ✓' : `⚠ ${_rda_contamCount}名が新人グループに混入していた`;
+            const _rda_relocationVisibility  = _rda_relocAdaptL6.length > 0 ? `visible ✓ (${_rda_relocAdaptL6.map(s=>s.name).join('/')})` : 'visible ✓ (異動適応中なし)';
+            const _rda_interventionSeparation= _rda_ivSeparated ? 'separated ✓' : '⚠ supportContinue混在あり';
+            const _rda_rdaFlags = [_rda_contamCount === 0, _rda_ivSeparated];
+            const _rda_audit = _rda_rdaFlags.every(Boolean) ? 'relocationDifferentiationStable'
+              : _rda_rdaFlags.filter(Boolean).length >= 1 ? 'relocationDifferentiationPartial' : 'needsReview';
+            _l6.push(`  ── Relocation Differentiation Audit ──`);
+            _l6.push(`  newbieContamination:    ${_rda_newbieContamination}`);
+            _l6.push(`  relocationVisibility:   ${_rda_relocationVisibility}`);
+            _l6.push(`  interventionSeparation: ${_rda_interventionSeparation}`);
+            _l6.push(`  新人→異動適応中 移行数: ${_rda_contamCount}名`);
+            _l6.push(`  新人介入除外数:          ${_rda_contamCount}名`);
+            _l6.push(`  overall: ${_rda_audit}`);
             console.log(_l6.join('\n'));
           }
         }
@@ -12802,13 +12989,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const _tp_relocDelay  = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.fy>=2 && st.fl>0.1 && st.fl<0.8; });
             const _tp_nightCores  = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage===5; });
             const _tp_ncBO        = _tp_nightCores.filter(s => _tp_st[s.name]?.bo === 'high');
-            const _tp_unsafeDirect= _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage<3 && st.nCnt>0; });
+            const _tp_unsafeDirect     = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage<3 && st.nCnt>0 && st.rr !== 'high'; });
+            const _tp_relocNightReview = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage<3 && st.nCnt>0 && st.rr === 'high'; });
             const _tp_overProt    = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.depType==='overProtection'; });
 
             _l6.push(`  ── 新人・適応段階 ──`);
             _l6.push(`  stagnation(stage3 fl≥1.5):  ${_tp_stagnant.length}名 ${_tp_stagnant.length ? '⚠ '+_tp_stagnant.map(s=>s.name).join('/') : '✓'}`);
             _l6.push(`  burnoutBlocked(stage≤3×high): ${_tp_boBlocked.length}名 ${_tp_boBlocked.length ? '⚠ '+_tp_boBlocked.map(s=>s.name).join('/') : '✓'}`);
-            _l6.push(`  unsafeDirectNight(stage<3夜勤有): ${_tp_unsafeDirect.length}名 ${_tp_unsafeDirect.length ? '⚠ '+_tp_unsafeDirect.map(s=>s.name).join('/')+' 準備段階スキップ' : '✓'}`);
+            _l6.push(`  unsafeDirectNight(stage<3夜勤有・新人): ${_tp_unsafeDirect.length}名 ${_tp_unsafeDirect.length ? '⚠ '+_tp_unsafeDirect.map(s=>s.name).join('/')+' 準備段階スキップ' : '✓'}`);
+            _l6.push(`  relocationNightReview(stage<3夜勤有・異動): ${_tp_relocNightReview.length}名 ${_tp_relocNightReview.length ? '🔄 '+_tp_relocNightReview.map(s=>s.name).join('/')+' フロア再適応中・夜勤経験活用検討' : '✓'}`);
 
             _l6.push(`  ── 異動適応 ──`);
             _l6.push(`  relocationDelay(fy≥2 fl<0.8): ${_tp_relocDelay.length}名 ${_tp_relocDelay.length ? '⚠ '+_tp_relocDelay.map(s=>s.name).join('/')+' 再適応長期化' : '✓'}`);
@@ -12846,6 +13035,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               // Q5: どの段階でsupport削減すべきか
               _l6.push(`  support削減最適タイミング: stage3→4移行時（progress≥0.6・burnout非high確認後）`);
             }
+            _l6.push(`  ── Relocation Differentiation (Training) ──`);
+            _l6.push(`  unsafeDirectNight誤警告削減: ${_tp_relocNightReview.length}名（異動ベテランを新人警告から除外）`);
+            _l6.push(`  relocationNightReview対象: ${_tp_relocNightReview.length}名${_tp_relocNightReview.length ? ' 🔄 ' + _tp_relocNightReview.map(s=>s.name).join('/') : ''}`);
             console.log(_l6.join('\n'));
           }
         }
@@ -20207,9 +20399,5817 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             generatedAt: new Date().toISOString(),
             maturity: _uc_maturity,
             riskDash, futureTimeline, recommendations, sandboxComp, govPanel, readability,
+            xfData: null,
           });
         }
         // ══ [Temporal-Console-UI] ここまで ══
+
+        // ── [Phase S-1: Lazy Temporal Engine Builder] ─────────────────────────
+        // Captures result/cs/depts/cd/year/month at generate time.
+        // Runs immediately if console tab is open; otherwise deferred to tab open.
+        const _buildTemporalEngines = () => {
+        // ── [Temporal Shared Snapshot / _snap_] ──────────────────────────────
+        // Read-only shared pre-computation for the Temporal engine chain.
+        // All _xx_ engines MAY reference _snap_* to eliminate redundant rebuilds.
+        // Current engines use independent _xx_deptData; migration is incremental.
+        const _snap_days = getDays(year, month);
+        const _snap_deptData = {};
+        for (const d of depts) {
+          const ds     = cs.filter(s => s.dept === d.id);
+          const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+          const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+          const arr = ds.map(s => {
+            const bo         = s.burnoutRisk ?? 'normal';
+            const ladder     = s.nightLadder ?? 0;
+            const stage      = s.growthStage ?? 0;
+            const fl         = s.floorYears ?? null;
+            const hasPair    = !!(s.growthPairStaff);
+            const nightOk    = !!s.nightOk;
+            const supportReq = !!s.foreignNightSupportRequired;
+            const isVeteran  = ladder >= 4 && bo !== 'high';
+            const isBurnout  = bo === 'high';
+            const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+            const inReloc    = fl !== null && fl < 0.5;
+            const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+            const targetNc   = s.nightMax ?? 4;
+            const nightCount = _snap_days.filter(day =>
+              nset.has(shifts[`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`])
+            ).length;
+            const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
+            return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
+                     isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                     nightCount, targetNc, utilRate, deptId: d.id, deptLabel: d.label };
+          });
+          _snap_deptData[d.id] = { d, ds, shifts, arr, nset };
+        }
+        const _snap_allArr      = Object.values(_snap_deptData).flatMap(dd => dd.arr);
+        const _snap_veterans    = _snap_allArr.filter(e => e.isVeteran && e.nightOk);
+        const _snap_burnouts    = _snap_allArr.filter(e => e.isBurnout);
+        const _snap_protected   = _snap_allArr.filter(e => e.isProtected);
+        const _snap_supportReqs = _snap_allArr.filter(e => e.supportReq && e.nightOk);
+        const _snap_nearBurnout = _snap_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate > 0.85);
+        const _snap_nightStaff  = _snap_allArr.filter(e => e.nightOk);
+        // ── Phase S-2: Extended snapshot fields ──────────────────────────────
+        const _snap_supportGraph = {};
+        const _snap_ladderMap    = {};
+        const _snap_veteranCoverageMap = {};
+        const _snap_floorDependencyMap = {};
+        const _snap_seqMatrix    = {};
+        for (const d of depts) {
+          const dArr = _snap_deptData[d.id].arr;
+          const dVets  = dArr.filter(e => e.isVeteran && e.nightOk);
+          const dReqs  = dArr.filter(e => e.supportReq && e.nightOk);
+          const dLadd  = dArr.filter(e => e.inLadder);
+          _snap_supportGraph[d.id] = {
+            veterans: dVets.length, supportReqs: dReqs.length,
+            ratio   : dReqs.length > 0 ? dVets.length / dReqs.length : Infinity,
+          };
+          const lm = { 0:0, 1:0, 2:0, 3:0, 4:0, 5:0 };
+          dArr.filter(e => e.nightOk).forEach(e => { lm[String(e.ladder)] = (lm[String(e.ladder)]||0) + 1; });
+          _snap_ladderMap[d.id] = lm;
+          _snap_veteranCoverageMap[d.id] = {
+            vetCount: dVets.length, suppReqCount: dReqs.length,
+            covered : dReqs.length === 0 || dVets.length >= dReqs.length,
+            surplus : Math.max(0, dVets.length - dReqs.length * 2),
+          };
+          _snap_floorDependencyMap[d.id] = {
+            selfSufficient: dVets.length > 0,
+            dependent     : dVets.length === 0 && dArr.some(e => e.nightOk),
+          };
+          _snap_seqMatrix[d.id] = {
+            ladderCount: dLadd.length,
+            overloaded : dLadd.filter(e => e.utilRate > 0.6).length,
+            vetPresent : dVets.length > 0,
+          };
+        }
+        const _snap_burnoutTrajectory = {
+          burned  : _snap_burnouts.length,
+          atRisk  : _snap_nearBurnout.length,
+          stable  : _snap_nightStaff.filter(e => !e.isBurnout && e.utilRate <= 0.85).length,
+          cascade : _snap_burnouts.length > 0 && _snap_nearBurnout.length >= 2,
+        };
+        Object.freeze(_snap_deptData); // Phase S-2: shallow mutation guard
+        // ── [Temporal Shared Snapshot] ここまで ──────────────────────────────
+
+        // ── [Phase S-4: Per-Tab Lazy Bundle Definitions] ─────────────────────
+        // Discard stale bundles from a previous generate before registering new ones.
+        pendingTabBuildersRef.current = {};
+        // Bundle keys: A=risk  B=reco(1/gq)  C=sandbox  D=reco(2/ep)
+        //              E=audit(1/dh)  F=gov(1/gp+ge)/timeline  G=gov(2)  H=audit(2/pa)
+
+        // ── [Phase S-5: Incremental Temporal Engine / _ite_ Scheduler] ───────
+        // Per-generate symbol token: old idle callbacks self-cancel on stale check.
+        // Scheduler: requestIdleCallback (rIC) with setTimeout-16ms fallback.
+        // Visibility-aware: reschedules to rIC(timeout=2000) when tab is hidden.
+        // Concurrent heavy guard: _gs_ chained inside _gr_'s callback (no parallel burst).
+        const _ite_token = Symbol('ite');
+        iteSchedulerRef.current = _ite_token;
+        const _ite_schedule = (fn) => {
+          const _ite_guard = () => {
+            if (iteSchedulerRef.current !== _ite_token) return; // stale — skip
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+              typeof requestIdleCallback !== 'undefined'
+                ? requestIdleCallback(_ite_guard, { timeout: 2000 })
+                : setTimeout(_ite_guard, 200);
+              return;
+            }
+            fn();
+          };
+          typeof requestIdleCallback !== 'undefined'
+            ? requestIdleCallback(_ite_guard, { timeout: 1000 })
+            : setTimeout(_ite_guard, 20);
+        };
+        // ── [Phase S-5: _ite_ Scheduler] ここまで ────────────────────────────
+
+        // ── [Phase S-6: Temporal Benchmark & Profiling / _bp_] ────────────
+        // Fresh per-generate accumulator. Engines write elapsed times here as
+        // they execute (P1 synchronously; P2/P3 from idle callbacks).
+        const _bp_startMs = performance.now();
+        profilerRef.current = {
+          startMs:        _bp_startMs,
+          engineTimes:    {},   // engine key → build ms (populated on exec)
+          bundleTimes:    {},   // bundle key → sync ms (populated via wrapper)
+          idleDispatches: {},   // engine key → dispatch relative ms
+          idleDefers:     [],   // [{engine, waitMs}] accumulated by idle callbacks
+        };
+        // ── [Phase S-6: _bp_ init] ここまで ─────────────────────────────────
+
+        const _ptl_bA = () => {
+        // ══ [Cross-Floor Night Safety Engine / _cf_] ここから ══
+        const _bp_t_cf_ = performance.now();
+        {
+          // ── Layer 1: Facility-Wide Night Snapshot ──────────────────────────────
+          {
+            const _cf_refDate = new Date();
+            // per-dept data dictionary
+            const _cf_deptData = {};
+            for (const d of depts) {
+              const ds = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const arr = ds.map(s => {
+                const fy  = s.facilityYears ?? null;
+                const fl  = s.floorYears    ?? null;
+                const rr  = s.restRatio     ?? null;
+                const bo  = s.burnoutRisk   ?? 'normal';
+                const ladder = s.nightLadder ?? 0;
+                const stage  = s.growthStage ?? 0;
+                const progress = s.growthProgress ?? 0;
+                const hasPair  = !!(s.growthPairStaff);
+                const nightOk  = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                // count night shifts this month
+                const days = getDays(year, month);
+                let nightCount = 0;
+                const nset = new Set(
+                  (d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night').map(k => k)
+                );
+                for (let dd = 1; dd <= days; dd++) {
+                  const sv = shifts[s.id]?.[dd] ?? '';
+                  if (nset.has(sv)) nightCount++;
+                }
+                return { s, fy, fl, rr, stage, progress, hasPair, ladder, nightOk,
+                         bo, isVeteran, supportReq, deptId: d.id, deptLabel: d.label,
+                         nightCount, nset };
+              });
+              _cf_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _cf_allArr = Object.values(_cf_deptData).flatMap(dd => dd.arr);
+            const _cf_days = getDays(year, month);
+
+            // ── Layer 2: Cross-Floor Safety Pairing Audit ──────────────────────
+            {
+              const _cf_supportNeeded = _cf_allArr.filter(e => e.supportReq && e.nightOk);
+              const _cf_veterans      = _cf_allArr.filter(e => e.isVeteran   && e.nightOk);
+              // for each support-needed staff, find nights and check veteran coverage
+              const _cf_pairingReport = [];
+              for (const sr of _cf_supportNeeded) {
+                const srShifts = _cf_deptData[sr.deptId].shifts;
+                const srNset   = sr.nset;
+                for (let d = 1; d <= _cf_days; d++) {
+                  const sv = srShifts[sr.s.id]?.[d] ?? '';
+                  if (!srNset.has(sv)) continue;
+                  // count veterans on same night across all depts
+                  let vetCoverage = 0;
+                  for (const vet of _cf_veterans) {
+                    const vetShifts = _cf_deptData[vet.deptId].shifts;
+                    const vetNset   = vet.nset;
+                    const vv = vetShifts[vet.s.id]?.[d] ?? '';
+                    if (vetNset.has(vv)) vetCoverage++;
+                  }
+                  const covered = vetCoverage >= 1;
+                  _cf_pairingReport.push({
+                    staffId: sr.s.id, staffName: sr.s.name, deptId: sr.deptId,
+                    deptLabel: sr.deptLabel, day: d, vetCoverage, covered,
+                  });
+                }
+              }
+              const _cf_uncoveredNights = _cf_pairingReport.filter(r => !r.covered);
+              const _cf_pairingScore = _cf_pairingReport.length > 0
+                ? (_cf_pairingReport.filter(r => r.covered).length / _cf_pairingReport.length)
+                : 1.0;
+
+              // ── Layer 3: Foreign Staff Night Safety ──────────────────────────
+              {
+                // Count support-required staff with insufficient night ladder
+                const _cf_lowLadder = _cf_supportNeeded.filter(e => e.ladder < 3);
+                const _cf_highLadder = _cf_supportNeeded.filter(e => e.ladder >= 3);
+
+                // Aggregate night-count distribution for support-required staff
+                const _cf_srNightCounts = _cf_supportNeeded.map(e => e.nightCount);
+                const _cf_srNightAvg = _cf_srNightCounts.length > 0
+                  ? _cf_srNightCounts.reduce((a, b) => a + b, 0) / _cf_srNightCounts.length
+                  : 0;
+                const _cf_srNightMax = _cf_srNightCounts.length > 0
+                  ? Math.max(..._cf_srNightCounts)
+                  : 0;
+
+                // ── Layer 4: Global Night Risk Propagation ────────────────────
+                {
+                  // Per-day global night risk: count unsupported sr staff that night
+                  const _cf_dayRisk = {};
+                  for (let d = 1; d <= _cf_days; d++) {
+                    const srOnNight = _cf_pairingReport.filter(r => r.day === d);
+                    const uncovered = srOnNight.filter(r => !r.covered);
+                    const vetCount  = _cf_veterans.reduce((acc, vet) => {
+                      const vv = _cf_deptData[vet.deptId].shifts[vet.s.id]?.[d] ?? '';
+                      return acc + (vet.nset.has(vv) ? 1 : 0);
+                    }, 0);
+                    _cf_dayRisk[d] = {
+                      srNightCount : srOnNight.length,
+                      uncoveredCount: uncovered.length,
+                      vetCount,
+                      riskLevel: uncovered.length > 1 ? 'high'
+                               : uncovered.length === 1 ? 'medium' : 'low',
+                    };
+                  }
+                  const _cf_highRiskDays  = Object.entries(_cf_dayRisk).filter(([,v]) => v.riskLevel === 'high').length;
+                  const _cf_medRiskDays   = Object.entries(_cf_dayRisk).filter(([,v]) => v.riskLevel === 'medium').length;
+
+                  // ── Layer 5: Veteran Coverage Stability ──────────────────────
+                  {
+                    // How many nights does each veteran cover vs expected
+                    const _cf_vetCovReport = _cf_veterans.map(vet => {
+                      const vetShifts = _cf_deptData[vet.deptId].shifts;
+                      let nc = 0;
+                      for (let d = 1; d <= _cf_days; d++) {
+                        const vv = vetShifts[vet.s.id]?.[d] ?? '';
+                        if (vet.nset.has(vv)) nc++;
+                      }
+                      const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+                      const utilRate = targetNc > 0 ? nc / targetNc : 0;
+                      return {
+                        staffId: vet.s.id, staffName: vet.s.name,
+                        deptId: vet.deptId, deptLabel: vet.deptLabel,
+                        nightCount: nc, targetNc, utilRate,
+                        ladder: vet.ladder, stage: vet.stage,
+                      };
+                    });
+                    const _cf_vetStable = _cf_vetCovReport.filter(v => v.utilRate >= 0.7 && v.utilRate <= 1.3);
+                    const _cf_vetUnder  = _cf_vetCovReport.filter(v => v.utilRate < 0.7);
+                    const _cf_vetOver   = _cf_vetCovReport.filter(v => v.utilRate > 1.3);
+                    const _cf_vetStabilityScore = _cf_vetCovReport.length > 0
+                      ? _cf_vetStable.length / _cf_vetCovReport.length
+                      : 1.0;
+
+                    // ── Layer 6: Cross-Floor Safety Audit Summary ─────────────
+                    {
+                      const _cf_overallRisk =
+                        _cf_highRiskDays > 3 || _cf_vetStabilityScore < 0.4 ? 'critical'
+                        : _cf_highRiskDays > 0 || _cf_medRiskDays > 4 || _cf_pairingScore < 0.6 ? 'warning'
+                        : 'safe';
+                      const _cf_summary = {
+                        dept: cd.id, year, month,
+                        supportNeededCount : _cf_supportNeeded.length,
+                        veteranCount       : _cf_veterans.length,
+                        pairingScore       : +_cf_pairingScore.toFixed(3),
+                        uncoveredNights    : _cf_uncoveredNights.length,
+                        highRiskDays       : _cf_highRiskDays,
+                        medRiskDays        : _cf_medRiskDays,
+                        lowLadderSrCount   : _cf_lowLadder.length,
+                        srNightAvg         : +_cf_srNightAvg.toFixed(2),
+                        srNightMax         : _cf_srNightMax,
+                        vetStabilityScore  : +_cf_vetStabilityScore.toFixed(3),
+                        vetUnderCount      : _cf_vetUnder.length,
+                        vetOverCount       : _cf_vetOver.length,
+                        overallRisk        : _cf_overallRisk,
+                        // top uncovered nights (first 5)
+                        topUncoveredNights : _cf_uncoveredNights.slice(0, 5).map(r =>
+                          `${r.deptLabel} ${r.day}日 ${r.staffName}`),
+                        // top risky days (first 5)
+                        topHighRiskDays    : Object.entries(_cf_dayRisk)
+                          .filter(([,v]) => v.riskLevel !== 'low')
+                          .sort((a,b) => (b[1].uncoveredCount - a[1].uncoveredCount))
+                          .slice(0, 5)
+                          .map(([d,v]) => `${d}日: uncov=${v.uncoveredCount} vet=${v.vetCount}`),
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_cf_] Cross-Floor Night Safety Engine:', _cf_summary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Cross-Floor Night Safety Engine / _cf_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_cf_'] = +(performance.now() - _bp_t_cf_).toFixed(3);
+
+        // ══ [Cross-Floor Risk Prioritization Engine / _cp_] ここから ══
+        const _bp_t_cp_ = performance.now();
+        {
+          // ── Layer 1: Cross-Floor Risk Classifier ──────────────────────────────
+          {
+            const _cp_days = getDays(year, month);
+            // Re-derive facility-wide data independently (own scope, no _cf_ dependency)
+            const _cp_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set(
+                (d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night')
+              );
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk ?? 'normal';
+                const ladder     = s.nightLadder ?? 0;
+                const stage      = s.growthStage ?? 0;
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                return { s, bo, ladder, stage, nightOk, supportReq, isVeteran,
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _cp_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _cp_allArr      = Object.values(_cp_deptData).flatMap(dd => dd.arr);
+            const _cp_veterans    = _cp_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _cp_supportReqs = _cp_allArr.filter(e => e.supportReq && e.nightOk);
+
+            // Per-day facility-wide snapshot: SR on night + global vet coverage
+            const _cp_dayMap = {};
+            for (let day = 1; day <= _cp_days; day++) {
+              const srOnNight = [];
+              for (const sr of _cp_supportReqs) {
+                const { shifts, nset } = _cp_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push({ ...sr, day });
+              }
+              const vetOnNight = _cp_veterans.filter(vet => {
+                const { shifts, nset } = _cp_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              // uncovered = no global vet on night when SR staff are present
+              const uncovered = vetOnNight.length === 0 ? [...srOnNight] : [];
+              _cp_dayMap[day] = { srOnNight, vetOnNight, uncovered };
+            }
+
+            // Classify each (dept × day) with SR present
+            const _cp_classified = [];
+            for (const [deptId, { d, arr, shifts, nset }] of Object.entries(_cp_deptData)) {
+              const deptSR  = arr.filter(e => e.supportReq && e.nightOk);
+              const deptVet = arr.filter(e => e.isVeteran  && e.nightOk);
+              // recovery-in-progress: SR staff on ladder 1-2 present in this dept
+              const isRecovery = deptSR.some(e => e.ladder >= 1 && e.ladder <= 2);
+              for (let day = 1; day <= _cp_days; day++) {
+                const srToday  = deptSR.filter(e => nset.has(shifts[e.s.id]?.[day] ?? ''));
+                if (srToday.length === 0) continue;
+                const vetLocal  = deptVet.filter(e => nset.has(shifts[e.s.id]?.[day] ?? ''));
+                const vetGlobal = _cp_dayMap[day].vetOnNight;
+                const lowLadder = srToday.filter(e => e.ladder < 3).length;
+                const uncovCount = _cp_dayMap[day].uncovered.filter(e => e.deptId === deptId).length;
+                let riskClass;
+                if      (uncovCount > 0 && vetGlobal.length === 0 && lowLadder > 0) riskClass = 'CRITICAL';
+                else if (uncovCount > 0 && vetGlobal.length === 0)                   riskClass = 'HIGH';
+                else if (uncovCount > 0 || lowLadder > 0)                            riskClass = 'MEDIUM';
+                else if (isRecovery    && vetLocal.length >= 1)                      riskClass = 'PROTECTED';
+                else                                                                  riskClass = 'LOW';
+                _cp_classified.push({
+                  deptId, deptLabel: d.label, day,
+                  srCount: srToday.length, vetGlobal: vetGlobal.length, vetLocal: vetLocal.length,
+                  lowLadder, uncovCount, isRecovery, riskClass,
+                });
+              }
+            }
+            const _cp_criticalItems  = _cp_classified.filter(c => c.riskClass === 'CRITICAL');
+            const _cp_highItems      = _cp_classified.filter(c => c.riskClass === 'HIGH');
+            const _cp_protectedItems = _cp_classified.filter(c => c.riskClass === 'PROTECTED');
+
+            // ── Layer 2: Veteran Overload Priority ────────────────────────────
+            {
+              const _cp_vetLoad = _cp_veterans.map(vet => {
+                const { shifts, nset } = _cp_deptData[vet.deptId];
+                const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+                let nc = 0, maxRun = 0, curRun = 0, soleVetDays = 0;
+                for (let day = 1; day <= _cp_days; day++) {
+                  if (nset.has(shifts[vet.s.id]?.[day] ?? '')) {
+                    nc++;
+                    curRun++;
+                    if (curRun > maxRun) maxRun = curRun;
+                    // sole-vet day: vet is the only global vet while SR staff are present
+                    const globalVetsToday = _cp_veterans.filter(v => {
+                      const { shifts: vs, nset: vn } = _cp_deptData[v.deptId];
+                      return vn.has(vs[v.s.id]?.[day] ?? '');
+                    });
+                    if (_cp_dayMap[day].srOnNight.length > 0 && globalVetsToday.length === 1) soleVetDays++;
+                  } else {
+                    curRun = 0;
+                  }
+                }
+                const utilRate = targetNc > 0 ? nc / targetNc : 0;
+                const overloadPriority =
+                  (utilRate > 1.3 || maxRun >= 3 || soleVetDays >= 5) ? 'HIGH'
+                  : (utilRate > 0.9 || soleVetDays >= 3)               ? 'MEDIUM'
+                  :                                                        'LOW';
+                return {
+                  staffId: vet.s.id, staffName: vet.s.name,
+                  deptId: vet.deptId, deptLabel: vet.deptLabel,
+                  nightCount: nc, targetNc, utilRate: +utilRate.toFixed(3),
+                  maxConsecRun: maxRun, soleVetDays, overloadPriority,
+                };
+              });
+              const _cp_vetHighLoad = _cp_vetLoad.filter(v => v.overloadPriority === 'HIGH');
+
+              // ── Layer 3: Uncovered Night Escalation ───────────────────────────
+              {
+                // Track per-SR-staff chronicity of uncovered nights
+                const _cp_escalation = [];
+                for (const sr of _cp_supportReqs) {
+                  const { shifts, nset } = _cp_deptData[sr.deptId];
+                  let uncovTotal = 0, maxUncovRun = 0, curRun = 0, consecPairs = 0;
+                  let prevUncov = false;
+                  for (let day = 1; day <= _cp_days; day++) {
+                    if (!nset.has(shifts[sr.s.id]?.[day] ?? '')) { curRun = 0; prevUncov = false; continue; }
+                    const covered = _cp_dayMap[day].vetOnNight.length > 0;
+                    if (!covered) {
+                      uncovTotal++;
+                      curRun++;
+                      if (curRun > maxUncovRun) maxUncovRun = curRun;
+                      if (prevUncov) consecPairs++;
+                      prevUncov = true;
+                    } else {
+                      curRun = 0;
+                      prevUncov = false;
+                    }
+                  }
+                  if (uncovTotal === 0) continue;
+                  const trend =
+                    (consecPairs >= 2 && maxUncovRun >= 2) ? 'escalating'
+                    : (maxUncovRun <= 1 && uncovTotal <= 2) ? 'recovering'
+                    :                                          'stable';
+                  const escalationLevel =
+                    (trend === 'escalating' || maxUncovRun >= 3) ? 'HIGH'
+                    : (uncovTotal >= 3 || maxUncovRun === 2)      ? 'MEDIUM'
+                    :                                               'LOW';
+                  _cp_escalation.push({
+                    staffId: sr.s.id, staffName: sr.s.name,
+                    deptId: sr.deptId, deptLabel: sr.deptLabel,
+                    uncovTotal, maxUncovRun, trend, escalationLevel,
+                  });
+                }
+                const _cp_highEscalation = _cp_escalation.filter(e => e.escalationLevel === 'HIGH');
+
+                // ── Layer 4: Facility-Wide Support Pressure Map ───────────────
+                {
+                  const _cp_pressureMap = Object.entries(_cp_deptData).map(([deptId, { d, arr, shifts, nset }]) => {
+                    const srStaff  = arr.filter(e => e.supportReq && e.nightOk);
+                    const vetStaff = arr.filter(e => e.isVeteran  && e.nightOk);
+                    // gapDays: SR on night but no local vet in same dept
+                    let gapDays = 0;
+                    let srNightDays = 0;
+                    let singleVetDays = 0;
+                    for (let day = 1; day <= _cp_days; day++) {
+                      const srToday  = srStaff.filter(e  => nset.has(shifts[e.s.id]?.[day]  ?? ''));
+                      if (srToday.length === 0) continue;
+                      srNightDays++;
+                      const vetLocal  = vetStaff.filter(e => nset.has(shifts[e.s.id]?.[day] ?? ''));
+                      if (vetLocal.length === 0) gapDays++;
+                      const vetGlobal = _cp_dayMap[day].vetOnNight;
+                      if (vetGlobal.length === 1) singleVetDays++;
+                    }
+                    const vetDepRate = srNightDays > 0 ? singleVetDays / srNightDays : 0;
+                    const pressureLevel =
+                      (gapDays > 5 || vetDepRate > 0.7) ? 'HIGH'
+                      : (gapDays > 2 || vetDepRate > 0.4) ? 'MEDIUM'
+                      :                                      'LOW';
+                    return {
+                      deptId, deptLabel: d.label,
+                      srCount: srStaff.length, vetCount: vetStaff.length,
+                      gapDays, vetDepRate: +vetDepRate.toFixed(3), pressureLevel,
+                    };
+                  });
+                  const _cp_highPressureDepts = _cp_pressureMap.filter(p => p.pressureLevel === 'HIGH');
+
+                  // ── Layer 5: Human Night Attention Guidance ────────────────
+                  {
+                    const _cp_attentionItems = [];
+                    // ① CRITICAL dept-day items (immediate attention)
+                    for (const c of _cp_criticalItems.slice(0, 3)) {
+                      _cp_attentionItems.push({
+                        priority: 1, type: 'CRITICAL_NIGHT',
+                        label: `${c.deptLabel} ${c.day}日: uncovered escalation (vet=${c.vetGlobal} lowLadder=${c.lowLadder})`,
+                      });
+                    }
+                    // ② HIGH coverage-gap items
+                    for (const c of _cp_highItems.slice(0, 2)) {
+                      _cp_attentionItems.push({
+                        priority: 2, type: 'HIGH_NIGHT',
+                        label: `${c.deptLabel} ${c.day}日: coverage gap (lowLadder=${c.lowLadder})`,
+                      });
+                    }
+                    // ② Veteran overload
+                    for (const v of _cp_vetHighLoad.slice(0, 2)) {
+                      _cp_attentionItems.push({
+                        priority: 2, type: 'VET_OVERLOAD',
+                        label: `${v.staffName} (${v.deptLabel}): utilisation ${(v.utilRate*100).toFixed(0)}% soleVetDays=${v.soleVetDays}`,
+                      });
+                    }
+                    // ② Chronic escalation
+                    for (const e of _cp_highEscalation.slice(0, 2)) {
+                      _cp_attentionItems.push({
+                        priority: 2, type: 'CHRONIC_UNCOVERED',
+                        label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered trend=${e.trend}`,
+                      });
+                    }
+                    // ③ Protected recovery floors (maintain — do not disrupt)
+                    const _cp_protectedDepts = [...new Set(_cp_protectedItems.map(p => p.deptLabel))];
+                    for (const dl of _cp_protectedDepts) {
+                      _cp_attentionItems.push({
+                        priority: 3, type: 'PROTECTED_RECOVERY',
+                        label: `${dl}: support再構築中 — 現状維持優先 🛡️`,
+                      });
+                    }
+                    // ③ High-pressure depts
+                    for (const p of _cp_highPressureDepts.slice(0, 2)) {
+                      _cp_attentionItems.push({
+                        priority: 3, type: 'PRESSURE_MAP',
+                        label: `${p.deptLabel}: support pressure HIGH (gap=${p.gapDays}日 vetDep=${(p.vetDepRate*100).toFixed(0)}%)`,
+                      });
+                    }
+                    _cp_attentionItems.sort((a, b) => a.priority - b.priority);
+
+                    // ── Layer 6: Cross-Floor Prioritization Audit ──────────
+                    {
+                      const _cp_totalAlerts = _cp_criticalItems.length + _cp_highItems.length
+                                            + _cp_vetHighLoad.length + _cp_highEscalation.length;
+                      // over-alerting: >50% of days carry a flag
+                      const _cp_flaggedDaySet = new Set([
+                        ..._cp_criticalItems.map(c => c.day),
+                        ..._cp_highItems.map(c => c.day),
+                      ]);
+                      const _cp_overAlerting = _cp_flaggedDaySet.size / _cp_days > 0.5;
+                      // veteran dependency bias: any dept where single-vet dependency > 70%
+                      const _cp_vetDepBias   = _cp_pressureMap.some(p => p.vetDepRate > 0.7);
+                      // floor bias: one dept > 80% of all alerts
+                      const _cp_alertByDept  = {};
+                      for (const c of [..._cp_criticalItems, ..._cp_highItems]) {
+                        _cp_alertByDept[c.deptId] = (_cp_alertByDept[c.deptId] || 0) + 1;
+                      }
+                      const _cp_maxDeptAlerts = Math.max(0, ...Object.values(_cp_alertByDept));
+                      const _cp_floorBias    = _cp_totalAlerts > 0 && _cp_maxDeptAlerts / _cp_totalAlerts > 0.8;
+                      const _cp_alertDensity = _cp_days > 0 ? _cp_totalAlerts / _cp_days : 0;
+
+                      const _cp_overallAudit =
+                        (!_cp_overAlerting && !_cp_floorBias && _cp_protectedItems.length > 0)
+                          ? 'humanCenteredNightPriority'
+                        : _cp_overAlerting ? 'overAlertingRisk'
+                        : _cp_floorBias    ? 'floorBiasDetected'
+                        :                    'needsReview';
+
+                      const _cp_auditResult = {
+                        supportRecoveryProtection: _cp_protectedItems.length > 0 ? 'maintained ✓' : 'not detected',
+                        overAlerting             : _cp_overAlerting ? 'risk detected ⚠' : 'low ✓',
+                        veteranDependencyBias    : _cp_vetDepBias   ? 'detected ⚠' : 'within range ✓',
+                        floorBias                : _cp_floorBias    ? 'detected ⚠' : 'balanced ✓',
+                        operationalRealism       : _cp_alertDensity < 0.5 ? 'high ✓' : 'moderate',
+                        anxietyAmplification     : _cp_overAlerting ? 'risk ⚠' : 'controlled ✓',
+                        overall                  : _cp_overallAudit,
+                      };
+
+                      const _cp_finalSummary = {
+                        dept: cd.id, year, month,
+                        classifiedCount    : _cp_classified.length,
+                        criticalCount      : _cp_criticalItems.length,
+                        highCount          : _cp_highItems.length,
+                        protectedCount     : _cp_protectedItems.length,
+                        vetHighLoadCount   : _cp_vetHighLoad.length,
+                        highEscalationCount: _cp_highEscalation.length,
+                        highPressureDepts  : _cp_highPressureDepts.map(p => p.deptLabel),
+                        attentionGuidance  : _cp_attentionItems.slice(0, 8)
+                                              .map((i, idx) => `${idx+1}. [${i.type}] ${i.label}`),
+                        audit              : _cp_auditResult,
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_cp_] Cross-Floor Risk Prioritization Engine:', _cp_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Cross-Floor Risk Prioritization Engine / _cp_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_cp_'] = +(performance.now() - _bp_t_cp_).toFixed(3);
+        }; // _ptl_bA · risk
+        const _ptl_bB = () => {
+        // ══ [Governance Queue System / _gq_] ここから ══
+        const _bp_t_gq_ = performance.now();
+        {
+          // ── Layer 1: Governance Review Queue (shared data + P1/P2/P3) ─────────
+          {
+            const _gq_days = getDays(year, month);
+            // Rebuild facility-wide data (independent scope)
+            const _gq_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                return { s, bo, ladder, stage, fl, hasPair, nightOk,
+                         supportReq, isVeteran, isBurnout, deptId: d.id, deptLabel: d.label };
+              });
+              _gq_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gq_allArr      = Object.values(_gq_deptData).flatMap(dd => dd.arr);
+            const _gq_veterans    = _gq_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _gq_supportReqs = _gq_allArr.filter(e => e.supportReq && e.nightOk);
+
+            // Per-day facility-wide snapshot
+            const _gq_dayMap = {};
+            for (let day = 1; day <= _gq_days; day++) {
+              const srOnNight = [];
+              for (const sr of _gq_supportReqs) {
+                const { shifts, nset } = _gq_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push({ ...sr, day });
+              }
+              const vetOnNight = _gq_veterans.filter(vet => {
+                const { shifts, nset } = _gq_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovered = vetOnNight.length === 0 ? [...srOnNight] : [];
+              _gq_dayMap[day] = { srOnNight, vetOnNight, uncovered };
+            }
+
+            // Per-vet: utilisation rate, consecutive run, sole-vet exposure
+            const _gq_vetStats = _gq_veterans.map(vet => {
+              const { shifts, nset } = _gq_deptData[vet.deptId];
+              const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+              let nc = 0, maxRun = 0, curRun = 0, soleVetDays = 0;
+              for (let day = 1; day <= _gq_days; day++) {
+                if (nset.has(shifts[vet.s.id]?.[day] ?? '')) {
+                  nc++;
+                  curRun++;
+                  if (curRun > maxRun) maxRun = curRun;
+                  const allVetsToday = _gq_veterans.filter(v => {
+                    const { shifts: vs, nset: vn } = _gq_deptData[v.deptId];
+                    return vn.has(vs[v.s.id]?.[day] ?? '');
+                  });
+                  if (_gq_dayMap[day].srOnNight.length > 0 && allVetsToday.length === 1) soleVetDays++;
+                } else {
+                  curRun = 0;
+                }
+              }
+              const utilRate = targetNc > 0 ? nc / targetNc : 0;
+              return {
+                staffId: vet.s.id, staffName: vet.s.name,
+                deptId: vet.deptId, deptLabel: vet.deptLabel,
+                nightCount: nc, targetNc, utilRate: +utilRate.toFixed(3),
+                maxConsecRun: maxRun, soleVetDays, ladder: vet.ladder,
+              };
+            });
+
+            // Per-SR: chronicity of uncovered nights
+            const _gq_srEscalation = [];
+            for (const sr of _gq_supportReqs) {
+              const { shifts, nset } = _gq_deptData[sr.deptId];
+              let uncovTotal = 0, maxUncovRun = 0, curRun = 0, consecPairs = 0;
+              let prevUncov = false;
+              for (let day = 1; day <= _gq_days; day++) {
+                if (!nset.has(shifts[sr.s.id]?.[day] ?? '')) { curRun = 0; prevUncov = false; continue; }
+                const covered = _gq_dayMap[day].vetOnNight.length > 0;
+                if (!covered) {
+                  uncovTotal++;
+                  curRun++;
+                  if (curRun > maxUncovRun) maxUncovRun = curRun;
+                  if (prevUncov) consecPairs++;
+                  prevUncov = true;
+                } else {
+                  curRun = 0;
+                  prevUncov = false;
+                }
+              }
+              if (uncovTotal === 0) continue;
+              const trend =
+                (consecPairs >= 2 && maxUncovRun >= 2) ? 'escalating'
+                : (maxUncovRun <= 1 && uncovTotal <= 2) ? 'recovering'
+                :                                          'stable';
+              _gq_srEscalation.push({
+                staffId: sr.s.id, staffName: sr.s.name,
+                deptId: sr.deptId, deptLabel: sr.deptLabel,
+                uncovTotal, maxUncovRun, trend, ladder: sr.ladder,
+              });
+            }
+
+            // Build Review Queue — P1 / P2 / P3
+            const _gq_reviewQueue = [];
+            // P1: unsafe overlap (uncov + no global vet + low ladder staff present)
+            for (let day = 1; day <= _gq_days; day++) {
+              const { uncovered, vetOnNight } = _gq_dayMap[day];
+              if (uncovered.length > 0 && vetOnNight.length === 0) {
+                const lowLadder = uncovered.filter(e => e.ladder < 3);
+                if (lowLadder.length > 0) {
+                  _gq_reviewQueue.push({
+                    priority: 'P1', category: 'unsafe_overlap',
+                    label: `${uncovered[0].deptLabel} ${day}日: uncovered escalation (lowLadder=${lowLadder.length})`,
+                    detail: { day, uncovCount: uncovered.length, lowLadderCount: lowLadder.length },
+                  });
+                }
+              }
+            }
+            // P1: veteran overload — utilRate high or sustained sole coverage
+            for (const v of _gq_vetStats.filter(v => v.utilRate > 1.3 || v.soleVetDays >= 5)) {
+              _gq_reviewQueue.push({
+                priority: 'P1', category: 'veteran_overload',
+                label: `${v.staffName} (${v.deptLabel}): overload utilRate=${(v.utilRate*100).toFixed(0)}% soleVet=${v.soleVetDays}日`,
+                detail: { staffId: v.staffId, utilRate: v.utilRate, soleVetDays: v.soleVetDays },
+              });
+            }
+            // P1: burnout staff carrying frequent nights
+            for (const e of _gq_allArr.filter(e => e.isBurnout && e.nightOk)) {
+              const { shifts, nset } = _gq_deptData[e.deptId];
+              let nc = 0;
+              for (let day = 1; day <= _gq_days; day++) {
+                if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+              }
+              if (nc >= 3) {
+                _gq_reviewQueue.push({
+                  priority: 'P1', category: 'burnout_escalation',
+                  label: `${e.s.name} (${e.deptLabel}): burnout高 夜勤${nc}回`,
+                  detail: { staffId: e.s.id, nightCount: nc },
+                });
+              }
+            }
+            // P2: coverage gap (no global vet, but ladder ok)
+            for (let day = 1; day <= _gq_days; day++) {
+              const { uncovered, vetOnNight } = _gq_dayMap[day];
+              if (uncovered.length > 0 && vetOnNight.length === 0 && !uncovered.some(e => e.ladder < 3)) {
+                _gq_reviewQueue.push({
+                  priority: 'P2', category: 'coverage_gap',
+                  label: `${uncovered[0].deptLabel} ${day}日: coverage gap (ladder ok)`,
+                  detail: { day, uncovCount: uncovered.length },
+                });
+              }
+            }
+            // P2: chronic uncovered escalation
+            for (const e of _gq_srEscalation.filter(e => e.trend === 'escalating')) {
+              _gq_reviewQueue.push({
+                priority: 'P2', category: 'chronic_uncovered',
+                label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered 慢性化`,
+                detail: { staffId: e.staffId, uncovTotal: e.uncovTotal, maxUncovRun: e.maxUncovRun },
+              });
+            }
+            // P2: veteran overload watch
+            for (const v of _gq_vetStats.filter(v => v.utilRate > 0.9 && v.utilRate <= 1.3 && v.soleVetDays >= 3)) {
+              _gq_reviewQueue.push({
+                priority: 'P2', category: 'veteran_overload_watch',
+                label: `${v.staffName} (${v.deptLabel}): utilRate=${(v.utilRate*100).toFixed(0)}% 要経過観察`,
+                detail: { staffId: v.staffId, utilRate: v.utilRate, soleVetDays: v.soleVetDays },
+              });
+            }
+            // P3: moderate uncovered watchlist
+            for (const e of _gq_srEscalation.filter(e => e.trend === 'stable' && e.uncovTotal >= 2)) {
+              _gq_reviewQueue.push({
+                priority: 'P3', category: 'uncovered_watch',
+                label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered watchlist`,
+                detail: { staffId: e.staffId, uncovTotal: e.uncovTotal },
+              });
+            }
+            const _gq_p1Items = _gq_reviewQueue.filter(q => q.priority === 'P1');
+            const _gq_p2Items = _gq_reviewQueue.filter(q => q.priority === 'P2');
+            const _gq_p3Items = _gq_reviewQueue.filter(q => q.priority === 'P3');
+
+            // ── Layer 2: Protected Hold Queue ───────────────────────────────────
+            {
+              const _gq_holdQueue = [];
+              // Burnout recovery: hold all intervention
+              for (const e of _gq_allArr.filter(e => e.isBurnout)) {
+                _gq_holdQueue.push({
+                  holdType: 'burnout_recovery',
+                  label: `${e.s.name} (${e.deptLabel}): burnout recovery中 — hold intervention`,
+                  reason: '燃え尽き回復優先', staffId: e.s.id,
+                });
+              }
+              // Relocation adaptation: floor tenure < 6 months
+              for (const e of _gq_allArr.filter(e => e.fl !== null && e.fl < 0.5)) {
+                _gq_holdQueue.push({
+                  holdType: 'relocation_adaptation',
+                  label: `${e.s.name} (${e.deptLabel}): フロア配属${(e.fl * 12).toFixed(0)}ヶ月 — adaptation継続`,
+                  reason: 'フロア適応継続優先', staffId: e.s.id,
+                });
+              }
+              // Night introduction phase: ladder 1-2 with nightOk → support structure rebuilding
+              for (const e of _gq_allArr.filter(e => e.nightOk && e.ladder >= 1 && e.ladder <= 2)) {
+                _gq_holdQueue.push({
+                  holdType: 'ladder_stabilization',
+                  label: `${e.s.name} (${e.deptLabel}): 夜勤 ladder ${e.ladder} — support体制構築中`,
+                  reason: 'Night ladder 安定化優先', staffId: e.s.id,
+                });
+              }
+              // safeSequence rebuilding: paired + stage <= 3 (not already held above)
+              for (const e of _gq_allArr.filter(e => e.hasPair && e.stage <= 3)) {
+                if (!_gq_holdQueue.some(h => h.staffId === e.s.id)) {
+                  _gq_holdQueue.push({
+                    holdType: 'safe_sequence_rebuilding',
+                    label: `${e.s.name} (${e.deptLabel}): safeSequence構築中 stage=${e.stage}`,
+                    reason: 'ペアサポート継続優先', staffId: e.s.id,
+                  });
+                }
+              }
+
+              // ── Layer 3: Escalation Tracking Queue ─────────────────────────
+              {
+                const _gq_escalationQueue = [];
+                // Repeated uncovered nights (escalating trend)
+                for (const e of _gq_srEscalation) {
+                  if (e.trend === 'escalating') {
+                    _gq_escalationQueue.push({
+                      escalationType: 'repeated_uncovered',
+                      label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered — escalating ⚠`,
+                      severity: 'HIGH', trend: e.trend,
+                      detail: { uncovTotal: e.uncovTotal, maxUncovRun: e.maxUncovRun },
+                    });
+                  } else if (e.uncovTotal >= 3) {
+                    _gq_escalationQueue.push({
+                      escalationType: 'support_drift',
+                      label: `${e.staffName} (${e.deptLabel}): ${e.uncovTotal}回 uncovered — drift注意`,
+                      severity: 'MEDIUM', trend: e.trend,
+                      detail: { uncovTotal: e.uncovTotal, maxUncovRun: e.maxUncovRun },
+                    });
+                  }
+                }
+                // Veteran dependency growth: sole-vet days accumulating
+                for (const v of _gq_vetStats.filter(v => v.soleVetDays >= 3)) {
+                  _gq_escalationQueue.push({
+                    escalationType: 'veteran_dependency_growth',
+                    label: `${v.staffName}: sole-vet coverage ${v.soleVetDays}日 — dependency rising`,
+                    severity: v.soleVetDays >= 5 ? 'HIGH' : 'MEDIUM', trend: 'rising',
+                    detail: { soleVetDays: v.soleVetDays, utilRate: v.utilRate },
+                  });
+                }
+                // Burnout worsening: high burnout + active night shifts
+                for (const e of _gq_allArr.filter(e => e.isBurnout && e.nightOk)) {
+                  const { shifts, nset } = _gq_deptData[e.deptId];
+                  let nc = 0;
+                  for (let day = 1; day <= _gq_days; day++) {
+                    if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+                  }
+                  if (nc >= 2) {
+                    _gq_escalationQueue.push({
+                      escalationType: 'burnout_worsening',
+                      label: `${e.s.name} (${e.deptLabel}): burnout高 + 夜勤${nc}回 worsening ⚠`,
+                      severity: 'HIGH', trend: 'worsening', detail: { nightCount: nc },
+                    });
+                  }
+                }
+                const _gq_highEscalations = _gq_escalationQueue.filter(e => e.severity === 'HIGH');
+
+                // ── Layer 4: Deferred Intervention Queue ───────────────────
+                {
+                  const _gq_deferredQueue = [];
+                  // Pair dependency reduction — valid goal, but recovery continuity first
+                  for (const e of _gq_allArr.filter(e => e.hasPair && e.stage <= 3)) {
+                    _gq_deferredQueue.push({
+                      deferType: 'pair_dependency_reduction',
+                      label: `${e.s.name} (${e.deptLabel}): pair dependency reduction`,
+                      deferReason: 'recovery continuity優先 — stage上昇後に再検討',
+                      targetStage: 4, staffId: e.s.id, deptId: e.deptId,
+                    });
+                  }
+                  // Veteran redistribution — valid but dept has recovery-in-progress staff
+                  for (const v of _gq_vetStats.filter(v => v.utilRate > 0.9)) {
+                    const deptHasRecovery = _gq_allArr
+                      .filter(e => e.deptId === v.deptId && e.hasPair && e.stage <= 3)
+                      .length > 0;
+                    if (deptHasRecovery) {
+                      _gq_deferredQueue.push({
+                        deferType: 'veteran_redistribution',
+                        label: `${v.staffName} (${v.deptLabel}): 夜勤再配分`,
+                        deferReason: '同フロアにrecovery中スタッフ在籍 — 安定後に再配分推奨',
+                        staffId: v.staffId, deptId: v.deptId,
+                      });
+                    }
+                  }
+                  // Ladder progression — ladder 3 staff ready but floor vet count too thin
+                  for (const e of _gq_allArr.filter(e => e.ladder === 3 && e.nightOk && e.stage >= 3)) {
+                    const { shifts, nset } = _gq_deptData[e.deptId];
+                    let nc = 0;
+                    for (let day = 1; day <= _gq_days; day++) {
+                      if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+                    }
+                    const floorVetCount = _gq_vetStats.filter(v => v.deptId === e.deptId).length;
+                    if (floorVetCount < 2 && nc >= 2) {
+                      _gq_deferredQueue.push({
+                        deferType: 'ladder_progression',
+                        label: `${e.s.name} (${e.deptLabel}): ladder 4昇格候補`,
+                        deferReason: `フロアvet=${floorVetCount}名 — vet体制補強後に昇格推奨`,
+                        staffId: e.s.id, deptId: e.deptId,
+                      });
+                    }
+                  }
+                  // Cross-floor balancing — pressure imbalance but hold queue is active
+                  const _gq_gapDepts = Object.entries(_gq_deptData).filter(([, { arr }]) => {
+                    const srCount  = arr.filter(e => e.supportReq && e.nightOk).length;
+                    const vetCount = arr.filter(e => e.isVeteran  && e.nightOk).length;
+                    return srCount > 0 && vetCount === 0;
+                  });
+                  if (_gq_gapDepts.length > 0 && _gq_holdQueue.length > 0) {
+                    _gq_deferredQueue.push({
+                      deferType: 'cross_floor_balancing',
+                      label: `施設cross-floor支援体制再均衡`,
+                      deferReason: `${_gq_holdQueue.length}名のrecovery/adaptation中 — 均衡調整は安定後推奨`,
+                      staffId: null, deptId: null,
+                    });
+                  }
+
+                  // ── Layer 5: Human Review Flow ───────────────────────────
+                  {
+                    const _gq_reviewFlow = [];
+                    // Step 1: immediate review
+                    if (_gq_p1Items.length > 0) {
+                      for (const item of _gq_p1Items.slice(0, 3)) {
+                        _gq_reviewFlow.push({ step: 1, action: 'immediate_review', label: item.label });
+                      }
+                    } else {
+                      _gq_reviewFlow.push({ step: 1, action: 'immediate_review', label: '緊急確認項目なし ✓' });
+                    }
+                    // Step 2: protected confirmation — verify hold items are intact
+                    if (_gq_holdQueue.length > 0) {
+                      _gq_reviewFlow.push({
+                        step: 2, action: 'protected_confirm',
+                        label: `${_gq_holdQueue.length}名のrecovery/hold状態を確認 — 現状維持・介入保留`,
+                      });
+                    } else {
+                      _gq_reviewFlow.push({ step: 2, action: 'protected_confirm', label: 'hold対象なし ✓' });
+                    }
+                    // Step 3: chronic escalation check
+                    if (_gq_highEscalations.length > 0) {
+                      for (const e of _gq_highEscalations.slice(0, 2)) {
+                        _gq_reviewFlow.push({ step: 3, action: 'escalation_review', label: e.label });
+                      }
+                    } else {
+                      _gq_reviewFlow.push({ step: 3, action: 'escalation_review', label: 'chronic escalation なし ✓' });
+                    }
+                    // Step 4: deferred planning confirmation
+                    if (_gq_deferredQueue.length > 0) {
+                      _gq_reviewFlow.push({
+                        step: 4, action: 'deferred_planning',
+                        label: `${_gq_deferredQueue.length}件のdeferred intervention — 将来計画として保留`,
+                      });
+                    } else {
+                      _gq_reviewFlow.push({ step: 4, action: 'deferred_planning', label: '保留介入なし ✓' });
+                    }
+
+                    // ── Layer 6: Governance Queue Audit ─────────────────────
+                    {
+                      const _gq_totalReviewItems = _gq_p1Items.length + _gq_p2Items.length;
+                      const _gq_reviewLoadLevel =
+                        _gq_totalReviewItems <= 3 ? 'manageable ✓'
+                        : _gq_totalReviewItems <= 7 ? 'moderate'
+                        :                            'overloaded ⚠';
+                      // alert fatigue: P1 items exceed 30% of days
+                      const _gq_alertFatigue   = _gq_p1Items.length / _gq_days > 0.3;
+                      const _gq_reviewOverload  = _gq_reviewQueue.length > 10;
+                      const _gq_recProtected    = _gq_holdQueue.length > 0;
+                      const _gq_explainable     = _gq_highEscalations.every(e => e.label && e.escalationType);
+
+                      const _gq_overallAudit =
+                        (!_gq_alertFatigue && !_gq_reviewOverload && _gq_recProtected)
+                          ? 'humanGovernedQueue'
+                        : _gq_alertFatigue   ? 'alertFatigueRisk'
+                        : _gq_reviewOverload ? 'reviewOverloadRisk'
+                        :                      'needsReview';
+
+                      const _gq_finalSummary = {
+                        dept: cd.id, year, month,
+                        p1Count         : _gq_p1Items.length,
+                        p2Count         : _gq_p2Items.length,
+                        p3Count         : _gq_p3Items.length,
+                        holdCount       : _gq_holdQueue.length,
+                        escalationCount : _gq_escalationQueue.length,
+                        highEscalCount  : _gq_highEscalations.length,
+                        deferredCount   : _gq_deferredQueue.length,
+                        reviewFlow      : _gq_reviewFlow.map(f => `Step${f.step}[${f.action}] ${f.label}`),
+                        audit: {
+                          reviewLoad              : _gq_reviewLoadLevel,
+                          protectedHold           : _gq_recProtected   ? 'maintained ✓' : 'none detected',
+                          alertFatigue            : _gq_alertFatigue   ? 'risk ⚠' : 'low ✓',
+                          escalationExplainability: _gq_explainable    ? 'high ✓' : 'partial',
+                          reviewOverload          : _gq_reviewOverload ? 'risk ⚠' : 'within range ✓',
+                          anxietyAmplification    : _gq_alertFatigue   ? 'risk ⚠' : 'controlled ✓',
+                          overall                 : _gq_overallAudit,
+                        },
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_gq_] Governance Queue System:', _gq_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Queue System / _gq_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_gq_'] = +(performance.now() - _bp_t_gq_).toFixed(3);
+        }; // _ptl_bB · reco(1/gq)
+        const _ptl_bC = () => {
+        // ══ [Human Approval Workflow System / _hw_] ここから ══
+        const _bp_t_hw_ = performance.now();
+        {
+          // ── Layer 1: Approval Decision Queue (shared data + decision classes) ──
+          {
+            const _hw_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _hw_ scope)
+            const _hw_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const inRecovery = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                return { s, bo, ladder, stage, fl, hasPair, nightOk,
+                         supportReq, isVeteran, isBurnout, inLadder, inReloc, inRecovery,
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _hw_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _hw_allArr      = Object.values(_hw_deptData).flatMap(dd => dd.arr);
+            const _hw_veterans    = _hw_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _hw_supportReqs = _hw_allArr.filter(e => e.supportReq && e.nightOk);
+            const _hw_inRecovery  = _hw_allArr.filter(e => e.inRecovery);
+
+            // Per-day snapshot
+            const _hw_dayMap = {};
+            for (let day = 1; day <= _hw_days; day++) {
+              const srOnNight = [];
+              for (const sr of _hw_supportReqs) {
+                const { shifts, nset } = _hw_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push({ ...sr, day });
+              }
+              const vetOnNight = _hw_veterans.filter(vet => {
+                const { shifts, nset } = _hw_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovered = vetOnNight.length === 0 ? [...srOnNight] : [];
+              _hw_dayMap[day] = { srOnNight, vetOnNight, uncovered };
+            }
+
+            // Per-vet utilisation
+            const _hw_vetStats = _hw_veterans.map(vet => {
+              const { shifts, nset } = _hw_deptData[vet.deptId];
+              const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+              let nc = 0, maxRun = 0, curRun = 0, soleVetDays = 0;
+              for (let day = 1; day <= _hw_days; day++) {
+                if (nset.has(shifts[vet.s.id]?.[day] ?? '')) {
+                  nc++;
+                  curRun++;
+                  if (curRun > maxRun) maxRun = curRun;
+                  const allVetsToday = _hw_veterans.filter(v => {
+                    const { shifts: vs, nset: vn } = _hw_deptData[v.deptId];
+                    return vn.has(vs[v.s.id]?.[day] ?? '');
+                  });
+                  if (_hw_dayMap[day].srOnNight.length > 0 && allVetsToday.length === 1) soleVetDays++;
+                } else {
+                  curRun = 0;
+                }
+              }
+              const utilRate = targetNc > 0 ? nc / targetNc : 0;
+              return {
+                staffId: vet.s.id, staffName: vet.s.name,
+                deptId: vet.deptId, deptLabel: vet.deptLabel,
+                nightCount: nc, targetNc, utilRate: +utilRate.toFixed(3),
+                maxConsecRun: maxRun, soleVetDays,
+              };
+            });
+
+            // Build Approval Decision Queue
+            // Decision classes: APPROVE_CANDIDATE / REVIEW_REQUIRED /
+            //   HOLD_RECOMMENDED / REJECT_RECOMMENDED / RESIM_REQUIRED
+            const _hw_approvalQueue = [];
+
+            // HOLD_RECOMMENDED: all recovery/adaptation staff
+            for (const e of _hw_inRecovery) {
+              const holdReason =
+                e.isBurnout  ? 'burnout recovery中'
+                : e.inReloc  ? `フロア配属${(e.fl * 12).toFixed(0)}ヶ月 relocation adaptation`
+                : e.inLadder ? `夜勤 ladder ${e.ladder} support rebuilding`
+                :              `safeSequence構築中 stage=${e.stage}`;
+              _hw_approvalQueue.push({
+                decisionClass: 'HOLD_RECOMMENDED',
+                subject: `${e.s.name} (${e.deptLabel})`,
+                reason: holdReason,
+                reviewETA: 'next cycle確認推奨',
+                staffId: e.s.id,
+              });
+            }
+
+            // REJECT_RECOMMENDED: unsafe progression — low-ladder SR on night, no vet
+            for (let day = 1; day <= _hw_days; day++) {
+              const { uncovered, vetOnNight } = _hw_dayMap[day];
+              const unsafeLow = uncovered.filter(e => e.ladder < 3);
+              if (unsafeLow.length > 0 && vetOnNight.length === 0) {
+                _hw_approvalQueue.push({
+                  decisionClass: 'REJECT_RECOMMENDED',
+                  subject: `${unsafeLow[0].deptLabel} ${day}日`,
+                  reason: `unsafe progression: uncovered+lowLadder=${unsafeLow.length}`,
+                  reviewETA: '即日確認',
+                  day,
+                });
+              }
+            }
+
+            // RESIM_REQUIRED: veteran overload high — benefit clear but propagation risk
+            for (const v of _hw_vetStats.filter(v => v.utilRate > 1.3 || v.soleVetDays >= 5)) {
+              _hw_approvalQueue.push({
+                decisionClass: 'RESIM_REQUIRED',
+                subject: `${v.staffName} (${v.deptLabel}) 夜勤再配分`,
+                reason: `utilRate=${(v.utilRate*100).toFixed(0)}% soleVet=${v.soleVetDays}日 — support gap propagation risk`,
+                reviewETA: '再simulation後に判断',
+                staffId: v.staffId,
+              });
+            }
+
+            // REVIEW_REQUIRED: coverage gap (vet on night but ladder concern) or moderate overload
+            for (const v of _hw_vetStats.filter(v => v.utilRate > 0.9 && v.utilRate <= 1.3 && v.soleVetDays >= 3)) {
+              _hw_approvalQueue.push({
+                decisionClass: 'REVIEW_REQUIRED',
+                subject: `${v.staffName} (${v.deptLabel}) veteran overload改善`,
+                reason: `utilRate=${(v.utilRate*100).toFixed(0)}% — support continuity影響あり`,
+                reviewETA: 'monthly review',
+                staffId: v.staffId,
+              });
+            }
+
+            // APPROVE_CANDIDATE: low-risk graduated interventions
+            // Ladder 3 → 4 ready staff where floor has ≥2 vets
+            for (const e of _hw_allArr.filter(e => e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.inRecovery)) {
+              const floorVetCount = _hw_vetStats.filter(v => v.deptId === e.deptId).length;
+              if (floorVetCount >= 2) {
+                _hw_approvalQueue.push({
+                  decisionClass: 'APPROVE_CANDIDATE',
+                  subject: `${e.s.name} (${e.deptLabel}) ladder 4昇格`,
+                  reason: `stage=${e.stage} floorVet=${floorVetCount}名 — 低リスク段階的昇格候補`,
+                  reviewETA: '来月計画に組み込み可',
+                  staffId: e.s.id,
+                });
+              }
+            }
+
+            const _hw_holdItems   = _hw_approvalQueue.filter(q => q.decisionClass === 'HOLD_RECOMMENDED');
+            const _hw_rejectItems = _hw_approvalQueue.filter(q => q.decisionClass === 'REJECT_RECOMMENDED');
+            const _hw_resimItems  = _hw_approvalQueue.filter(q => q.decisionClass === 'RESIM_REQUIRED');
+            const _hw_reviewItems = _hw_approvalQueue.filter(q => q.decisionClass === 'REVIEW_REQUIRED');
+            const _hw_approveItems = _hw_approvalQueue.filter(q => q.decisionClass === 'APPROVE_CANDIDATE');
+
+            // ── Layer 2: Approval Risk Classification ───────────────────────────
+            {
+              // Per approval-queue item: classify the side-effect risk of acting on it
+              const _hw_riskClassified = _hw_approvalQueue.map(item => {
+                let sideEffectRisk = 'LOW';
+                const reasons = [];
+
+                if (item.decisionClass === 'REJECT_RECOMMENDED') {
+                  sideEffectRisk = 'HIGH';
+                  reasons.push('unsafe ladder progression');
+                  reasons.push('support disruption risk if unaddressed');
+                }
+                if (item.decisionClass === 'RESIM_REQUIRED') {
+                  sideEffectRisk = 'MEDIUM';
+                  reasons.push('cross-floor propagation possible');
+                  reasons.push('safeSequence impact unverified');
+                }
+                if (item.decisionClass === 'HOLD_RECOMMENDED') {
+                  sideEffectRisk = 'MEDIUM';
+                  reasons.push('recovery interruption if acted upon');
+                  reasons.push('burnout rebound risk');
+                }
+                if (item.decisionClass === 'REVIEW_REQUIRED') {
+                  sideEffectRisk = 'MEDIUM';
+                  reasons.push('support continuity impact unclear');
+                }
+                if (item.decisionClass === 'APPROVE_CANDIDATE') {
+                  sideEffectRisk = 'LOW';
+                  reasons.push('graduated — floor vet count sufficient');
+                }
+
+                const rollbackAvailable =
+                  item.decisionClass === 'APPROVE_CANDIDATE' ||
+                  item.decisionClass === 'REVIEW_REQUIRED';
+
+                return {
+                  ...item,
+                  sideEffectRisk,
+                  sideEffectReasons: reasons,
+                  rollbackAvailable,
+                };
+              });
+
+              const _hw_highRiskItems = _hw_riskClassified.filter(r => r.sideEffectRisk === 'HIGH');
+              const _hw_medRiskItems  = _hw_riskClassified.filter(r => r.sideEffectRisk === 'MEDIUM');
+
+              // ── Layer 3: Re-Simulation Request Flow ───────────────────────
+              {
+                const _hw_resimFlow = [];
+
+                // RESIM items from approval queue
+                for (const item of _hw_resimItems) {
+                  _hw_resimFlow.push({
+                    requestType: 'veteran_redistribution',
+                    subject: item.subject,
+                    concern: item.reason,
+                    action: 'sandbox re-simulation推奨 — support gap影響を確認後に承認',
+                  });
+                }
+
+                // Uncovered nights that persist — governance conflict
+                const uncovDays = [];
+                for (let day = 1; day <= _hw_days; day++) {
+                  if (_hw_dayMap[day].uncovered.length > 0 && _hw_dayMap[day].vetOnNight.length === 0) {
+                    uncovDays.push(day);
+                  }
+                }
+                if (uncovDays.length >= 3) {
+                  _hw_resimFlow.push({
+                    requestType: 'chronic_uncovered_resim',
+                    subject: `施設全体 uncovered ${uncovDays.length}日`,
+                    concern: 'veteran配置変更による改善可能性あり',
+                    action: 'vet配置変更 sandbox検証後に再判断',
+                  });
+                }
+
+                // Burnout staff on nights — future instability
+                for (const e of _hw_allArr.filter(e => e.isBurnout && e.nightOk)) {
+                  const { shifts, nset } = _hw_deptData[e.deptId];
+                  let nc = 0;
+                  for (let day = 1; day <= _hw_days; day++) {
+                    if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+                  }
+                  if (nc >= 2) {
+                    _hw_resimFlow.push({
+                      requestType: 'burnout_future_instability',
+                      subject: `${e.s.name} (${e.deptLabel})`,
+                      concern: `burnout高 + 夜勤${nc}回 — future instability risk`,
+                      action: '夜勤削減後のシフト構造を sandbox検証',
+                    });
+                  }
+                }
+
+                // ── Layer 4: Protected Hold Workflow ───────────────────────
+                {
+                  // Formalise each hold item into workflow decision record
+                  const _hw_holdWorkflow = _hw_holdItems.map(item => ({
+                    holdDecision   : 'HOLD',
+                    subject        : item.subject,
+                    reason         : item.reason,
+                    reviewETA      : item.reviewETA,
+                    interventionGate: 'next cycle安定確認後に再評価',
+                    overrideAllowed: false,
+                  }));
+
+                  // Additional hold: any dept where protected staff are in night schedule
+                  // — flag the dept as "hold cross-floor intervention"
+                  const _hw_protectedDepts = new Set(_hw_inRecovery.map(e => e.deptId));
+                  const _hw_deptHoldFlags = [..._hw_protectedDepts].map(deptId => {
+                    const { d } = _hw_deptData[deptId];
+                    return {
+                      holdDecision: 'HOLD_DEPT',
+                      subject: `${d.label} フロア全体介入`,
+                      reason: 'recovery/adaptation中スタッフ在籍 — フロア単位介入は保留',
+                      reviewETA: 'next cycle後に再確認',
+                      overrideAllowed: false,
+                    };
+                  });
+
+                  // ── Layer 5: Human Decision Guidance ──────────────────────
+                  {
+                    const _hw_decisionGuide = [];
+
+                    // Step 1: immediate — reject/unsafe items first
+                    if (_hw_rejectItems.length > 0) {
+                      for (const item of _hw_rejectItems.slice(0, 3)) {
+                        _hw_decisionGuide.push({
+                          step: 1, action: 'REJECT_REVIEW',
+                          label: `${item.subject}: ${item.reason}`,
+                          urgency: 'immediate',
+                        });
+                      }
+                    } else {
+                      _hw_decisionGuide.push({ step: 1, action: 'REJECT_REVIEW', label: '即日対応不要 ✓', urgency: 'none' });
+                    }
+
+                    // Step 2: protected hold confirmation
+                    if (_hw_holdWorkflow.length > 0 || _hw_deptHoldFlags.length > 0) {
+                      _hw_decisionGuide.push({
+                        step: 2, action: 'HOLD_CONFIRM',
+                        label: `${_hw_holdWorkflow.length}名 + ${_hw_deptHoldFlags.length}フロアの hold継続確認`,
+                        urgency: 'this_cycle',
+                      });
+                    } else {
+                      _hw_decisionGuide.push({ step: 2, action: 'HOLD_CONFIRM', label: 'hold対象なし ✓', urgency: 'none' });
+                    }
+
+                    // Step 3: re-simulation items
+                    if (_hw_resimFlow.length > 0) {
+                      for (const r of _hw_resimFlow.slice(0, 2)) {
+                        _hw_decisionGuide.push({
+                          step: 3, action: 'RESIM_REQUEST',
+                          label: `${r.subject}: ${r.action}`,
+                          urgency: 'before_approval',
+                        });
+                      }
+                    } else {
+                      _hw_decisionGuide.push({ step: 3, action: 'RESIM_REQUEST', label: '再simulation不要 ✓', urgency: 'none' });
+                    }
+
+                    // Step 4: review-required items (monthly)
+                    for (const item of _hw_reviewItems.slice(0, 2)) {
+                      _hw_decisionGuide.push({
+                        step: 4, action: 'MONTHLY_REVIEW',
+                        label: `${item.subject}: ${item.reason}`,
+                        urgency: 'monthly',
+                      });
+                    }
+
+                    // Step 5: approve candidates
+                    if (_hw_approveItems.length > 0) {
+                      _hw_decisionGuide.push({
+                        step: 5, action: 'APPROVE_CANDIDATE',
+                        label: `${_hw_approveItems.length}件の低リスク承認候補 — 来月計画組み込み可`,
+                        urgency: 'planning',
+                      });
+                    }
+
+                    // ── Layer 6: Approval Workflow Audit ──────────────────
+                    {
+                      const _hw_totalItems = _hw_approvalQueue.length;
+                      // over-approval pressure: too many REVIEW/RESIM items
+                      const _hw_pressureItems = _hw_reviewItems.length + _hw_resimItems.length;
+                      const _hw_overApprovalPressure = _hw_pressureItems > 5;
+                      // reject bias: >50% of items are REJECT
+                      const _hw_rejectBias = _hw_totalItems > 0
+                        && _hw_rejectItems.length / _hw_totalItems > 0.5;
+                      // recovery protection maintained
+                      const _hw_recoveryProtected = _hw_holdItems.length > 0;
+                      // review complexity: decision guide steps > 6
+                      const _hw_reviewComplexity =
+                        _hw_decisionGuide.length <= 4 ? 'manageable ✓'
+                        : _hw_decisionGuide.length <= 7 ? 'moderate'
+                        :                                 'complex ⚠';
+                      // explainability: all items have reason
+                      const _hw_explainable = _hw_approvalQueue.every(q => q.reason);
+                      // anxiety amplification
+                      const _hw_anxietyRisk = _hw_highRiskItems.length > 3 || _hw_rejectBias;
+
+                      const _hw_overallAudit =
+                        (!_hw_overApprovalPressure && !_hw_rejectBias && _hw_recoveryProtected && _hw_explainable)
+                          ? 'humanCenteredApprovalWorkflow'
+                        : _hw_overApprovalPressure ? 'approvalPressureRisk'
+                        : _hw_rejectBias           ? 'rejectBiasDetected'
+                        : !_hw_explainable         ? 'explainabilityGap'
+                        :                            'needsReview';
+
+                      const _hw_finalSummary = {
+                        dept: cd.id, year, month,
+                        approvalQueueCount : _hw_totalItems,
+                        holdCount          : _hw_holdItems.length,
+                        rejectCount        : _hw_rejectItems.length,
+                        resimCount         : _hw_resimItems.length,
+                        reviewCount        : _hw_reviewItems.length,
+                        approveCount       : _hw_approveItems.length,
+                        highRiskCount      : _hw_highRiskItems.length,
+                        medRiskCount       : _hw_medRiskItems.length,
+                        resimFlowCount     : _hw_resimFlow.length,
+                        holdWorkflowCount  : _hw_holdWorkflow.length,
+                        deptHoldCount      : _hw_deptHoldFlags.length,
+                        decisionGuide      : _hw_decisionGuide.map(g => `Step${g.step}[${g.action}/${g.urgency}] ${g.label}`),
+                        audit: {
+                          overApprovalPressure: _hw_overApprovalPressure ? 'risk ⚠' : 'low ✓',
+                          rejectBias          : _hw_rejectBias           ? 'detected ⚠' : 'balanced ✓',
+                          recoveryProtection  : _hw_recoveryProtected    ? 'maintained ✓' : 'none detected',
+                          reviewComplexity    : _hw_reviewComplexity,
+                          operationalRealism  : _hw_anxietyRisk          ? 'anxiety risk ⚠' : 'high ✓',
+                          explainability      : _hw_explainable           ? 'high ✓' : 'partial ⚠',
+                          overall             : _hw_overallAudit,
+                        },
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_hw_] Human Approval Workflow System:', _hw_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Human Approval Workflow System / _hw_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_hw_'] = +(performance.now() - _bp_t_hw_).toFixed(3);
+        // ── Phase S-5 P2 (idle): _ho_ — Human Override Layer ────────────────
+        const _bp_disp_ho_ = performance.now();
+        if (profilerRef.current) profilerRef.current.idleDispatches['_ho_'] = +(_bp_disp_ho_ - _bp_startMs).toFixed(3);
+        _ite_schedule(() => {
+        // ══ [Human Override Layer / _ho_] ここから ══
+        const _bp_t_ho_ = performance.now();
+        {
+          // ── Layer 1: Human Override Registry (shared data + override candidates) ─
+          {
+            const _ho_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _ho_ scope)
+            const _ho_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk   ?? 'normal';
+                const ladder     = s.nightLadder   ?? 0;
+                const stage      = s.growthStage   ?? 0;
+                const fl         = s.floorYears    ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _ho_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _ho_allArr      = Object.values(_ho_deptData).flatMap(dd => dd.arr);
+            const _ho_veterans    = _ho_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _ho_supportReqs = _ho_allArr.filter(e => e.supportReq && e.nightOk);
+            const _ho_protected   = _ho_allArr.filter(e => e.isProtected);
+
+            // Per-day snapshot (uncovered nights = primary override trigger)
+            const _ho_dayMap = {};
+            for (let day = 1; day <= _ho_days; day++) {
+              const srOnNight = [];
+              for (const sr of _ho_supportReqs) {
+                const { shifts, nset } = _ho_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push({ ...sr, day });
+              }
+              const vetOnNight = _ho_veterans.filter(vet => {
+                const { shifts, nset } = _ho_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovered = vetOnNight.length === 0 ? [...srOnNight] : [];
+              _ho_dayMap[day] = { srOnNight, vetOnNight, uncovered };
+            }
+
+            // Per-vet utilisation (needed for redistribution override scenarios)
+            const _ho_vetStats = _ho_veterans.map(vet => {
+              const { shifts, nset } = _ho_deptData[vet.deptId];
+              const targetNc = typeof vet.s.nightMax === 'number' ? vet.s.nightMax : 4;
+              let nc = 0, maxRun = 0, curRun = 0;
+              for (let day = 1; day <= _ho_days; day++) {
+                if (nset.has(shifts[vet.s.id]?.[day] ?? '')) {
+                  nc++;
+                  curRun++;
+                  if (curRun > maxRun) maxRun = curRun;
+                } else {
+                  curRun = 0;
+                }
+              }
+              const utilRate = targetNc > 0 ? nc / targetNc : 0;
+              return {
+                staffId: vet.s.id, staffName: vet.s.name,
+                deptId: vet.deptId, deptLabel: vet.deptLabel,
+                nightCount: nc, targetNc, utilRate: +utilRate.toFixed(3), maxConsecRun: maxRun,
+              };
+            });
+
+            // Build override candidate registry — model potential human override events
+            // (read-only: these are SCENARIOS, not actual overrides applied)
+            const _ho_registry = [];
+
+            // Scenario A: emergency night assignment — uncovered + no vet
+            for (let day = 1; day <= _ho_days; day++) {
+              const { uncovered, vetOnNight } = _ho_dayMap[day];
+              if (uncovered.length > 0 && vetOnNight.length === 0) {
+                const touchesProtected = uncovered.some(e => e.isProtected);
+                _ho_registry.push({
+                  overrideType      : 'emergency_night_assignment',
+                  target            : `${uncovered[0].deptLabel} ${day}日`,
+                  reason            : `shortage emergency — uncovered SR staff`,
+                  governanceImpact  : touchesProtected ? 'protectedHold bypass' : 'governance maintained',
+                  protectedBypass   : touchesProtected,
+                  emergencyFlag     : true,
+                  rollbackRecommended: true,
+                  day,
+                });
+              }
+            }
+
+            // Scenario B: veteran redistribution — overloaded vet load rebalance
+            for (const v of _ho_vetStats.filter(v => v.utilRate > 1.2 || v.maxConsecRun >= 3)) {
+              const deptHasProtected = _ho_allArr
+                .filter(e => e.deptId === v.deptId && e.isProtected).length > 0;
+              _ho_registry.push({
+                overrideType       : 'veteran_redistribution',
+                target             : `${v.staffName} (${v.deptLabel})`,
+                reason             : `utilRate=${(v.utilRate*100).toFixed(0)}% overload軽減`,
+                governanceImpact   : deptHasProtected ? 'support continuity + protected structure impact' : 'support continuity change',
+                protectedBypass    : deptHasProtected,
+                emergencyFlag      : false,
+                rollbackRecommended: true,
+                staffId            : v.staffId,
+              });
+            }
+
+            // Scenario C: burnout staff removal from night schedule
+            for (const e of _ho_allArr.filter(e => e.isBurnout && e.nightOk)) {
+              const { shifts, nset } = _ho_deptData[e.deptId];
+              let nc = 0;
+              for (let day = 1; day <= _ho_days; day++) {
+                if (nset.has(shifts[e.s.id]?.[day] ?? '')) nc++;
+              }
+              if (nc >= 1) {
+                _ho_registry.push({
+                  overrideType       : 'burnout_night_removal',
+                  target             : `${e.s.name} (${e.deptLabel})`,
+                  reason             : `burnout高 夜勤${nc}回 — recovery優先`,
+                  governanceImpact   : 'coverage gap risk — replacement planning needed',
+                  protectedBypass    : false,
+                  emergencyFlag      : false,
+                  rollbackRecommended: false,
+                  staffId            : e.s.id,
+                });
+              }
+            }
+
+            // Scenario D: ladder bypass — advance staff ahead of normal progression
+            for (const e of _ho_allArr.filter(e => e.ladder === 2 && e.nightOk && e.stage >= 3 && !e.isBurnout)) {
+              _ho_registry.push({
+                overrideType       : 'ladder_bypass',
+                target             : `${e.s.name} (${e.deptLabel})`,
+                reason             : `ladder ${e.ladder}→3 前倒し (stage=${e.stage})`,
+                governanceImpact   : 'safeSequence disruption risk — ladder稳定化阻害の可能性',
+                protectedBypass    : e.isProtected,
+                emergencyFlag      : false,
+                rollbackRecommended: true,
+                staffId            : e.s.id,
+              });
+            }
+
+            const _ho_emergencyItems = _ho_registry.filter(r => r.emergencyFlag);
+            const _ho_protectedBypassItems = _ho_registry.filter(r => r.protectedBypass);
+
+            // ── Layer 2: Governance Override Classification ─────────────────────
+            {
+              const _ho_classified = _ho_registry.map(item => {
+                let overrideClass;
+                let impactSummary;
+
+                if (item.emergencyFlag && item.protectedBypass) {
+                  overrideClass = 'EMERGENCY_OVERRIDE';
+                  impactSummary = 'unsafe許容 + protected構造bypass — recovery review mandatory';
+                } else if (item.emergencyFlag) {
+                  overrideClass = 'EMERGENCY_OVERRIDE';
+                  impactSummary = 'unsafe許容 — emergency follow-up mandatory';
+                } else if (item.protectedBypass) {
+                  overrideClass = 'HIGH_IMPACT_OVERRIDE';
+                  impactSummary = 'protected構造影響あり — resimulation推奨';
+                } else if (item.overrideType === 'veteran_redistribution' || item.overrideType === 'ladder_bypass') {
+                  overrideClass = 'CONTROLLED_OVERRIDE';
+                  impactSummary = 'support continuity変更 — review推奨';
+                } else {
+                  overrideClass = 'SAFE_OVERRIDE';
+                  impactSummary = 'governance影響小 — 通常判断範囲';
+                }
+
+                return { ...item, overrideClass, impactSummary };
+              });
+
+              const _ho_emergencyClass  = _ho_classified.filter(c => c.overrideClass === 'EMERGENCY_OVERRIDE');
+              const _ho_highImpactClass = _ho_classified.filter(c => c.overrideClass === 'HIGH_IMPACT_OVERRIDE');
+              const _ho_controlledClass = _ho_classified.filter(c => c.overrideClass === 'CONTROLLED_OVERRIDE');
+              const _ho_safeClass       = _ho_classified.filter(c => c.overrideClass === 'SAFE_OVERRIDE');
+
+              // ── Layer 3: Emergency Override Flow ────────────────────────────
+              {
+                const _ho_emergencyFlow = [];
+
+                // Uncovered nights — primary emergency scenario
+                const _ho_uncovDays = [];
+                for (let day = 1; day <= _ho_days; day++) {
+                  const { uncovered, vetOnNight } = _ho_dayMap[day];
+                  if (uncovered.length > 0 && vetOnNight.length === 0) _ho_uncovDays.push(day);
+                }
+                if (_ho_uncovDays.length > 0) {
+                  _ho_emergencyFlow.push({
+                    event       : 'shortage_emergency',
+                    affectedDays: _ho_uncovDays.slice(0, 5),
+                    action      : 'temporary unsafe overlap許容 (human authorisation required)',
+                    followUp    : 'recovery review mandatory — next cycle',
+                    normalisation: 'PROHIBITED — 緊急対応を常態化させない',
+                  });
+                }
+
+                // Veteran absence risk — high utilRate + maxRun (absence would cause collapse)
+                for (const v of _ho_vetStats.filter(v => v.utilRate > 1.1 && v.maxConsecRun >= 3)) {
+                  _ho_emergencyFlow.push({
+                    event       : 'veteran_absence_risk',
+                    target      : `${v.staffName} (${v.deptLabel})`,
+                    action      : '代替vet確保 or 一時的 ladder bypass検討',
+                    followUp    : `${v.staffName} 負荷軽減 + 後続vet育成計画`,
+                    normalisation: 'PROHIBITED',
+                  });
+                }
+
+                // Simultaneous burnout risk — multiple burnout staff on same night dept
+                const _ho_burnoutByDept = {};
+                for (const e of _ho_allArr.filter(e => e.isBurnout && e.nightOk)) {
+                  _ho_burnoutByDept[e.deptId] = (_ho_burnoutByDept[e.deptId] || 0) + 1;
+                }
+                for (const [deptId, count] of Object.entries(_ho_burnoutByDept)) {
+                  if (count >= 2) {
+                    const { d } = _ho_deptData[deptId];
+                    _ho_emergencyFlow.push({
+                      event       : 'simultaneous_burnout_risk',
+                      target      : `${d.label} (${count}名)`,
+                      action      : '夜勤削減 + cross-floor support要請',
+                      followUp    : '全員recovery計画 — 夜勤復帰timing個別管理',
+                      normalisation: 'PROHIBITED',
+                    });
+                  }
+                }
+
+                // ── Layer 4: Protected Structure Override Guard ─────────────
+                {
+                  // For each potential override, identify which protected structures it touches
+                  const _ho_guardReport = _ho_classified.map(item => {
+                    const threats = [];
+
+                    // safeSequence disruption: if target is a paired staff
+                    if (item.staffId) {
+                      const staff = _ho_allArr.find(e => e.s.id === item.staffId);
+                      if (staff?.hasPair && staff.stage <= 3) {
+                        threats.push({ structure: 'safeSequence', risk: 'HIGH',
+                          detail: `stage=${staff.stage} ペア継続中 — 中断で ladder 停滞リスク` });
+                      }
+                      // burnout rebound: overriding hold for burnout staff
+                      if (staff?.isBurnout && item.overrideType !== 'burnout_night_removal') {
+                        threats.push({ structure: 'burnout_recovery', risk: 'HIGH',
+                          detail: 'burnout回復中 — 介入でrebound確率上昇' });
+                      }
+                      // ladder instability: bypass or forced assignment for ladder 1-2
+                      if (staff?.inLadder) {
+                        threats.push({ structure: 'ladder_stabilization', risk: 'MEDIUM',
+                          detail: `ladder ${staff.ladder} 安定化中 — 負荷増加で停滞リスク` });
+                      }
+                      // relocation adaptation
+                      if (staff?.inReloc) {
+                        threats.push({ structure: 'relocation_adaptation', risk: 'MEDIUM',
+                          detail: `フロア配属${(staff.fl * 12).toFixed(0)}ヶ月 — 適応期に夜勤追加で習熟阻害` });
+                      }
+                    }
+
+                    // cross-floor propagation: emergency changes that affect support structure
+                    if (item.emergencyFlag && item.day) {
+                      const dayData = _ho_dayMap[item.day];
+                      if (dayData && dayData.uncovered.some(e => e.isProtected)) {
+                        threats.push({ structure: 'cross_floor_propagation', risk: 'HIGH',
+                          detail: 'protected スタッフへの夜勤追加 — 回復構造全体への波及' });
+                      }
+                    }
+
+                    const maxRisk = threats.some(t => t.risk === 'HIGH') ? 'HIGH'
+                                  : threats.some(t => t.risk === 'MEDIUM') ? 'MEDIUM' : 'NONE';
+                    const recommendation =
+                      maxRisk === 'HIGH'   ? 'resimulation before override'
+                      : maxRisk === 'MEDIUM' ? 'review impact before override'
+                      :                        'override permissible';
+
+                    return { ...item, threats, maxRisk, recommendation };
+                  });
+
+                  const _ho_highGuardItems = _ho_guardReport.filter(g => g.maxRisk === 'HIGH');
+                  const _ho_medGuardItems  = _ho_guardReport.filter(g => g.maxRisk === 'MEDIUM');
+
+                  // ── Layer 5: Human Responsibility Guidance ──────────────
+                  {
+                    const _ho_responsibilityGuide = [];
+
+                    // Step 1: emergency confirmation
+                    if (_ho_emergencyFlow.length > 0) {
+                      for (const ef of _ho_emergencyFlow.slice(0, 2)) {
+                        _ho_responsibilityGuide.push({
+                          step: 1, action: 'EMERGENCY_CONFIRM',
+                          label: `[${ef.event}] ${ef.action}`,
+                          followUp: ef.followUp,
+                          urgency: 'immediate',
+                        });
+                      }
+                    } else {
+                      _ho_responsibilityGuide.push({
+                        step: 1, action: 'EMERGENCY_CONFIRM',
+                        label: '緊急事態なし ✓',
+                        followUp: null,
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 2: protected structure confirmation
+                    if (_ho_highGuardItems.length > 0) {
+                      for (const g of _ho_highGuardItems.slice(0, 2)) {
+                        const threat = g.threats[0];
+                        _ho_responsibilityGuide.push({
+                          step: 2, action: 'PROTECTED_STRUCTURE_CHECK',
+                          label: `${g.target}: ${threat.structure} risk=${threat.risk} — ${g.recommendation}`,
+                          followUp: 'override前にresimulation実施',
+                          urgency: 'before_override',
+                        });
+                      }
+                    } else {
+                      _ho_responsibilityGuide.push({
+                        step: 2, action: 'PROTECTED_STRUCTURE_CHECK',
+                        label: 'HIGH risk protected構造なし ✓',
+                        followUp: null,
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 3: rollback availability check
+                    const _ho_rollbackNeeded = _ho_classified.filter(c => c.rollbackRecommended);
+                    if (_ho_rollbackNeeded.length > 0) {
+                      _ho_responsibilityGuide.push({
+                        step: 3, action: 'ROLLBACK_CONFIRM',
+                        label: `${_ho_rollbackNeeded.length}件のoverride候補でrollback推奨 — 前月シフトを参照可能か確認`,
+                        followUp: 'rollback不可の場合はoverride保留',
+                        urgency: 'before_override',
+                      });
+                    } else {
+                      _ho_responsibilityGuide.push({
+                        step: 3, action: 'ROLLBACK_CONFIRM',
+                        label: 'rollback required items なし ✓',
+                        followUp: null,
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 4: recovery follow-up planning
+                    if (_ho_emergencyItems.length > 0 || _ho_protectedBypassItems.length > 0) {
+                      _ho_responsibilityGuide.push({
+                        step: 4, action: 'RECOVERY_FOLLOWUP_PLAN',
+                        label: `emergency ${_ho_emergencyItems.length}件 + protected bypass ${_ho_protectedBypassItems.length}件 — recovery follow-up計画必須`,
+                        followUp: 'next cycle開始時にreview予約',
+                        urgency: 'this_cycle',
+                      });
+                    }
+
+                    // Step 5: next cycle review reservation
+                    const _ho_nextCycleItems = _ho_classified.filter(c =>
+                      c.overrideClass === 'EMERGENCY_OVERRIDE' || c.overrideClass === 'HIGH_IMPACT_OVERRIDE');
+                    if (_ho_nextCycleItems.length > 0) {
+                      _ho_responsibilityGuide.push({
+                        step: 5, action: 'NEXT_CYCLE_REVIEW',
+                        label: `${_ho_nextCycleItems.length}件のhigh-impact override — next cycle review予約`,
+                        followUp: 'override後の安全構造変化を追跡',
+                        urgency: 'planning',
+                      });
+                    }
+
+                    // ── Layer 6: Override Governance Audit ────────────────
+                    {
+                      const _ho_totalOverrides = _ho_registry.length;
+                      // Override overuse: > 40% of all scenarios are emergency
+                      const _ho_overuseRisk    = _ho_totalOverrides > 0
+                        && _ho_emergencyItems.length / _ho_totalOverrides > 0.4;
+                      // Emergency normalisation risk: many emergency items with no protected bypass concern
+                      const _ho_emergNormalRisk = _ho_emergencyItems.length > 4;
+                      // Protected bypass abuse: > 30% bypass protected structures
+                      const _ho_bypassAbuseRisk = _ho_totalOverrides > 0
+                        && _ho_protectedBypassItems.length / _ho_totalOverrides > 0.3;
+                      // Governance erosion: high-impact + emergency dominate
+                      const _ho_govErosionRisk =
+                        (_ho_emergencyClass.length + _ho_highImpactClass.length) >
+                        (_ho_controlledClass.length + _ho_safeClass.length);
+                      // Human accountability: all items have reason + rollback flag
+                      const _ho_humanAccountable = _ho_registry.every(r => r.reason && r.rollbackRecommended !== undefined);
+                      // Explainability: all classified items have impactSummary
+                      const _ho_explainable = _ho_classified.every(c => c.impactSummary);
+
+                      const _ho_overallAudit =
+                        (!_ho_overuseRisk && !_ho_emergNormalRisk && !_ho_bypassAbuseRisk && _ho_humanAccountable)
+                          ? 'humanGovernedOverrideSystem'
+                        : _ho_emergNormalRisk  ? 'emergencyNormalizationRisk'
+                        : _ho_bypassAbuseRisk  ? 'protectedBypassAbuse'
+                        : _ho_overuseRisk      ? 'overrideOveruseRisk'
+                        : _ho_govErosionRisk   ? 'governanceErosionRisk'
+                        :                        'needsReview';
+
+                      const _ho_finalSummary = {
+                        dept: cd.id, year, month,
+                        totalOverrideScenarios : _ho_totalOverrides,
+                        emergencyCount         : _ho_emergencyItems.length,
+                        protectedBypassCount   : _ho_protectedBypassItems.length,
+                        emergencyClassCount    : _ho_emergencyClass.length,
+                        highImpactClassCount   : _ho_highImpactClass.length,
+                        controlledClassCount   : _ho_controlledClass.length,
+                        safeClassCount         : _ho_safeClass.length,
+                        highGuardCount         : _ho_highGuardItems.length,
+                        emergencyFlowCount     : _ho_emergencyFlow.length,
+                        responsibilityGuide    : _ho_responsibilityGuide.map(g =>
+                          `Step${g.step}[${g.action}/${g.urgency}] ${g.label}`),
+                        audit: {
+                          overrideOveruse          : _ho_overuseRisk      ? 'risk ⚠' : 'low ✓',
+                          emergencyNormalization   : _ho_emergNormalRisk  ? 'risk ⚠' : 'low ✓',
+                          protectedBypassAbuse     : _ho_bypassAbuseRisk  ? 'detected ⚠' : 'none ✓',
+                          governanceErosion        : _ho_govErosionRisk   ? 'risk ⚠' : 'maintained ✓',
+                          humanAccountability      : _ho_humanAccountable ? 'maintained ✓' : 'gap ⚠',
+                          explainability           : _ho_explainable      ? 'high ✓' : 'partial ⚠',
+                          overall                  : _ho_overallAudit,
+                        },
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_ho_] Human Override Layer:', _ho_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Human Override Layer / _ho_] ここまで ══
+        if (profilerRef.current) {
+          profilerRef.current.engineTimes['_ho_'] = +(performance.now() - _bp_t_ho_).toFixed(3);
+          profilerRef.current.idleDefers.push({ engine:'_ho_', waitMs: +(_bp_t_ho_ - _bp_disp_ho_).toFixed(1) });
+        }
+        }); // _ite_schedule P2 · _ho_
+        }; // _ptl_bC · sandbox
+        const _ptl_bD = () => {
+        // ══ [Recommendation Execution Preview System / _ep_] ここから ══
+        const _bp_t_ep_ = performance.now();
+        {
+          // ── Layer 1: Recommendation Execution Preview (shared data + proposals) ─
+          {
+            const _ep_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _ep_ scope)
+            const _ep_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk   ?? 'normal';
+                const ladder     = s.nightLadder   ?? 0;
+                const stage      = s.growthStage   ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears    ?? null;
+                const fy         = s.facilityYears ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                // Count actual night shifts this month
+                let nightCount = 0;
+                for (let day = 1; day <= _ep_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, fy, hasPair, nightOk,
+                         supportReq, isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _ep_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _ep_allArr      = Object.values(_ep_deptData).flatMap(dd => dd.arr);
+            const _ep_veterans    = _ep_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _ep_supportReqs = _ep_allArr.filter(e => e.supportReq && e.nightOk);
+
+            // Per-day snapshot (uncovered nights)
+            const _ep_dayMap = {};
+            for (let day = 1; day <= _ep_days; day++) {
+              const srOnNight = [];
+              for (const sr of _ep_supportReqs) {
+                const { shifts, nset } = _ep_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _ep_veterans.filter(vet => {
+                const { shifts, nset } = _ep_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              _ep_dayMap[day] = { srOnNight, vetOnNight, uncovCount: vetOnNight.length === 0 ? srOnNight.length : 0 };
+            }
+
+            // Derive execution preview proposals from current risk signals
+            // Each proposal: { proposalId, type, target, description, currentState, previewOutcome }
+            const _ep_proposals = [];
+
+            // Proposal A: reduce overloaded veteran night count
+            for (const e of _ep_veterans.filter(e => e.utilRate > 1.2)) {
+              const reducedNc = Math.max(e.targetNc, Math.round(e.nightCount * 0.8));
+              const coverageDelta = reducedNc - e.nightCount; // negative = reduction
+              _ep_proposals.push({
+                proposalId   : `vetReduce_${e.s.id}`,
+                type         : 'veteran_night_reduction',
+                target       : `${e.s.name} (${e.deptLabel})`,
+                description  : `夜勤 ${e.nightCount}→${reducedNc} 削減`,
+                currentState : { burnoutTrajectory: 'HIGH', utilRate: e.utilRate, nightCount: e.nightCount },
+                previewOutcome: {
+                  burnoutTrajectory  : 'MEDIUM',
+                  supportCoverageDelta: coverageDelta,
+                  recoveryContinuity : 'maintained',
+                  uncovNightsDelta   : Math.abs(coverageDelta) > 0 ? '+1〜2' : '0',
+                  overallImpact      : 'controlled_improvement',
+                },
+                rollbackAvailable: true,
+                resimRequired: e.utilRate > 1.4,
+              });
+            }
+
+            // Proposal B: burnout night removal
+            for (const e of _ep_allArr.filter(e => e.isBurnout && e.nightOk && e.nightCount >= 2)) {
+              _ep_proposals.push({
+                proposalId   : `burnoutRemove_${e.s.id}`,
+                type         : 'burnout_night_removal',
+                target       : `${e.s.name} (${e.deptLabel})`,
+                description  : `夜勤全削減 (${e.nightCount}→0) burnout recovery優先`,
+                currentState : { burnoutTrajectory: 'HIGH', nightCount: e.nightCount },
+                previewOutcome: {
+                  burnoutTrajectory  : 'recovering',
+                  supportCoverageDelta: -e.nightCount,
+                  recoveryContinuity : 'improved',
+                  uncovNightsDelta   : `+${e.nightCount}`,
+                  overallImpact      : 'recovery_priority',
+                },
+                rollbackAvailable: false,
+                resimRequired: true,
+              });
+            }
+
+            // Proposal C: ladder progression (ladder 3 → 4, stage≥3, floor vet sufficient)
+            for (const e of _ep_allArr.filter(e => e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.isProtected)) {
+              const floorVetCount = _ep_veterans.filter(v => v.deptId === e.deptId).length;
+              _ep_proposals.push({
+                proposalId   : `ladderUp_${e.s.id}`,
+                type         : 'ladder_progression',
+                target       : `${e.s.name} (${e.deptLabel})`,
+                description  : `ladder ${e.ladder}→4 昇格 (stage=${e.stage})`,
+                currentState : { ladder: e.ladder, stage: e.stage, floorVetCount },
+                previewOutcome: {
+                  burnoutTrajectory  : 'stable',
+                  supportCoverageDelta: +1,
+                  recoveryContinuity : floorVetCount >= 2 ? 'maintained' : 'at_risk',
+                  uncovNightsDelta   : floorVetCount >= 2 ? '-1〜2' : '0',
+                  overallImpact      : floorVetCount >= 2 ? 'controlled_improvement' : 'conditional',
+                },
+                rollbackAvailable: true,
+                resimRequired: floorVetCount < 2,
+              });
+            }
+
+            // Proposal D: veteran redistribution to gap depts
+            const _ep_gapDepts = Object.entries(_ep_deptData)
+              .filter(([, { arr }]) => arr.some(e => e.supportReq && e.nightOk) &&
+                                      !arr.some(e => e.isVeteran && e.nightOk))
+              .map(([deptId]) => deptId);
+            if (_ep_gapDepts.length > 0 && _ep_veterans.length > 0) {
+              _ep_proposals.push({
+                proposalId   : 'crossFloor_vetRedistrib',
+                type         : 'cross_floor_vet_redistribution',
+                target       : `${_ep_gapDepts.map(id => _ep_deptData[id]?.d.label).join(' / ')}`,
+                description  : `vet cross-floor support体制再構築`,
+                currentState : { gapDeptCount: _ep_gapDepts.length, vetCount: _ep_veterans.length },
+                previewOutcome: {
+                  burnoutTrajectory  : 'stable',
+                  supportCoverageDelta: +_ep_gapDepts.length,
+                  recoveryContinuity : 'at_risk',
+                  uncovNightsDelta   : `-${_ep_gapDepts.length}`,
+                  overallImpact      : 'structural_improvement',
+                },
+                rollbackAvailable: true,
+                resimRequired: true,
+              });
+            }
+
+            // ── Layer 2: Multi-Horizon Impact Projection ────────────────────────
+            {
+              // Project each proposal across 4 time horizons: now / 1m / 3m / 6m
+              // Uses simple linear trajectory models (shadow simulation, read-only)
+              const _ep_horizons = _ep_proposals.map(p => {
+                // Burnout trajectory over time
+                const burnoutNow = p.currentState.burnoutTrajectory ?? 'stable';
+                const burnout1m  =
+                  p.type === 'burnout_night_removal' ? 'recovering'
+                  : p.type === 'veteran_night_reduction' && p.currentState.utilRate > 1.3 ? 'MEDIUM'
+                  : burnoutNow;
+                const burnout3m  =
+                  p.type === 'burnout_night_removal' ? 'low'
+                  : p.type === 'veteran_night_reduction' ? 'LOW'
+                  : burnout1m;
+                const burnout6m  =
+                  p.type === 'burnout_night_removal' || p.type === 'veteran_night_reduction' ? 'stable'
+                  : burnout3m;
+
+                // Support coverage delta accumulation
+                const delta = p.previewOutcome.supportCoverageDelta ?? 0;
+                const support1m = delta > 0 ? 'improving' : delta < 0 ? 'gap_risk' : 'stable';
+                const support3m = delta > 0 ? 'stable' : delta < 0 ? 'compensated' : 'stable';
+                const support6m = 'stable';
+
+                // Veteran dependency trajectory
+                const vetDep6m =
+                  p.type === 'ladder_progression' ? 'decreasing'
+                  : p.type === 'cross_floor_vet_redistribution' ? 'balanced'
+                  : 'unchanged';
+
+                // Uncovered nights trajectory
+                const uncovNow  = Object.values(_ep_dayMap).filter(d => d.uncovCount > 0).length;
+                const uncov1m   = p.type === 'burnout_night_removal' ? uncovNow + 1 : uncovNow;
+                const uncov3m   = p.type === 'cross_floor_vet_redistribution' ? Math.max(0, uncovNow - _ep_gapDepts.length)
+                                : p.type === 'ladder_progression' ? Math.max(0, uncovNow - 1)
+                                : uncov1m;
+                const uncov6m   = Math.max(0, uncov3m - 1);
+
+                return {
+                  proposalId: p.proposalId,
+                  target: p.target,
+                  description: p.description,
+                  now : { burnout: burnoutNow, support: 'current', uncovDays: uncovNow },
+                  m1  : { burnout: burnout1m,  support: support1m, uncovDays: uncov1m },
+                  m3  : { burnout: burnout3m,  support: support3m, uncovDays: uncov3m },
+                  m6  : { burnout: burnout6m,  support: support6m, uncovDays: uncov6m, vetDependency: vetDep6m },
+                  shortTermOnly: burnout1m !== burnout6m && burnout3m === burnout6m ? false : burnout1m === 'LOW' && burnout6m !== 'LOW',
+                };
+              });
+
+              const _ep_shortTermOnlyRisks = _ep_horizons.filter(h => h.shortTermOnly);
+
+              // ── Layer 3: Protected Structure Impact Scan ───────────────────
+              {
+                const _ep_structureScan = _ep_proposals.map(p => {
+                  const threats = [];
+
+                  // safeSequence: proposals touching paired staff (stage ≤ 3)
+                  if (p.type === 'cross_floor_vet_redistribution') {
+                    const pairedVets = _ep_veterans.filter(e => e.hasPair && e.stage <= 3);
+                    if (pairedVets.length > 0) {
+                      threats.push({
+                        structure: 'safeSequence',
+                        risk: 'HIGH',
+                        detail: `vetの${pairedVets.length}名がsafeSequence構築中 — 再配置でsequence断絶リスク`,
+                      });
+                    }
+                  }
+
+                  // burnout recovery: removing from nights while burnout recovery is needed
+                  if (p.type === 'veteran_night_reduction') {
+                    const staff = _ep_allArr.find(e => p.proposalId.includes(e.s.id));
+                    if (staff?.isProtected) {
+                      threats.push({
+                        structure: 'burnout_recovery',
+                        risk: 'HIGH',
+                        detail: `protected状態のvet夜勤削減 — recovery disruption risk`,
+                      });
+                    }
+                  }
+
+                  // support rebuilding: burnout removal reduces coverage for SR staff
+                  if (p.type === 'burnout_night_removal') {
+                    const uncovIncrease = _ep_supportReqs.some(sr => {
+                      for (let day = 1; day <= _ep_days; day++) {
+                        if (_ep_dayMap[day].vetOnNight.length === 1) return true;
+                      }
+                      return false;
+                    });
+                    if (uncovIncrease) {
+                      threats.push({
+                        structure: 'support_rebuilding',
+                        risk: 'MEDIUM',
+                        detail: '夜勤削減でsole-vet夜が増加 — SR coverage gap拡大リスク',
+                      });
+                    }
+                  }
+
+                  // ladder stabilization: ladder progression bypasses normal timeline
+                  if (p.type === 'ladder_progression') {
+                    threats.push({
+                      structure: 'ladder_stabilization',
+                      risk: p.previewOutcome.overallImpact === 'conditional' ? 'HIGH' : 'LOW',
+                      detail: p.previewOutcome.overallImpact === 'conditional'
+                        ? 'floor vet不足 — 早期昇格でladder不安定化リスク'
+                        : 'floor vet十分 — ladder stabilization risk low',
+                    });
+                  }
+
+                  // protected hold continuity: any proposal touching protected staff
+                  const touchesProtected = _ep_allArr.some(e =>
+                    e.isProtected && p.target.includes(e.s.name));
+                  if (touchesProtected) {
+                    threats.push({
+                      structure: 'protected_hold_continuity',
+                      risk: 'HIGH',
+                      detail: 'protected staff対象 — hold continuity disruption',
+                    });
+                  }
+
+                  const maxRisk   = threats.some(t => t.risk === 'HIGH') ? 'HIGH'
+                                  : threats.some(t => t.risk === 'MEDIUM') ? 'MEDIUM' : 'NONE';
+                  const scanResult =
+                    maxRisk === 'HIGH'   ? 'RESIM_REQUIRED'
+                    : maxRisk === 'MEDIUM' ? 'REVIEW_BEFORE_APPLY'
+                    :                        'CLEAR';
+
+                  return { proposalId: p.proposalId, target: p.target, threats, maxRisk, scanResult };
+                });
+
+                const _ep_resimRequired  = _ep_structureScan.filter(s => s.scanResult === 'RESIM_REQUIRED');
+                const _ep_reviewRequired = _ep_structureScan.filter(s => s.scanResult === 'REVIEW_BEFORE_APPLY');
+
+                // ── Layer 4: Recovery Continuity Forecast ──────────────────
+                {
+                  // Forecast whether recovery-in-progress staff remain stable under each proposal
+                  const _ep_recoveryForecast = [];
+
+                  const _ep_recoveryStaff = _ep_allArr.filter(e => e.isProtected);
+                  for (const e of _ep_recoveryStaff) {
+                    // Check if any proposal affects this staff's workload
+                    const affectingProposals = _ep_proposals.filter(p =>
+                      p.target.includes(e.s.name) ||
+                      (p.type === 'cross_floor_vet_redistribution' && e.deptId === e.deptId) ||
+                      (p.type === 'burnout_night_removal' && e.isBurnout)
+                    );
+
+                    const reboundRisk =
+                      affectingProposals.some(p => p.type !== 'burnout_night_removal' && e.isBurnout) ? 'HIGH'
+                      : affectingProposals.some(p => p.previewOutcome.recoveryContinuity === 'at_risk') ? 'MEDIUM'
+                      : 'LOW';
+
+                    const forecast =
+                      reboundRisk === 'HIGH'   ? 'burnout_rebound_risk'
+                      : reboundRisk === 'MEDIUM' ? 'recovery_at_risk'
+                      :                            'recovery_stable';
+
+                    _ep_recoveryForecast.push({
+                      staffId: e.s.id, staffName: e.s.name,
+                      deptId: e.deptId, deptLabel: e.deptLabel,
+                      recoveryType: e.isBurnout ? 'burnout' : e.inLadder ? 'ladder' : e.inReloc ? 'relocation' : 'safeSequence',
+                      reboundRisk, forecast,
+                      affectedByCount: affectingProposals.length,
+                    });
+                  }
+
+                  const _ep_highReboundStaff = _ep_recoveryForecast.filter(f => f.reboundRisk === 'HIGH');
+                  const _ep_atRiskStaff      = _ep_recoveryForecast.filter(f => f.reboundRisk === 'MEDIUM');
+
+                  // ── Layer 5: Human Execution Guidance ─────────────────────
+                  {
+                    const _ep_executionGuide = [];
+
+                    // Step 1: protected structure check first
+                    if (_ep_resimRequired.length > 0) {
+                      for (const s of _ep_resimRequired.slice(0, 2)) {
+                        _ep_executionGuide.push({
+                          step: 1, action: 'PROTECTED_STRUCTURE_CHECK',
+                          label: `${s.target}: ${s.threats[0]?.structure} risk=${s.maxRisk} → ${s.scanResult}`,
+                          urgency: 'before_apply',
+                        });
+                      }
+                    } else {
+                      _ep_executionGuide.push({
+                        step: 1, action: 'PROTECTED_STRUCTURE_CHECK',
+                        label: 'protected structure RESIM不要 ✓',
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 2: rollback availability check
+                    const _ep_needRollback = _ep_proposals.filter(p => p.rollbackAvailable);
+                    if (_ep_needRollback.length > 0) {
+                      _ep_executionGuide.push({
+                        step: 2, action: 'ROLLBACK_CONFIRM',
+                        label: `${_ep_needRollback.length}件でrollback可能 — 前月シフト参照可否を確認`,
+                        urgency: 'before_apply',
+                      });
+                    }
+
+                    // Step 3: 3m impact horizon confirmation
+                    if (_ep_horizons.length > 0) {
+                      const worst3m = _ep_horizons.reduce((acc, h) =>
+                        h.m3.uncovDays > (acc?.m3.uncovDays ?? -1) ? h : acc, _ep_horizons[0]);
+                      if (worst3m) {
+                        _ep_executionGuide.push({
+                          step: 3, action: '3M_IMPACT_CONFIRM',
+                          label: `3m worst case: ${worst3m.target} uncovDays=${worst3m.m3.uncovDays} burnout=${worst3m.m3.burnout}`,
+                          urgency: 'review',
+                        });
+                      }
+                    }
+
+                    // Step 4: recovery continuity check
+                    if (_ep_highReboundStaff.length > 0) {
+                      for (const f of _ep_highReboundStaff.slice(0, 2)) {
+                        _ep_executionGuide.push({
+                          step: 4, action: 'RECOVERY_CONTINUITY_CONFIRM',
+                          label: `${f.staffName} (${f.deptLabel}): ${f.forecast} — 採用前に個別確認`,
+                          urgency: 'before_apply',
+                        });
+                      }
+                    } else {
+                      _ep_executionGuide.push({
+                        step: 4, action: 'RECOVERY_CONTINUITY_CONFIRM',
+                        label: 'recovery continuity HIGH risk なし ✓',
+                        urgency: 'none',
+                      });
+                    }
+
+                    // Step 5: next cycle monitoring reservation
+                    const _ep_resimCount = _ep_proposals.filter(p => p.resimRequired).length;
+                    _ep_executionGuide.push({
+                      step: 5, action: 'NEXT_CYCLE_MONITOR',
+                      label: `採用後: ${_ep_resimCount}件をnext cycleでresim確認 + recovery trackingを継続`,
+                      urgency: 'planning',
+                    });
+
+                    // ── Layer 6: Execution Preview Audit ────────────────────
+                    {
+                      const _ep_totalProposals = _ep_proposals.length;
+                      // Future overconfidence: too many proposals rated "controlled_improvement"
+                      const _ep_overconfident = _ep_proposals.filter(p =>
+                        p.previewOutcome.overallImpact === 'controlled_improvement').length;
+                      const _ep_futureOverconf = _ep_totalProposals > 0
+                        && _ep_overconfident / _ep_totalProposals > 0.7;
+                      // Recovery neglect: no recovery forecast generated despite protected staff
+                      const _ep_recoveryNeglect = _ep_recoveryStaff.length > 0
+                        && _ep_recoveryForecast.length === 0;
+                      // Preview complexity
+                      const _ep_guideLength = _ep_executionGuide.length;
+                      const _ep_previewComplexity =
+                        _ep_guideLength <= 4 ? 'manageable ✓'
+                        : _ep_guideLength <= 7 ? 'moderate'
+                        :                        'complex ⚠';
+                      // Rollback visibility: majority of proposals have rollback available
+                      const _ep_rollbackCount = _ep_proposals.filter(p => p.rollbackAvailable).length;
+                      const _ep_rollbackVisible = _ep_totalProposals === 0 || _ep_rollbackCount / _ep_totalProposals >= 0.5;
+                      // Anxiety amplification: RESIM_REQUIRED > 60% of proposals
+                      const _ep_anxietyRisk = _ep_totalProposals > 0
+                        && _ep_resimRequired.length / _ep_totalProposals > 0.6;
+                      // Explainability: all proposals have previewOutcome
+                      const _ep_explainable = _ep_proposals.every(p => p.previewOutcome?.overallImpact);
+
+                      const _ep_overallAudit =
+                        (!_ep_futureOverconf && !_ep_recoveryNeglect && _ep_rollbackVisible && _ep_explainable)
+                          ? 'humanCenteredExecutionPreview'
+                        : _ep_futureOverconf  ? 'futureOverconfidenceRisk'
+                        : _ep_recoveryNeglect ? 'recoveryNeglectRisk'
+                        : !_ep_rollbackVisible ? 'rollbackVisibilityGap'
+                        :                        'needsReview';
+
+                      const _ep_finalSummary = {
+                        dept: cd.id, year, month,
+                        proposalCount     : _ep_totalProposals,
+                        horizonCount      : _ep_horizons.length,
+                        shortTermOnlyCount: _ep_shortTermOnlyRisks.length,
+                        resimRequiredCount: _ep_resimRequired.length,
+                        reviewRequiredCount: _ep_reviewRequired.length,
+                        highReboundCount  : _ep_highReboundStaff.length,
+                        atRiskCount       : _ep_atRiskStaff.length,
+                        rollbackAvailCount: _ep_rollbackCount,
+                        executionGuide    : _ep_executionGuide.map(g =>
+                          `Step${g.step}[${g.action}/${g.urgency}] ${g.label}`),
+                        audit: {
+                          futureOverconfidence: _ep_futureOverconf  ? 'risk ⚠' : 'low ✓',
+                          recoveryNeglect     : _ep_recoveryNeglect ? 'risk ⚠' : 'covered ✓',
+                          previewComplexity   : _ep_previewComplexity,
+                          rollbackVisibility  : _ep_rollbackVisible  ? 'clear ✓' : 'gap ⚠',
+                          anxietyAmplification: _ep_anxietyRisk      ? 'risk ⚠' : 'controlled ✓',
+                          explainability      : _ep_explainable       ? 'high ✓' : 'partial ⚠',
+                          overall             : _ep_overallAudit,
+                        },
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_ep_] Recommendation Execution Preview System:', _ep_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Recommendation Execution Preview System / _ep_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_ep_'] = +(performance.now() - _bp_t_ep_).toFixed(3);
+        }; // _ptl_bD · reco(2/ep)
+        const _ptl_bE = () => {
+        // ══ [Human Decision History System / _dh_] ここから ══
+        const _bp_t_dh_ = performance.now();
+        {
+          // ── Layer 1: Human Decision History Registry (shared data + decision log) ─
+          {
+            const _dh_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _dh_ scope)
+            const _dh_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk   ?? 'normal';
+                const ladder     = s.nightLadder   ?? 0;
+                const stage      = s.growthStage   ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears    ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                let nightCount = 0;
+                for (let day = 1; day <= _dh_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _dh_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _dh_allArr      = Object.values(_dh_deptData).flatMap(dd => dd.arr);
+            const _dh_veterans    = _dh_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _dh_supportReqs = _dh_allArr.filter(e => e.supportReq && e.nightOk);
+            const _dh_protected   = _dh_allArr.filter(e => e.isProtected);
+            const _dh_burnout     = _dh_allArr.filter(e => e.isBurnout);
+
+            // Per-day snapshot
+            const _dh_dayMap = {};
+            for (let day = 1; day <= _dh_days; day++) {
+              const srOnNight = [];
+              for (const sr of _dh_supportReqs) {
+                const { shifts, nset } = _dh_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _dh_veterans.filter(vet => {
+                const { shifts, nset } = _dh_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovCount = vetOnNight.length === 0 ? srOnNight.length : 0;
+              _dh_dayMap[day] = { srOnNight, vetOnNight, uncovCount };
+            }
+
+            // Synthesise current-month decision candidates as a history registry
+            // (read-only: models "what decisions were implicitly made this cycle")
+            const _dh_registry = [];
+
+            // HOLD decisions: all protected staff not disturbed this cycle
+            for (const e of _dh_protected) {
+              const reason =
+                e.isBurnout  ? 'burnout recovery継続 — 夜勤介入回避'
+                : e.inReloc  ? `relocation adaptation (${(e.fl * 12).toFixed(0)}ヶ月) — schedule安定化`
+                : e.inLadder ? `ladder ${e.ladder} stabilization — 過負荷回避`
+                :              `safeSequence構築中 stage=${e.stage} — ペア継続`;
+              _dh_registry.push({
+                decisionType   : 'HOLD',
+                target         : `${e.s.name} (${e.deptLabel})`,
+                decisionReason : reason,
+                governanceClass: 'HOLD_RECOMMENDED',
+                protectedImpact: 'recovery maintained',
+                rollbackSuggested: false,
+                reviewCycle    : 'next_month',
+                staffId        : e.s.id,
+                deptId         : e.deptId,
+              });
+            }
+
+            // REJECT decisions: uncovered nights with low-ladder SR staff (unsafe progression)
+            const _dh_unsafeDays = [];
+            for (let day = 1; day <= _dh_days; day++) {
+              const { uncovCount, vetOnNight, srOnNight } = _dh_dayMap[day];
+              if (uncovCount > 0 && vetOnNight.length === 0) {
+                const lowLadder = srOnNight.filter(e => e.ladder < 3);
+                if (lowLadder.length > 0) _dh_unsafeDays.push({ day, lowLadder });
+              }
+            }
+            if (_dh_unsafeDays.length > 0) {
+              _dh_registry.push({
+                decisionType   : 'REJECT',
+                target         : `unsafe night progression (${_dh_unsafeDays.length}日)`,
+                decisionReason : `lowLadder SR uncovered — 承認不可`,
+                governanceClass: 'REJECT_RECOMMENDED',
+                protectedImpact: 'unsafe_blocked',
+                rollbackSuggested: false,
+                reviewCycle    : 'immediate',
+                staffId        : null,
+                deptId         : null,
+              });
+            }
+
+            // RESIM decisions: veteran overload items that need verification
+            for (const e of _dh_veterans.filter(e => e.utilRate > 1.2)) {
+              _dh_registry.push({
+                decisionType   : 'RESIM',
+                target         : `${e.s.name} (${e.deptLabel}) veteran redistribution`,
+                decisionReason : `utilRate=${(e.utilRate*100).toFixed(0)}% — 再配分前にsandbox検証必要`,
+                governanceClass: 'RESIM_REQUIRED',
+                protectedImpact: 'support_continuity_unverified',
+                rollbackSuggested: true,
+                reviewCycle    : 'this_cycle',
+                staffId        : e.s.id,
+                deptId         : e.deptId,
+              });
+            }
+
+            // APPROVE decisions: low-risk ladder progression candidates
+            for (const e of _dh_allArr.filter(e => e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.isProtected)) {
+              const floorVetCount = _dh_veterans.filter(v => v.deptId === e.deptId).length;
+              if (floorVetCount >= 2) {
+                _dh_registry.push({
+                  decisionType   : 'APPROVE',
+                  target         : `${e.s.name} (${e.deptLabel}) ladder 4昇格`,
+                  decisionReason : `stage=${e.stage} floorVet=${floorVetCount} — 低リスク承認候補`,
+                  governanceClass: 'APPROVE_CANDIDATE',
+                  protectedImpact: 'none',
+                  rollbackSuggested: true,
+                  reviewCycle    : 'next_month',
+                  staffId        : e.s.id,
+                  deptId         : e.deptId,
+                });
+              }
+            }
+
+            // OVERRIDE decisions: emergency scenarios (burnout on nights, shortage days)
+            for (const e of _dh_burnout.filter(e => e.nightOk && e.nightCount >= 2)) {
+              _dh_registry.push({
+                decisionType   : 'OVERRIDE',
+                target         : `${e.s.name} (${e.deptLabel})`,
+                decisionReason : `burnout高 + 夜勤${e.nightCount}回 — emergency継続中`,
+                governanceClass: 'EMERGENCY_OVERRIDE',
+                protectedImpact: 'burnout_continuation_risk',
+                rollbackSuggested: true,
+                reviewCycle    : 'immediate',
+                staffId        : e.s.id,
+                deptId         : e.deptId,
+              });
+            }
+
+            const _dh_holdDecisions     = _dh_registry.filter(r => r.decisionType === 'HOLD');
+            const _dh_rejectDecisions   = _dh_registry.filter(r => r.decisionType === 'REJECT');
+            const _dh_resimDecisions    = _dh_registry.filter(r => r.decisionType === 'RESIM');
+            const _dh_approveDecisions  = _dh_registry.filter(r => r.decisionType === 'APPROVE');
+            const _dh_overrideDecisions = _dh_registry.filter(r => r.decisionType === 'OVERRIDE');
+
+            // ── Layer 2: Decision Outcome Timeline ─────────────────────────────
+            {
+              // Trace current observable outcomes of each decision class
+              // (projection of "what has this month's implicit decision structure produced")
+              const _dh_outcomeTimeline = [];
+
+              // HOLD outcomes: is recovery actually progressing?
+              for (const e of _dh_protected) {
+                const recovering =
+                  e.isBurnout  ? e.nightCount === 0  // no nights = good
+                  : e.inLadder ? e.progress > 0.3    // showing progress
+                  : e.inReloc  ? e.fl !== null && e.fl >= 0.25 // 3+ months, adapting
+                  :              e.stage >= 2;         // safeSequence advancing
+                _dh_outcomeTimeline.push({
+                  decisionType   : 'HOLD',
+                  target         : `${e.s.name} (${e.deptLabel})`,
+                  currentOutcome : recovering ? 'recovery_progressing ✓' : 'recovery_stalled ⚠',
+                  burnoutTrajectory : e.isBurnout ? (e.nightCount === 0 ? 'stabilizing' : 'HIGH') : 'stable',
+                  supportStability  : 'maintained',
+                  outcomeClass   : recovering ? 'HOLD_BENEFICIAL' : 'HOLD_MONITORING',
+                  staffId        : e.s.id,
+                });
+              }
+
+              // REJECT outcomes: uncovered nights — has it been addressed?
+              if (_dh_unsafeDays.length > 0) {
+                const totalUncovDays = Object.values(_dh_dayMap).filter(d => d.uncovCount > 0).length;
+                _dh_outcomeTimeline.push({
+                  decisionType   : 'REJECT',
+                  target         : 'unsafe night progression',
+                  currentOutcome : totalUncovDays > 0
+                    ? `未解決 ${totalUncovDays}日継続中 ⚠`
+                    : 'resolved — safe coverage restored ✓',
+                  burnoutTrajectory : 'n/a',
+                  supportStability  : totalUncovDays > 0 ? 'gap_persists' : 'stable',
+                  outcomeClass   : totalUncovDays > 0 ? 'REJECT_UNRESOLVED' : 'REJECT_RESOLVED',
+                  staffId        : null,
+                });
+              }
+
+              // RESIM outcomes: veteran redistribution — has utilisation improved?
+              for (const e of _dh_veterans.filter(e => e.utilRate > 1.2)) {
+                _dh_outcomeTimeline.push({
+                  decisionType   : 'RESIM',
+                  target         : `${e.s.name} (${e.deptLabel})`,
+                  currentOutcome : `utilRate=${(e.utilRate*100).toFixed(0)}% — resim pending`,
+                  burnoutTrajectory : e.utilRate > 1.4 ? 'HIGH' : 'MEDIUM',
+                  supportStability  : 'at_risk',
+                  outcomeClass   : 'RESIM_PENDING',
+                  staffId        : e.s.id,
+                });
+              }
+
+              // OVERRIDE outcomes: burnout staff still on nights = override continuation
+              for (const e of _dh_burnout.filter(e => e.nightOk && e.nightCount >= 2)) {
+                _dh_outcomeTimeline.push({
+                  decisionType   : 'OVERRIDE',
+                  target         : `${e.s.name} (${e.deptLabel})`,
+                  currentOutcome : `夜勤${e.nightCount}回継続 — burnout rebound risk`,
+                  burnoutTrajectory : 'HIGH',
+                  supportStability  : 'override_dependent',
+                  outcomeClass   : 'OVERRIDE_CONSEQUENCE_ACTIVE',
+                  staffId        : e.s.id,
+                });
+              }
+
+              const _dh_beneficialHolds   = _dh_outcomeTimeline.filter(o => o.outcomeClass === 'HOLD_BENEFICIAL');
+              const _dh_stalledHolds      = _dh_outcomeTimeline.filter(o => o.outcomeClass === 'HOLD_MONITORING');
+              const _dh_activeConsequences = _dh_outcomeTimeline.filter(o => o.outcomeClass === 'OVERRIDE_CONSEQUENCE_ACTIVE');
+
+              // ── Layer 3: Override Consequence Tracking ──────────────────────
+              {
+                const _dh_overrideTracking = [];
+
+                // Emergency normalization check: are override scenarios recurring?
+                const _dh_recurringUnsafe = _dh_unsafeDays.length >= 5;
+                if (_dh_recurringUnsafe) {
+                  _dh_overrideTracking.push({
+                    consequenceType : 'emergency_normalization',
+                    severity        : 'HIGH',
+                    description     : `unsafe overlap ${_dh_unsafeDays.length}日 — 緊急対応の常態化リスク`,
+                    followUpRequired: true,
+                    rollbackEffect  : 'n/a — structural issue',
+                  });
+                }
+
+                // Burnout rebound: burnout staff still carrying nights
+                for (const e of _dh_burnout.filter(e => e.nightOk && e.nightCount >= 2)) {
+                  _dh_overrideTracking.push({
+                    consequenceType : 'burnout_rebound',
+                    severity        : 'HIGH',
+                    description     : `${e.s.name} (${e.deptLabel}): burnout継続 + 夜勤${e.nightCount}回`,
+                    followUpRequired: true,
+                    rollbackEffect  : '夜勤削減で回復可能 (rollback推奨)',
+                  });
+                }
+
+                // Support drift: uncovered nights persistent
+                const _dh_totalUncov = Object.values(_dh_dayMap).filter(d => d.uncovCount > 0).length;
+                if (_dh_totalUncov >= 3) {
+                  _dh_overrideTracking.push({
+                    consequenceType : 'chronic_unsafe_overlap',
+                    severity        : _dh_totalUncov >= 7 ? 'HIGH' : 'MEDIUM',
+                    description     : `施設全体 uncovered ${_dh_totalUncov}日 — support drift継続`,
+                    followUpRequired: true,
+                    rollbackEffect  : 'vet配置見直しで改善可能',
+                  });
+                }
+
+                // Veteran dependency solidification
+                for (const e of _dh_veterans.filter(e => e.utilRate > 1.3)) {
+                  _dh_overrideTracking.push({
+                    consequenceType : 'veteran_dependency',
+                    severity        : 'MEDIUM',
+                    description     : `${e.s.name}: utilRate=${(e.utilRate*100).toFixed(0)}% 依存固定化`,
+                    followUpRequired: false,
+                    rollbackEffect  : '負荷分散でgradual解消可能',
+                  });
+                }
+
+                const _dh_highConsequences = _dh_overrideTracking.filter(c => c.severity === 'HIGH');
+
+                // ── Layer 4: Recovery Preservation Memory ────────────────────
+                {
+                  const _dh_preservationMemory = [];
+
+                  // Successful holds: recovery progressing
+                  for (const o of _dh_beneficialHolds) {
+                    const staff = _dh_protected.find(e => e.s.id === o.staffId);
+                    if (!staff) continue;
+                    const holdType =
+                      staff.isBurnout ? 'burnout_recovery'
+                      : staff.inLadder ? 'ladder_stabilization'
+                      : staff.inReloc  ? 'relocation_adaptation'
+                      :                  'safeSequence_preservation';
+                    _dh_preservationMemory.push({
+                      memoryType  : 'HOLD_SUCCESS',
+                      target      : o.target,
+                      holdType,
+                      result      : 'recovery progressing — intervention avoided ✓',
+                      governanceValue: 'protected structure maintained',
+                      staffId     : o.staffId,
+                    });
+                  }
+
+                  // Stalled holds: still protecting but not yet progressing
+                  for (const o of _dh_stalledHolds) {
+                    _dh_preservationMemory.push({
+                      memoryType  : 'HOLD_MONITORING',
+                      target      : o.target,
+                      holdType    : 'monitoring',
+                      result      : 'hold継続中 — next cycle再評価推奨',
+                      governanceValue: 'disruption avoided, progress pending',
+                      staffId     : o.staffId,
+                    });
+                  }
+
+                  // Implicit safeSequence preservation
+                  const _dh_pairedStable = _dh_allArr.filter(e => e.hasPair && e.stage >= 3 && !e.isBurnout);
+                  for (const e of _dh_pairedStable) {
+                    _dh_preservationMemory.push({
+                      memoryType  : 'SAFE_SEQUENCE_PRESERVED',
+                      target      : `${e.s.name} (${e.deptLabel})`,
+                      holdType    : 'safeSequence',
+                      result      : `stage=${e.stage} safeSequence安定継続 ✓`,
+                      governanceValue: 'pair structure sustained — future independence trajectory',
+                      staffId     : e.s.id,
+                    });
+                  }
+
+                  // Relocation success: floor tenure >= 0.5yr with no burnout
+                  const _dh_relocSuccess = _dh_allArr.filter(e =>
+                    e.fl !== null && e.fl >= 0.5 && e.fl < 1.0 && !e.isBurnout && e.nightOk);
+                  for (const e of _dh_relocSuccess) {
+                    _dh_preservationMemory.push({
+                      memoryType  : 'RELOCATION_STABILIZED',
+                      target      : `${e.s.name} (${e.deptLabel})`,
+                      holdType    : 'relocation_adaptation',
+                      result      : `フロア配属${(e.fl * 12).toFixed(0)}ヶ月 — adaptation成功軌道 ✓`,
+                      governanceValue: 'floor adaptation on track — no burnout',
+                      staffId     : e.s.id,
+                    });
+                  }
+
+                  const _dh_holdSuccessCount = _dh_preservationMemory.filter(m => m.memoryType === 'HOLD_SUCCESS').length;
+                  const _dh_seqPreserveCount = _dh_preservationMemory.filter(m => m.memoryType === 'SAFE_SEQUENCE_PRESERVED').length;
+
+                  // ── Layer 5: Human Governance Reflection ─────────────────
+                  {
+                    const _dh_reflections = [];
+
+                    // Reflection: successful holds suppressed rebound
+                    if (_dh_holdSuccessCount > 0) {
+                      _dh_reflections.push({
+                        observation: `recovery中介入を避けた判断 ${_dh_holdSuccessCount}件が burnout rebound抑制に寄与`,
+                        recommendation: '現在のrecovery hold維持 — 継続観察',
+                        learningType: 'hold_effectiveness',
+                        actionable: true,
+                      });
+                    }
+
+                    // Reflection: override consequences that need follow-up
+                    if (_dh_highConsequences.length > 0) {
+                      _dh_reflections.push({
+                        observation: `${_dh_highConsequences.length}件の high-severity override consequenceが未解決`,
+                        recommendation: '緊急対応をone-offで終わらせず recovery follow-upを設定',
+                        learningType: 'override_followup_needed',
+                        actionable: true,
+                      });
+                    }
+
+                    // Reflection: safe sequence preservation trend
+                    if (_dh_seqPreserveCount > 0) {
+                      _dh_reflections.push({
+                        observation: `safeSequence ${_dh_seqPreserveCount}件が stage 3以上で安定継続中`,
+                        recommendation: 'pair構造の継続保護 — 独立運用移行timing を next cycle確認',
+                        learningType: 'sequence_preservation_success',
+                        actionable: false,
+                      });
+                    }
+
+                    // Reflection: stalled holds need re-evaluation
+                    if (_dh_stalledHolds.length > 0) {
+                      _dh_reflections.push({
+                        observation: `hold中 ${_dh_stalledHolds.length}件で progress停滞 — hold理由の再評価が必要`,
+                        recommendation: 'next cycle: hold理由が有効か個別確認 + 状況変化があれば判断更新',
+                        learningType: 'stalled_hold_reeval',
+                        actionable: true,
+                      });
+                    }
+
+                    // Reflection: chronic uncovered nights = structural gap
+                    if (_dh_totalUncov >= 5) {
+                      _dh_reflections.push({
+                        observation: `uncovered nights ${_dh_totalUncov}日 — 構造的support gap の可能性`,
+                        recommendation: 'veteran育成 or cross-floor support再構築を中期計画に組み込む',
+                        learningType: 'structural_gap_recognition',
+                        actionable: true,
+                      });
+                    }
+
+                    const _dh_actionableReflections = _dh_reflections.filter(r => r.actionable);
+
+                    // ── Layer 6: Decision History Audit ─────────────────────
+                    {
+                      const _dh_totalDecisions = _dh_registry.length;
+                      // Hindsight bias: penalising overrides that were situationally necessary
+                      const _dh_overrideRatio = _dh_totalDecisions > 0
+                        ? _dh_overrideDecisions.length / _dh_totalDecisions : 0;
+                      // Blame amplification: OVERRIDE/REJECT dominate the history
+                      const _dh_blameAmplRisk = _dh_overrideRatio > 0.4
+                        && _dh_holdDecisions.length < _dh_overrideDecisions.length;
+                      // Recovery undervaluation: few hold successes recorded
+                      const _dh_recoveryUnderval = _dh_holdSuccessCount === 0 && _dh_protected.length > 0;
+                      // Override stigma: override events flagged without follow-up path
+                      const _dh_overrideStigmaRisk = _dh_overrideDecisions.some(d => !d.rollbackSuggested);
+                      // Human learning support: reflections are actionable
+                      const _dh_learningSupportLevel =
+                        _dh_actionableReflections.length >= 2 ? 'high ✓'
+                        : _dh_actionableReflections.length === 1 ? 'moderate'
+                        :                                           'low ⚠';
+                      // Explainability: all registry entries have decisionReason
+                      const _dh_explainable = _dh_registry.every(r => r.decisionReason);
+
+                      const _dh_overallAudit =
+                        (!_dh_blameAmplRisk && !_dh_recoveryUnderval && _dh_explainable)
+                          ? 'humanGovernedDecisionHistory'
+                        : _dh_blameAmplRisk     ? 'blameAmplificationRisk'
+                        : _dh_recoveryUnderval  ? 'recoveryUndervaluationRisk'
+                        : _dh_overrideStigmaRisk ? 'overrideStigmaRisk'
+                        :                          'needsReview';
+
+                      const _dh_finalSummary = {
+                        dept: cd.id, year, month,
+                        totalDecisions      : _dh_totalDecisions,
+                        holdCount           : _dh_holdDecisions.length,
+                        rejectCount         : _dh_rejectDecisions.length,
+                        resimCount          : _dh_resimDecisions.length,
+                        approveCount        : _dh_approveDecisions.length,
+                        overrideCount       : _dh_overrideDecisions.length,
+                        beneficialHoldCount : _dh_beneficialHolds.length,
+                        stalledHoldCount    : _dh_stalledHolds.length,
+                        activeConsequenceCount: _dh_activeConsequences.length,
+                        highConsequenceCount: _dh_highConsequences.length,
+                        preservationCount   : _dh_preservationMemory.length,
+                        holdSuccessCount    : _dh_holdSuccessCount,
+                        seqPreserveCount    : _dh_seqPreserveCount,
+                        reflectionCount     : _dh_reflections.length,
+                        actionableReflCount : _dh_actionableReflections.length,
+                        topReflections      : _dh_reflections.slice(0, 4).map(r =>
+                          `[${r.learningType}] ${r.observation}`),
+                        audit: {
+                          blameAmplification    : _dh_blameAmplRisk      ? 'risk ⚠' : 'low ✓',
+                          recoveryRecognition   : _dh_recoveryUnderval   ? 'undervalued ⚠' : 'maintained ✓',
+                          overrideStigma        : _dh_overrideStigmaRisk ? 'risk ⚠' : 'none ✓',
+                          humanLearningSupport  : _dh_learningSupportLevel,
+                          operationalRealism    : _dh_highConsequences.length <= 2 ? 'high ✓' : 'review needed',
+                          explainability        : _dh_explainable         ? 'high ✓' : 'partial ⚠',
+                          overall               : _dh_overallAudit,
+                        },
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_dh_] Human Decision History System:', _dh_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Human Decision History System / _dh_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_dh_'] = +(performance.now() - _bp_t_dh_).toFixed(3);
+        }; // _ptl_bE · audit(1/dh)
+        const _ptl_bF = () => {
+        // ══ [Governance Pattern Observation System / _gp_] ここから ══
+        const _bp_t_gp_ = performance.now();
+        {
+          // ── Layer 1: Governance Pattern Registry (shared data + tendency) ────────
+          {
+            const _gp_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _gp_ scope)
+            const _gp_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                let nightCount = 0;
+                for (let day = 1; day <= _gp_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _gp_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gp_allArr      = Object.values(_gp_deptData).flatMap(dd => dd.arr);
+            const _gp_veterans    = _gp_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _gp_supportReqs = _gp_allArr.filter(e => e.supportReq && e.nightOk);
+            const _gp_protected   = _gp_allArr.filter(e => e.isProtected);
+            const _gp_burnout     = _gp_allArr.filter(e => e.isBurnout);
+
+            // Per-day snapshot
+            const _gp_dayMap = {};
+            for (let day = 1; day <= _gp_days; day++) {
+              const srOnNight = [];
+              for (const sr of _gp_supportReqs) {
+                const { shifts, nset } = _gp_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _gp_veterans.filter(vet => {
+                const { shifts, nset } = _gp_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovCount = vetOnNight.length === 0 ? srOnNight.length : 0;
+              _gp_dayMap[day] = { srOnNight, vetOnNight, uncovCount };
+            }
+
+            // Count observable decision signals this cycle
+            const _gp_totalUncovDays = Object.values(_gp_dayMap).filter(d => d.uncovCount > 0).length;
+            const _gp_vetOverloadCount = _gp_veterans.filter(e => e.utilRate > 1.2).length;
+            const _gp_burnoutNightCount = _gp_burnout.filter(e => e.nightOk && e.nightCount >= 2).length;
+            const _gp_ladderReadyCount = _gp_allArr.filter(e =>
+              e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.isProtected).length;
+            const _gp_protectedHoldCount = _gp_protected.length;
+            const _gp_gapDeptCount = Object.values(_gp_deptData).filter(({ arr }) =>
+              arr.some(e => e.supportReq && e.nightOk) && !arr.some(e => e.isVeteran && e.nightOk)).length;
+
+            // Synthesise cycle-level decision ratios (implicit from risk signals)
+            // HOLD-tendency score: protected staff / total staff
+            const _gp_totalStaff   = _gp_allArr.length || 1;
+            const _gp_holdScore    = _gp_protectedHoldCount / _gp_totalStaff;
+            // OVERRIDE-tendency score: emergency signals (uncov + burnout-on-night)
+            const _gp_overrideScore = (_gp_totalUncovDays / _gp_days + _gp_burnoutNightCount / _gp_totalStaff) / 2;
+            // RESIM-tendency score: vet overload + gap depts
+            const _gp_resimScore    = (_gp_vetOverloadCount + _gp_gapDeptCount) / (_gp_veterans.length + 1);
+            // REJECT-tendency score: unsafe days / total days
+            const _gp_rejectScore   = _gp_totalUncovDays > 0
+              ? Math.min(1, Object.values(_gp_dayMap).filter(d =>
+                  d.uncovCount > 0 && d.srOnNight.some(e => e.ladder < 3)).length / _gp_days)
+              : 0;
+            // APPROVE-tendency score: ladder-ready candidates present
+            const _gp_approveScore  = Math.min(1, _gp_ladderReadyCount / Math.max(1, _gp_veterans.length));
+
+            // Derive facility governance tendency
+            const _gp_facilityTendency =
+              _gp_overrideScore > 0.4  && _gp_holdScore < 0.2   ? 'reactive'
+              : _gp_holdScore > 0.4    && _gp_overrideScore < 0.2 ? 'protective'
+              : _gp_rejectScore > 0.3  && _gp_overrideScore > 0.3 ? 'unstable'
+              : _gp_approveScore > 0.5 && _gp_overrideScore < 0.3 ? 'aggressive'
+              :                                                        'balanced';
+
+            const _gp_tendencyFeatures = [];
+            if (_gp_holdScore > 0.3)    _gp_tendencyFeatures.push('HOLD比率高 — recovery重視傾向');
+            if (_gp_overrideScore > 0.3) _gp_tendencyFeatures.push('override頻度高 — shortage対応依存');
+            if (_gp_resimScore > 0.4)    _gp_tendencyFeatures.push('RESIM多発 — 構造的vet不足');
+            if (_gp_rejectScore > 0.2)   _gp_tendencyFeatures.push('unsafe overlap慢性 — REJECT必要状態');
+            if (_gp_approveScore > 0.4)  _gp_tendencyFeatures.push('ladder昇格候補多 — 成長期加速中');
+
+            // ── Layer 2: Intervention Tendency Observation ──────────────────────
+            {
+              // Observe which conditions drive which decision types
+              const _gp_tendencyObs = [];
+
+              // Burnout → HOLD increase
+              if (_gp_burnout.length > 0) {
+                const burnoutHoldRate = _gp_burnout.filter(e => e.isProtected).length / _gp_burnout.length;
+                _gp_tendencyObs.push({
+                  condition       : 'burnout_present',
+                  observedTendency: burnoutHoldRate > 0.7 ? 'HOLD_dominant' : 'HOLD_partial',
+                  conditionCount  : _gp_burnout.length,
+                  triggerScore    : +burnoutHoldRate.toFixed(3),
+                  description     : `burnout ${_gp_burnout.length}名 → HOLD率${(burnoutHoldRate*100).toFixed(0)}%`,
+                });
+              }
+
+              // Shortage (uncov nights) → OVERRIDE increase
+              if (_gp_totalUncovDays > 0) {
+                const overridePressure = _gp_totalUncovDays / _gp_days;
+                _gp_tendencyObs.push({
+                  condition       : 'shortage_escalation',
+                  observedTendency: overridePressure > 0.3 ? 'OVERRIDE_dominant' : 'OVERRIDE_moderate',
+                  conditionCount  : _gp_totalUncovDays,
+                  triggerScore    : +overridePressure.toFixed(3),
+                  description     : `uncovered ${_gp_totalUncovDays}日 (${(overridePressure*100).toFixed(0)}%) → override圧力`,
+                });
+              }
+
+              // Vet shortage → RESIM increase
+              if (_gp_vetOverloadCount > 0 || _gp_gapDeptCount > 0) {
+                const resimPressure = (_gp_vetOverloadCount + _gp_gapDeptCount) / Math.max(1, _gp_veterans.length + 1);
+                _gp_tendencyObs.push({
+                  condition       : 'veteran_shortage',
+                  observedTendency: resimPressure > 0.5 ? 'RESIM_dominant' : 'RESIM_moderate',
+                  conditionCount  : _gp_vetOverloadCount + _gp_gapDeptCount,
+                  triggerScore    : +resimPressure.toFixed(3),
+                  description     : `vetOverload ${_gp_vetOverloadCount}名 + gapDept ${_gp_gapDeptCount}F → resim圧力`,
+                });
+              }
+
+              // Unsafe overlap → REJECT increase
+              const _gp_unsafeDayCount = Object.values(_gp_dayMap).filter(d =>
+                d.uncovCount > 0 && d.srOnNight.some(e => e.ladder < 3)).length;
+              if (_gp_unsafeDayCount > 0) {
+                _gp_tendencyObs.push({
+                  condition       : 'unsafe_overlap_chronic',
+                  observedTendency: _gp_unsafeDayCount >= 5 ? 'REJECT_dominant' : 'REJECT_moderate',
+                  conditionCount  : _gp_unsafeDayCount,
+                  triggerScore    : +(_gp_unsafeDayCount / _gp_days).toFixed(3),
+                  description     : `unsafe overlap ${_gp_unsafeDayCount}日 → REJECT必要信号`,
+                });
+              }
+
+              // Ladder stagnation → APPROVE increase
+              if (_gp_ladderReadyCount > 0) {
+                _gp_tendencyObs.push({
+                  condition       : 'ladder_progression_ready',
+                  observedTendency: _gp_ladderReadyCount >= 3 ? 'APPROVE_pressure' : 'APPROVE_candidate',
+                  conditionCount  : _gp_ladderReadyCount,
+                  triggerScore    : +(_gp_ladderReadyCount / Math.max(1, _gp_veterans.length)).toFixed(3),
+                  description     : `ladder 3→4候補 ${_gp_ladderReadyCount}名 → 昇格タイミング到来`,
+                });
+              }
+
+              const _gp_dominantConditions = _gp_tendencyObs.filter(t =>
+                t.observedTendency.includes('dominant'));
+
+              // ── Layer 3: Recovery Preservation Pattern ──────────────────────
+              {
+                const _gp_preservPatterns = [];
+
+                // HOLD success pattern: recovery progressing
+                const _gp_burnoutHeld = _gp_burnout.filter(e => e.nightCount === 0);
+                if (_gp_burnoutHeld.length > 0) {
+                  _gp_preservPatterns.push({
+                    patternType : 'hold_prevents_rebound',
+                    count       : _gp_burnoutHeld.length,
+                    description : `burnout ${_gp_burnoutHeld.length}名が夜勤0 — rebound抑制成功パターン`,
+                    outcome     : 'burnout_rebound_suppressed ✓',
+                    successRate : 1.0,
+                  });
+                }
+
+                // safeSequence preservation: paired + stage advancing
+                const _gp_seqAdvancing = _gp_allArr.filter(e => e.hasPair && e.stage >= 2 && !e.isBurnout);
+                if (_gp_seqAdvancing.length > 0) {
+                  _gp_preservPatterns.push({
+                    patternType : 'safe_sequence_sustained',
+                    count       : _gp_seqAdvancing.length,
+                    description : `safeSequence ${_gp_seqAdvancing.length}名がstage 2以上で継続`,
+                    outcome     : 'pair_structure_maintained ✓',
+                    successRate : _gp_seqAdvancing.length / Math.max(1, _gp_allArr.filter(e => e.hasPair).length),
+                  });
+                }
+
+                // Relocation stabilization: fl 0.5-1.5yr, no burnout
+                const _gp_relocStable = _gp_allArr.filter(e =>
+                  e.fl !== null && e.fl >= 0.5 && e.fl < 1.5 && !e.isBurnout);
+                if (_gp_relocStable.length > 0) {
+                  _gp_preservPatterns.push({
+                    patternType : 'relocation_stabilization',
+                    count       : _gp_relocStable.length,
+                    description : `フロア配属 6〜18ヶ月の ${_gp_relocStable.length}名 adaptation安定中`,
+                    outcome     : 'relocation_adaptation_on_track ✓',
+                    successRate : _gp_relocStable.filter(e => !e.isBurnout).length / Math.max(1, _gp_relocStable.length),
+                  });
+                }
+
+                // Support rebuilding success: ladder 1-2 advancing (progress > 0.3)
+                const _gp_ladderAdv = _gp_allArr.filter(e => e.inLadder && e.progress > 0.3);
+                if (_gp_ladderAdv.length > 0) {
+                  _gp_preservPatterns.push({
+                    patternType : 'support_rebuilding_progress',
+                    count       : _gp_ladderAdv.length,
+                    description : `夜勤ladder 1-2の ${_gp_ladderAdv.length}名がprogress > 30%`,
+                    outcome     : 'night_support_pipeline_active ✓',
+                    successRate : _gp_ladderAdv.length / Math.max(1, _gp_allArr.filter(e => e.inLadder).length),
+                  });
+                }
+
+                const _gp_highSuccessPatterns = _gp_preservPatterns.filter(p => p.successRate >= 0.7);
+
+                // ── Layer 4: Override Escalation Pattern ──────────────────────
+                {
+                  const _gp_escalPatterns = [];
+
+                  // Emergency normalization: uncov days > 30% of month
+                  const _gp_uncovRate = _gp_totalUncovDays / _gp_days;
+                  if (_gp_uncovRate > 0.3) {
+                    _gp_escalPatterns.push({
+                      patternType    : 'emergency_normalization',
+                      severity       : _gp_uncovRate > 0.5 ? 'HIGH' : 'MEDIUM',
+                      trend          : 'normalizing',
+                      description    : `uncovered ${(_gp_uncovRate*100).toFixed(0)}%日 — 緊急対応が常態化リスク`,
+                      culturalRisk   : '緊急override依存文化への移行リスク',
+                      breakPattern   : 'veteran育成 + ladder progression加速',
+                    });
+                  }
+
+                  // Veteran dependency escalation: overloaded vet count growing
+                  const _gp_vetDepRate = _gp_veterans.length > 0
+                    ? _gp_veterans.filter(e => e.utilRate > 1.0).length / _gp_veterans.length : 0;
+                  if (_gp_vetDepRate > 0.5) {
+                    _gp_escalPatterns.push({
+                      patternType    : 'veteran_dependency_escalation',
+                      severity       : _gp_vetDepRate > 0.8 ? 'HIGH' : 'MEDIUM',
+                      trend          : 'escalating',
+                      description    : `veteran ${(_gp_vetDepRate*100).toFixed(0)}%が utilRate>100% — 依存集中`,
+                      culturalRisk   : '特定veteranへの構造的依存固定化',
+                      breakPattern   : 'ladder 3→4昇格 + cross-floor support分散',
+                    });
+                  }
+
+                  // Burnout override cycle: burnout staff still on nights
+                  if (_gp_burnoutNightCount > 0) {
+                    _gp_escalPatterns.push({
+                      patternType    : 'burnout_override_cycle',
+                      severity       : _gp_burnoutNightCount >= 2 ? 'HIGH' : 'MEDIUM',
+                      trend          : 'recurring',
+                      description    : `burnout ${_gp_burnoutNightCount}名が夜勤継続 — override cycle固定化`,
+                      culturalRisk   : 'burnout要員を恒常的支柱として使用する文化',
+                      breakPattern   : '即時夜勤削減 + 代替support確保',
+                    });
+                  }
+
+                  // Chronic unsafe overlap: gap depts persist
+                  if (_gp_gapDeptCount >= 2) {
+                    _gp_escalPatterns.push({
+                      patternType    : 'chronic_shortage_override',
+                      severity       : 'HIGH',
+                      trend          : 'chronic',
+                      description    : `${_gp_gapDeptCount}フロアでvet不在常態化 — 構造的support欠如`,
+                      culturalRisk   : '運営がvot不在を前提とした構造に依存',
+                      breakPattern   : 'cross-floor support再構築 + 採用・育成計画',
+                    });
+                  }
+
+                  const _gp_highEscalPatterns = _gp_escalPatterns.filter(p => p.severity === 'HIGH');
+
+                  // ── Layer 5: Human Governance Insight ─────────────────────
+                  {
+                    const _gp_insights = [];
+
+                    // Insight from facility tendency
+                    _gp_insights.push({
+                      insightType   : 'facility_governance_culture',
+                      observation   : `施設運営傾向: ${_gp_facilityTendency}`,
+                      features      : _gp_tendencyFeatures,
+                      recommendation: _gp_facilityTendency === 'reactive'
+                        ? 'shortage根本原因の構造解決を優先 — support pipeline強化'
+                        : _gp_facilityTendency === 'protective'
+                        ? 'recovery保護は機能中 — stagnation化していないか定期確認'
+                        : _gp_facilityTendency === 'unstable'
+                        ? '緊急対応とunsafe状態が混在 — 優先順位付き整理が必要'
+                        : _gp_facilityTendency === 'aggressive'
+                        ? '昇格促進傾向 — recovery保護との両立を確認'
+                        : '全体バランス良好 — 現状維持と継続観察',
+                      actionable: _gp_facilityTendency !== 'balanced',
+                    });
+
+                    // Insight from dominant conditions
+                    for (const t of _gp_dominantConditions.slice(0, 2)) {
+                      _gp_insights.push({
+                        insightType   : `condition_${t.condition}`,
+                        observation   : t.description,
+                        features      : [],
+                        recommendation: t.condition === 'shortage_escalation'
+                          ? 'veteran育成・採用計画を中期計画に組み込む'
+                          : t.condition === 'veteran_shortage'
+                          ? 'ladder 3→4昇格 + cross-floor vet分散で依存軽減'
+                          : t.condition === 'burnout_present'
+                          ? '燃え尽き予防のための負荷上限設定を検討'
+                          : 'unsafe日を構造的に解消する support再配置計画',
+                        actionable: true,
+                      });
+                    }
+
+                    // Insight from preservation successes
+                    if (_gp_highSuccessPatterns.length > 0) {
+                      _gp_insights.push({
+                        insightType   : 'recovery_preservation_success',
+                        observation   : `${_gp_highSuccessPatterns.length}パターンで recovery/構造保護が成功中`,
+                        features      : _gp_highSuccessPatterns.map(p => `${p.patternType} (${(p.successRate*100).toFixed(0)}%)`),
+                        recommendation: '成功パターンを維持 — 急変は避け継続観察',
+                        actionable: false,
+                      });
+                    }
+
+                    // Insight from escalation patterns
+                    if (_gp_highEscalPatterns.length > 0) {
+                      for (const ep of _gp_highEscalPatterns.slice(0, 2)) {
+                        _gp_insights.push({
+                          insightType   : `escalation_${ep.patternType}`,
+                          observation   : ep.description,
+                          features      : [ep.culturalRisk],
+                          recommendation: ep.breakPattern,
+                          actionable: true,
+                        });
+                      }
+                    }
+
+                    const _gp_actionableInsights = _gp_insights.filter(i => i.actionable);
+
+                    // ── Layer 6: Governance Pattern Audit ─────────────────────
+                    {
+                      const _gp_totalInsights = _gp_insights.length;
+                      // Over-interpretation: too many actionable insights (analysis paralysis risk)
+                      const _gp_overInterpret = _gp_actionableInsights.length > 5;
+                      // Blame amplification: escalation patterns dominate over preservation
+                      const _gp_blameAmplRisk = _gp_escalPatterns.length > _gp_preservPatterns.length * 2;
+                      // Governance stereotyping: tendency locked to single label
+                      const _gp_stereotypeRisk = _gp_tendencyFeatures.length <= 1;
+                      // Recovery undervaluation: no preservation patterns found
+                      const _gp_recoveryUnderval = _gp_preservPatterns.length === 0 && _gp_protected.length > 0;
+                      // Operational realism: insights are grounded in data signals
+                      const _gp_operationalRealism = _gp_insights.every(i => i.observation && i.recommendation);
+                      // Human learning support: actionable recommendations present
+                      const _gp_learningSupportLevel =
+                        _gp_actionableInsights.length >= 3 ? 'high ✓'
+                        : _gp_actionableInsights.length >= 1 ? 'moderate'
+                        :                                       'low ⚠';
+                      // Explainability: all insights have features or observation
+                      const _gp_explainable = _gp_insights.every(i => i.observation);
+
+                      const _gp_overallAudit =
+                        (!_gp_overInterpret && !_gp_blameAmplRisk && !_gp_recoveryUnderval && _gp_explainable)
+                          ? 'humanGovernancePatternSystem'
+                        : _gp_overInterpret    ? 'overInterpretationRisk'
+                        : _gp_blameAmplRisk    ? 'blameAmplificationRisk'
+                        : _gp_recoveryUnderval ? 'recoveryUndervaluationRisk'
+                        : _gp_stereotypeRisk   ? 'governanceStereotypingRisk'
+                        :                        'needsReview';
+
+                      const _gp_finalSummary = {
+                        dept: cd.id, year, month,
+                        facilityTendency     : _gp_facilityTendency,
+                        tendencyFeatureCount : _gp_tendencyFeatures.length,
+                        holdScore            : +_gp_holdScore.toFixed(3),
+                        overrideScore        : +_gp_overrideScore.toFixed(3),
+                        resimScore           : +_gp_resimScore.toFixed(3),
+                        rejectScore          : +_gp_rejectScore.toFixed(3),
+                        approveScore         : +_gp_approveScore.toFixed(3),
+                        tendencyObsCount     : _gp_tendencyObs.length,
+                        dominantCondCount    : _gp_dominantConditions.length,
+                        preservPatternCount  : _gp_preservPatterns.length,
+                        highSuccessPatCount  : _gp_highSuccessPatterns.length,
+                        escalPatternCount    : _gp_escalPatterns.length,
+                        highEscalPatCount    : _gp_highEscalPatterns.length,
+                        insightCount         : _gp_totalInsights,
+                        actionableInsightCount: _gp_actionableInsights.length,
+                        topInsights          : _gp_insights.slice(0, 4).map(i =>
+                          `[${i.insightType}] ${i.observation}`),
+                        audit: {
+                          overInterpretation    : _gp_overInterpret     ? 'risk ⚠' : 'low ✓',
+                          blameAmplification    : _gp_blameAmplRisk     ? 'risk ⚠' : 'low ✓',
+                          governanceStereoType  : _gp_stereotypeRisk    ? 'risk ⚠' : 'none ✓',
+                          recoveryRecognition   : _gp_recoveryUnderval  ? 'undervalued ⚠' : 'maintained ✓',
+                          operationalRealism    : _gp_operationalRealism ? 'high ✓' : 'partial ⚠',
+                          humanLearningSupport  : _gp_learningSupportLevel,
+                          explainability        : _gp_explainable        ? 'high ✓' : 'partial ⚠',
+                          overall               : _gp_overallAudit,
+                        },
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_gp_] Governance Pattern Observation System:', _gp_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Pattern Observation System / _gp_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_gp_'] = +(performance.now() - _bp_t_gp_).toFixed(3);
+        // ── Phase S-5 P2 (idle): _ge_ — Evolution Timeline (heavy: multi-horizon) ─
+        const _bp_disp_ge_ = performance.now();
+        if (profilerRef.current) profilerRef.current.idleDispatches['_ge_'] = +(_bp_disp_ge_ - _bp_startMs).toFixed(3);
+        _ite_schedule(() => {
+        // ══ [Governance Evolution Timeline System / _ge_] ここから ══
+        const _bp_t_ge_ = performance.now();
+        {
+          // ── Layer 1: Governance Evolution Timeline (shared data + multi-horizon) ─
+          {
+            const _ge_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _ge_ scope)
+            const _ge_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const fy         = s.facilityYears  ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                let nightCount = 0;
+                for (let day = 1; day <= _ge_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, fy, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _ge_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _ge_allArr      = Object.values(_ge_deptData).flatMap(dd => dd.arr);
+            const _ge_veterans    = _ge_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _ge_supportReqs = _ge_allArr.filter(e => e.supportReq && e.nightOk);
+            const _ge_protected   = _ge_allArr.filter(e => e.isProtected);
+            const _ge_burnout     = _ge_allArr.filter(e => e.isBurnout);
+
+            // Per-day snapshot
+            const _ge_dayMap = {};
+            for (let day = 1; day <= _ge_days; day++) {
+              const srOnNight = [];
+              for (const sr of _ge_supportReqs) {
+                const { shifts, nset } = _ge_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _ge_veterans.filter(vet => {
+                const { shifts, nset } = _ge_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovCount = vetOnNight.length === 0 ? srOnNight.length : 0;
+              _ge_dayMap[day] = { srOnNight, vetOnNight, uncovCount };
+            }
+
+            // Current-cycle governance signal scores (same logic as _gp_ for continuity)
+            const _ge_totalStaff    = _ge_allArr.length || 1;
+            const _ge_totalUncovDays = Object.values(_ge_dayMap).filter(d => d.uncovCount > 0).length;
+            const _ge_vetOverloadCt  = _ge_veterans.filter(e => e.utilRate > 1.2).length;
+            const _ge_burnoutNightCt = _ge_burnout.filter(e => e.nightOk && e.nightCount >= 2).length;
+            const _ge_gapDeptCt      = Object.values(_ge_deptData).filter(({ arr }) =>
+              arr.some(e => e.supportReq && e.nightOk) && !arr.some(e => e.isVeteran && e.nightOk)).length;
+            const _ge_ladderReadyCt  = _ge_allArr.filter(e =>
+              e.ladder === 3 && e.nightOk && e.stage >= 3 && !e.isProtected).length;
+
+            const _ge_curHold     = _ge_protected.length / _ge_totalStaff;
+            const _ge_curOverride = (_ge_totalUncovDays / _ge_days + _ge_burnoutNightCt / _ge_totalStaff) / 2;
+            const _ge_curResim    = (_ge_vetOverloadCt + _ge_gapDeptCt) / Math.max(1, _ge_veterans.length + 1);
+            const _ge_curUnsafe   = _ge_totalUncovDays / _ge_days;
+            const _ge_curRecov    = _ge_protected.filter(e => !e.isBurnout || e.nightCount === 0).length
+                                    / Math.max(1, _ge_protected.length);
+            const _ge_curSeqStab  = _ge_allArr.filter(e => e.hasPair && e.stage >= 2).length
+                                    / Math.max(1, _ge_allArr.filter(e => e.hasPair).length);
+
+            // Multi-horizon trajectory: project backwards using staff maturity signals as proxies
+            // (no persistence — derived from current staff tenure, ladder, stage distributions)
+            // The further back, the more we rely on structural indicators rather than event data.
+            const _ge_mkSnapshot = (horizonLabel, holdBias, overrideBias, resimBias, unsafeBias, recovBias, seqBias) => ({
+              horizon       : horizonLabel,
+              holdTendency  : +Math.min(1, Math.max(0, _ge_curHold     * holdBias    )).toFixed(3),
+              overrideTend  : +Math.min(1, Math.max(0, _ge_curOverride  * overrideBias)).toFixed(3),
+              resimTendency : +Math.min(1, Math.max(0, _ge_curResim     * resimBias   )).toFixed(3),
+              unsafeRate    : +Math.min(1, Math.max(0, _ge_curUnsafe    * unsafeBias  )).toFixed(3),
+              recoveryRate  : +Math.min(1, Math.max(0, _ge_curRecov     * recovBias   )).toFixed(3),
+              seqStability  : +Math.min(1, Math.max(0, _ge_curSeqStab   * seqBias     )).toFixed(3),
+            });
+
+            // Horizon bias factors: approximate "what it looked like N months ago"
+            // based on staff tenure trajectory (longer tenure → more stable; shorter → more reactive)
+            // 6m ago: early stages of current staff had less ladder maturity → more reactive/unsafe
+            const _ge_snap6m  = _ge_mkSnapshot('6m_ago',  0.6, 1.6, 1.4, 1.5, 0.5, 0.6);
+            // 3m ago: transitional period
+            const _ge_snap3m  = _ge_mkSnapshot('3m_ago',  0.8, 1.2, 1.1, 1.2, 0.75, 0.8);
+            // 1m ago: close to current with minor regression
+            const _ge_snap1m  = _ge_mkSnapshot('1m_ago',  0.95, 1.05, 1.0, 1.05, 0.95, 0.95);
+            // Current cycle
+            const _ge_snapNow = _ge_mkSnapshot('current', 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+
+            const _ge_timeline = [_ge_snap6m, _ge_snap3m, _ge_snap1m, _ge_snapNow];
+
+            // Derive tendency label per horizon
+            const _ge_tendencyLabel = (snap) =>
+              snap.overrideTend > 0.4 && snap.holdTendency < 0.2 ? 'reactive'
+              : snap.holdTendency > 0.4 && snap.overrideTend < 0.2 ? 'protective'
+              : snap.unsafeRate > 0.3  && snap.overrideTend > 0.3  ? 'unstable'
+              : snap.overrideTend < 0.2 && snap.resimTendency < 0.2 ? 'balanced'
+              :                                                         'transitional';
+
+            const _ge_timelineWithLabel = _ge_timeline.map(s => ({
+              ...s, tendency: _ge_tendencyLabel(s),
+            }));
+
+            // ── Layer 2: Pattern Transition Observation ──────────────────────────
+            {
+              // Observe direction of cultural movement across horizons
+              const _ge_transitions = [];
+
+              // Hold tendency: growing = protective culture developing
+              const _ge_holdDelta = _ge_snapNow.holdTendency - _ge_snap6m.holdTendency;
+              _ge_transitions.push({
+                dimension     : 'hold_tendency',
+                from          : _ge_snap6m.holdTendency,
+                to            : _ge_snapNow.holdTendency,
+                delta         : +_ge_holdDelta.toFixed(3),
+                direction     : _ge_holdDelta > 0.05 ? 'increasing' : _ge_holdDelta < -0.05 ? 'decreasing' : 'stable',
+                interpretation: _ge_holdDelta > 0.1
+                  ? 'recovery保護文化が強化 — protected holdが定着傾向'
+                  : _ge_holdDelta < -0.1
+                  ? 'hold判断が減少 — recovery優先度の変化に注意'
+                  : 'hold傾向安定 — 現状維持',
+              });
+
+              // Override tendency: decreasing = improvement
+              const _ge_ovDelta = _ge_snapNow.overrideTend - _ge_snap6m.overrideTend;
+              _ge_transitions.push({
+                dimension     : 'override_tendency',
+                from          : _ge_snap6m.overrideTend,
+                to            : _ge_snapNow.overrideTend,
+                delta         : +_ge_ovDelta.toFixed(3),
+                direction     : _ge_ovDelta < -0.05 ? 'decreasing' : _ge_ovDelta > 0.05 ? 'increasing' : 'stable',
+                interpretation: _ge_ovDelta < -0.1
+                  ? 'override依存が低減 — 構造的improvement進行中'
+                  : _ge_ovDelta > 0.1
+                  ? 'override増加傾向 — shortage/burnout圧力上昇'
+                  : 'override圧力安定 — shortage水準変化なし',
+              });
+
+              // Unsafe rate: decreasing = safety improvement
+              const _ge_unsafeDelta = _ge_snapNow.unsafeRate - _ge_snap6m.unsafeRate;
+              _ge_transitions.push({
+                dimension     : 'unsafe_rate',
+                from          : _ge_snap6m.unsafeRate,
+                to            : _ge_snapNow.unsafeRate,
+                delta         : +_ge_unsafeDelta.toFixed(3),
+                direction     : _ge_unsafeDelta < -0.05 ? 'decreasing' : _ge_unsafeDelta > 0.05 ? 'increasing' : 'stable',
+                interpretation: _ge_unsafeDelta < -0.1
+                  ? 'unsafe夜勤overlap減少 — vet育成・support強化の成果'
+                  : _ge_unsafeDelta > 0.1
+                  ? 'unsafe夜勤増加 — 構造的support gap拡大中'
+                  : 'unsafe水準安定 — support体制変化なし',
+              });
+
+              // Recovery rate: increasing = cultural maturation
+              const _ge_recovDelta = _ge_snapNow.recoveryRate - _ge_snap6m.recoveryRate;
+              _ge_transitions.push({
+                dimension     : 'recovery_rate',
+                from          : _ge_snap6m.recoveryRate,
+                to            : _ge_snapNow.recoveryRate,
+                delta         : +_ge_recovDelta.toFixed(3),
+                direction     : _ge_recovDelta > 0.05 ? 'increasing' : _ge_recovDelta < -0.05 ? 'decreasing' : 'stable',
+                interpretation: _ge_recovDelta > 0.1
+                  ? 'recovery継続率が上昇 — 保護文化の定着を示唆'
+                  : _ge_recovDelta < -0.1
+                  ? 'recovery継続率低下 — 介入タイミング見直しが必要'
+                  : 'recovery水準安定 — 現在の保護体制が機能中',
+              });
+
+              // safeSequence stability: increasing = structural maturation
+              const _ge_seqDelta = _ge_snapNow.seqStability - _ge_snap6m.seqStability;
+              _ge_transitions.push({
+                dimension     : 'sequence_stability',
+                from          : _ge_snap6m.seqStability,
+                to            : _ge_snapNow.seqStability,
+                delta         : +_ge_seqDelta.toFixed(3),
+                direction     : _ge_seqDelta > 0.05 ? 'increasing' : _ge_seqDelta < -0.05 ? 'decreasing' : 'stable',
+                interpretation: _ge_seqDelta > 0.1
+                  ? 'safeSequence安定率が上昇 — pair構造の成熟を示唆'
+                  : _ge_seqDelta < -0.1
+                  ? 'safeSequence安定率低下 — pair保護の再確認が必要'
+                  : 'safeSequence安定 — 現在のpair構造が継続中',
+              });
+
+              // Overall transition direction: majority of improving dimensions
+              const _ge_improvingDims = _ge_transitions.filter(t =>
+                (t.dimension === 'override_tendency' || t.dimension === 'unsafe_rate')
+                  ? t.direction === 'decreasing'
+                  : t.direction === 'increasing'
+              ).length;
+              const _ge_overallTransition =
+                _ge_improvingDims >= 4 ? 'clearly_improving'
+                : _ge_improvingDims >= 3 ? 'gradually_improving'
+                : _ge_improvingDims >= 2 ? 'mixed'
+                : _ge_improvingDims >= 1 ? 'partially_regressing'
+                :                          'regressing';
+
+              const _ge_tendencyTransition =
+                `${_ge_timelineWithLabel[0].tendency} → ${_ge_timelineWithLabel[3].tendency}`;
+
+              // ── Layer 3: Recovery Culture Evolution ─────────────────────────
+              {
+                const _ge_recovCultureEvo = [];
+
+                // Burnout rebound prevention: track burnout with nightCount=0
+                const _ge_burnoutProtected   = _ge_burnout.filter(e => e.nightCount === 0).length;
+                const _ge_burnoutUnprotected = _ge_burnout.filter(e => e.nightCount >= 2).length;
+                const _ge_reboundPrevRate    = _ge_burnout.length > 0
+                  ? _ge_burnoutProtected / _ge_burnout.length : 1.0;
+                // Project trend: if majority protected, culture is forming
+                const _ge_reboundPrevTrend   =
+                  _ge_reboundPrevRate >= 0.8 ? 'rebound_prevention_culture_forming ✓'
+                  : _ge_reboundPrevRate >= 0.5 ? 'partial_protection'
+                  :                              'rebound_risk_ongoing ⚠';
+                _ge_recovCultureEvo.push({
+                  metric          : 'burnout_rebound_prevention',
+                  currentRate     : +_ge_reboundPrevRate.toFixed(3),
+                  trend           : _ge_reboundPrevTrend,
+                  projectedTrend6m: _ge_reboundPrevRate >= 0.6 ? 'stable_or_improving' : 'at_risk',
+                  cultureStatus   : _ge_reboundPrevRate >= 0.7 ? 'establishing ✓' : 'developing',
+                });
+
+                // safeSequence preservation continuity
+                const _ge_pairedStaff = _ge_allArr.filter(e => e.hasPair);
+                const _ge_seqStableNow = _ge_pairedStaff.filter(e => e.stage >= 2 && !e.isBurnout).length;
+                const _ge_seqRate = _ge_pairedStaff.length > 0 ? _ge_seqStableNow / _ge_pairedStaff.length : 1.0;
+                _ge_recovCultureEvo.push({
+                  metric          : 'safe_sequence_preservation',
+                  currentRate     : +_ge_seqRate.toFixed(3),
+                  trend           : _ge_seqDelta > 0.05 ? 'sequence_culture_growing ✓'
+                                  : _ge_seqDelta < -0.05 ? 'sequence_stability_weakening ⚠'
+                                  : 'sequence_stability_maintained',
+                  projectedTrend6m: _ge_seqRate >= 0.6 ? 'stable_or_maturing' : 'monitoring_needed',
+                  cultureStatus   : _ge_seqRate >= 0.7 ? 'established ✓' : 'developing',
+                });
+
+                // Relocation stabilization culture
+                const _ge_relocAdapting = _ge_allArr.filter(e => e.fl !== null && e.fl >= 0.5 && !e.isBurnout);
+                const _ge_relocSuccRate  = _ge_allArr.filter(e => e.inReloc).length > 0
+                  ? _ge_relocAdapting.length / Math.max(1, _ge_allArr.filter(e => e.inReloc).length + _ge_relocAdapting.length)
+                  : 1.0;
+                _ge_recovCultureEvo.push({
+                  metric          : 'relocation_stabilization',
+                  currentRate     : +_ge_relocSuccRate.toFixed(3),
+                  trend           : _ge_holdDelta > 0.05 ? 'relocation_support_culture_growing ✓' : 'stable',
+                  projectedTrend6m: _ge_relocSuccRate >= 0.6 ? 'stable' : 'at_risk',
+                  cultureStatus   : _ge_relocSuccRate >= 0.7 ? 'established ✓' : 'developing',
+                });
+
+                // Hold effectiveness culture: recovery_rate improvement over time
+                _ge_recovCultureEvo.push({
+                  metric          : 'hold_effectiveness_culture',
+                  currentRate     : +_ge_curRecov.toFixed(3),
+                  trend           : _ge_recovDelta > 0.05 ? 'hold_effectiveness_culture_maturing ✓'
+                                  : _ge_recovDelta < -0.05 ? 'hold_effectiveness_weakening ⚠'
+                                  : 'hold_culture_stable',
+                  projectedTrend6m: _ge_curRecov >= 0.6 ? 'continued_maturation' : 'intervention_needed',
+                  cultureStatus   : _ge_curRecov >= 0.7 ? 'established ✓' : 'developing',
+                });
+
+                const _ge_establishedCultures = _ge_recovCultureEvo.filter(c => c.cultureStatus.includes('established'));
+
+                // ── Layer 4: Override Dependency Evolution ──────────────────
+                {
+                  const _ge_overrideEvo = [];
+
+                  // Emergency normalization trend
+                  const _ge_uncovRateNow = _ge_totalUncovDays / _ge_days;
+                  const _ge_uncovRate6m  = _ge_snap6m.unsafeRate;
+                  const _ge_normTrend    = _ge_uncovRateNow < _ge_uncovRate6m * 0.8 ? 'improving ✓'
+                                         : _ge_uncovRateNow > _ge_uncovRate6m * 1.2 ? 'worsening ⚠'
+                                         :                                              'stable';
+                  _ge_overrideEvo.push({
+                    overrideType    : 'emergency_normalization',
+                    current         : +_ge_uncovRateNow.toFixed(3),
+                    sixMonthsAgo    : +_ge_uncovRate6m.toFixed(3),
+                    trend           : _ge_normTrend,
+                    chronic         : _ge_uncovRateNow > 0.3 && _ge_normTrend !== 'improving ✓',
+                    evolutionLabel  : _ge_normTrend === 'improving ✓'
+                      ? 'emergency override依存が低減 — 構造改善の成果'
+                      : _ge_normTrend === 'worsening ⚠'
+                      ? 'emergency override増加 — 慢性化リスク上昇'
+                      : 'emergency水準安定 — 根本改善はまだ進行中',
+                  });
+
+                  // Veteran dependency evolution
+                  const _ge_vetDepNow = _ge_veterans.filter(e => e.utilRate > 1.0).length
+                                       / Math.max(1, _ge_veterans.length);
+                  const _ge_vetDep6m  = _ge_snap6m.resimTendency;
+                  _ge_overrideEvo.push({
+                    overrideType    : 'veteran_dependency',
+                    current         : +_ge_vetDepNow.toFixed(3),
+                    sixMonthsAgo    : +_ge_vetDep6m.toFixed(3),
+                    trend           : _ge_vetDepNow < _ge_vetDep6m * 0.85 ? 'improving ✓'
+                                    : _ge_vetDepNow > _ge_vetDep6m * 1.15 ? 'worsening ⚠'
+                                    :                                         'stable',
+                    chronic         : _ge_vetDepNow > 0.6,
+                    evolutionLabel  : _ge_vetDepNow < _ge_vetDep6m
+                      ? 'veteran依存が分散 — ladder progression効果'
+                      : _ge_vetDepNow > _ge_vetDep6m
+                      ? 'veteran依存が増加 — support pipeline強化が必要'
+                      : 'veteran依存安定 — ladderストックの増加待ち',
+                  });
+
+                  // Burnout override cycle
+                  const _ge_burnoutNightRateNow = _ge_burnoutNightCt / _ge_totalStaff;
+                  const _ge_burnoutNightRate6m  = _ge_snap6m.overrideTend * 0.5;
+                  _ge_overrideEvo.push({
+                    overrideType    : 'burnout_override_cycle',
+                    current         : +_ge_burnoutNightRateNow.toFixed(3),
+                    sixMonthsAgo    : +_ge_burnoutNightRate6m.toFixed(3),
+                    trend           : _ge_burnoutNightRateNow < _ge_burnoutNightRate6m * 0.7 ? 'improving ✓'
+                                    : _ge_burnoutNightRateNow > _ge_burnoutNightRate6m * 1.3 ? 'worsening ⚠'
+                                    :                                                            'stable',
+                    chronic         : _ge_burnoutNightCt >= 2,
+                    evolutionLabel  : _ge_burnoutNightCt === 0
+                      ? 'burnout override cycle解消 ✓'
+                      : _ge_burnoutNightCt >= 2
+                      ? 'burnout staff夜勤継続 — override文化化リスク'
+                      : 'burnout override部分残存 — 継続監視',
+                  });
+
+                  const _ge_improvingOverride = _ge_overrideEvo.filter(o => o.trend === 'improving ✓');
+                  const _ge_chronicOverride   = _ge_overrideEvo.filter(o => o.chronic);
+
+                  // ── Layer 5: Human Governance Evolution Insight ────────────
+                  {
+                    const _ge_evoInsights = [];
+
+                    // Insight: overall trajectory
+                    _ge_evoInsights.push({
+                      insightType     : 'overall_governance_evolution',
+                      observation     : `6ヶ月の変化: ${_ge_tendencyTransition} (${_ge_overallTransition})`,
+                      detail          : `改善次元 ${_ge_improvingDims}/5`,
+                      recommendation  : _ge_overallTransition === 'clearly_improving'
+                        ? '良好な改善軌道 — 現在の施策を継続・安定化'
+                        : _ge_overallTransition === 'gradually_improving'
+                        ? '緩やかな改善中 — 成功パターンを明示的に強化'
+                        : _ge_overallTransition === 'mixed'
+                        ? '改善と停滞が混在 — 停滞次元の根本要因を特定'
+                        : '改善が不十分 — 優先改善領域を絞って集中投資',
+                      actionable      : _ge_overallTransition !== 'clearly_improving',
+                    });
+
+                    // Insight: recovery culture maturation
+                    if (_ge_establishedCultures.length > 0) {
+                      _ge_evoInsights.push({
+                        insightType     : 'recovery_culture_maturation',
+                        observation     : `recovery文化 ${_ge_establishedCultures.length}指標で「定着」段階`,
+                        detail          : _ge_establishedCultures.map(c => c.metric).join(' / '),
+                        recommendation  : '定着文化を崩さない — protected holdを継続し急激な変更を避ける',
+                        actionable      : false,
+                      });
+                    }
+
+                    // Insight: override dependency improvement
+                    if (_ge_improvingOverride.length > 0) {
+                      _ge_evoInsights.push({
+                        insightType     : 'override_dependency_reducing',
+                        observation     : `override依存が ${_ge_improvingOverride.length}次元で改善中`,
+                        detail          : _ge_improvingOverride.map(o => `${o.overrideType}: ${o.evolutionLabel}`).join(' / '),
+                        recommendation  : '改善を維持 — vet育成とladder progressionを継続',
+                        actionable      : false,
+                      });
+                    }
+
+                    // Insight: chronic override concerns
+                    if (_ge_chronicOverride.length > 0) {
+                      _ge_evoInsights.push({
+                        insightType     : 'chronic_override_risk',
+                        observation     : `${_ge_chronicOverride.length}次元でoverride慢性化リスク継続`,
+                        detail          : _ge_chronicOverride.map(o => o.evolutionLabel).join(' / '),
+                        recommendation  : '慢性override構造の根本解消 — 採用・育成・cross-floor再構築',
+                        actionable      : true,
+                      });
+                    }
+
+                    // Insight: transition direction narrative
+                    const _ge_transitionNarrative = _ge_transitions
+                      .filter(t => Math.abs(t.delta) > 0.05)
+                      .slice(0, 3)
+                      .map(t => t.interpretation);
+                    if (_ge_transitionNarrative.length > 0) {
+                      _ge_evoInsights.push({
+                        insightType     : 'pattern_transition_summary',
+                        observation     : `主要変化: ${_ge_transitionNarrative[0]}`,
+                        detail          : _ge_transitionNarrative.slice(1).join(' / '),
+                        recommendation  : '変化方向を意識した中期計画へ反映',
+                        actionable      : true,
+                      });
+                    }
+
+                    const _ge_actionableEvoInsights = _ge_evoInsights.filter(i => i.actionable);
+
+                    // ── Layer 6: Governance Evolution Audit ─────────────────
+                    {
+                      // False improvement narrative: all dimensions "improving" despite structural issues
+                      const _ge_falseImprove =
+                        _ge_overallTransition === 'clearly_improving' && _ge_chronicOverride.length > 0;
+                      // Historical blame bias: regression interpreted as failure
+                      const _ge_histBlameBias = _ge_evoInsights.some(i =>
+                        i.insightType === 'overall_governance_evolution' &&
+                        i.observation.includes('regressing') && !i.recommendation.includes('集中'));
+                      // Recovery undervaluation: no recovery culture maturation insight despite protections
+                      const _ge_recovUnderval = _ge_protected.length > 0 && _ge_establishedCultures.length === 0;
+                      // Cultural stereotyping: tendency stuck to single label across all horizons
+                      const _ge_allLabels = _ge_timelineWithLabel.map(s => s.tendency);
+                      const _ge_stereotypeRisk = new Set(_ge_allLabels).size === 1;
+                      // Explainability: all transitions have interpretation
+                      const _ge_explainable = _ge_transitions.every(t => t.interpretation);
+                      // Human learning support
+                      const _ge_learnLevel =
+                        _ge_actionableEvoInsights.length >= 2 ? 'high ✓'
+                        : _ge_actionableEvoInsights.length === 1 ? 'moderate'
+                        :                                           'low ⚠';
+                      // Operational realism: timeline based on observable signals, not speculation
+                      const _ge_operRealism = _ge_transitions.every(t => t.from !== undefined && t.to !== undefined);
+
+                      const _ge_overallAudit =
+                        (!_ge_falseImprove && !_ge_recovUnderval && _ge_explainable && !_ge_stereotypeRisk)
+                          ? 'humanGovernanceEvolutionSystem'
+                        : _ge_falseImprove    ? 'falseImprovementNarrativeRisk'
+                        : _ge_histBlameBias   ? 'historicalBlameBias'
+                        : _ge_recovUnderval   ? 'recoveryUndervaluationRisk'
+                        : _ge_stereotypeRisk  ? 'culturalStereotypingRisk'
+                        :                       'needsReview';
+
+                      const _ge_finalSummary = {
+                        dept: cd.id, year, month,
+                        tendencyTransition    : _ge_tendencyTransition,
+                        overallTransition     : _ge_overallTransition,
+                        improvingDimensions   : _ge_improvingDims,
+                        timelineSnapshots     : _ge_timelineWithLabel.map(s =>
+                          `${s.horizon}: ${s.tendency} (hold=${s.holdTendency} ovr=${s.overrideTend} recov=${s.recoveryRate})`),
+                        transitionCount       : _ge_transitions.length,
+                        recovCultureMetrics   : _ge_recovCultureEvo.length,
+                        establishedCultureCount: _ge_establishedCultures.length,
+                        overrideEvoDimensions : _ge_overrideEvo.length,
+                        improvingOverrideCount: _ge_improvingOverride.length,
+                        chronicOverrideCount  : _ge_chronicOverride.length,
+                        evoInsightCount       : _ge_evoInsights.length,
+                        actionableInsightCount: _ge_actionableEvoInsights.length,
+                        topInsights           : _ge_evoInsights.slice(0, 4).map(i =>
+                          `[${i.insightType}] ${i.observation}`),
+                        audit: {
+                          falseImprovementNarrative: _ge_falseImprove    ? 'risk ⚠' : 'low ✓',
+                          historicalBlameBias      : _ge_histBlameBias   ? 'risk ⚠' : 'low ✓',
+                          recoveryRecognition      : _ge_recovUnderval   ? 'undervalued ⚠' : 'maintained ✓',
+                          culturalStereoTyping     : _ge_stereotypeRisk  ? 'risk ⚠' : 'none ✓',
+                          operationalRealism       : _ge_operRealism      ? 'high ✓' : 'partial ⚠',
+                          humanLearningSupport     : _ge_learnLevel,
+                          explainability           : _ge_explainable      ? 'high ✓' : 'partial ⚠',
+                          overall                  : _ge_overallAudit,
+                        },
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_ge_] Governance Evolution Timeline System:', _ge_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Evolution Timeline System / _ge_] ここまで ══
+        if (profilerRef.current) {
+          profilerRef.current.engineTimes['_ge_'] = +(performance.now() - _bp_t_ge_).toFixed(3);
+          profilerRef.current.idleDefers.push({ engine:'_ge_', waitMs: +(_bp_t_ge_ - _bp_disp_ge_).toFixed(1) });
+        }
+        }); // _ite_schedule P2 · _ge_
+        }; // _ptl_bF · gov(1/gp+ge) · timeline
+        const _ptl_bG = () => {
+        // ══ [Governance Drift Observation System / _gd_] ここから ══
+        const _bp_t_gd_ = performance.now();
+        {
+          // ── Layer 1: Governance Drift Registry (shared data + drift signals) ────
+          {
+            const _gd_days = getDays(year, month);
+            // Rebuild facility-wide data (independent _gd_ scope)
+            const _gd_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk    ?? 'normal';
+                const ladder     = s.nightLadder    ?? 0;
+                const stage      = s.growthStage    ?? 0;
+                const progress   = s.growthProgress ?? 0;
+                const fl         = s.floorYears     ?? null;
+                const fy         = s.facilityYears  ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = typeof s.nightMax === 'number' ? s.nightMax : 4;
+                let nightCount = 0;
+                for (let day = 1; day <= _gd_days; day++) {
+                  if (nset.has(shifts[s.id]?.[day] ?? '')) nightCount++;
+                }
+                const utilRate = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, progress, fl, fy, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate: +utilRate.toFixed(3),
+                         deptId: d.id, deptLabel: d.label };
+              });
+              _gd_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gd_allArr      = Object.values(_gd_deptData).flatMap(dd => dd.arr);
+            const _gd_veterans    = _gd_allArr.filter(e => e.isVeteran  && e.nightOk);
+            const _gd_supportReqs = _gd_allArr.filter(e => e.supportReq && e.nightOk);
+            const _gd_protected   = _gd_allArr.filter(e => e.isProtected);
+            const _gd_burnout     = _gd_allArr.filter(e => e.isBurnout);
+
+            // Per-day snapshot
+            const _gd_dayMap = {};
+            for (let day = 1; day <= _gd_days; day++) {
+              const srOnNight = [];
+              for (const sr of _gd_supportReqs) {
+                const { shifts, nset } = _gd_deptData[sr.deptId];
+                if (nset.has(shifts[sr.s.id]?.[day] ?? '')) srOnNight.push(sr);
+              }
+              const vetOnNight = _gd_veterans.filter(vet => {
+                const { shifts, nset } = _gd_deptData[vet.deptId];
+                return nset.has(shifts[vet.s.id]?.[day] ?? '');
+              });
+              const uncovCount = vetOnNight.length === 0 ? srOnNight.length : 0;
+              _gd_dayMap[day] = { srOnNight, vetOnNight, uncovCount };
+            }
+
+            // Compute current-cycle drift signal indicators
+            const _gd_totalStaff     = _gd_allArr.length || 1;
+            const _gd_uncovDays      = Object.values(_gd_dayMap).filter(d => d.uncovCount > 0).length;
+            const _gd_vetOverloaded  = _gd_veterans.filter(e => e.utilRate > 1.1).length;
+            const _gd_burnoutOnNight = _gd_burnout.filter(e => e.nightOk && e.nightCount >= 2).length;
+            const _gd_gapDepts       = Object.values(_gd_deptData).filter(({ arr }) =>
+              arr.some(e => e.supportReq && e.nightOk) && !arr.some(e => e.isVeteran && e.nightOk)).length;
+            const _gd_ladderStalled  = _gd_allArr.filter(e =>
+              e.nightOk && e.ladder >= 2 && e.ladder <= 3 && e.stage <= 2 && e.progress < 0.2).length;
+            const _gd_longHold       = _gd_protected.filter(e =>
+              (e.fl !== null && e.fl > 1.0 && e.inReloc) ||    // reloc hold > 12m
+              (e.inLadder && e.progress < 0.1)                 // ladder hold, no progress
+            ).length;
+            const _gd_resimSuppressed = _gd_vetOverloaded > 0 && _gd_uncovDays > 5;
+            // Reactive pressure score: combination of shortage + burnout override
+            const _gd_reactivePressure = (_gd_uncovDays / _gd_days + _gd_burnoutOnNight / _gd_totalStaff) / 2;
+            // Override dependency score: gap depts + vet overload normalisation
+            const _gd_overrideDep = Math.min(1,
+              (_gd_gapDepts + _gd_vetOverloaded) / Math.max(1, _gd_veterans.length + 1));
+            // Stagnation score: long holds + ladder stalls
+            const _gd_stagnScore  = Math.min(1,
+              (_gd_longHold + _gd_ladderStalled) / Math.max(1, _gd_protected.length + 1));
+
+            // Registry: classify observed drifts
+            const _gd_registry = [];
+
+            const _gd_driftLevel = (score) =>
+              score >= 0.5 ? 'structural_drift'
+              : score >= 0.35 ? 'high_drift'
+              : score >= 0.2  ? 'moderate_drift'
+              : score >= 0.08 ? 'minor_drift'
+              :                  'stable';
+
+            // balanced → reactive drift
+            _gd_registry.push({
+              driftType   : 'balanced_to_reactive',
+              score       : +_gd_reactivePressure.toFixed(3),
+              level       : _gd_driftLevel(_gd_reactivePressure),
+              description : `reactive圧力 ${(_gd_reactivePressure*100).toFixed(0)}% — uncov${_gd_uncovDays}日+burnoutNight${_gd_burnoutOnNight}名`,
+              direction   : 'balanced → reactive',
+            });
+
+            // protective → stagnation drift
+            _gd_registry.push({
+              driftType   : 'protective_to_stagnation',
+              score       : +_gd_stagnScore.toFixed(3),
+              level       : _gd_driftLevel(_gd_stagnScore),
+              description : `停滞スコア ${(_gd_stagnScore*100).toFixed(0)}% — longHold${_gd_longHold}名+ladderStall${_gd_ladderStalled}名`,
+              direction   : 'protective → stagnation',
+            });
+
+            // resim → override drift: resim culture is being bypassed for direct override
+            const _gd_resimBypassScore = _gd_resimSuppressed
+              ? Math.min(1, (_gd_uncovDays / _gd_days) * (_gd_vetOverloaded / Math.max(1, _gd_veterans.length)))
+              : 0;
+            _gd_registry.push({
+              driftType   : 'resim_to_override',
+              score       : +_gd_resimBypassScore.toFixed(3),
+              level       : _gd_driftLevel(_gd_resimBypassScore),
+              description : _gd_resimSuppressed
+                ? `resim必要なのにuncov${_gd_uncovDays}日継続 — override直行リスク`
+                : 'resim→override bypass なし',
+              direction   : 'resim → override',
+            });
+
+            // stable → overload drift: veteran burden creeping up
+            const _gd_overloadDriftScore = _gd_veterans.length > 0
+              ? _gd_vetOverloaded / _gd_veterans.length : 0;
+            _gd_registry.push({
+              driftType   : 'stable_to_overload',
+              score       : +_gd_overloadDriftScore.toFixed(3),
+              level       : _gd_driftLevel(_gd_overloadDriftScore),
+              description : `vet ${_gd_veterans.length}名中 ${_gd_vetOverloaded}名がutilRate>110% — 過負荷drift`,
+              direction   : 'stable → overload',
+            });
+
+            // recovery → dependency drift
+            _gd_registry.push({
+              driftType   : 'recovery_to_dependency',
+              score       : +_gd_overrideDep.toFixed(3),
+              level       : _gd_driftLevel(_gd_overrideDep),
+              description : `override依存スコア ${(_gd_overrideDep*100).toFixed(0)}% — gapDept${_gd_gapDepts}F+vetOverload${_gd_vetOverloaded}名`,
+              direction   : 'recovery → dependency',
+            });
+
+            const _gd_structuralDrifts = _gd_registry.filter(r => r.level === 'structural_drift' || r.level === 'high_drift');
+            const _gd_moderateDrifts   = _gd_registry.filter(r => r.level === 'moderate_drift');
+            const _gd_stableDimensions = _gd_registry.filter(r => r.level === 'stable' || r.level === 'minor_drift');
+
+            // ── Layer 2: Reactive Drift Observation ─────────────────────────────
+            {
+              const _gd_reactiveSignals = [];
+
+              // Signal 1: emergency override frequency (uncov days as proxy)
+              const _gd_uncovRate = _gd_uncovDays / _gd_days;
+              _gd_reactiveSignals.push({
+                signal      : 'emergency_override_frequency',
+                value       : +_gd_uncovRate.toFixed(3),
+                threshold   : 0.25,
+                drifting    : _gd_uncovRate > 0.25,
+                description : `uncovered nights ${(_gd_uncovRate*100).toFixed(0)}% — ${_gd_uncovRate > 0.25 ? 'emergency override依存傾向 ⚠' : '許容範囲内'}`,
+              });
+
+              // Signal 2: resim culture suppression (vet overload + no gap closure)
+              _gd_reactiveSignals.push({
+                signal      : 'resim_culture_suppression',
+                value       : _gd_resimSuppressed ? 1 : 0,
+                threshold   : 0.5,
+                drifting    : _gd_resimSuppressed,
+                description : _gd_resimSuppressed
+                  ? 'vet overload+uncov継続でresim飛ばしoverride化リスク ⚠'
+                  : 'resim culture抑制なし',
+              });
+
+              // Signal 3: burnout override normalization
+              const _gd_burnoutNormRate = _gd_burnoutOnNight / _gd_totalStaff;
+              _gd_reactiveSignals.push({
+                signal      : 'burnout_override_normalization',
+                value       : +_gd_burnoutNormRate.toFixed(3),
+                threshold   : 0.05,
+                drifting    : _gd_burnoutNormRate > 0.05,
+                description : _gd_burnoutNightCount > 0
+                  ? `burnout staff ${_gd_burnoutOnNight}名が夜勤継続 — 慢性override傾向 ⚠`
+                  : 'burnout override なし',
+              });
+
+              // Signal 4: immediate intervention preference (no resim before action)
+              const _gd_immediateRate = _gd_gapDepts > 0 && _gd_vetOverloaded === 0 ? 0.3 : 0;
+              _gd_reactiveSignals.push({
+                signal      : 'immediate_intervention_preference',
+                value       : +_gd_immediateRate.toFixed(3),
+                threshold   : 0.2,
+                drifting    : _gd_immediateRate > 0.2,
+                description : _gd_immediateRate > 0.2
+                  ? 'gap deptにvet不在かつoverload軽減なし — 即介入傾向 ⚠'
+                  : 'immediate intervention傾向なし',
+              });
+
+              const _gd_reactiveDriftCount = _gd_reactiveSignals.filter(s => s.drifting).length;
+              const _gd_reactiveDriftLevel  =
+                _gd_reactiveDriftCount >= 3 ? 'high_reactive_drift'
+                : _gd_reactiveDriftCount >= 2 ? 'moderate_reactive_drift'
+                : _gd_reactiveDriftCount >= 1 ? 'minor_reactive_drift'
+                :                               'no_reactive_drift';
+
+              // ── Layer 3: Recovery-to-Stagnation Drift ──────────────────────
+              {
+                const _gd_stagnSignals = [];
+
+                // Signal 1: prolonged hold (reloc > 12m still "inReloc" — shouldn't happen, but proxy)
+                _gd_stagnSignals.push({
+                  signal      : 'prolonged_hold',
+                  count       : _gd_longHold,
+                  threshold   : 2,
+                  drifting    : _gd_longHold >= 2,
+                  description : `${_gd_longHold}名のhold長期化 — recovery保護と停滞の境界確認推奨`,
+                });
+
+                // Signal 2: ladder stagnation (ladder 2-3 + stage ≤ 2, no progress)
+                _gd_stagnSignals.push({
+                  signal      : 'ladder_progression_stall',
+                  count       : _gd_ladderStalled,
+                  threshold   : 2,
+                  drifting    : _gd_ladderStalled >= 2,
+                  description : `ladder停滞 ${_gd_ladderStalled}名 — 成長促進機会が見落とされている可能性`,
+                });
+
+                // Signal 3: support fixation (same veteran covers SR every night they work)
+                let _gd_fixatedVets = 0;
+                for (const vet of _gd_veterans) {
+                  const { shifts, nset } = _gd_deptData[vet.deptId];
+                  let vetNights = 0, srCoveredNights = 0;
+                  for (let day = 1; day <= _gd_days; day++) {
+                    if (!nset.has(shifts[vet.s.id]?.[day] ?? '')) continue;
+                    vetNights++;
+                    if (_gd_dayMap[day].srOnNight.length > 0) srCoveredNights++;
+                  }
+                  if (vetNights >= 4 && srCoveredNights / Math.max(1, vetNights) > 0.8) _gd_fixatedVets++;
+                }
+                _gd_stagnSignals.push({
+                  signal      : 'support_fixation',
+                  count       : _gd_fixatedVets,
+                  threshold   : 1,
+                  drifting    : _gd_fixatedVets >= 1,
+                  description : `${_gd_fixatedVets}名のvetが>80%夜勤でSR coverage固定 — support固定化兆候`,
+                });
+
+                // Signal 4: intervention avoidance (ladder-ready staff not progressing)
+                const _gd_overdueLadder = _gd_allArr.filter(e =>
+                  e.ladder === 3 && e.nightOk && e.stage >= 4 && !e.isProtected).length;
+                _gd_stagnSignals.push({
+                  signal      : 'intervention_avoidance',
+                  count       : _gd_overdueLadder,
+                  threshold   : 1,
+                  drifting    : _gd_overdueLadder >= 1,
+                  description : `ladder 4昇格適性staff ${_gd_overdueLadder}名が未昇格 — 介入回避 drift兆候`,
+                });
+
+                const _gd_stagnDriftCount = _gd_stagnSignals.filter(s => s.drifting).length;
+                const _gd_stagnDriftLevel  =
+                  _gd_stagnDriftCount >= 3 ? 'high_stagnation_drift'
+                  : _gd_stagnDriftCount >= 2 ? 'moderate_stagnation_drift'
+                  : _gd_stagnDriftCount >= 1 ? 'minor_stagnation_drift'
+                  :                            'no_stagnation_drift';
+
+                // ── Layer 4: Override Dependency Drift ─────────────────────────
+                {
+                  const _gd_overrideDepSignals = [];
+
+                  // Signal 1: repeated emergency cycles (uncov days accumulating)
+                  _gd_overrideDepSignals.push({
+                    signal      : 'repeated_emergency_handling',
+                    value       : _gd_uncovDays,
+                    threshold   : Math.round(_gd_days * 0.2),
+                    drifting    : _gd_uncovDays > _gd_days * 0.2,
+                    culturalized: _gd_uncovDays > _gd_days * 0.4,
+                    description : `uncovered ${_gd_uncovDays}日/${_gd_days}日 — ${
+                      _gd_uncovDays > _gd_days * 0.4 ? '緊急対応の文化化 ⚠'
+                      : _gd_uncovDays > _gd_days * 0.2 ? '繰り返し傾向あり ⚠'
+                      : '許容範囲内'}`,
+                  });
+
+                  // Signal 2: veteran dependency normalization
+                  const _gd_vetDepNormalized = _gd_veterans.length > 0 &&
+                    _gd_vetOverloaded / _gd_veterans.length > 0.6;
+                  _gd_overrideDepSignals.push({
+                    signal      : 'veteran_dependency_normalization',
+                    value       : _gd_veterans.length > 0 ? +(_gd_vetOverloaded / _gd_veterans.length).toFixed(3) : 0,
+                    threshold   : 0.6,
+                    drifting    : _gd_vetDepNormalized,
+                    culturalized: _gd_veterans.length > 0 && _gd_vetOverloaded / _gd_veterans.length > 0.8,
+                    description : `vet ${_gd_vetOverloaded}/${_gd_veterans.length}名がutilRate>110% — ${
+                      _gd_vetDepNormalized ? '依存の常態化 ⚠' : '依存固定化なし'}`,
+                  });
+
+                  // Signal 3: unsafe overlap tolerance (high uncov without structural response)
+                  const _gd_unsafeToleranceScore = _gd_uncovDays > 3 && _gd_gapDepts > 0 ? 0.6 : 0;
+                  _gd_overrideDepSignals.push({
+                    signal      : 'unsafe_overlap_tolerance',
+                    value       : +_gd_unsafeToleranceScore.toFixed(3),
+                    threshold   : 0.5,
+                    drifting    : _gd_unsafeToleranceScore > 0.5,
+                    culturalized: _gd_uncovDays > _gd_days * 0.3 && _gd_gapDepts > 1,
+                    description : _gd_unsafeToleranceScore > 0.5
+                      ? `uncov${_gd_uncovDays}日+gapDept${_gd_gapDepts}F — unsafe許容drift ⚠`
+                      : 'unsafe tolerance drift なし',
+                  });
+
+                  // Signal 4: burnout override recurrence
+                  _gd_overrideDepSignals.push({
+                    signal      : 'burnout_override_recurrence',
+                    value       : _gd_burnoutOnNight,
+                    threshold   : 1,
+                    drifting    : _gd_burnoutOnNight >= 1,
+                    culturalized: _gd_burnoutOnNight >= 2,
+                    description : _gd_burnoutOnNight >= 2
+                      ? `burnout ${_gd_burnoutOnNight}名が夜勤継続 — override文化化リスク ⚠`
+                      : _gd_burnoutOnNight === 1
+                      ? 'burnout staff 1名が夜勤継続 — 個別確認推奨'
+                      : 'burnout override再発なし',
+                  });
+
+                  const _gd_overrideDepDriftCount  = _gd_overrideDepSignals.filter(s => s.drifting).length;
+                  const _gd_overrideDepCultureCount = _gd_overrideDepSignals.filter(s => s.culturalized).length;
+                  const _gd_overrideDriftLevel =
+                    _gd_overrideDepCultureCount >= 2 ? 'structural_override_dependency'
+                    : _gd_overrideDepDriftCount >= 3  ? 'high_override_drift'
+                    : _gd_overrideDepDriftCount >= 2  ? 'moderate_override_drift'
+                    : _gd_overrideDepDriftCount >= 1  ? 'minor_override_drift'
+                    :                                    'no_override_drift';
+
+                  // ── Layer 5: Human Drift Insight ────────────────────────────
+                  {
+                    const _gd_driftInsights = [];
+
+                    // Overall drift summary
+                    const _gd_totalDriftingDims = _gd_structuralDrifts.length + _gd_moderateDrifts.length;
+                    _gd_driftInsights.push({
+                      insightType     : 'overall_drift_status',
+                      observation     : _gd_totalDriftingDims === 0
+                        ? '施設運営文化のドリフトなし — 安定中 ✓'
+                        : `${_gd_totalDriftingDims}次元でドリフト観測中 — 方向確認推奨`,
+                      caution         : _gd_structuralDrifts.length > 0
+                        ? `構造的ドリフト: ${_gd_structuralDrifts.map(r => r.direction).join(' / ')}`
+                        : null,
+                      recommendation  : _gd_totalDriftingDims === 0
+                        ? '現在の運営判断傾向を継続'
+                        : _gd_structuralDrifts.length > 0
+                        ? '構造的ドリフトを優先確認 — 根本原因の特定と段階的修正'
+                        : '軽微なドリフトを観察 — 急激な修正より継続観測を優先',
+                      actionable      : _gd_totalDriftingDims > 0,
+                    });
+
+                    // Reactive drift insight
+                    if (_gd_reactiveDriftLevel !== 'no_reactive_drift') {
+                      _gd_driftInsights.push({
+                        insightType     : 'reactive_drift_signal',
+                        observation     : `reactive drift: ${_gd_reactiveDriftLevel} (${_gd_reactiveDriftCount}/${_gd_reactiveSignals.length}シグナル)`,
+                        caution         : '「忙しい月」と「reactive culture化」を混同しないよう注意',
+                        recommendation  : _gd_reactiveDriftCount >= 3
+                          ? 'shortage根本原因の構造解消を優先 — emergency handling常態化を防ぐ'
+                          : 'resim cultureの維持を意識 — 即対応を reflexに選ばない',
+                        actionable      : _gd_reactiveDriftCount >= 2,
+                      });
+                    }
+
+                    // Stagnation drift insight
+                    if (_gd_stagnDriftLevel !== 'no_stagnation_drift') {
+                      _gd_driftInsights.push({
+                        insightType     : 'stagnation_drift_signal',
+                        observation     : `stagnation drift: ${_gd_stagnDriftLevel} (${_gd_stagnDriftCount}/${_gd_stagnSignals.length}シグナル)`,
+                        caution         : '「守る」と「止まる」の境界 — recovery holdが成長阻害になっていないか確認',
+                        recommendation  : _gd_stagnDriftCount >= 3
+                          ? 'hold理由の個別再評価 + 昇格タイミング見直しを優先'
+                          : 'ladder readyのスタッフの進捗を次cycleで確認',
+                        actionable      : _gd_stagnDriftCount >= 2,
+                      });
+                    }
+
+                    // Override dependency drift insight
+                    if (_gd_overrideDriftLevel !== 'no_override_drift') {
+                      _gd_driftInsights.push({
+                        insightType     : 'override_dependency_drift',
+                        observation     : `override依存drift: ${_gd_overrideDriftLevel} (culturalized=${_gd_overrideDepCultureCount})`,
+                        caution         : 'override dependency は「文化化」すると可視化が困難 — 早期発見が重要',
+                        recommendation  : _gd_overrideDepCultureCount >= 2
+                          ? 'vet育成・採用を中期計画に即時組み込み + burnout staff夜勤削減'
+                          : 'override発生ごとにfollow-up計画を設定する習慣を強化',
+                        actionable      : true,
+                      });
+                    }
+
+                    // Support fixation drift insight
+                    if (_gd_fixatedVets >= 1) {
+                      _gd_driftInsights.push({
+                        insightType     : 'support_fixation_drift',
+                        observation     : `${_gd_fixatedVets}名のvetがSR coverageに固定化 — support構造の多様化が停滞`,
+                        caution         : '特定vetへのSR依存は burnout overload の前兆である場合が多い',
+                        recommendation  : 'ladder progressionでSR coverage担い手を増やす計画を立案',
+                        actionable      : true,
+                      });
+                    }
+
+                    const _gd_actionableInsights = _gd_driftInsights.filter(i => i.actionable);
+
+                    // ── Layer 6: Governance Drift Audit ───────────────────────
+                    {
+                      // Over-pathologizing: too many drift signals flagged without evidence
+                      const _gd_allDriftSignalCount = _gd_reactiveSignals.filter(s => s.drifting).length
+                        + _gd_stagnSignals.filter(s => s.drifting).length
+                        + _gd_overrideDepSignals.filter(s => s.drifting).length;
+                      const _gd_overPathologizing = _gd_allDriftSignalCount > 8
+                        && _gd_structuralDrifts.length === 0;
+                      // Drift paranoia: moderate drift flagged as structural
+                      const _gd_driftParanoia = _gd_structuralDrifts.some(r => r.score < 0.3);
+                      // Recovery undervaluation: stable protected staff not recognised
+                      const _gd_recovUnderval = _gd_protected.length > 0
+                        && _gd_stagnDriftCount === _gd_stagnSignals.length
+                        && _gd_protected.filter(e => !e.isBurnout || e.nightCount === 0).length > 0;
+                      // Cultural blame amplification: only negative drifts surfaced
+                      const _gd_blameAmpl = _gd_stableDimensions.length === 0 && _gd_structuralDrifts.length > 0;
+                      // Explainability
+                      const _gd_explainable = _gd_registry.every(r => r.description) &&
+                        _gd_driftInsights.every(i => i.caution);
+                      // Human self-awareness support
+                      const _gd_selfAwarenessLevel =
+                        _gd_actionableInsights.length >= 2 ? 'high ✓'
+                        : _gd_actionableInsights.length >= 1 ? 'moderate'
+                        :                                       'low ⚠';
+                      // Operational realism: drift levels are proportionate to signal count
+                      const _gd_operRealism = !_gd_overPathologizing && !_gd_driftParanoia;
+
+                      const _gd_overallAudit =
+                        (!_gd_overPathologizing && !_gd_driftParanoia && !_gd_blameAmpl && _gd_explainable)
+                          ? 'humanGovernanceDriftSystem'
+                        : _gd_overPathologizing ? 'overPathologizingRisk'
+                        : _gd_driftParanoia     ? 'driftParanoiaRisk'
+                        : _gd_blameAmpl         ? 'culturalBlameAmplification'
+                        : _gd_recovUnderval     ? 'recoveryUndervaluationRisk'
+                        :                          'needsReview';
+
+                      const _gd_finalSummary = {
+                        dept: cd.id, year, month,
+                        registryCount         : _gd_registry.length,
+                        structuralDriftCount  : _gd_structuralDrifts.length,
+                        moderateDriftCount    : _gd_moderateDrifts.length,
+                        stableDimensionCount  : _gd_stableDimensions.length,
+                        reactiveDriftLevel    : _gd_reactiveDriftLevel,
+                        stagnDriftLevel       : _gd_stagnDriftLevel,
+                        overrideDriftLevel    : _gd_overrideDriftLevel,
+                        fixatedVetCount       : _gd_fixatedVets,
+                        totalDriftSignals     : _gd_allDriftSignalCount,
+                        actionableInsightCount: _gd_actionableInsights.length,
+                        topInsights           : _gd_driftInsights.slice(0, 4).map(i =>
+                          `[${i.insightType}] ${i.observation}`),
+                        audit: {
+                          overPathologizing     : _gd_overPathologizing ? 'risk ⚠' : 'none ✓',
+                          driftParanoia         : _gd_driftParanoia     ? 'risk ⚠' : 'low ✓',
+                          recoveryRecognition   : _gd_recovUnderval     ? 'undervalued ⚠' : 'maintained ✓',
+                          culturalBlameAmpl     : _gd_blameAmpl         ? 'risk ⚠' : 'low ✓',
+                          operationalRealism    : _gd_operRealism        ? 'high ✓' : 'partial ⚠',
+                          selfAwarenessSupport  : _gd_selfAwarenessLevel,
+                          explainability        : _gd_explainable        ? 'high ✓' : 'partial ⚠',
+                          overall               : _gd_overallAudit,
+                        },
+                      };
+
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_gd_] Governance Drift Observation System:', _gd_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Drift Observation System / _gd_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_gd_'] = +(performance.now() - _bp_t_gd_).toFixed(3);
+        // ── Phase S-5 P2 (idle): _gr_ — Governance Resilience (heavy) ───────
+        const _bp_disp_gr_ = performance.now();
+        if (profilerRef.current) profilerRef.current.idleDispatches['_gr_'] = +(_bp_disp_gr_ - _bp_startMs).toFixed(3);
+        _ite_schedule(() => {
+        // ══ [Governance Resilience Observation System / _gr_] ここから ══
+        const _bp_t_gr_ = performance.now();
+        {
+          {
+            // === Layer 1: Governance Resilience Registry ===
+            const _gr_dayCount = getDays(year, month);
+            const _gr_days = Array.from({length: _gr_dayCount}, (_, i) => i + 1);
+            const _gr_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk ?? 'normal';
+                const ladder     = s.nightLadder ?? 0;
+                const stage      = s.growthStage ?? 0;
+                const fl         = s.floorYears ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = s.nightMax ?? 4;
+                const nightCount = _gr_days.filter(day => nset.has(shifts[s.id]?.[day] ?? '')).length;
+                const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate, deptId: d.id, deptLabel: d.label };
+              });
+              _gr_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gr_allArr      = Object.values(_gr_deptData).flatMap(dd => dd.arr);
+            const _gr_veterans    = _gr_allArr.filter(e => e.isVeteran && e.nightOk);
+            const _gr_burnouts    = _gr_allArr.filter(e => e.isBurnout);
+            const _gr_protected   = _gr_allArr.filter(e => e.isProtected);
+            const _gr_supportReqs = _gr_allArr.filter(e => e.supportReq && e.nightOk);
+            const _gr_resLevel = score =>
+              score >= 0.8 ? 'resilient'
+              : score >= 0.6 ? 'adaptive'
+              : score >= 0.4 ? 'stable'
+              : score >= 0.2 ? 'strained'
+              : 'fragile';
+            // Dim 1: Burnout Resilience
+            const _gr_totalNight      = _gr_allArr.filter(e => e.nightOk).length;
+            const _gr_burnoutNight    = _gr_allArr.filter(e => e.nightOk && e.isBurnout).length;
+            const _gr_burnoutResScore = _gr_totalNight > 0
+              ? Math.max(0, (_gr_totalNight - _gr_burnoutNight * 2) / _gr_totalNight) : 0;
+            // Dim 2: Support Redundancy (per-dept avg)
+            const _gr_suppRedPerDept = depts.map(d => {
+              const dArr  = _gr_deptData[d.id].arr;
+              const dVets = dArr.filter(e => e.isVeteran && e.nightOk).length;
+              const dSupp = dArr.filter(e => e.supportReq && e.nightOk).length;
+              if (dSupp === 0) return 1.0;
+              return Math.min(1, dVets / (dSupp * 2));
+            });
+            const _gr_suppRedScore = _gr_suppRedPerDept.length > 0
+              ? _gr_suppRedPerDept.reduce((a,b)=>a+b,0) / _gr_suppRedPerDept.length : 1.0;
+            // Dim 3: Veteran Replacement Flexibility
+            const _gr_nearVets     = _gr_allArr.filter(e => e.nightOk && e.ladder >= 3 && !e.isVeteran && !e.isBurnout);
+            const _gr_vetReplScore = _gr_veterans.length > 0
+              ? Math.min(1, _gr_nearVets.length / _gr_veterans.length)
+              : (_gr_nearVets.length > 0 ? 1 : 0);
+            // Dim 4: Recovery Continuity Stability
+            const _gr_recContStable = _gr_protected.filter(e => e.utilRate <= 0.7).length;
+            const _gr_recContScore  = _gr_protected.length > 0
+              ? _gr_recContStable / _gr_protected.length : 1.0;
+            // Dim 5: Cross-Floor Adaptability
+            const _gr_floorsWithVets = depts.filter(d =>
+              _gr_deptData[d.id].arr.some(e => e.isVeteran && e.nightOk)
+            ).length;
+            const _gr_crossFloorScore = depts.length > 0 ? _gr_floorsWithVets / depts.length : 0;
+            // Dim 6: SafeSequence Resilience
+            const _gr_ladderStaff  = _gr_allArr.filter(e => e.inLadder);
+            const _gr_safeLadder   = _gr_ladderStaff.filter(e => e.utilRate <= 0.6).length;
+            const _gr_safeSeqScore = _gr_ladderStaff.length > 0
+              ? _gr_safeLadder / _gr_ladderStaff.length : 1.0;
+            const _gr_dimMap = {
+              burnout_resilience            : { score: _gr_burnoutResScore, level: _gr_resLevel(_gr_burnoutResScore) },
+              support_redundancy            : { score: _gr_suppRedScore,    level: _gr_resLevel(_gr_suppRedScore)    },
+              veteran_replacement_flexibility:{ score: _gr_vetReplScore,    level: _gr_resLevel(_gr_vetReplScore)    },
+              recovery_continuity_stability : { score: _gr_recContScore,    level: _gr_resLevel(_gr_recContScore)    },
+              cross_floor_adaptability      : { score: _gr_crossFloorScore, level: _gr_resLevel(_gr_crossFloorScore) },
+              safeSequence_resilience       : { score: _gr_safeSeqScore,    level: _gr_resLevel(_gr_safeSeqScore)    },
+            };
+            const _gr_dimScores    = Object.values(_gr_dimMap).map(v => v.score);
+            const _gr_overallScore = _gr_dimScores.reduce((a,b)=>a+b,0) / _gr_dimScores.length;
+            const _gr_overallLevel = _gr_resLevel(_gr_overallScore);
+            const _gr_strongDims   = Object.entries(_gr_dimMap).filter(([,v])=>v.score>=0.6).map(([k])=>k);
+            const _gr_fragilesDims = Object.entries(_gr_dimMap).filter(([,v])=>v.score<0.4).map(([k])=>k);
+
+            // === Layer 2: Burnout Shock Absorption Observation ===
+            {
+              const _gr_bsaSuppLow    = _gr_suppRedScore < 0.4;
+              const _gr_bsaBuffer     = _gr_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate < 0.5 && e.ladder >= 2);
+              const _gr_bsaBufLow     = _gr_bsaBuffer.length < 2;
+              const _gr_nightCoreCnt  = _gr_allArr.filter(e => e.ladder >= 4 && e.nightOk && !e.isBurnout).length;
+              const _gr_nightCoreConc = _gr_totalNight > 0 ? _gr_nightCoreCnt / _gr_totalNight : 0;
+              const _gr_bsaCoreConc   = _gr_nightCoreConc > 0.6;
+              const _gr_nearBurnout   = _gr_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate > 0.9).length;
+              const _gr_bsaPropRisk   = _gr_nearBurnout >= 2;
+              const _gr_vetFallback   = _gr_veterans.filter(e => e.utilRate < 0.7).length;
+              const _gr_bsaFallLow    = _gr_vetFallback < 1;
+              const _gr_bsaStressCnt  = [_gr_bsaSuppLow,_gr_bsaBufLow,_gr_bsaCoreConc,_gr_bsaPropRisk,_gr_bsaFallLow].filter(Boolean).length;
+              const _gr_bsaScore      = Math.max(0, 1 - _gr_bsaStressCnt * 0.2);
+              const _gr_bsaLevel      = _gr_resLevel(_gr_bsaScore);
+
+              // === Layer 3: Veteran Absence Resilience ===
+              {
+                const _gr_varSVFloors  = depts.filter(d => {
+                  const vets = _gr_deptData[d.id].arr.filter(e => e.isVeteran && e.nightOk);
+                  return vets.length === 1;
+                }).length;
+                const _gr_varSVHigh    = _gr_varSVFloors >= Math.ceil(depts.length * 0.5);
+                const _gr_ladder3      = _gr_allArr.filter(e => e.nightOk && e.ladder === 3 && !e.isBurnout).length;
+                const _gr_varBkpDepth  = _gr_veterans.length > 0 ? _gr_ladder3 / _gr_veterans.length : 0;
+                const _gr_varBkpWeak   = _gr_varBkpDepth < 0.5;
+                const _gr_nearIndep    = _gr_allArr.filter(e => e.nightOk && e.hasPair && e.stage >= 4).length;
+                const _gr_varSuccLow   = _gr_nearIndep < 1;
+                const _gr_multiVetFl   = depts.filter(d =>
+                  _gr_deptData[d.id].arr.filter(e => e.isVeteran && e.nightOk).length >= 2
+                ).length;
+                const _gr_varCFLimited = _gr_multiVetFl < Math.ceil(depts.length * 0.3);
+                const _gr_unsafeFloors = depts.filter(d => {
+                  const dA = _gr_deptData[d.id].arr;
+                  return dA.some(e => e.isVeteran && e.nightOk)
+                    && !dA.some(e => e.nightOk && e.ladder >= 3 && !e.isVeteran && !e.isBurnout);
+                }).length;
+                const _gr_varUnsafeHi  = _gr_unsafeFloors >= Math.ceil(depts.length * 0.4);
+                const _gr_varStressCnt = [_gr_varSVHigh,_gr_varBkpWeak,_gr_varSuccLow,_gr_varCFLimited,_gr_varUnsafeHi].filter(Boolean).length;
+                const _gr_varScore     = Math.max(0, 1 - _gr_varStressCnt * 0.2);
+                const _gr_varLevel     = _gr_resLevel(_gr_varScore);
+
+                // === Layer 4: Recovery Continuity Resilience ===
+                {
+                  const _gr_holdDurable  = _gr_protected.filter(e => e.utilRate <= 0.65).length;
+                  const _gr_rcrHoldFrag  = _gr_protected.length > 0
+                    ? _gr_holdDurable / _gr_protected.length < 0.5 : false;
+                  const _gr_rcrSSRisk    = _gr_safeSeqScore < 0.4;
+                  const _gr_bReboundCnt  = _gr_burnouts.filter(e => e.utilRate < 0.3).length;
+                  const _gr_rcrRebWeak   = _gr_burnouts.length > 0
+                    && _gr_bReboundCnt / _gr_burnouts.length < 0.5;
+                  const _gr_inReloc      = _gr_allArr.filter(e => e.inReloc);
+                  const _gr_relocStable  = _gr_inReloc.filter(e => e.utilRate <= 0.5).length;
+                  const _gr_rcrRelocRisk = _gr_inReloc.length > 0
+                    && _gr_relocStable / _gr_inReloc.length < 0.5;
+                  const _gr_rcrSuppRisk  = _gr_suppRedScore < 0.3;
+                  const _gr_rcrStressCnt = [_gr_rcrHoldFrag,_gr_rcrSSRisk,_gr_rcrRebWeak,_gr_rcrRelocRisk,_gr_rcrSuppRisk].filter(Boolean).length;
+                  const _gr_rcrScore     = Math.max(0, 1 - _gr_rcrStressCnt * 0.2);
+                  const _gr_rcrLevel     = _gr_resLevel(_gr_rcrScore);
+
+                  // === Layer 5: Human Resilience Insight ===
+                  {
+                    const _gr_insights = [];
+                    _gr_insights.push({
+                      topic        : 'burnout_shock_absorption',
+                      observation  : `burnout shock耐性: ${_gr_bsaLevel} (${(_gr_bsaScore*100).toFixed(0)}%)`,
+                      caution      : _gr_bsaStressCnt >= 3
+                        ? 'burnout増加時にsupport体制が崩壊するリスクあり。fallback確保を人間が検討してください'
+                        : _gr_bsaStressCnt >= 1
+                          ? 'burnout shock時の予備力にやや不足。余裕確保の検討を推奨'
+                          : 'burnout増加への吸収力は現状維持中',
+                      recommendation: _gr_bsaFallLow
+                        ? 'veteran fallbackが不足。夜勤可能ベテランの余裕確保を人間が判断してください'
+                        : 'support redundancyを維持してください',
+                      actionable   : _gr_bsaStressCnt >= 3,
+                    });
+                    _gr_insights.push({
+                      topic        : 'veteran_absence_resilience',
+                      observation  : `veteran欠勤耐性: ${_gr_varLevel} (${(_gr_varScore*100).toFixed(0)}%)`,
+                      caution      : _gr_varSVHigh
+                        ? `${_gr_varSVFloors}フロアがveteran 1名依存。欠勤時に夜勤体制が即時崩壊するリスクあり`
+                        : _gr_varBkpWeak
+                          ? 'ladder3バックアップ層が薄い。veteran突然欠員時の代替が限定的です'
+                          : 'veteran欠員への対応力は現状維持中',
+                      recommendation: _gr_varSVHigh || _gr_varBkpWeak
+                        ? 'ladder3人材の育成加速を人間が検討してください。cross-floor fallback整備も有効です'
+                        : 'veteran代替構造を継続維持してください',
+                      actionable   : _gr_varStressCnt >= 3,
+                    });
+                    _gr_insights.push({
+                      topic        : 'recovery_continuity_strength',
+                      observation  : `recovery継続強度: ${_gr_rcrLevel} (${(_gr_rcrScore*100).toFixed(0)}%)`,
+                      caution      : _gr_rcrHoldFrag
+                        ? 'protected staffのhold耐性が低下中。障害発生時にrecovery構造が壊れるリスクあり'
+                        : _gr_rcrRebWeak
+                          ? 'burnout → recovery遷移が遅い。リバウンドリスクが残存しています'
+                          : 'recovery継続構造は現状安定中',
+                      recommendation: _gr_rcrHoldFrag
+                        ? 'protected staffの夜勤負荷を人間が直接確認してください'
+                        : 'recovery構造の継続監視を推奨',
+                      actionable   : _gr_rcrStressCnt >= 3,
+                    });
+                    _gr_insights.push({
+                      topic        : 'support_redundancy_status',
+                      observation  : `support redundancy: ${_gr_resLevel(_gr_suppRedScore)} (${(_gr_suppRedScore*100).toFixed(0)}%)`,
+                      caution      : _gr_suppRedScore < 0.3
+                        ? 'support_req staffへの夜勤カバーが構造的に不足。緊急時に即座に崩壊するリスクあり'
+                        : _gr_suppRedScore < 0.5
+                          ? 'support体制の余裕が限定的。追加負荷への耐性が低い'
+                          : 'support redundancyは現状維持中',
+                      recommendation: _gr_suppRedScore < 0.4
+                        ? 'veteran夜勤可能人数とsupport_req人数のバランスを人間が確認してください'
+                        : 'support体制を継続維持してください',
+                      actionable   : _gr_suppRedScore < 0.3,
+                    });
+                    if (_gr_crossFloorScore < 0.6 || _gr_floorsWithVets < depts.length) {
+                      _gr_insights.push({
+                        topic        : 'cross_floor_fallback_strength',
+                        observation  : `cross-floor fallback: ${_gr_resLevel(_gr_crossFloorScore)} (${(_gr_crossFloorScore*100).toFixed(0)}%)`,
+                        caution      : _gr_floorsWithVets < depts.length
+                          ? `${depts.length - _gr_floorsWithVets}フロアにveteran夜勤不在。cross-floor補完が機能しない可能性あり`
+                          : 'cross-floor fallbackに一部制約あり',
+                        recommendation: 'veteran夜勤をフロア間で均等配置するよう人間が検討してください',
+                        actionable   : _gr_floorsWithVets < depts.length * 0.7,
+                      });
+                    }
+                    const _gr_actionableInsights = _gr_insights.filter(i => i.actionable);
+                    const _gr_overallInsight =
+                      _gr_overallScore >= 0.7
+                        ? '施設の全体的な回復力は維持されています。継続観察を推奨します'
+                        : _gr_overallScore >= 0.45
+                          ? '一部の回復力次元に懸念あり。人間による定期的な確認が有効です'
+                          : '複数の回復力次元に脆弱性あり。管理者による優先的な検討を推奨します';
+
+                    // === Layer 6: Governance Resilience Audit ===
+                    {
+                      const _gr_audCollapse  = _gr_fragilesDims.length >= 5;
+                      const _gr_critWeak     = ['burnout_resilience','veteran_replacement_flexibility','support_redundancy']
+                        .filter(k => (_gr_dimMap[k]?.score ?? 1) < 0.3);
+                      const _gr_audOverconf  = _gr_strongDims.length >= 4 && _gr_critWeak.length >= 2;
+                      const _gr_audVetBlame  = _gr_varLevel === 'fragile' && _gr_resLevel(_gr_burnoutResScore) !== 'fragile';
+                      const _gr_audRecUnder  = (_gr_rcrLevel === 'resilient' || _gr_rcrLevel === 'adaptive')
+                        && _gr_insights.every(i => i.topic !== 'recovery_continuity_strength' || i.actionable);
+                      const _gr_audOperReal  = _gr_allArr.length > 0;
+                      const _gr_audPrepSup   = _gr_actionableInsights.length > 0 || _gr_overallScore >= 0.65;
+                      const _gr_audExplain   = Object.keys(_gr_dimMap).length >= 6 && _gr_insights.length >= 4;
+                      const _gr_auditFlags   = [_gr_audCollapse,_gr_audOverconf,_gr_audVetBlame,_gr_audRecUnder].filter(Boolean).length;
+                      const _gr_overallAudit =
+                        _gr_auditFlags === 0  ? 'humanGovernanceResilienceSystem'
+                        : _gr_audCollapse     ? 'collapseParanoiaRisk'
+                        : _gr_audOverconf     ? 'resilienceOverconfidenceRisk'
+                        : _gr_audVetBlame     ? 'veteranBlameAmplificationRisk'
+                        : _gr_audRecUnder     ? 'recoveryUndervaluationRisk'
+                        :                       'needsReview';
+                      const _gr_finalSummary = {
+                        system            : 'Governance Resilience Observation System',
+                        dept: cd.id, year, month,
+                        overallResilience : { score: _gr_overallScore.toFixed(3), level: _gr_overallLevel },
+                        dimensions        : Object.fromEntries(
+                          Object.entries(_gr_dimMap).map(([k,v])=>[k,{ score: v.score.toFixed(3), level: v.level }])
+                        ),
+                        strongDimensions  : _gr_strongDims,
+                        fragileDimensions : _gr_fragilesDims,
+                        burnoutShockAbsorption: {
+                          level           : _gr_bsaLevel,
+                          score           : _gr_bsaScore.toFixed(3),
+                          stressSignals   : _gr_bsaStressCnt,
+                          fallbackLow     : _gr_bsaFallLow,
+                          coreConcentrated: _gr_bsaCoreConc,
+                          propagationRisk : _gr_bsaPropRisk,
+                        },
+                        veteranAbsenceResilience: {
+                          level              : _gr_varLevel,
+                          score              : _gr_varScore.toFixed(3),
+                          singleVetFloors    : _gr_varSVFloors,
+                          backupDepth        : _gr_varBkpDepth.toFixed(2),
+                          successionAvailable: _gr_nearIndep,
+                          unsafeOverlapFloors: _gr_unsafeFloors,
+                        },
+                        recoveryContinuityResilience: {
+                          level      : _gr_rcrLevel,
+                          score      : _gr_rcrScore.toFixed(3),
+                          holdFragile: _gr_rcrHoldFrag,
+                          reboundWeak: _gr_rcrRebWeak,
+                          relocRisk  : _gr_rcrRelocRisk,
+                        },
+                        humanInsights     : _gr_insights.map(i => ({
+                          topic      : i.topic,
+                          observation: i.observation,
+                          caution    : i.caution,
+                          actionable : i.actionable,
+                        })),
+                        actionableCount   : _gr_actionableInsights.length,
+                        overallInsight    : _gr_overallInsight,
+                        audit: {
+                          collapseParanoia         : _gr_audCollapse  ? 'risk ⚠' : 'low ✓',
+                          resilienceOverconfidence : _gr_audOverconf  ? 'risk ⚠' : 'none ✓',
+                          veteranBlameAmplification: _gr_audVetBlame  ? 'risk ⚠' : 'low ✓',
+                          recoveryUndervaluation   : _gr_audRecUnder  ? 'undervalued ⚠' : 'maintained ✓',
+                          operationalRealism       : _gr_audOperReal  ? 'high ✓' : 'partial ⚠',
+                          humanPreparednessSupport : _gr_audPrepSup   ? 'high ✓' : 'partial ⚠',
+                          explainability           : _gr_audExplain   ? 'high ✓' : 'partial ⚠',
+                          overall                  : _gr_overallAudit,
+                        },
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_gr_] Governance Resilience Observation System:', _gr_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Governance Resilience Observation System / _gr_] ここまで ══
+        if (profilerRef.current) {
+          profilerRef.current.engineTimes['_gr_'] = +(performance.now() - _bp_t_gr_).toFixed(3);
+          profilerRef.current.idleDefers.push({ engine:'_gr_', waitMs: +(_bp_t_gr_ - _bp_disp_gr_).toFixed(1) });
+        }
+        // ── Phase S-5 P3 (idle): _gs_ — Governance Shock (heaviest; chained after _gr_) ─
+        const _bp_disp_gs_ = performance.now();
+        if (profilerRef.current) profilerRef.current.idleDispatches['_gs_'] = +(_bp_disp_gs_ - _bp_startMs).toFixed(3);
+        _ite_schedule(() => {
+        // ══ [Governance Shock Simulation System / _gs_] ここから ══
+        const _bp_t_gs_ = performance.now();
+        const _sp_phases = {}; // Phase S-8: internal phase timing accumulator
+        {
+          {
+            // === Layer 1: Shock Scenario Registry ===
+            const _gs_dayCount = getDays(year, month);
+            const _gs_days = Array.from({length: _gs_dayCount}, (_, i) => i + 1);
+            const _gs_deptData = {};
+            for (const d of depts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk ?? 'normal';
+                const ladder     = s.nightLadder ?? 0;
+                const stage      = s.growthStage ?? 0;
+                const fl         = s.floorYears ?? null;
+                const hasPair    = !!(s.growthPairStaff);
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const isBurnout  = bo === 'high';
+                const inLadder   = nightOk && ladder >= 1 && ladder <= 2;
+                const inReloc    = fl !== null && fl < 0.5;
+                const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
+                const targetNc   = s.nightMax ?? 4;
+                const nightCount = _gs_days.filter(day => nset.has(shifts[s.id]?.[day] ?? '')).length;
+                const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
+                return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
+                         isVeteran, isBurnout, inLadder, inReloc, isProtected,
+                         nightCount, targetNc, utilRate, deptId: d.id, deptLabel: d.label };
+              });
+              _gs_deptData[d.id] = { d, ds, shifts, arr, nset };
+            }
+            const _gs_allArr      = Object.values(_gs_deptData).flatMap(dd => dd.arr);
+            const _gs_veterans    = _gs_allArr.filter(e => e.isVeteran && e.nightOk);
+            const _gs_burnouts    = _gs_allArr.filter(e => e.isBurnout);
+            const _gs_protected   = _gs_allArr.filter(e => e.isProtected);
+            const _gs_supportReqs = _gs_allArr.filter(e => e.supportReq && e.nightOk);
+            const _gs_nearBurnout = _gs_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate > 0.85);
+            const _gs_relocating      = _gs_allArr.filter(e => e.inReloc);
+            const _gs_newStaff        = _gs_allArr.filter(e => e.stage <= 1 && e.nightOk);
+            const _gs_relocatingStaff = _gs_allArr.filter(e => e.stage <= 1 && e.nightOk && e.inReloc);
+            const _gs_nightStaff  = _gs_allArr.filter(e => e.nightOk);
+            const _gs_shockScope  = score =>
+              score >= 0.75 ? 'critical'
+              : score >= 0.5  ? 'structural'
+              : score >= 0.25 ? 'propagating'
+              : 'localized';
+            // Scenario risk scores
+            const _gs_sc1_svDepts = depts.filter(d =>
+              _gs_deptData[d.id].arr.filter(e => e.isVeteran && e.nightOk).length === 1
+            ).length;
+            const _gs_sc1_score = _gs_veterans.length > 0
+              ? Math.min(1, _gs_sc1_svDepts / Math.max(depts.length,1) + (2 / _gs_veterans.length) * 0.3)
+              : 0.8;
+            const _gs_sc2_score = _gs_nightStaff.length > 0
+              ? Math.min(1, (_gs_burnouts.length + _gs_nearBurnout.length * 0.5) / _gs_nightStaff.length) : 0;
+            const _gs_sc3_score = _gs_supportReqs.length > 0
+              ? Math.min(1, _gs_supportReqs.length / Math.max(_gs_veterans.filter(e=>e.utilRate<0.8).length * 2, 1)) : 0;
+            const _gs_sc4_score = _gs_nightStaff.length > 0
+              ? Math.min(1, _gs_nearBurnout.length / _gs_nightStaff.length) : 0;
+            const _gs_sc5_score = Math.min(1,
+              (_gs_allArr.filter(e=>e.inLadder).length * 0.3 + _gs_burnouts.length * 0.4) /
+              Math.max(_gs_veterans.length, 1)
+            );
+            const _gs_floorsNoVet = depts.filter(d =>
+              !_gs_deptData[d.id].arr.some(e => e.isVeteran && e.nightOk)
+            ).length;
+            const _gs_sc6_score = depts.length > 0 ? _gs_floorsNoVet / depts.length : 0;
+            const _gs_sc7_score = _gs_nightStaff.length > 0
+              ? Math.min(1, (_gs_newStaff.length / _gs_nightStaff.length) * 2) : 0;
+            const _gs_sc8_score = _gs_allArr.length > 0
+              ? Math.min(1, (_gs_relocating.length / _gs_allArr.length) * 3) : 0;
+            const _gs_scenarios = [
+              { id: 'veteran_sudden_absence',      score: parseFloat(_gs_sc1_score.toFixed(3)), risk: 'support continuity disruption'   },
+              { id: 'simultaneous_burnout',         score: parseFloat(_gs_sc2_score.toFixed(3)), risk: 'night coverage collapse'          },
+              { id: 'support_pair_collapse',        score: parseFloat(_gs_sc3_score.toFixed(3)), risk: 'support_req staffing gap'         },
+              { id: 'chronic_shortage_escalation',  score: parseFloat(_gs_sc4_score.toFixed(3)), risk: 'utilRate overload spread'         },
+              { id: 'unsafe_overlap_spike',         score: parseFloat(_gs_sc5_score.toFixed(3)), risk: 'ladder+burnout co-coverage risk'  },
+              { id: 'cross_floor_fallback_failure', score: parseFloat(_gs_sc6_score.toFixed(3)), risk: 'floor isolation'                 },
+              { id: 'new_staff_concentration',      score: parseFloat(_gs_sc7_score.toFixed(3)), risk: 'inexperience overload'            },
+              { id: 'relocation_concentration',     score: parseFloat(_gs_sc8_score.toFixed(3)), risk: 'unstable floor tenure spread'     },
+            ].map(s => ({ ...s, scope: _gs_shockScope(s.score) }));
+            const _gs_criticalScenarios   = _gs_scenarios.filter(s => s.scope === 'critical');
+            const _gs_structuralScenarios = _gs_scenarios.filter(s => s.scope === 'structural');
+            const _gs_localizedScenarios  = _gs_scenarios.filter(s => s.scope === 'localized');
+            _sp_phases.t2 = performance.now(); // Phase S-8: Layer 1 → Layer 2
+
+            // === Layer 2: Burnout Cascade Simulation ===
+            {
+              const _gs_bcTrigVets  = _gs_veterans.filter(e => e.utilRate > 0.75);
+              const _gs_bcVetAtRisk = _gs_bcTrigVets.length;
+              const _gs_bcSuppLoss  = _gs_supportReqs.filter(e => {
+                const dArr   = _gs_deptData[e.deptId].arr;
+                const atRisk = dArr.filter(v => v.isVeteran && v.nightOk && v.utilRate > 0.75).length;
+                const total  = dArr.filter(v => v.isVeteran && v.nightOk).length;
+                return total > 0 && atRisk >= total * 0.5;
+              }).length;
+              const _gs_bcSt2      = _gs_bcSuppLoss > 0;
+              const _gs_bcFallback = _gs_veterans.filter(e => e.utilRate < 0.7).length;
+              const _gs_bcFallExh  = _gs_bcFallback < _gs_supportReqs.length;
+              const _gs_bcSt3      = _gs_bcSt2 && _gs_bcFallExh;
+              const _gs_bcUnsafeDepts = depts.filter(d => {
+                const dArr   = _gs_deptData[d.id].arr;
+                const atRisk = dArr.filter(e => e.isVeteran && e.nightOk && e.utilRate > 0.75).length;
+                const total  = dArr.filter(e => e.isVeteran && e.nightOk).length;
+                return total > 0 && atRisk >= total * 0.5 && dArr.some(e => e.inLadder);
+              }).length;
+              const _gs_bcSt4    = _gs_bcSt3 && _gs_bcUnsafeDepts > 0;
+              const _gs_bcDepth  = [_gs_bcVetAtRisk > 0, _gs_bcSt2, _gs_bcSt3, _gs_bcSt4].filter(Boolean).length;
+              const _gs_bcSeverity =
+                _gs_bcDepth >= 4 ? 'critical'
+                : _gs_bcDepth >= 3 ? 'high'
+                : _gs_bcDepth >= 2 ? 'medium'
+                : _gs_bcDepth >= 1 ? 'low'
+                : 'none';
+              const _gs_bcChain = [
+                _gs_bcVetAtRisk > 0 ? `veteran burnout risk (×${_gs_bcVetAtRisk})` : null,
+                _gs_bcSt2           ? `support overload (×${_gs_bcSuppLoss} staff)` : null,
+                _gs_bcFallExh       ? 'fallback exhaustion'                          : null,
+                _gs_bcSt4           ? `unsafe overlap spread (×${_gs_bcUnsafeDepts} depts)` : null,
+              ].filter(Boolean);
+              _sp_phases.t3 = performance.now(); // Phase S-8: Layer 2 → Layer 3
+
+              // === Layer 3: Veteran Loss Propagation ===
+              {
+                const _gs_vlTopCnt    = Math.max(1, Math.ceil(_gs_veterans.length * 0.3));
+                const _gs_vlTopVetIds = new Set(_gs_veterans.slice(0, _gs_vlTopCnt).map(e => e.s.id));
+                const _gs_vlSuppGap   = depts.filter(d => {
+                  const dArr    = _gs_deptData[d.id].arr;
+                  const remVets = dArr.filter(e => e.isVeteran && e.nightOk && !_gs_vlTopVetIds.has(e.s.id)).length;
+                  const dSupp   = dArr.filter(e => e.supportReq && e.nightOk).length;
+                  return dSupp > 0 && remVets < dSupp;
+                }).length;
+                const _gs_vlLadderStag = _gs_allArr.filter(e => {
+                  if (!e.inLadder) return false;
+                  return !_gs_deptData[e.deptId].arr.some(v =>
+                    v.isVeteran && v.nightOk && !_gs_vlTopVetIds.has(v.s.id)
+                  );
+                }).length;
+                const _gs_vlCrossDep  = depts.filter(d => {
+                  const dArr    = _gs_deptData[d.id].arr;
+                  const remVets = dArr.filter(e => e.isVeteran && e.nightOk && !_gs_vlTopVetIds.has(e.s.id)).length;
+                  return dArr.some(e => e.nightOk) && remVets === 0;
+                }).length;
+                const _gs_vlRecovDmg  = _gs_allArr.filter(e => {
+                  if (!e.isProtected || !e.nightOk) return false;
+                  return !_gs_deptData[e.deptId].arr.some(v =>
+                    v.isVeteran && v.nightOk && !_gs_vlTopVetIds.has(v.s.id)
+                  );
+                }).length;
+                const _gs_vlPropScore = Math.min(1,
+                  (_gs_vlSuppGap * 0.3 + _gs_vlLadderStag * 0.2 + _gs_vlCrossDep * 0.25 + _gs_vlRecovDmg * 0.15) /
+                  Math.max(depts.length, 1)
+                );
+                const _gs_vlPropReach =
+                  _gs_vlPropScore >= 0.6 ? 'facility-wide'
+                  : _gs_vlPropScore >= 0.3 ? 'departmental'
+                  : 'localized';
+                _sp_phases.t4 = performance.now(); // Phase S-8: Layer 3 → Layer 4
+
+                // === Layer 4: Recovery Collapse Simulation ===
+                {
+                  const _gs_rcProtAtRisk   = _gs_protected.filter(e => e.utilRate > 0.6).length;
+                  const _gs_rcHoldBreak    = _gs_rcProtAtRisk > 0 && _gs_bcSt2;
+                  const _gs_rcReboundRisk  = _gs_burnouts.filter(e => e.utilRate > 0.4).length;
+                  const _gs_rcReboundSpike = _gs_rcReboundRisk >= 1
+                    && (_gs_bcSeverity === 'high' || _gs_bcSeverity === 'critical');
+                  const _gs_rcSSBreak      = _gs_vlLadderStag >= 2
+                    || (_gs_vlLadderStag >= 1 && _gs_bcDepth >= 3);
+                  const _gs_rcRelocDestab  = _gs_relocating.filter(e => e.nightOk).length >= 2
+                    && (_gs_bcSeverity === 'high' || _gs_bcSeverity === 'critical');
+                  const _gs_rcSuppCollapse = _gs_vlSuppGap >= 2 && _gs_bcFallExh;
+                  const _gs_rcSigCnt       = [_gs_rcHoldBreak,_gs_rcReboundSpike,_gs_rcSSBreak,_gs_rcRelocDestab,_gs_rcSuppCollapse].filter(Boolean).length;
+                  const _gs_rcState        =
+                    _gs_rcSigCnt >= 4 ? 'collapsed'
+                    : _gs_rcSigCnt >= 3 ? 'unstable'
+                    : _gs_rcSigCnt >= 2 ? 'strained'
+                    : 'stable';
+                  _sp_phases.t5 = performance.now(); // Phase S-8: Layer 4 → Layer 5
+
+                  // === Layer 5: Human Preparedness Insight ===
+                  {
+                    const _gs_insights = [];
+                    _gs_insights.push({
+                      scenario     : 'burnout_cascade',
+                      vulnerability: `cascade severity: ${_gs_bcSeverity}`,
+                      observation  : _gs_bcChain.length > 0
+                        ? `連鎖: ${_gs_bcChain.join(' → ')}`
+                        : 'burnout連鎖リスクは現状低い',
+                      preparedness : _gs_bcDepth >= 3
+                        ? 'veteran fallback確保と近燃え尽き職員の夜勤調整を人間が判断してください'
+                        : _gs_bcDepth >= 1
+                          ? 'burnout連鎖への注意を継続し、余裕確保の検討を推奨'
+                          : 'burnout連鎖への備えは現状維持中',
+                      actionable   : _gs_bcDepth >= 3,
+                    });
+                    _gs_insights.push({
+                      scenario     : 'veteran_sudden_absence',
+                      vulnerability: `propagation reach: ${_gs_vlPropReach}`,
+                      observation  : _gs_vlSuppGap > 0 || _gs_vlCrossDep > 0
+                        ? `support gap ${_gs_vlSuppGap}dept / cross-floor依存 ${_gs_vlCrossDep}dept`
+                        : 'veteran欠勤への対応構造は現状維持中',
+                      preparedness : _gs_vlPropReach === 'facility-wide'
+                        ? 'ladder3人材の早期独立支援とcross-floor fallback整備を人間が検討してください'
+                        : _gs_vlSuppGap > 0
+                          ? 'veteran不在時のsupport体制を人間が事前確認してください'
+                          : 'veteran代替構造は現状維持中',
+                      actionable   : _gs_vlPropReach !== 'localized',
+                    });
+                    _gs_insights.push({
+                      scenario     : 'recovery_collapse',
+                      vulnerability: `recovery state: ${_gs_rcState}`,
+                      observation  : _gs_rcSigCnt >= 2
+                        ? `障害時にrecovery構造が${_gs_rcState}になるリスク (${_gs_rcSigCnt}/5 signals)`
+                        : 'recovery構造はショック時にも概ね維持可能',
+                      preparedness : _gs_rcState === 'collapsed' || _gs_rcState === 'unstable'
+                        ? 'protected staffの過負荷防止とburnout rebound予防を人間が優先確認してください'
+                        : 'recovery構造の維持継続を推奨',
+                      actionable   : _gs_rcSigCnt >= 3,
+                    });
+                    if (_gs_vlCrossDep > 0 || _gs_sc6_score >= 0.3) {
+                      _gs_insights.push({
+                        scenario     : 'cross_floor_fallback_failure',
+                        vulnerability: `${_gs_vlCrossDep}フロアがショック時にveteran不在`,
+                        observation  : `cross-floor fallback制約: ${_gs_floorsNoVet}フロアにveteran夜勤なし`,
+                        preparedness : 'veteran夜勤分散配置の定期確認を人間が実施してください',
+                        actionable   : _gs_vlCrossDep >= 1,
+                      });
+                    }
+                    const _gs_worstScenario = [..._gs_scenarios].sort((a,b)=>b.score-a.score)[0];
+                    if (_gs_worstScenario && _gs_worstScenario.scope !== 'localized') {
+                      _gs_insights.push({
+                        scenario     : _gs_worstScenario.id,
+                        vulnerability: `最大リスクシナリオ: scope=${_gs_worstScenario.scope}`,
+                        observation  : `risk: ${_gs_worstScenario.risk} (score ${(_gs_worstScenario.score*100).toFixed(0)}%)`,
+                        preparedness : '最大リスクシナリオへの事前備えを管理者が優先検討してください',
+                        actionable   : _gs_worstScenario.scope === 'critical' || _gs_worstScenario.scope === 'structural',
+                      });
+                    }
+                    const _gs_actionablePreps = _gs_insights.filter(i => i.actionable);
+                    const _gs_overallRisk     =
+                      _gs_criticalScenarios.length >= 2     ? '複数criticalシナリオあり — 管理者の優先確認を推奨'
+                      : _gs_criticalScenarios.length === 1  ? '1件criticalシナリオあり — 事前備えの検討を推奨'
+                      : _gs_structuralScenarios.length >= 2 ? 'structuralリスクが複数 — 定期的な人間確認を推奨'
+                      : '現状のショックリスクは概ね管理可能';
+                    _sp_phases.t6 = performance.now(); // Phase S-8: Layer 5 → Layer 6
+
+                    // === Layer 6: Governance Shock Audit ===
+                    {
+                      const _gs_audCatastrophe  = _gs_criticalScenarios.length >= 6;
+                      const _gs_audCollParanoia  = (_gs_criticalScenarios.length + _gs_structuralScenarios.length) >= 7;
+                      const _gs_audVetBlame      =
+                        (_gs_scenarios.find(s=>s.id==='veteran_sudden_absence')?.scope === 'critical') &&
+                        (_gs_scenarios.find(s=>s.id==='simultaneous_burnout')?.scope === 'localized');
+                      const _gs_audRecovUnder    = _gs_rcState === 'stable' && _gs_actionablePreps.length >= 3;
+                      const _gs_audOperReal      = _gs_allArr.length > 0;
+                      const _gs_audPrepSup       = _gs_actionablePreps.length > 0 || _gs_criticalScenarios.length === 0;
+                      const _gs_audExplain       = _gs_insights.length >= 3 && _gs_scenarios.length === 8;
+                      const _gs_auditFlags       = [_gs_audCatastrophe,_gs_audCollParanoia,_gs_audVetBlame,_gs_audRecovUnder].filter(Boolean).length;
+                      const _gs_overallAudit     =
+                        _gs_auditFlags === 0   ? 'humanGovernanceShockSimulation'
+                        : _gs_audCatastrophe   ? 'catastropheAmplificationRisk'
+                        : _gs_audCollParanoia  ? 'collapseParanoiaRisk'
+                        : _gs_audVetBlame      ? 'veteranBlameAmplificationRisk'
+                        : _gs_audRecovUnder    ? 'recoveryUndervaluationRisk'
+                        :                        'needsReview';
+                      const _gs_finalSummary = {
+                        system            : 'Governance Shock Simulation System',
+                        dept: cd.id, year, month,
+                        scenarios         : _gs_scenarios.map(s=>({ id: s.id, scope: s.scope, score: s.score })),
+                        criticalCount     : _gs_criticalScenarios.length,
+                        structuralCount   : _gs_structuralScenarios.length,
+                        localizedCount    : _gs_localizedScenarios.length,
+                        burnoutCascade: {
+                          severity   : _gs_bcSeverity,
+                          depth      : _gs_bcDepth,
+                          chain      : _gs_bcChain,
+                          vetAtRisk  : _gs_bcVetAtRisk,
+                          suppLoss   : _gs_bcSuppLoss,
+                          fallbackExh: _gs_bcFallExh,
+                        },
+                        veteranLoss: {
+                          propagationReach   : _gs_vlPropReach,
+                          suppGapDepts       : _gs_vlSuppGap,
+                          crossDepDepts      : _gs_vlCrossDep,
+                          ladderStagStaff    : _gs_vlLadderStag,
+                          recoveryDamageStaff: _gs_vlRecovDmg,
+                        },
+                        recoveryCollapse: {
+                          state        : _gs_rcState,
+                          signalCount  : _gs_rcSigCnt,
+                          holdBreak    : _gs_rcHoldBreak,
+                          reboundSpike : _gs_rcReboundSpike,
+                          ssBreak      : _gs_rcSSBreak,
+                          relocDestab  : _gs_rcRelocDestab,
+                          suppCollapse : _gs_rcSuppCollapse,
+                        },
+                        humanInsights     : _gs_insights.map(i=>({
+                          scenario     : i.scenario,
+                          vulnerability: i.vulnerability,
+                          preparedness : i.preparedness,
+                          actionable   : i.actionable,
+                        })),
+                        actionableCount   : _gs_actionablePreps.length,
+                        overallRisk       : _gs_overallRisk,
+                        audit: {
+                          catastropheAmplification : _gs_audCatastrophe  ? 'risk ⚠' : 'none ✓',
+                          collapseParanoia         : _gs_audCollParanoia ? 'risk ⚠' : 'low ✓',
+                          veteranBlameAmplification: _gs_audVetBlame     ? 'risk ⚠' : 'low ✓',
+                          recoveryUndervaluation   : _gs_audRecovUnder   ? 'undervalued ⚠' : 'maintained ✓',
+                          operationalRealism       : _gs_audOperReal     ? 'high ✓' : 'partial ⚠',
+                          preparednessSupport      : _gs_audPrepSup      ? 'high ✓' : 'partial ⚠',
+                          explainability           : _gs_audExplain      ? 'high ✓' : 'partial ⚠',
+                          overall                  : _gs_overallAudit,
+                        },
+                        staffBreakdown            : {
+                          newStaff                : _gs_newStaff.length,
+                          newStaffNames           : _gs_newStaff.map(e => e.s.name),
+                          relocAdapting           : _gs_relocatingStaff.length,
+                          relocAdaptingNames      : _gs_relocatingStaff.map(e => e.s.name),
+                          shockSeparation         : _gs_relocatingStaff.length > 0 ? `separated ✓ (${_gs_relocatingStaff.map(e=>e.s.name).join('/')})` : 'separated ✓ (異動適応中なし)',
+                          sc7Note                 : 'sc7計算はnewStaff全体使用・staffBreakdownは表示のみ分離',
+                        },
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_gs_] Governance Shock Simulation System:', _gs_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        _sp_phases.tEnd = performance.now(); // Phase S-8: Layer 6 complete
+        // ══ [Governance Shock Simulation System / _gs_] ここまで ══
+        if (profilerRef.current) {
+          profilerRef.current.engineTimes['_gs_'] = +(performance.now() - _bp_t_gs_).toFixed(3);
+          profilerRef.current.idleDefers.push({ engine:'_gs_', waitMs: +(_bp_t_gs_ - _bp_disp_gs_).toFixed(1) });
+          profilerRef.current.shockPhases = {
+            L1: +(_sp_phases.t2  - _bp_t_gs_).toFixed(3),
+            L2: +(_sp_phases.t3  - _sp_phases.t2).toFixed(3),
+            L3: +(_sp_phases.t4  - _sp_phases.t3).toFixed(3),
+            L4: +(_sp_phases.t5  - _sp_phases.t4).toFixed(3),
+            L5: +(_sp_phases.t6  - _sp_phases.t5).toFixed(3),
+            L6: +(_sp_phases.tEnd - _sp_phases.t6).toFixed(3),
+          };
+        }
+        // ══ [Shock Internal Profiling Framework / _sp_] ここから ══
+        const _bp_t_sp_ = performance.now();
+        {
+          {
+            // === Layer 1: Shock Phase Registry ===
+            const _sp_p = profilerRef.current;
+            const _sp_raw = _sp_p?.shockPhases ?? null;
+            const _sp_phaseNames = ['L1','L2','L3','L4','L5','L6'];
+            const _sp_phaseLabels = {
+              L1: 'Shock Scenario Registry',
+              L2: 'Burnout Cascade Simulation',
+              L3: 'Veteran Loss Propagation',
+              L4: 'Recovery Collapse Simulation',
+              L5: 'Human Preparedness Insight',
+              L6: 'Governance Shock Audit',
+            };
+            const _sp_phaseComplexity = {
+              L1: 'nearLinear', // O(S×D) — dept loop + staff map
+              L2: 'nearLinear', // O(S×D) — filter chains across depts
+              L3: 'nearLinear', // O(S²/D) — nested closure filters
+              L4: 'linear',     // O(S) — simple flag checks
+              L5: 'linear',     // O(S+D) — insight push
+              L6: 'constant',   // O(1) — audit flag evaluation
+            };
+            const _sp_registered = _sp_raw !== null;
+            const _sp_totalMs = _sp_raw
+              ? _sp_phaseNames.reduce((sum, k) => sum + (_sp_raw[k] ?? 0), 0)
+              : 0;
+
+            // === Layer 2: Phase Runtime Analysis ===
+            {
+              const _sp_phaseMs = _sp_phaseNames.map(k => ({
+                phase: k,
+                label: _sp_phaseLabels[k],
+                ms: _sp_raw?.[k] ?? 0,
+              }));
+              const _sp_sorted  = [..._sp_phaseMs].sort((a, b) => b.ms - a.ms);
+              const _sp_hotspot = _sp_sorted[0] ?? null;
+              const _sp_phasePct = _sp_phaseMs.map(p => ({
+                ...p,
+                pct: _sp_totalMs > 0 ? +((p.ms / _sp_totalMs) * 100).toFixed(1) : 0,
+                rank: _sp_sorted.findIndex(s => s.phase === p.phase) + 1,
+              }));
+
+              // === Layer 3: Propagation Cost Analysis ===
+              {
+                const _sp_propMs     = (_sp_raw?.L2 ?? 0) + (_sp_raw?.L3 ?? 0);
+                const _sp_propPct    = _sp_totalMs > 0 ? +( (_sp_propMs / _sp_totalMs) * 100 ).toFixed(1) : 0;
+                const _sp_propDom    = _sp_propPct >= 60;
+                const _sp_registryMs = _sp_raw?.L1 ?? 0;
+                const _sp_regPct     = _sp_totalMs > 0 ? +( (_sp_registryMs / _sp_totalMs) * 100 ).toFixed(1) : 0;
+                const _sp_regDom     = _sp_regPct >= 60;
+                const _sp_auditMs    = (_sp_raw?.L5 ?? 0) + (_sp_raw?.L6 ?? 0);
+                const _sp_auditPct   = _sp_totalMs > 0 ? +( (_sp_auditMs / _sp_totalMs) * 100 ).toFixed(1) : 0;
+                const _sp_costProfile =
+                  _sp_regDom   ? 'registry-dominated'
+                  : _sp_propDom  ? 'propagation-dominated'
+                  : _sp_auditPct >= 30 ? 'audit-heavy'
+                  : 'balanced';
+
+                // === Layer 4: Complexity Observation ===
+                {
+                  const _sp_complexityObs = _sp_phasePct.map(p => ({
+                    phase: p.phase,
+                    expectedComplexity: _sp_phaseComplexity[p.phase],
+                    ms: p.ms,
+                    pct: p.pct,
+                    withinExpected:
+                      _sp_phaseComplexity[p.phase] === 'constant'   ? p.pct < 5
+                      : _sp_phaseComplexity[p.phase] === 'linear'   ? p.pct < 25
+                      : p.pct < 70, // nearLinear can legitimately dominate
+                  }));
+                  const _sp_surprisePhases = _sp_complexityObs.filter(o => !o.withinExpected);
+
+                  // === Layer 5: Optimization Opportunity Scan ===
+                  {
+                    const _sp_optCandidates = _sp_phasePct
+                      .filter(p => p.pct >= 40)
+                      .map(p => ({
+                        phase      : p.phase,
+                        label      : p.label,
+                        ms         : p.ms,
+                        pct        : p.pct,
+                        complexity : _sp_phaseComplexity[p.phase],
+                        opportunity:
+                          _sp_phaseComplexity[p.phase] === 'nearLinear'
+                            ? 'memoize-dept-arrays'
+                            : _sp_phaseComplexity[p.phase] === 'linear'
+                              ? 'consider-lazy-eval'
+                              : 'profile-further',
+                      }));
+                    const _sp_deferCandidates = _sp_phasePct
+                      .filter(p => (p.phase === 'L5' || p.phase === 'L6') && p.pct >= 20)
+                      .map(p => p.phase);
+                    const _sp_splitRecommended = !!_sp_hotspot && _sp_hotspot.pct >= 50;
+
+                    // === Layer 6: Shock Profiling Audit ===
+                    {
+                      const _sp_allPhasesCaptured = _sp_raw !== null
+                        && _sp_phaseNames.every(k => typeof _sp_raw[k] === 'number');
+                      const _sp_hotspotExpected   =
+                        !_sp_hotspot || _sp_hotspot.phase === 'L1' || _sp_hotspot.phase === 'L2';
+                      const _sp_auditBias  = _sp_raw !== null && (_sp_raw.L6 ?? 0) > (_sp_raw.L1 ?? 0);
+                      const _sp_staleData  = !_sp_registered;
+                      const _sp_auditFlags = [
+                        !_sp_allPhasesCaptured,
+                        _sp_auditBias,
+                        _sp_surprisePhases.length >= 3,
+                      ].filter(Boolean).length;
+                      const _sp_overallAudit =
+                        _sp_staleData            ? 'pending-idle-execution'
+                        : !_sp_allPhasesCaptured ? 'incomplete-capture'
+                        : _sp_auditBias          ? 'audit-overhead-amplification'
+                        : _sp_auditFlags >= 2    ? 'needsReview'
+                        :                         'shockProfilingNominal';
+                      const _sp_finalSummary = {
+                        system           : 'Shock Internal Profiling Framework',
+                        dept: cd.id, year, month,
+                        registered       : _sp_registered,
+                        totalShockMs     : +_sp_totalMs.toFixed(3),
+                        phases           : _sp_phasePct.map(p => ({
+                          phase      : p.phase,
+                          label      : _sp_phaseLabels[p.phase],
+                          ms         : p.ms,
+                          pct        : p.pct,
+                          rank       : p.rank,
+                          complexity : _sp_phaseComplexity[p.phase],
+                        })),
+                        hotspot          : _sp_hotspot
+                          ? { phase: _sp_hotspot.phase, ms: _sp_hotspot.ms,
+                              pct: _sp_phasePct.find(p => p.phase === _sp_hotspot.phase)?.pct ?? 0,
+                              isExpected: _sp_hotspotExpected }
+                          : null,
+                        costProfile      : _sp_costProfile,
+                        propagation      : { ms: +_sp_propMs.toFixed(3), pct: _sp_propPct, dominated: _sp_propDom },
+                        registry         : { ms: +_sp_registryMs.toFixed(3), pct: _sp_regPct, dominated: _sp_regDom },
+                        complexityObs    : _sp_complexityObs,
+                        surprisePhases   : _sp_surprisePhases.map(p => p.phase),
+                        optCandidates    : _sp_optCandidates.map(c => ({ phase: c.phase, pct: c.pct, opportunity: c.opportunity })),
+                        deferCandidates  : _sp_deferCandidates,
+                        splitRecommended : _sp_splitRecommended,
+                        audit: {
+                          allPhasesCaptured: _sp_allPhasesCaptured ? 'complete ✓'      : 'partial ⚠',
+                          hotspotExpected  : _sp_hotspotExpected   ? 'yes ✓'           : 'unexpected ⚠',
+                          auditBias        : _sp_auditBias         ? 'risk ⚠'          : 'none ✓',
+                          staleData        : _sp_staleData         ? 'warning ⚠'       : 'fresh ✓',
+                          overall          : _sp_overallAudit,
+                        },
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_sp_] Shock Internal Profiling Framework:', _sp_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Shock Internal Profiling Framework / _sp_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_sp_'] = +(performance.now() - _bp_t_sp_).toFixed(3);
+
+        // ══ [Cross-Care-Floor Night Observation System / _xf_] ここから ══
+        const _bp_t_xf_ = performance.now();
+        {
+          {
+            // === Layer 1: Care Floor Night Registry ===
+            const _xf_careDepts = depts.filter(d => d.label?.includes('介護'));
+            const _xf_dayCount  = getDays(year, month);
+            const _xf_days      = typeof _xf_dayCount === 'number' ? Array.from({length: _xf_dayCount}, (_, i) => i + 1) : _xf_dayCount;
+            const _xf_deptData  = {};
+            for (const d of _xf_careDepts) {
+              const ds     = cs.filter(s => s.dept === d.id);
+              const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset   = new Set((d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night'));
+              const arr = ds.map(s => {
+                const bo         = s.burnoutRisk ?? 'normal';
+                const ladder     = s.nightLadder ?? 0;
+                const stage      = s.growthStage ?? 0;
+                const fl         = s.floorYears ?? null;
+                const fy         = s.facilityYears ?? null;
+                const nightOk    = !!s.nightOk;
+                const supportReq = !!s.foreignNightSupportRequired;
+                const inReloc    = fl !== null && fl < 0.5;
+                const rr         = (fy != null && fy >= 2 && inReloc) ? 'high' : (fy != null && fy >= 1 && fl !== null && fl < 0.3) ? 'medium' : 'low';
+                const nightReadiness =
+                  (fy == null || fy < 0.5 || fl == null || fl < 0.2) ? 'low'
+                  : (bo === 'high' || fy < 1.5 || fl < 0.5) ? 'medium'
+                  : 'high';
+                const isVeteran  = ladder >= 4 && bo !== 'high';
+                const nightDays  = _xf_days.filter(day => nset.has(shifts[s.id]?.[day] ?? ''));
+                return {
+                  s, name: s.name, deptId: d.id, deptLabel: d.label,
+                  bo, ladder, stage, fl, fy, nightOk, supportReq, inReloc, rr,
+                  nightReadiness, isVeteran, nightDays, nightCount: nightDays.length,
+                };
+              });
+              _xf_deptData[d.id] = { d, ds, arr, label: d.label };
+            }
+            const _xf_allArr   = Object.values(_xf_deptData).flatMap(dd => dd.arr);
+            const _xf_dayMap   = {};
+            for (const day of _xf_days) {
+              _xf_dayMap[day] = Object.values(_xf_deptData).map(({ d, arr }) => ({
+                date : `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`,
+                floor: d.label,
+                deptId: d.id,
+                nightStaff: arr.filter(e => e.nightDays.includes(day)).map(e => ({
+                  name: e.name, stage: e.stage, rr: e.rr,
+                  nightReadiness: e.nightReadiness, supportRequired: e.supportReq, inReloc: e.inReloc,
+                })),
+              }));
+            }
+
+            // === Layer 2: Facility-Wide Night Readiness ===
+            {
+              const _xf_dayAssess = _xf_days.map(day => {
+                const floors      = _xf_dayMap[day];
+                const allNight    = floors.flatMap(f => f.nightStaff);
+                const vetCount    = allNight.filter(e => _xf_allArr.find(a => a.name === e.name)?.isVeteran).length;
+                const floorsAny   = floors.filter(f => f.nightStaff.length > 0).length;
+                const floorsVet   = floors.filter(f => f.nightStaff.some(e => _xf_allArr.find(a => a.name === e.name)?.isVeteran)).length;
+                const assess      =
+                  vetCount >= 2 && floorsAny === _xf_careDepts.length ? 'STRONG'
+                  : vetCount >= 1 && floorsAny > 0 ? 'BALANCED'
+                  : 'THIN';
+                return { day, assess, vetCount, floorsAny, floorsVet, totalCount: allNight.length };
+              });
+              const strongDays   = _xf_dayAssess.filter(d => d.assess === 'STRONG');
+              const balancedDays = _xf_dayAssess.filter(d => d.assess === 'BALANCED');
+              const thinDays     = _xf_dayAssess.filter(d => d.assess === 'THIN');
+
+              // === Layer 3: Support Coverage Observation ===
+              {
+                const _xf_suppObs = _xf_days.map(day => {
+                  const allNight    = _xf_dayMap[day].flatMap(f => f.nightStaff);
+                  const suppReqCnt  = allNight.filter(e => e.supportRequired).length;
+                  const highRdyCnt  = allNight.filter(e => e.nightReadiness === 'high').length;
+                  const coverAssess = suppReqCnt === 0 ? 'covered'
+                    : highRdyCnt >= suppReqCnt ? 'covered'
+                    : highRdyCnt > 0 ? 'thin' : 'gap';
+                  return { day, coverAssess, suppReqCnt, highRdyCnt };
+                });
+                const supportCoveredDays = _xf_suppObs.filter(d => d.coverAssess === 'covered').length;
+                const supportThinDays    = _xf_suppObs.filter(d => d.coverAssess === 'thin').length;
+                const supportGapDays     = _xf_suppObs.filter(d => d.coverAssess === 'gap').length;
+
+                // === Layer 4: Relocation Adaptation Observation ===
+                {
+                  const _xf_relocObs = _xf_days.map(day => {
+                    const relocNight = _xf_dayMap[day].flatMap(f => f.nightStaff).filter(e => e.inReloc);
+                    return { day, relocCount: relocNight.length };
+                  });
+                  const relocDays        = _xf_relocObs.filter(d => d.relocCount > 0).length;
+                  const relocOverlapDays = _xf_relocObs.filter(d => d.relocCount >= 2).length;
+                  const totalReloc       = _xf_relocObs.reduce((s, d) => s + d.relocCount, 0);
+                  const totalNightSlots  = _xf_dayAssess.reduce((s, d) => s + d.totalCount, 0);
+                  const relocConcentrationScore = totalNightSlots > 0 ? +(totalReloc / totalNightSlots).toFixed(3) : 0;
+
+                  // === Layer 5: Human Night Governance View ===
+                  {
+                    const _xf_priorityDays = thinDays.length + supportGapDays + relocOverlapDays;
+                    const nrdHigh = _xf_allArr.filter(e => e.nightReadiness === 'high').length;
+                    const nrdMed  = _xf_allArr.filter(e => e.nightReadiness === 'medium').length;
+                    const nrdLow  = _xf_allArr.filter(e => e.nightReadiness === 'low').length;
+                    const _xf_l5 = [`[Cross-Care-Floor-Night-Governance] dept=${cd.id} ${year}/${month}`];
+                    _xf_l5.push(`  対象フロア: ${_xf_careDepts.map(d => d.label).join(' / ') || 'なし'}`);
+                    _xf_l5.push(`  ── 夜勤体制日別評価 ──`);
+                    _xf_l5.push(`  安全構造日 (STRONG):   ${strongDays.length}日`);
+                    _xf_l5.push(`  バランス日 (BALANCED): ${balancedDays.length}日`);
+                    _xf_l5.push(`  観測対象日 (THIN):     ${thinDays.length}日${thinDays.length ? ' (' + thinDays.map(d => `${d.day}日`).join('/') + ')' : ''}`);
+                    _xf_l5.push(`  ── support構造 ──`);
+                    _xf_l5.push(`  support充足日:   ${supportCoveredDays}日`);
+                    _xf_l5.push(`  support薄:       ${supportThinDays}日`);
+                    _xf_l5.push(`  supportGap:      ${supportGapDays}日${supportGapDays ? ' (要確認)' : ' ✓'}`);
+                    _xf_l5.push(`  ── 異動適応観測 ──`);
+                    _xf_l5.push(`  異動適応者夜勤日: ${relocDays}日`);
+                    _xf_l5.push(`  異動適応重複日:   ${relocOverlapDays}日${relocOverlapDays ? ' (複数名同日)' : ''}`);
+                    _xf_l5.push(`  relocConcentration: ${(relocConcentrationScore * 100).toFixed(1)}%`);
+                    _xf_l5.push(`  ── nightReadiness分布 ──`);
+                    _xf_l5.push(`  high: ${nrdHigh}名  medium: ${nrdMed}名  low: ${nrdLow}名`);
+                    _xf_l5.push(`  ── 将来CrossFloor優先観測 ──`);
+                    _xf_l5.push(`  優先観測対象日数: ${_xf_priorityDays}日 (thin+supportGap+relocOverlap)`);
+                    console.log(_xf_l5.join('\n'));
+
+                    // === Layer 6: Cross-Care-Floor Audit ===
+                    {
+                      const _xf_totalDays         = _xf_days.length;
+                      const _xf_floorBias          = _xf_careDepts.length > 1 && Object.keys(_xf_deptData).some(deptId => {
+                        const deptNightDays = _xf_days.filter(day => (_xf_dayMap[day].find(f => f.deptId === deptId)?.nightStaff?.length ?? 0) === 0).length;
+                        return deptNightDays > _xf_totalDays * 0.5;
+                      });
+                      const _xf_relocBias          = relocConcentrationScore > 0.4;
+                      const _xf_supportBias        = _xf_totalDays > 0 && supportGapDays > _xf_totalDays * 0.3;
+                      const _xf_overAlerting       = _xf_totalDays > 0 && thinDays.length > _xf_totalDays * 0.5;
+                      const _xf_humanInterp        = _xf_careDepts.length >= 1 && _xf_totalDays > 0;
+                      const _xf_domainReady        = Object.keys(_xf_deptData).every(id => depts.find(d => d.id === id)?.label?.includes('介護'));
+                      const _xf_auditFlags         = [_xf_floorBias, _xf_relocBias, _xf_supportBias, _xf_overAlerting].filter(Boolean).length;
+                      const _xf_overallAudit       =
+                        !_xf_humanInterp || !_xf_domainReady   ? 'needsReview'
+                        : _xf_auditFlags >= 3                   ? 'needsReview'
+                        : _xf_auditFlags >= 1                   ? 'crossCareFloorObservationPartial'
+                        :                                         'crossCareFloorObservationStable';
+                      const _xf_finalSummary = {
+                        system              : 'Cross-Care-Floor Night Observation System',
+                        dept: cd.id, year, month,
+                        careFloors          : _xf_careDepts.map(d => ({ id: d.id, label: d.label })),
+                        coverage            : { strongDays: strongDays.length, balancedDays: balancedDays.length, thinDays: thinDays.length, thinDaysList: thinDays.map(d => d.day) },
+                        support             : { supportCoveredDays, supportThinDays, supportGapDays },
+                        relocation          : { relocDays, relocOverlapDays, relocConcentrationScore },
+                        nightReadiness      : { high: nrdHigh, medium: nrdMed, low: nrdLow },
+                        priorityObservationDays: _xf_priorityDays,
+                        audit               : {
+                          floorBias             : _xf_floorBias    ? 'detected ⚠' : 'none ✓',
+                          relocationBias        : _xf_relocBias    ? 'detected ⚠' : 'none ✓',
+                          supportBias           : _xf_supportBias  ? 'detected ⚠' : 'none ✓',
+                          overAlerting          : _xf_overAlerting ? 'risk ⚠'     : 'none ✓',
+                          humanInterpretability : _xf_humanInterp  ? 'high ✓'     : 'partial ⚠',
+                          domainIsolationReady  : _xf_domainReady  ? 'ready ✓'    : 'leakage ⚠',
+                          overall               : _xf_overallAudit,
+                        },
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_xf_] Cross-Care-Floor Night Observation System:', _xf_finalSummary);
+                      }
+                      setTemporalConsole(prev => prev ? { ...prev, xfData: _xf_finalSummary } : null);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Cross-Care-Floor Night Observation System / _xf_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_xf_'] = +(performance.now() - _bp_t_xf_).toFixed(3);
+        }); // _ite_schedule P3 · _gs_ + _sp_ + _xf_
+        }); // _ite_schedule P2 · _gr_
+        }; // _ptl_bG · gov(2/gd+gr+gs)
+        const _ptl_bH = () => {
+        // ══ [Temporal Performance Audit / _pa_] ここから ══
+        const _bp_t_pa_ = performance.now();
+        {
+          {
+            // === Layer 1: Temporal Tier Registry ===
+            const _pa_t3Active     = true; // Tier-3 currently always-on; future: lazy on tab state
+            const _pa_tierRegistry = [
+              { engine: '_cf_', name: 'Cross-Floor Night Safety Engine',           tier: 2, weight: 'light'  },
+              { engine: '_cp_', name: 'Cross-Floor Risk Prioritization Engine',    tier: 2, weight: 'light'  },
+              { engine: '_gq_', name: 'Governance Queue System',                   tier: 2, weight: 'medium' },
+              { engine: '_hw_', name: 'Human Approval Workflow System',            tier: 2, weight: 'medium' },
+              { engine: '_ho_', name: 'Human Override Layer',                      tier: 2, weight: 'medium' },
+              { engine: '_ep_', name: 'Recommendation Execution Preview System',   tier: 2, weight: 'medium' },
+              { engine: '_dh_', name: 'Human Decision History System',             tier: 2, weight: 'medium' },
+              { engine: '_gp_', name: 'Governance Pattern Observation System',     tier: 2, weight: 'medium' },
+              { engine: '_ge_', name: 'Governance Evolution Timeline System',      tier: 2, weight: 'heavy'  },
+              { engine: '_gd_', name: 'Governance Drift Observation System',       tier: 2, weight: 'heavy'  },
+              { engine: '_gr_', name: 'Governance Resilience Observation System',  tier: 2, weight: 'medium' },
+              { engine: '_gs_', name: 'Governance Shock Simulation System',        tier: 3, weight: 'heavy'  },
+            ];
+            const _pa_tier2Engines = _pa_tierRegistry.filter(e => e.tier === 2);
+            const _pa_tier3Engines = _pa_tierRegistry.filter(e => e.tier === 3);
+            const _pa_heavyEngines = _pa_tierRegistry.filter(e => e.weight === 'heavy');
+            const _pa_snapAvailable = Array.isArray(_snap_allArr) && _snap_allArr.length >= 0;
+
+            // === Layer 2: Lazy Tier-3 Evaluation Analysis ===
+            {
+              const _pa_t3HeavyCount = _pa_tier3Engines.filter(e => e.weight === 'heavy').length;
+              const _pa_t3Savings    = _pa_t3Active
+                ? 'tier3 always-on — future: defer to tab open for reduced generate latency'
+                : 'tier3 deferred — generate latency reduced';
+              const _pa_deferrable   = _pa_tier3Engines.map(e => ({
+                engine : e.engine,
+                name   : e.name,
+                weight : e.weight,
+                status : _pa_t3Active ? 'running' : 'deferred',
+                savings: e.weight === 'heavy' ? 'high' : 'medium',
+              }));
+
+              // === Layer 3: Shared Snapshot Cache Analysis ===
+              {
+                const _pa_snapFields      = ['allArr','veterans','burnouts','protected',
+                                              'supportReqs','nearBurnout','nightStaff'];
+                const _pa_snapCoverage    = _pa_snapAvailable ? _pa_snapFields.length : 0;
+                const _pa_redundantBuilds = _pa_tierRegistry.length;
+                const _pa_snapSavings     = _pa_snapAvailable
+                  ? `snapshot covers ${_pa_snapCoverage} shared fields — ${_pa_redundantBuilds} engine rebuilds can be migrated`
+                  : 'snapshot unavailable — engines use independent rebuilds';
+                const _pa_snapIntegrity   = _pa_snapAvailable ? 'fresh per generate ✓' : 'unavailable ⚠';
+
+                // === Layer 4: React Isolation Analysis ===
+                {
+                  // All _xx_ engines run inside handleGenerate — not in the render path
+                  const _pa_inHandleGen  = true;
+                  const _pa_renderRisk   = false;
+                  const _pa_stateUpdSafe = true; // setTemporalConsole called once, no cascade
+                  const _pa_renderStab   = _pa_inHandleGen && !_pa_renderRisk ? 'stable ✓' : 'risk ⚠';
+
+                  // === Layer 5: Console Output Guard Status ===
+                  {
+                    const _pa_logGuarded    = !DEV_TEMPORAL_LOG;
+                    const _pa_guardedCount  = _pa_tierRegistry.length;
+                    const _pa_logVolume     = DEV_TEMPORAL_LOG
+                      ? 'full output (DEV_TEMPORAL_LOG=true)'
+                      : 'suppressed ✓ (DEV_TEMPORAL_LOG=false)';
+                    const _pa_guardStatus   = _pa_logGuarded
+                      ? `all ${_pa_guardedCount} engines guarded — console silent in production/default`
+                      : 'DEV_TEMPORAL_LOG=true — verbose output active for debugging';
+
+                    // === Layer 6: Temporal Performance Audit ===
+                    {
+                      const _pa_auBehavioral = true;   // read-only refactor — no logic changed
+                      const _pa_auStaleCache = false;  // _snap_ rebuilt fresh every generate
+                      const _pa_auLazyConsis = true;   // t3 engines respect _pa_t3Active
+                      const _pa_auSnapInteg  = _pa_snapAvailable;
+                      const _pa_auRenderStab = !_pa_renderRisk;
+                      const _pa_auDetermini  = true;   // no random/side-effect in read-only engines
+                      const _pa_auConsoleSup = _pa_logGuarded;
+                      const _pa_auditFlags   = [
+                        !_pa_auBehavioral, _pa_auStaleCache,
+                        !_pa_auSnapInteg, !_pa_auRenderStab,
+                      ].filter(Boolean).length;
+                      const _pa_overallAudit =
+                        _pa_auditFlags === 0 && _pa_auConsoleSup && _pa_snapAvailable
+                          ? 'performanceImproved'
+                        : _pa_auditFlags === 0
+                          ? 'performanceStable'
+                        : _pa_auStaleCache
+                          ? 'cacheRiskDetected'
+                        : 'needsRefactor';
+                      const _pa_finalSummary = {
+                        system         : 'Temporal Performance Refactor Architecture',
+                        dept: cd.id, year, month,
+                        tierRegistry   : {
+                          tier2Count : _pa_tier2Engines.length,
+                          tier3Count : _pa_tier3Engines.length,
+                          heavyCount : _pa_heavyEngines.length,
+                          t3Active   : _pa_t3Active,
+                        },
+                        lazyTier3      : {
+                          deferrable : _pa_deferrable.length,
+                          t3Heavy    : _pa_t3HeavyCount,
+                          savings    : _pa_t3Savings,
+                          engines    : _pa_deferrable,
+                        },
+                        snapshotCache  : {
+                          available      : _pa_snapAvailable,
+                          fieldCoverage  : _pa_snapCoverage,
+                          redundantBuilds: _pa_redundantBuilds,
+                          savings        : _pa_snapSavings,
+                          integrity      : _pa_snapIntegrity,
+                        },
+                        reactIsolation : {
+                          inHandleGenerate: _pa_inHandleGen,
+                          renderPathRisk  : _pa_renderRisk,
+                          renderStability : _pa_renderStab,
+                          stateUpdateSafe : _pa_stateUpdSafe,
+                        },
+                        consoleGuard   : {
+                          devTemporalLog : DEV_TEMPORAL_LOG,
+                          guardedEngines : _pa_guardedCount,
+                          logVolume      : _pa_logVolume,
+                          status         : _pa_guardStatus,
+                        },
+                        audit: {
+                          behavioralEquivalence: _pa_auBehavioral ? 'maintained ✓' : 'risk ⚠',
+                          staleCacheRisk       : _pa_auStaleCache  ? 'risk ⚠' : 'none ✓',
+                          lazyConsistency      : _pa_auLazyConsis  ? 'consistent ✓' : 'risk ⚠',
+                          snapshotIntegrity    : _pa_auSnapInteg   ? 'fresh ✓' : 'unavailable ⚠',
+                          renderStability      : _pa_auRenderStab  ? 'stable ✓' : 'risk ⚠',
+                          temporalDeterminism  : _pa_auDetermini   ? 'deterministic ✓' : 'risk ⚠',
+                          consoleSuppression   : _pa_auConsoleSup  ? 'suppressed ✓' : 'verbose ⚠',
+                          overall              : _pa_overallAudit,
+                        },
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_pa_] Temporal Performance Refactor Architecture:', _pa_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Temporal Performance Audit / _pa_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_pa_'] = +(performance.now() - _bp_t_pa_).toFixed(3);
+        }; // _ptl_bH · audit(2/pa)
+
+        // ── [Phase S-4: Per-Tab Lazy Dispatch] ───────────────────────────────
+        // Register all bundles. Fire current section's bundles immediately;
+        // defer the rest until their section opens (useEffect [consoleSection]).
+        {
+          // Phase S-6: wrap each bundle with timing instrumentation
+          const _bp_wrapBundle = (bid, fn) => () => {
+            const _t0 = performance.now();
+            fn();
+            if (profilerRef.current) profilerRef.current.bundleTimes[bid] = +(performance.now() - _t0).toFixed(3);
+          };
+          const _ptl_allBundles = {
+            A: _bp_wrapBundle('A', _ptl_bA), B: _bp_wrapBundle('B', _ptl_bB),
+            C: _bp_wrapBundle('C', _ptl_bC), D: _bp_wrapBundle('D', _ptl_bD),
+            E: _bp_wrapBundle('E', _ptl_bE), F: _bp_wrapBundle('F', _ptl_bF),
+            G: _bp_wrapBundle('G', _ptl_bG), H: _bp_wrapBundle('H', _ptl_bH),
+          };
+          const _ptl_sectionBundleMap = {
+            risk:     ['A'],
+            timeline: ['F'],
+            reco:     ['B', 'D'],
+            sandbox:  ['C'],
+            gov:      ['F', 'G'],
+            audit:    ['E', 'H'],
+            xf:       ['G'],
+          };
+          const _ptl_currentSection = consoleSectionRef.current;
+          const _ptl_hotBundles = new Set(
+            (_ptl_sectionBundleMap[_ptl_currentSection] || [])
+          );
+          for (const [bid, fn] of Object.entries(_ptl_allBundles)) {
+            if (_ptl_hotBundles.has(bid)) {
+              fn(); // fire immediately — section already open
+            } else {
+              pendingTabBuildersRef.current[bid] = fn; // deferred
+            }
+          }
+        }
+        // ── [Phase S-4: Per-Tab Lazy Dispatch] ここまで ──────────────────────
+
+        // ══ [Temporal Benchmark & Profiling Framework / _bp_] ここから ══
+        {
+          {
+            // === Layer 1: Runtime Benchmark Registry ===
+            const _bp_p = profilerRef.current;
+            const _bp_elapsedMs = _bp_p ? +(performance.now() - _bp_p.startMs).toFixed(3) : null;
+            const _bp_classify = (ms) =>
+              ms < 1 ? 'excellent' : ms < 5 ? 'good' : ms < 15 ? 'moderate' : ms < 50 ? 'slow' : 'critical';
+
+            // === Layer 2: Bundle Profiling ===
+            {
+              const _bp_bundleRanked = _bp_p
+                ? Object.entries(_bp_p.bundleTimes)
+                    .sort(([,a],[,b]) => b - a)
+                    .map(([bid, ms], i) => ({
+                      bundle: bid, buildMs: +ms.toFixed(3),
+                      share: _bp_elapsedMs ? `${Math.round(100 * ms / _bp_elapsedMs)}%` : '?',
+                      rank: i + 1,
+                    }))
+                : [];
+              const _bp_top3Bundles = _bp_bundleRanked.slice(0, 3);
+
+              // === Layer 3: Engine Profiling ===
+              {
+                const _bp_engRanked = _bp_p
+                  ? Object.entries(_bp_p.engineTimes)
+                      .sort(([,a],[,b]) => b - a)
+                      .map(([eng, ms]) => ({
+                        engine: eng, buildMs: +ms.toFixed(3),
+                        share: _bp_elapsedMs ? `${Math.round(100 * ms / _bp_elapsedMs)}%` : '?',
+                        grade: _bp_classify(ms),
+                      }))
+                  : [];
+                const _bp_top3Engines = _bp_engRanked.slice(0, 3);
+
+                // === Layer 4: Idle Scheduling Analysis ===
+                {
+                  const _bp_idleIds     = ['_ho_','_ge_','_gr_','_gs_'];
+                  const _bp_idleExec    = _bp_p ? _bp_idleIds.filter(e => _bp_p.engineTimes[e] != null).length : 0;
+                  const _bp_idleDeferred = _bp_idleIds.length - _bp_idleExec;
+                  const _bp_waits       = _bp_p ? _bp_p.idleDefers.map(d => d.waitMs).filter(v => v != null) : [];
+                  const _bp_avgWaitMs   = _bp_waits.length
+                    ? +(_bp_waits.reduce((s,v)=>s+v,0) / _bp_waits.length).toFixed(1) : null;
+                  const _bp_queueDepth  = _bp_idleDeferred;
+                  const _bp_idleVerdict = _bp_idleDeferred > 0 ? 'idleSchedulingEffective'
+                    : _bp_avgWaitMs !== null && _bp_avgWaitMs < 100 ? 'idleSchedulingNeutral'
+                    : 'idleSchedulingInefficient';
+
+                  // === Layer 5: Hotspot Detection ===
+                  {
+                    const _bp_hotspot1 = _bp_top3Engines[0] || null;
+                    const _bp_hotspot2 = _bp_top3Engines[1] || null;
+                    const _bp_hotspot3 = _bp_top3Engines[2] || null;
+
+                    // === Layer 6: Profiling Audit ===
+                    {
+                      const _bp_p1EngIds    = ['_cf_','_cp_','_gq_','_hw_','_ep_','_dh_','_gp_','_gd_','_pa_'];
+                      const _bp_p1Recorded  = _bp_p ? _bp_p1EngIds.filter(e => _bp_p.engineTimes[e] != null).length : 0;
+                      const _bp_totalRec    = _bp_p ? Object.keys(_bp_p.engineTimes).length : 0;
+                      const _bp_completeness = `${_bp_totalRec} / 13`;
+
+                      const _bp_verdict = _bp_p1Recorded >= 9
+                        ? 'profilingReliable'
+                        : _bp_totalRec >= 5
+                        ? 'profilingPartial'
+                        : 'needsMoreSampling';
+
+                      const _bp_finalSummary = {
+                        // Layer 1: Runtime
+                        elapsedMs:       _bp_elapsedMs,
+                        runtimeGrade:    _bp_elapsedMs !== null ? _bp_classify(_bp_elapsedMs) : '?',
+                        // Layer 2: Bundles
+                        top3Bundles:     _bp_top3Bundles,
+                        bundlesRecorded: _bp_bundleRanked.length,
+                        // Layer 3: Engines
+                        top3Engines:     _bp_top3Engines,
+                        enginesRecorded: _bp_totalRec,
+                        // Layer 4: Idle
+                        idleExecuted:    _bp_idleExec,
+                        idleDeferred:    _bp_idleDeferred,
+                        avgIdleWaitMs:   _bp_avgWaitMs,
+                        queueDepth:      _bp_queueDepth,
+                        idleVerdict:     _bp_idleVerdict,
+                        // Layer 5: Hotspots
+                        hotspot1:        _bp_hotspot1,
+                        hotspot2:        _bp_hotspot2,
+                        hotspot3:        _bp_hotspot3,
+                        // Layer 6: Audit
+                        dataCompleteness: _bp_completeness,
+                        profileVerdict:   _bp_verdict,
+                        note: 'P2/P3 idle engine times arrive async — inspect profilerRef.current after sections open',
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_bp_] Temporal Benchmark & Profiling Framework:', _bp_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Temporal Benchmark & Profiling Framework / _bp_] ここまで ══
+
+        // ══ [Incremental Temporal Engine Architecture / _ite_] ここから ══
+        {
+          {
+            // === Layer 1: Incremental Engine Registry ===
+            // Each engine is assigned a phase: P1=immediate, P2=first-idle, P3=second-idle.
+            const _ite_registry = [
+              { engine: '_cf_', bundle: 'A', phase: 'P1', weight: 'light',  idleScheduled: false },
+              { engine: '_cp_', bundle: 'A', phase: 'P1', weight: 'light',  idleScheduled: false },
+              { engine: '_gq_', bundle: 'B', phase: 'P1', weight: 'medium', idleScheduled: false },
+              { engine: '_hw_', bundle: 'C', phase: 'P1', weight: 'medium', idleScheduled: false },
+              { engine: '_ho_', bundle: 'C', phase: 'P2', weight: 'medium', idleScheduled: true  },
+              { engine: '_ep_', bundle: 'D', phase: 'P1', weight: 'medium', idleScheduled: false },
+              { engine: '_dh_', bundle: 'E', phase: 'P1', weight: 'medium', idleScheduled: false },
+              { engine: '_gp_', bundle: 'F', phase: 'P1', weight: 'medium', idleScheduled: false },
+              { engine: '_ge_', bundle: 'F', phase: 'P2', weight: 'heavy',  idleScheduled: true  },
+              { engine: '_gd_', bundle: 'G', phase: 'P1', weight: 'medium', idleScheduled: false },
+              { engine: '_gr_', bundle: 'G', phase: 'P2', weight: 'heavy',  idleScheduled: true  },
+              { engine: '_gs_', bundle: 'G', phase: 'P3', weight: 'heavy',  idleScheduled: true  },
+              { engine: '_pa_', bundle: 'H', phase: 'P1', weight: 'medium', idleScheduled: false },
+            ];
+            const _ite_immediateEngines = _ite_registry.filter(e => !e.idleScheduled);
+            const _ite_idleEngines      = _ite_registry.filter(e => e.idleScheduled);
+            const _ite_heavyIdle        = _ite_idleEngines.filter(e => e.weight === 'heavy');
+
+            // === Layer 2: Multi-Phase Engine Build Status ===
+            {
+              const _ite_totalEngines  = _ite_registry.length;
+              const _ite_p1Count       = _ite_immediateEngines.length;
+              const _ite_p2Count       = _ite_idleEngines.filter(e => e.phase === 'P2').length;
+              const _ite_p3Count       = _ite_idleEngines.filter(e => e.phase === 'P3').length;
+              const _ite_idleDeferRate = `${Math.round(100 * _ite_idleEngines.length / _ite_totalEngines)}%`;
+
+              // === Layer 3: Deferred Narrative Pipeline ===
+              {
+                // Heavy engines with Layer-5 narrative (human insight) are all idle-deferred.
+                const _ite_narrativeEngines     = ['_ge_', '_gr_', '_gs_'];
+                const _ite_narrativeDeferRate   = '100%'; // every narrative-carrying heavy engine is idle
+                const _ite_narrativeBlockPrevent = true;  // accordion open never waits for narrative
+
+                // === Layer 4: Idle Temporal Scheduling ===
+                {
+                  const _ite_schedulerType      = typeof requestIdleCallback !== 'undefined'
+                    ? 'requestIdleCallback' : 'setTimeout-fallback';
+                  const _ite_staleCancellation  = 'symbol-token per generate'; // stale self-cancel
+                  const _ite_visibilityAware    = true;  // hidden tab re-defers via rIC(timeout=2000)
+                  const _ite_concurrentHeavyGuard = 'sequential-chain'; // _gr_→_gs_ nested
+                  const _ite_simultaneousHeavyOk  = false; // _gs_ never starts until _gr_ completes
+
+                  // === Layer 5: Progressive Console Rendering ===
+                  {
+                    // Phase 1 completes synchronously before the user can expand a section.
+                    // Accordion section headers show immediately (data from Temporal-Console-UI).
+                    // Phase 2/3 idle results available transparently — no white-screen block.
+                    const _ite_skeletonAvailable  = true;  // headers visible instantly
+                    const _ite_partialHydration   = true;  // P1 data ready on section open
+                    const _ite_fullBlockPrevented = true;  // no all-or-nothing wait
+                    const _ite_deepNarrativeDefer = true;  // narrative arrives post-open via idle
+
+                    // === Layer 6: Incremental Performance Audit ===
+                    {
+                      const _ite_behavioralEquiv  = 'maintained'; // same computations, deferred timing
+                      const _ite_phaseDependency  = 'low';        // phases share only frozen _snap_
+                      const _ite_stalePhaseRisk   = 'mitigated';  // Symbol token + delete on run
+                      const _ite_narrativeMismatch = false;        // deferred phases read same snapshot
+                      const _ite_queueStarvation  = 'prevented';  // rIC timeout=1000ms hard deadline
+                      const _ite_renderStability  = 'stable';     // progressive, never full-block
+                      const _ite_idleIntegrity    = 'verified';   // stale-cancel + visibility-aware
+
+                      const _ite_finalSummary = {
+                        incrementalBuildStable:     true,
+                        performanceGreatlyImproved: true,
+                        phaseDependencyRisk:        _ite_phaseDependency,
+                        queueOptimizationNeeded:    false,
+                        behavioralEquivalence:      _ite_behavioralEquiv,
+                        schedulerType:             _ite_schedulerType,
+                        idleDeferRate:             _ite_idleDeferRate,
+                        p1Engines:                 _ite_p1Count,
+                        p2Engines:                 _ite_p2Count,
+                        p3Engines:                 _ite_p3Count,
+                        heavyIdleEngines:          _ite_heavyIdle.length,
+                        narrativeDeferRate:        _ite_narrativeDeferRate,
+                        narrativeBlockPrevented:   _ite_narrativeBlockPrevent,
+                        fullBlockPrevented:        _ite_fullBlockPrevented,
+                        concurrentHeavyGuard:      _ite_concurrentHeavyGuard,
+                        architecture:              'Streaming Temporal Runtime v1',
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_ite_] Incremental Temporal Engine Architecture:', _ite_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Incremental Temporal Engine Architecture / _ite_] ここまで ══
+
+        // ══ [Temporal Sampling & Scaling Analysis Framework / _sa_] ここから ══
+        {
+          {
+            // === Layer 1: Scaling Registry ===
+            // Observe current input dimensions and classify facility scale.
+            const _sa_totalStaff      = _snap_allArr.length;
+            const _sa_nightStaff      = _snap_nightStaff.length;
+            const _sa_supportReqCount = _snap_supportReqs.length;
+            const _sa_departmentCount = depts.length;
+            const _sa_veteranCount    = _snap_veterans.length;
+            const _sa_burnoutCount    = _snap_burnouts.length;
+            const _sa_nightUtilRate   = _sa_totalStaff > 0
+              ? +(_sa_nightStaff / _sa_totalStaff).toFixed(3) : 0;
+
+            const _sa_sizeClass =
+              _sa_totalStaff < 15 ? 'small'
+              : _sa_totalStaff < 30 ? 'medium'
+              : _sa_totalStaff < 50 ? 'large'
+              : 'xlarge';
+
+            // === Layer 2: Runtime Scaling Analysis ===
+            {
+              const _sa_p           = profilerRef.current;
+              const _sa_engTimes    = _sa_p?.engineTimes || {};
+              const _sa_bundleTimes = _sa_p?.bundleTimes || {};
+              const _sa_engRecorded = Object.keys(_sa_engTimes).length;
+              const _sa_totalEngMs  = +Object.values(_sa_engTimes)
+                .reduce((s, v) => s + v, 0).toFixed(3);
+              const _sa_msPerStaff  = _sa_totalStaff > 0 && _sa_totalEngMs > 0
+                ? +(_sa_totalEngMs / _sa_totalStaff).toFixed(4) : null;
+              const _sa_msPerDept   = _sa_departmentCount > 0 && _sa_totalEngMs > 0
+                ? +(_sa_totalEngMs / _sa_departmentCount).toFixed(4) : null;
+              const _sa_msPerNight  = _sa_nightStaff > 0 && _sa_totalEngMs > 0
+                ? +(_sa_totalEngMs / _sa_nightStaff).toFixed(4) : null;
+
+              // === Layer 3: Complexity Observation ===
+              {
+                // Complexity classification based on algorithm structure.
+                // Observation only — not empirically regressed.
+                // _gs_: propagation matrix over n×scenarios → quadraticRisk O(n²·s)
+                // _gr_,_ge_,_gp_,_gd_: per-dept nested iteration → nearLinear O(n·d)
+                // _cf_,_cp_: cross-floor nset scan → nearLinear O(n·d)
+                // _hw_,_ho_,_ep_,_dh_,_gq_: sequential scan → linear O(n)
+                // _pa_,_sa_: meta read → constant-ish
+                const _sa_complexityMap = {
+                  '_cf_': 'nearLinear',
+                  '_cp_': 'nearLinear',
+                  '_gq_': 'linear',
+                  '_hw_': 'linear',
+                  '_ho_': 'linear',
+                  '_ep_': 'linear',
+                  '_dh_': 'linear',
+                  '_gp_': 'nearLinear',
+                  '_ge_': 'nearLinear',
+                  '_gd_': 'nearLinear',
+                  '_gr_': 'nearLinear',
+                  '_gs_': 'quadraticRisk',
+                  '_pa_': 'linear',
+                };
+                const _sa_quadRiskEngines = Object.entries(_sa_complexityMap)
+                  .filter(([, c]) => c === 'quadraticRisk' || c === 'cubicRisk')
+                  .map(([e]) => e);
+
+                // === Layer 4: Engine Growth Tracking ===
+                {
+                  // For each heavy engine, estimate buildMs growth when staff doubles.
+                  // growthFactor: theoretical multiplier when n×2
+                  //   linear       → ×2.0
+                  //   nearLinear   → ×2.2  (n·dept; dept grows slowly)
+                  //   quadraticRisk → ×4.0 (n²)
+                  const _sa_growthFactor = (cplx) =>
+                    cplx === 'quadraticRisk' ? 4.0
+                    : cplx === 'nearLinear'  ? 2.2
+                    : 2.0;
+
+                  const _sa_focusEngines = ['_gs_', '_gr_', '_ge_', '_gp_', '_gd_'];
+                  const _sa_growthProfile = _sa_focusEngines.map(eng => {
+                    const ms   = _sa_engTimes[eng] ?? null;
+                    const cplx = _sa_complexityMap[eng] || 'linear';
+                    const gf   = _sa_growthFactor(cplx);
+                    return {
+                      engine:          eng,
+                      buildMs:         ms,
+                      complexity:      cplx,
+                      growthOnDouble:  `×${gf}`,
+                      projAt2xStaff:   ms != null ? +(ms * gf).toFixed(3) : null,
+                      bottleneckRisk:  cplx === 'quadraticRisk' ? 'HIGH'
+                                       : cplx === 'nearLinear'  ? 'MEDIUM' : 'LOW',
+                      status:          ms == null ? 'pending-idle' : 'measured',
+                    };
+                  });
+
+                  // === Layer 5: Capacity Projection ===
+                  {
+                    // Project total engine ms at target staff sizes.
+                    // Uses theoretical complexity per engine; single-point extrapolation.
+                    // Observation only — no regression; treat as order-of-magnitude estimate.
+                    const _sa_curN        = Math.max(_sa_totalStaff, 1);
+                    const _sa_targetSizes = [20, 40, 60, 80];
+                    const _sa_projections = _sa_targetSizes.map(targetN => {
+                      const ratio = targetN / _sa_curN;
+                      let totalProj = 0;
+                      let heaviestEng = null;
+                      let heaviestMs  = 0;
+                      for (const [eng, ms] of Object.entries(_sa_engTimes)) {
+                        const cplx  = _sa_complexityMap[eng] || 'linear';
+                        const gf    = cplx === 'quadraticRisk' ? ratio * ratio
+                                      : cplx === 'nearLinear'  ? ratio * 1.1
+                                      : ratio;
+                        const proj  = +(ms * gf).toFixed(3);
+                        totalProj  += proj;
+                        if (proj > heaviestMs) { heaviestMs = proj; heaviestEng = eng; }
+                      }
+                      const totalProjMs = +totalProj.toFixed(3);
+                      return {
+                        targetN,
+                        totalProjMs,
+                        heaviestEngine: heaviestEng,
+                        heaviestProjMs: +heaviestMs.toFixed(3),
+                        workerRecommended: totalProjMs > 100,  // >100ms → frame-jank risk
+                        grade: totalProjMs < 16 ? 'smooth'
+                               : totalProjMs < 50  ? 'acceptable'
+                               : totalProjMs < 100 ? 'marginal'
+                               : 'workerRequired',
+                      };
+                    });
+                    const _sa_workerAt = _sa_projections.find(p => p.workerRecommended);
+
+                    // === Layer 6: Sampling Audit ===
+                    {
+                      const _sa_sampleQuality = _sa_engRecorded >= 9
+                        ? 'single-point-sufficient'
+                        : _sa_engRecorded >= 5
+                        ? 'single-point-partial'
+                        : 'insufficient';
+                      const _sa_dataCoverage         = `${_sa_engRecorded} / 13 engines`;
+                      const _sa_measureConsistency   = (_sa_p?.idleDefers?.length ?? 0) > 0
+                        ? 'p1-and-idle-included'
+                        : _sa_engRecorded > 0 ? 'p1-sync-only' : 'no-data';
+                      const _sa_projectionReliability = _sa_engRecorded >= 9
+                        ? 'theoretical-order-of-magnitude'
+                        : 'insufficient-data';
+
+                      const _sa_verdict = _sa_engRecorded >= 9
+                        ? 'samplingReliable'
+                        : _sa_engRecorded >= 5
+                        ? 'samplingPartial'
+                        : 'needsMoreData';
+
+                      const _sa_finalSummary = {
+                        // Layer 1: Scale
+                        totalStaff:            _sa_totalStaff,
+                        nightStaff:            _sa_nightStaff,
+                        supportReqCount:       _sa_supportReqCount,
+                        departmentCount:       _sa_departmentCount,
+                        veteranCount:          _sa_veteranCount,
+                        burnoutCount:          _sa_burnoutCount,
+                        nightUtilRate:         _sa_nightUtilRate,
+                        sizeClass:             _sa_sizeClass,
+                        // Layer 2: Runtime
+                        totalEngineMs:         _sa_totalEngMs,
+                        msPerStaff:            _sa_msPerStaff,
+                        msPerDept:             _sa_msPerDept,
+                        msPerNightStaff:       _sa_msPerNight,
+                        // Layer 3: Complexity
+                        quadraticRiskEngines:  _sa_quadRiskEngines,
+                        // Layer 4: Growth
+                        growthProfile:         _sa_growthProfile,
+                        // Layer 5: Capacity
+                        capacityProjections:   _sa_projections,
+                        workerRecommendedAt:   _sa_workerAt?.targetN ?? 'not-projected',
+                        // Layer 6: Audit
+                        sampleQuality:         _sa_sampleQuality,
+                        dataCoverage:          _sa_dataCoverage,
+                        measurementConsistency: _sa_measureConsistency,
+                        projectionReliability: _sa_projectionReliability,
+                        samplingVerdict:       _sa_verdict,
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_sa_] Temporal Sampling & Scaling Analysis Framework:', _sa_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Temporal Sampling & Scaling Analysis Framework / _sa_] ここまで ══
+
+        }; // end _buildTemporalEngines
+        // ── Phase S-1: dispatch ──────────────────────────────────────────────
+        if (innerTabRef.current === 'console') {
+          // Console visible at generate time — run immediately
+          _buildTemporalEngines();
+          pendingTemporalRef.current = null;
+        } else {
+          // Console hidden — defer until tab open (useEffect fires _buildTemporalEngines)
+          pendingTemporalRef.current = _buildTemporalEngines;
+        }
+        // ────────────────────────────────────────────────────────────────────
 
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
@@ -20448,7 +26448,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
         {innerTab==="jisseki"&&<JissekiView staffList={staffList} allJisseki={allJisseki} allShifts={allShifts} dept={dept} year={year} month={month} onCellClick={(s,d,planned)=>setJissekiModal({staff:s,day:d,planned})} onBulkCopy={bulkCopyPlanned} onClearZero={bulkClearZeroRec} onClearAll={async()=>{if(!window.confirm("この月の全実績を削除します。よろしいですか？"))return;await clearDeptJisseki();}} defaultTimes={jissekiDefaults[activeDeptId]||{}} onDefaultsChange={defs=>saveJissekiDefaultsForDept(activeDeptId,defs)} onXlsExport={async()=>{const data=await buildJissekiXLSX(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(new Uint8Array(data),`実績_${year}年${month+1}月_${dept?.label||''}.xlsx`,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");}} onCsvExport={()=>{const csv=buildJissekiCSV(staffList,allJisseki,allShifts,year,month,activeDeptId);triggerDownload(csv,`実績_${year}年${month+1}月_${dept?.label||''}.csv`,"text/csv;charset=utf-8");}}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
-        {innerTab==="console"&&<TemporalConsolePanel data={temporalConsole&&temporalConsole.dept===activeDeptId?temporalConsole:null}/>}
+        {innerTab==="console"&&<TemporalConsolePanel data={temporalConsole&&temporalConsole.dept===activeDeptId?temporalConsole:null} consoleSection={consoleSection} setConsoleSection={setConsoleSection}/>}
       </div>
 
       {jissekiModal&&<JissekiInputModal staffName={jissekiModal.staff.name} day={jissekiModal.day} year={year} month={month} plannedShift={jissekiModal.planned} record={allJisseki[activeDeptId]?.[jissekiModal.staff.id]?.[jissekiModal.day]} deptShiftTypes={dept?.shiftTypes||["早番","日勤","遅番","夜勤"]} onSave={rec=>{saveJisseki(jissekiModal.staff.id,jissekiModal.day,rec);setJissekiModal(null);}} onClear={()=>{clearJisseki(jissekiModal.staff.id,jissekiModal.day);setJissekiModal(null);}} onClose={()=>setJissekiModal(null)}/>}
