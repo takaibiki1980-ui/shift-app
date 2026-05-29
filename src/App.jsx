@@ -6231,6 +6231,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const pendingTabBuildersRef = useRef({});        // per-section deferred engine bundles
   // ── Phase S-5: Incremental Temporal Engine Architecture ──────────────────
   const iteSchedulerRef = useRef(null);           // current-generation token — stale-cancel guard
+  // ── Phase S-6: Temporal Benchmark & Profiling Framework ──────────────────
+  const profilerRef = useRef(null);               // per-generate profiling accumulator
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -20384,8 +20386,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         };
         // ── [Phase S-5: _ite_ Scheduler] ここまで ────────────────────────────
 
+        // ── [Phase S-6: Temporal Benchmark & Profiling / _bp_] ────────────
+        // Fresh per-generate accumulator. Engines write elapsed times here as
+        // they execute (P1 synchronously; P2/P3 from idle callbacks).
+        const _bp_startMs = performance.now();
+        profilerRef.current = {
+          startMs:        _bp_startMs,
+          engineTimes:    {},   // engine key → build ms (populated on exec)
+          bundleTimes:    {},   // bundle key → sync ms (populated via wrapper)
+          idleDispatches: {},   // engine key → dispatch relative ms
+          idleDefers:     [],   // [{engine, waitMs}] accumulated by idle callbacks
+        };
+        // ── [Phase S-6: _bp_ init] ここまで ─────────────────────────────────
+
         const _ptl_bA = () => {
         // ══ [Cross-Floor Night Safety Engine / _cf_] ここから ══
+        const _bp_t_cf_ = performance.now();
         {
           // ── Layer 1: Facility-Wide Night Snapshot ──────────────────────────────
           {
@@ -20563,8 +20579,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Cross-Floor Night Safety Engine / _cf_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_cf_'] = +(performance.now() - _bp_t_cf_).toFixed(3);
 
         // ══ [Cross-Floor Risk Prioritization Engine / _cp_] ここから ══
+        const _bp_t_cp_ = performance.now();
         {
           // ── Layer 1: Cross-Floor Risk Classifier ──────────────────────────────
           {
@@ -20857,9 +20875,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Cross-Floor Risk Prioritization Engine / _cp_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_cp_'] = +(performance.now() - _bp_t_cp_).toFixed(3);
         }; // _ptl_bA · risk
         const _ptl_bB = () => {
         // ══ [Governance Queue System / _gq_] ここから ══
+        const _bp_t_gq_ = performance.now();
         {
           // ── Layer 1: Governance Review Queue (shared data + P1/P2/P3) ─────────
           {
@@ -21276,9 +21296,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Queue System / _gq_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_gq_'] = +(performance.now() - _bp_t_gq_).toFixed(3);
         }; // _ptl_bB · reco(1/gq)
         const _ptl_bC = () => {
         // ══ [Human Approval Workflow System / _hw_] ここから ══
+        const _bp_t_hw_ = performance.now();
         {
           // ── Layer 1: Approval Decision Queue (shared data + decision classes) ──
           {
@@ -21679,9 +21701,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Human Approval Workflow System / _hw_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_hw_'] = +(performance.now() - _bp_t_hw_).toFixed(3);
         // ── Phase S-5 P2 (idle): _ho_ — Human Override Layer ────────────────
+        const _bp_disp_ho_ = performance.now();
+        if (profilerRef.current) profilerRef.current.idleDispatches['_ho_'] = +(_bp_disp_ho_ - _bp_startMs).toFixed(3);
         _ite_schedule(() => {
         // ══ [Human Override Layer / _ho_] ここから ══
+        const _bp_t_ho_ = performance.now();
         {
           // ── Layer 1: Human Override Registry (shared data + override candidates) ─
           {
@@ -22109,10 +22135,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Human Override Layer / _ho_] ここまで ══
+        if (profilerRef.current) {
+          profilerRef.current.engineTimes['_ho_'] = +(performance.now() - _bp_t_ho_).toFixed(3);
+          profilerRef.current.idleDefers.push({ engine:'_ho_', waitMs: +(_bp_t_ho_ - _bp_disp_ho_).toFixed(1) });
+        }
         }); // _ite_schedule P2 · _ho_
         }; // _ptl_bC · sandbox
         const _ptl_bD = () => {
         // ══ [Recommendation Execution Preview System / _ep_] ここから ══
+        const _bp_t_ep_ = performance.now();
         {
           // ── Layer 1: Recommendation Execution Preview (shared data + proposals) ─
           {
@@ -22569,9 +22600,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Recommendation Execution Preview System / _ep_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_ep_'] = +(performance.now() - _bp_t_ep_).toFixed(3);
         }; // _ptl_bD · reco(2/ep)
         const _ptl_bE = () => {
         // ══ [Human Decision History System / _dh_] ここから ══
+        const _bp_t_dh_ = performance.now();
         {
           // ── Layer 1: Human Decision History Registry (shared data + decision log) ─
           {
@@ -23045,9 +23078,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Human Decision History System / _dh_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_dh_'] = +(performance.now() - _bp_t_dh_).toFixed(3);
         }; // _ptl_bE · audit(1/dh)
         const _ptl_bF = () => {
         // ══ [Governance Pattern Observation System / _gp_] ここから ══
+        const _bp_t_gp_ = performance.now();
         {
           // ── Layer 1: Governance Pattern Registry (shared data + tendency) ────────
           {
@@ -23464,9 +23499,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Pattern Observation System / _gp_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_gp_'] = +(performance.now() - _bp_t_gp_).toFixed(3);
         // ── Phase S-5 P2 (idle): _ge_ — Evolution Timeline (heavy: multi-horizon) ─
+        const _bp_disp_ge_ = performance.now();
+        if (profilerRef.current) profilerRef.current.idleDispatches['_ge_'] = +(_bp_disp_ge_ - _bp_startMs).toFixed(3);
         _ite_schedule(() => {
         // ══ [Governance Evolution Timeline System / _ge_] ここから ══
+        const _bp_t_ge_ = performance.now();
         {
           // ── Layer 1: Governance Evolution Timeline (shared data + multi-horizon) ─
           {
@@ -23947,10 +23986,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Evolution Timeline System / _ge_] ここまで ══
+        if (profilerRef.current) {
+          profilerRef.current.engineTimes['_ge_'] = +(performance.now() - _bp_t_ge_).toFixed(3);
+          profilerRef.current.idleDefers.push({ engine:'_ge_', waitMs: +(_bp_t_ge_ - _bp_disp_ge_).toFixed(1) });
+        }
         }); // _ite_schedule P2 · _ge_
         }; // _ptl_bF · gov(1/gp+ge) · timeline
         const _ptl_bG = () => {
         // ══ [Governance Drift Observation System / _gd_] ここから ══
+        const _bp_t_gd_ = performance.now();
         {
           // ── Layer 1: Governance Drift Registry (shared data + drift signals) ────
           {
@@ -24429,9 +24473,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Drift Observation System / _gd_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_gd_'] = +(performance.now() - _bp_t_gd_).toFixed(3);
         // ── Phase S-5 P2 (idle): _gr_ — Governance Resilience (heavy) ───────
+        const _bp_disp_gr_ = performance.now();
+        if (profilerRef.current) profilerRef.current.idleDispatches['_gr_'] = +(_bp_disp_gr_ - _bp_startMs).toFixed(3);
         _ite_schedule(() => {
         // ══ [Governance Resilience Observation System / _gr_] ここから ══
+        const _bp_t_gr_ = performance.now();
         {
           {
             // === Layer 1: Governance Resilience Registry ===
@@ -24740,9 +24788,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Resilience Observation System / _gr_] ここまで ══
+        if (profilerRef.current) {
+          profilerRef.current.engineTimes['_gr_'] = +(performance.now() - _bp_t_gr_).toFixed(3);
+          profilerRef.current.idleDefers.push({ engine:'_gr_', waitMs: +(_bp_t_gr_ - _bp_disp_gr_).toFixed(1) });
+        }
         // ── Phase S-5 P3 (idle): _gs_ — Governance Shock (heaviest; chained after _gr_) ─
+        const _bp_disp_gs_ = performance.now();
+        if (profilerRef.current) profilerRef.current.idleDispatches['_gs_'] = +(_bp_disp_gs_ - _bp_startMs).toFixed(3);
         _ite_schedule(() => {
         // ══ [Governance Shock Simulation System / _gs_] ここから ══
+        const _bp_t_gs_ = performance.now();
         {
           {
             // === Layer 1: Shock Scenario Registry ===
@@ -25065,11 +25120,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Governance Shock Simulation System / _gs_] ここまで ══
+        if (profilerRef.current) {
+          profilerRef.current.engineTimes['_gs_'] = +(performance.now() - _bp_t_gs_).toFixed(3);
+          profilerRef.current.idleDefers.push({ engine:'_gs_', waitMs: +(_bp_t_gs_ - _bp_disp_gs_).toFixed(1) });
+        }
         }); // _ite_schedule P3 · _gs_
         }); // _ite_schedule P2 · _gr_
         }; // _ptl_bG · gov(2/gd+gr+gs)
         const _ptl_bH = () => {
         // ══ [Temporal Performance Audit / _pa_] ここから ══
+        const _bp_t_pa_ = performance.now();
         {
           {
             // === Layer 1: Temporal Tier Registry ===
@@ -25214,14 +25274,25 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ══ [Temporal Performance Audit / _pa_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_pa_'] = +(performance.now() - _bp_t_pa_).toFixed(3);
         }; // _ptl_bH · audit(2/pa)
 
         // ── [Phase S-4: Per-Tab Lazy Dispatch] ───────────────────────────────
         // Register all bundles. Fire current section's bundles immediately;
         // defer the rest until their section opens (useEffect [consoleSection]).
         {
-          const _ptl_allBundles = { A:_ptl_bA, B:_ptl_bB, C:_ptl_bC, D:_ptl_bD,
-                                     E:_ptl_bE, F:_ptl_bF, G:_ptl_bG, H:_ptl_bH };
+          // Phase S-6: wrap each bundle with timing instrumentation
+          const _bp_wrapBundle = (bid, fn) => () => {
+            const _t0 = performance.now();
+            fn();
+            if (profilerRef.current) profilerRef.current.bundleTimes[bid] = +(performance.now() - _t0).toFixed(3);
+          };
+          const _ptl_allBundles = {
+            A: _bp_wrapBundle('A', _ptl_bA), B: _bp_wrapBundle('B', _ptl_bB),
+            C: _bp_wrapBundle('C', _ptl_bC), D: _bp_wrapBundle('D', _ptl_bD),
+            E: _bp_wrapBundle('E', _ptl_bE), F: _bp_wrapBundle('F', _ptl_bF),
+            G: _bp_wrapBundle('G', _ptl_bG), H: _bp_wrapBundle('H', _ptl_bH),
+          };
           const _ptl_sectionBundleMap = {
             risk:     ['A'],
             timeline: ['F'],
@@ -25243,6 +25314,110 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         // ── [Phase S-4: Per-Tab Lazy Dispatch] ここまで ──────────────────────
+
+        // ══ [Temporal Benchmark & Profiling Framework / _bp_] ここから ══
+        {
+          {
+            // === Layer 1: Runtime Benchmark Registry ===
+            const _bp_p = profilerRef.current;
+            const _bp_elapsedMs = _bp_p ? +(performance.now() - _bp_p.startMs).toFixed(3) : null;
+            const _bp_classify = (ms) =>
+              ms < 1 ? 'excellent' : ms < 5 ? 'good' : ms < 15 ? 'moderate' : ms < 50 ? 'slow' : 'critical';
+
+            // === Layer 2: Bundle Profiling ===
+            {
+              const _bp_bundleRanked = _bp_p
+                ? Object.entries(_bp_p.bundleTimes)
+                    .sort(([,a],[,b]) => b - a)
+                    .map(([bid, ms], i) => ({
+                      bundle: bid, buildMs: +ms.toFixed(3),
+                      share: _bp_elapsedMs ? `${Math.round(100 * ms / _bp_elapsedMs)}%` : '?',
+                      rank: i + 1,
+                    }))
+                : [];
+              const _bp_top3Bundles = _bp_bundleRanked.slice(0, 3);
+
+              // === Layer 3: Engine Profiling ===
+              {
+                const _bp_engRanked = _bp_p
+                  ? Object.entries(_bp_p.engineTimes)
+                      .sort(([,a],[,b]) => b - a)
+                      .map(([eng, ms]) => ({
+                        engine: eng, buildMs: +ms.toFixed(3),
+                        share: _bp_elapsedMs ? `${Math.round(100 * ms / _bp_elapsedMs)}%` : '?',
+                        grade: _bp_classify(ms),
+                      }))
+                  : [];
+                const _bp_top3Engines = _bp_engRanked.slice(0, 3);
+
+                // === Layer 4: Idle Scheduling Analysis ===
+                {
+                  const _bp_idleIds     = ['_ho_','_ge_','_gr_','_gs_'];
+                  const _bp_idleExec    = _bp_p ? _bp_idleIds.filter(e => _bp_p.engineTimes[e] != null).length : 0;
+                  const _bp_idleDeferred = _bp_idleIds.length - _bp_idleExec;
+                  const _bp_waits       = _bp_p ? _bp_p.idleDefers.map(d => d.waitMs).filter(v => v != null) : [];
+                  const _bp_avgWaitMs   = _bp_waits.length
+                    ? +(_bp_waits.reduce((s,v)=>s+v,0) / _bp_waits.length).toFixed(1) : null;
+                  const _bp_queueDepth  = _bp_idleDeferred;
+                  const _bp_idleVerdict = _bp_idleDeferred > 0 ? 'idleSchedulingEffective'
+                    : _bp_avgWaitMs !== null && _bp_avgWaitMs < 100 ? 'idleSchedulingNeutral'
+                    : 'idleSchedulingInefficient';
+
+                  // === Layer 5: Hotspot Detection ===
+                  {
+                    const _bp_hotspot1 = _bp_top3Engines[0] || null;
+                    const _bp_hotspot2 = _bp_top3Engines[1] || null;
+                    const _bp_hotspot3 = _bp_top3Engines[2] || null;
+
+                    // === Layer 6: Profiling Audit ===
+                    {
+                      const _bp_p1EngIds    = ['_cf_','_cp_','_gq_','_hw_','_ep_','_dh_','_gp_','_gd_','_pa_'];
+                      const _bp_p1Recorded  = _bp_p ? _bp_p1EngIds.filter(e => _bp_p.engineTimes[e] != null).length : 0;
+                      const _bp_totalRec    = _bp_p ? Object.keys(_bp_p.engineTimes).length : 0;
+                      const _bp_completeness = `${_bp_totalRec} / 13`;
+
+                      const _bp_verdict = _bp_p1Recorded >= 9
+                        ? 'profilingReliable'
+                        : _bp_totalRec >= 5
+                        ? 'profilingPartial'
+                        : 'needsMoreSampling';
+
+                      const _bp_finalSummary = {
+                        // Layer 1: Runtime
+                        elapsedMs:       _bp_elapsedMs,
+                        runtimeGrade:    _bp_elapsedMs !== null ? _bp_classify(_bp_elapsedMs) : '?',
+                        // Layer 2: Bundles
+                        top3Bundles:     _bp_top3Bundles,
+                        bundlesRecorded: _bp_bundleRanked.length,
+                        // Layer 3: Engines
+                        top3Engines:     _bp_top3Engines,
+                        enginesRecorded: _bp_totalRec,
+                        // Layer 4: Idle
+                        idleExecuted:    _bp_idleExec,
+                        idleDeferred:    _bp_idleDeferred,
+                        avgIdleWaitMs:   _bp_avgWaitMs,
+                        queueDepth:      _bp_queueDepth,
+                        idleVerdict:     _bp_idleVerdict,
+                        // Layer 5: Hotspots
+                        hotspot1:        _bp_hotspot1,
+                        hotspot2:        _bp_hotspot2,
+                        hotspot3:        _bp_hotspot3,
+                        // Layer 6: Audit
+                        dataCompleteness: _bp_completeness,
+                        profileVerdict:   _bp_verdict,
+                        note: 'P2/P3 idle engine times arrive async — inspect profilerRef.current after sections open',
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_bp_] Temporal Benchmark & Profiling Framework:', _bp_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Temporal Benchmark & Profiling Framework / _bp_] ここまで ══
 
         // ══ [Incremental Temporal Engine Architecture / _ite_] ここから ══
         {
