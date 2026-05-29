@@ -24798,6 +24798,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         _ite_schedule(() => {
         // ══ [Governance Shock Simulation System / _gs_] ここから ══
         const _bp_t_gs_ = performance.now();
+        const _sp_phases = {}; // Phase S-8: internal phase timing accumulator
         {
           {
             // === Layer 1: Shock Scenario Registry ===
@@ -24883,6 +24884,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const _gs_criticalScenarios   = _gs_scenarios.filter(s => s.scope === 'critical');
             const _gs_structuralScenarios = _gs_scenarios.filter(s => s.scope === 'structural');
             const _gs_localizedScenarios  = _gs_scenarios.filter(s => s.scope === 'localized');
+            _sp_phases.t2 = performance.now(); // Phase S-8: Layer 1 → Layer 2
 
             // === Layer 2: Burnout Cascade Simulation ===
             {
@@ -24918,6 +24920,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 _gs_bcFallExh       ? 'fallback exhaustion'                          : null,
                 _gs_bcSt4           ? `unsafe overlap spread (×${_gs_bcUnsafeDepts} depts)` : null,
               ].filter(Boolean);
+              _sp_phases.t3 = performance.now(); // Phase S-8: Layer 2 → Layer 3
 
               // === Layer 3: Veteran Loss Propagation ===
               {
@@ -24954,6 +24957,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   _gs_vlPropScore >= 0.6 ? 'facility-wide'
                   : _gs_vlPropScore >= 0.3 ? 'departmental'
                   : 'localized';
+                _sp_phases.t4 = performance.now(); // Phase S-8: Layer 3 → Layer 4
 
                 // === Layer 4: Recovery Collapse Simulation ===
                 {
@@ -24973,6 +24977,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                     : _gs_rcSigCnt >= 3 ? 'unstable'
                     : _gs_rcSigCnt >= 2 ? 'strained'
                     : 'stable';
+                  _sp_phases.t5 = performance.now(); // Phase S-8: Layer 4 → Layer 5
 
                   // === Layer 5: Human Preparedness Insight ===
                   {
@@ -25039,6 +25044,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                       : _gs_criticalScenarios.length === 1  ? '1件criticalシナリオあり — 事前備えの検討を推奨'
                       : _gs_structuralScenarios.length >= 2 ? 'structuralリスクが複数 — 定期的な人間確認を推奨'
                       : '現状のショックリスクは概ね管理可能';
+                    _sp_phases.t6 = performance.now(); // Phase S-8: Layer 5 → Layer 6
 
                     // === Layer 6: Governance Shock Audit ===
                     {
@@ -25119,12 +25125,182 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             }
           }
         }
+        _sp_phases.tEnd = performance.now(); // Phase S-8: Layer 6 complete
         // ══ [Governance Shock Simulation System / _gs_] ここまで ══
         if (profilerRef.current) {
           profilerRef.current.engineTimes['_gs_'] = +(performance.now() - _bp_t_gs_).toFixed(3);
           profilerRef.current.idleDefers.push({ engine:'_gs_', waitMs: +(_bp_t_gs_ - _bp_disp_gs_).toFixed(1) });
+          profilerRef.current.shockPhases = {
+            L1: +(_sp_phases.t2  - _bp_t_gs_).toFixed(3),
+            L2: +(_sp_phases.t3  - _sp_phases.t2).toFixed(3),
+            L3: +(_sp_phases.t4  - _sp_phases.t3).toFixed(3),
+            L4: +(_sp_phases.t5  - _sp_phases.t4).toFixed(3),
+            L5: +(_sp_phases.t6  - _sp_phases.t5).toFixed(3),
+            L6: +(_sp_phases.tEnd - _sp_phases.t6).toFixed(3),
+          };
         }
-        }); // _ite_schedule P3 · _gs_
+        // ══ [Shock Internal Profiling Framework / _sp_] ここから ══
+        const _bp_t_sp_ = performance.now();
+        {
+          {
+            // === Layer 1: Shock Phase Registry ===
+            const _sp_p = profilerRef.current;
+            const _sp_raw = _sp_p?.shockPhases ?? null;
+            const _sp_phaseNames = ['L1','L2','L3','L4','L5','L6'];
+            const _sp_phaseLabels = {
+              L1: 'Shock Scenario Registry',
+              L2: 'Burnout Cascade Simulation',
+              L3: 'Veteran Loss Propagation',
+              L4: 'Recovery Collapse Simulation',
+              L5: 'Human Preparedness Insight',
+              L6: 'Governance Shock Audit',
+            };
+            const _sp_phaseComplexity = {
+              L1: 'nearLinear', // O(S×D) — dept loop + staff map
+              L2: 'nearLinear', // O(S×D) — filter chains across depts
+              L3: 'nearLinear', // O(S²/D) — nested closure filters
+              L4: 'linear',     // O(S) — simple flag checks
+              L5: 'linear',     // O(S+D) — insight push
+              L6: 'constant',   // O(1) — audit flag evaluation
+            };
+            const _sp_registered = _sp_raw !== null;
+            const _sp_totalMs = _sp_raw
+              ? _sp_phaseNames.reduce((sum, k) => sum + (_sp_raw[k] ?? 0), 0)
+              : 0;
+
+            // === Layer 2: Phase Runtime Analysis ===
+            {
+              const _sp_phaseMs = _sp_phaseNames.map(k => ({
+                phase: k,
+                label: _sp_phaseLabels[k],
+                ms: _sp_raw?.[k] ?? 0,
+              }));
+              const _sp_sorted  = [..._sp_phaseMs].sort((a, b) => b.ms - a.ms);
+              const _sp_hotspot = _sp_sorted[0] ?? null;
+              const _sp_phasePct = _sp_phaseMs.map(p => ({
+                ...p,
+                pct: _sp_totalMs > 0 ? +((p.ms / _sp_totalMs) * 100).toFixed(1) : 0,
+                rank: _sp_sorted.findIndex(s => s.phase === p.phase) + 1,
+              }));
+
+              // === Layer 3: Propagation Cost Analysis ===
+              {
+                const _sp_propMs     = (_sp_raw?.L2 ?? 0) + (_sp_raw?.L3 ?? 0);
+                const _sp_propPct    = _sp_totalMs > 0 ? +( (_sp_propMs / _sp_totalMs) * 100 ).toFixed(1) : 0;
+                const _sp_propDom    = _sp_propPct >= 60;
+                const _sp_registryMs = _sp_raw?.L1 ?? 0;
+                const _sp_regPct     = _sp_totalMs > 0 ? +( (_sp_registryMs / _sp_totalMs) * 100 ).toFixed(1) : 0;
+                const _sp_regDom     = _sp_regPct >= 60;
+                const _sp_auditMs    = (_sp_raw?.L5 ?? 0) + (_sp_raw?.L6 ?? 0);
+                const _sp_auditPct   = _sp_totalMs > 0 ? +( (_sp_auditMs / _sp_totalMs) * 100 ).toFixed(1) : 0;
+                const _sp_costProfile =
+                  _sp_regDom   ? 'registry-dominated'
+                  : _sp_propDom  ? 'propagation-dominated'
+                  : _sp_auditPct >= 30 ? 'audit-heavy'
+                  : 'balanced';
+
+                // === Layer 4: Complexity Observation ===
+                {
+                  const _sp_complexityObs = _sp_phasePct.map(p => ({
+                    phase: p.phase,
+                    expectedComplexity: _sp_phaseComplexity[p.phase],
+                    ms: p.ms,
+                    pct: p.pct,
+                    withinExpected:
+                      _sp_phaseComplexity[p.phase] === 'constant'   ? p.pct < 5
+                      : _sp_phaseComplexity[p.phase] === 'linear'   ? p.pct < 25
+                      : p.pct < 70, // nearLinear can legitimately dominate
+                  }));
+                  const _sp_surprisePhases = _sp_complexityObs.filter(o => !o.withinExpected);
+
+                  // === Layer 5: Optimization Opportunity Scan ===
+                  {
+                    const _sp_optCandidates = _sp_phasePct
+                      .filter(p => p.pct >= 40)
+                      .map(p => ({
+                        phase      : p.phase,
+                        label      : p.label,
+                        ms         : p.ms,
+                        pct        : p.pct,
+                        complexity : _sp_phaseComplexity[p.phase],
+                        opportunity:
+                          _sp_phaseComplexity[p.phase] === 'nearLinear'
+                            ? 'memoize-dept-arrays'
+                            : _sp_phaseComplexity[p.phase] === 'linear'
+                              ? 'consider-lazy-eval'
+                              : 'profile-further',
+                      }));
+                    const _sp_deferCandidates = _sp_phasePct
+                      .filter(p => (p.phase === 'L5' || p.phase === 'L6') && p.pct >= 20)
+                      .map(p => p.phase);
+                    const _sp_splitRecommended = !!_sp_hotspot && _sp_hotspot.pct >= 50;
+
+                    // === Layer 6: Shock Profiling Audit ===
+                    {
+                      const _sp_allPhasesCaptured = _sp_raw !== null
+                        && _sp_phaseNames.every(k => typeof _sp_raw[k] === 'number');
+                      const _sp_hotspotExpected   =
+                        !_sp_hotspot || _sp_hotspot.phase === 'L1' || _sp_hotspot.phase === 'L2';
+                      const _sp_auditBias  = _sp_raw !== null && (_sp_raw.L6 ?? 0) > (_sp_raw.L1 ?? 0);
+                      const _sp_staleData  = !_sp_registered;
+                      const _sp_auditFlags = [
+                        !_sp_allPhasesCaptured,
+                        _sp_auditBias,
+                        _sp_surprisePhases.length >= 3,
+                      ].filter(Boolean).length;
+                      const _sp_overallAudit =
+                        _sp_staleData            ? 'pending-idle-execution'
+                        : !_sp_allPhasesCaptured ? 'incomplete-capture'
+                        : _sp_auditBias          ? 'audit-overhead-amplification'
+                        : _sp_auditFlags >= 2    ? 'needsReview'
+                        :                         'shockProfilingNominal';
+                      const _sp_finalSummary = {
+                        system           : 'Shock Internal Profiling Framework',
+                        dept: cd.id, year, month,
+                        registered       : _sp_registered,
+                        totalShockMs     : +_sp_totalMs.toFixed(3),
+                        phases           : _sp_phasePct.map(p => ({
+                          phase      : p.phase,
+                          label      : _sp_phaseLabels[p.phase],
+                          ms         : p.ms,
+                          pct        : p.pct,
+                          rank       : p.rank,
+                          complexity : _sp_phaseComplexity[p.phase],
+                        })),
+                        hotspot          : _sp_hotspot
+                          ? { phase: _sp_hotspot.phase, ms: _sp_hotspot.ms,
+                              pct: _sp_phasePct.find(p => p.phase === _sp_hotspot.phase)?.pct ?? 0,
+                              isExpected: _sp_hotspotExpected }
+                          : null,
+                        costProfile      : _sp_costProfile,
+                        propagation      : { ms: +_sp_propMs.toFixed(3), pct: _sp_propPct, dominated: _sp_propDom },
+                        registry         : { ms: +_sp_registryMs.toFixed(3), pct: _sp_regPct, dominated: _sp_regDom },
+                        complexityObs    : _sp_complexityObs,
+                        surprisePhases   : _sp_surprisePhases.map(p => p.phase),
+                        optCandidates    : _sp_optCandidates.map(c => ({ phase: c.phase, pct: c.pct, opportunity: c.opportunity })),
+                        deferCandidates  : _sp_deferCandidates,
+                        splitRecommended : _sp_splitRecommended,
+                        audit: {
+                          allPhasesCaptured: _sp_allPhasesCaptured ? 'complete ✓'      : 'partial ⚠',
+                          hotspotExpected  : _sp_hotspotExpected   ? 'yes ✓'           : 'unexpected ⚠',
+                          auditBias        : _sp_auditBias         ? 'risk ⚠'          : 'none ✓',
+                          staleData        : _sp_staleData         ? 'warning ⚠'       : 'fresh ✓',
+                          overall          : _sp_overallAudit,
+                        },
+                      };
+                      if (DEV_TEMPORAL_LOG) {
+                        console.log('[_sp_] Shock Internal Profiling Framework:', _sp_finalSummary);
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        // ══ [Shock Internal Profiling Framework / _sp_] ここまで ══
+        if (profilerRef.current) profilerRef.current.engineTimes['_sp_'] = +(performance.now() - _bp_t_sp_).toFixed(3);
+        }); // _ite_schedule P3 · _gs_ + _sp_
         }); // _ite_schedule P2 · _gr_
         }; // _ptl_bG · gov(2/gd+gr+gs)
         const _ptl_bH = () => {
