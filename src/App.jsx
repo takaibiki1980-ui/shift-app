@@ -24618,7 +24618,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {
           {
             // === Layer 1: Governance Resilience Registry ===
-            const _gr_days = getDays(year, month);
+            const _gr_dayCount = getDays(year, month);
+            const _gr_days = Array.from({length: _gr_dayCount}, (_, i) => i + 1);
             const _gr_deptData = {};
             for (const d of depts) {
               const ds     = cs.filter(s => s.dept === d.id);
@@ -24638,9 +24639,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 const inReloc    = fl !== null && fl < 0.5;
                 const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
                 const targetNc   = s.nightMax ?? 4;
-                const nightCount = _gr_days.filter(day =>
-                  nset.has(shifts[`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`])
-                ).length;
+                const nightCount = _gr_days.filter(day => nset.has(shifts[s.id]?.[day] ?? '')).length;
                 const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
                 return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
                          isVeteran, isBurnout, inLadder, inReloc, isProtected,
@@ -24937,7 +24936,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {
           {
             // === Layer 1: Shock Scenario Registry ===
-            const _gs_days = getDays(year, month);
+            const _gs_dayCount = getDays(year, month);
+            const _gs_days = Array.from({length: _gs_dayCount}, (_, i) => i + 1);
             const _gs_deptData = {};
             for (const d of depts) {
               const ds     = cs.filter(s => s.dept === d.id);
@@ -24957,9 +24957,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 const inReloc    = fl !== null && fl < 0.5;
                 const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
                 const targetNc   = s.nightMax ?? 4;
-                const nightCount = _gs_days.filter(day =>
-                  nset.has(shifts[`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`])
-                ).length;
+                const nightCount = _gs_days.filter(day => nset.has(shifts[s.id]?.[day] ?? '')).length;
                 const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
                 return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
                          isVeteran, isBurnout, inLadder, inReloc, isProtected,
