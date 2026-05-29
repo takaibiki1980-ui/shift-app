@@ -12060,8 +12060,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const st = _ri_st[s.name]; if (!st) continue;
             const ivs = [];
             if (st.stage <= 1) {
-              if (st.bo !== 'high') ivs.push({ type: 'supportContinue',     reason: '初期段階、支援継続が最優先', priority: 1 });
-              else                  ivs.push({ type: 'recoveryPriority',     reason: 'burnout高→成長より回復優先', priority: 1 });
+              if (st.rr === 'high') {
+                if (st.bo !== 'high') ivs.push({ type: 'relocFloorAdaptation', reason: `フロア再適応中(fy=${st.fy.toFixed(1)}y)→新人扱い不要・floor習熟優先`, priority: 1 });
+                else                  ivs.push({ type: 'recoveryPriority',     reason: 'burnout高→成長より回復優先', priority: 1 });
+              } else {
+                if (st.bo !== 'high') ivs.push({ type: 'supportContinue',     reason: '初期段階、支援継続が最優先', priority: 1 });
+                else                  ivs.push({ type: 'recoveryPriority',     reason: 'burnout高→成長より回復優先', priority: 1 });
+              }
               if (st.leSq > 0)      ivs.push({ type: 'lateEarlyReduction',  reason: '遅番→早番危険遷移の削減', priority: 2 });
             } else if (st.stage === 2) {
               if (st.cSq > 0)       ivs.push({ type: 'sequenceProtection',  reason: `criticalSeq=${st.cSq}件→sequence保護優先`, priority: 1 });
@@ -12369,12 +12374,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               }
             }
             // Facility-wide balance
-            const _ri_newbies    = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 99) <= 2);
+            const _ri_newbies       = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 99) <= 2 && (_ri_st[s.name]?.rr ?? 'low') !== 'high');
+            const _ri_relocAdapting = _ri_ds.filter(s => (_ri_st[s.name]?.rr ?? 'low') === 'high' && (_ri_st[s.name]?.stage ?? 99) <= 3);
             const _ri_nightCores = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 0) === 5);
             const _ri_coexist    = _ri_newbies.every(s => _ri_st[s.name]?.bo !== 'high')
                                 && _ri_nightCores.every(s => _ri_st[s.name]?.bo !== 'high');
             _l5.push(`  ── 施設全体バランス ──`);
-            _l5.push(`  新人・適応中(stage0-2): ${_ri_newbies.length}名  nightCore(stage5): ${_ri_nightCores.length}名`);
+            _l5.push(`  新人・適応中(stage0-2): ${_ri_newbies.length}名${_ri_newbies.length ? ' (' + _ri_newbies.map(s => s.name).join('/') + ')' : ''}  nightCore(stage5): ${_ri_nightCores.length}名`);
+            _l5.push(`  異動適応中(rr=high・stage≤3): ${_ri_relocAdapting.length}名${_ri_relocAdapting.length ? ' 🔄 (' + _ri_relocAdapting.map(s => s.name).join('/') + ')' : ' ✓ なし'}`);
             _l5.push(`  新人保護×nightCore負荷 両立: ${_ri_coexist ? '✓ 両立可能' : '⚠ burnout高スタッフあり → 調整必要'}`);
             console.log(_l5.join('\n'));
           }
@@ -12409,13 +12416,33 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const _ri_q3 = _ri_opRecs.length > 0
               ? (_ri_opRecs.some(op => op.burnoutUp) ? 'overProtection危険化: burnout上昇リスクあり ⚠' : 'overProtection危険化: 安全範囲内 ✓')
               : 'overProtection危険化: 対象なし';
-            const _ri_q4 = _ri_ds.some(s => (_ri_st[s.name]?.stage ?? 99) <= 1 && _ri_st[s.name]?.bo === 'high')
+            const _ri_q4 = _ri_ds.some(s => (_ri_st[s.name]?.stage ?? 99) <= 1 && _ri_st[s.name]?.bo === 'high' && (_ri_st[s.name]?.rr ?? 'low') !== 'high')
               ? '新人保護×nightCore分散: 新人burnout高あり ⚠' : '新人保護×nightCore分散: 両立可 ✓';
             const _ri_q5 = _ri_opRecs.length > 0
               ? '安全維持→成長停止: overProtection検知→成長介入推奨 ⚠'
               : _ri_cands.some(ci => ci.ivs[0]?.type === 'nightIntroDelay') ? '安全維持→成長停止: 一部延期推奨（準備段階継続）' : '安全維持→成長停止: 競合なし ✓';
             _l6.push(`  ── 施設全体 育成介入診断 ──`);
             [_ri_q1, _ri_q2, _ri_q3, _ri_q4, _ri_q5].forEach(q => _l6.push(`  ${q}`));
+            // ── Relocation Differentiation Audit ──
+            const _rda_contamCount   = _ri_ds.filter(s => (_ri_st[s.name]?.stage ?? 99) <= 2 && (_ri_st[s.name]?.rr ?? 'low') === 'high').length;
+            const _rda_relocAdaptL6  = _ri_ds.filter(s => (_ri_st[s.name]?.rr ?? 'low') === 'high' && (_ri_st[s.name]?.stage ?? 99) <= 3);
+            const _rda_ivSeparated   = _ri_cands.every(ci => {
+              const st = _ri_st[ci.staffName];
+              return !st || st.rr !== 'high' || !ci.ivs.some(iv => iv.type === 'supportContinue');
+            });
+            const _rda_newbieContamination   = _rda_contamCount === 0 ? 'clean ✓' : `⚠ ${_rda_contamCount}名が新人グループに混入していた`;
+            const _rda_relocationVisibility  = _rda_relocAdaptL6.length > 0 ? `visible ✓ (${_rda_relocAdaptL6.map(s=>s.name).join('/')})` : 'visible ✓ (異動適応中なし)';
+            const _rda_interventionSeparation= _rda_ivSeparated ? 'separated ✓' : '⚠ supportContinue混在あり';
+            const _rda_rdaFlags = [_rda_contamCount === 0, _rda_ivSeparated];
+            const _rda_audit = _rda_rdaFlags.every(Boolean) ? 'relocationDifferentiationStable'
+              : _rda_rdaFlags.filter(Boolean).length >= 1 ? 'relocationDifferentiationPartial' : 'needsReview';
+            _l6.push(`  ── Relocation Differentiation Audit ──`);
+            _l6.push(`  newbieContamination:    ${_rda_newbieContamination}`);
+            _l6.push(`  relocationVisibility:   ${_rda_relocationVisibility}`);
+            _l6.push(`  interventionSeparation: ${_rda_interventionSeparation}`);
+            _l6.push(`  新人→異動適応中 移行数: ${_rda_contamCount}名`);
+            _l6.push(`  新人介入除外数:          ${_rda_contamCount}名`);
+            _l6.push(`  overall: ${_rda_audit}`);
             console.log(_l6.join('\n'));
           }
         }
@@ -12860,13 +12887,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const _tp_relocDelay  = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.fy>=2 && st.fl>0.1 && st.fl<0.8; });
             const _tp_nightCores  = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage===5; });
             const _tp_ncBO        = _tp_nightCores.filter(s => _tp_st[s.name]?.bo === 'high');
-            const _tp_unsafeDirect= _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage<3 && st.nCnt>0; });
+            const _tp_unsafeDirect     = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage<3 && st.nCnt>0 && st.rr !== 'high'; });
+            const _tp_relocNightReview = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.stage<3 && st.nCnt>0 && st.rr === 'high'; });
             const _tp_overProt    = _tp_ds.filter(s => { const st=_tp_st[s.name]; return st && st.depType==='overProtection'; });
 
             _l6.push(`  ── 新人・適応段階 ──`);
             _l6.push(`  stagnation(stage3 fl≥1.5):  ${_tp_stagnant.length}名 ${_tp_stagnant.length ? '⚠ '+_tp_stagnant.map(s=>s.name).join('/') : '✓'}`);
             _l6.push(`  burnoutBlocked(stage≤3×high): ${_tp_boBlocked.length}名 ${_tp_boBlocked.length ? '⚠ '+_tp_boBlocked.map(s=>s.name).join('/') : '✓'}`);
-            _l6.push(`  unsafeDirectNight(stage<3夜勤有): ${_tp_unsafeDirect.length}名 ${_tp_unsafeDirect.length ? '⚠ '+_tp_unsafeDirect.map(s=>s.name).join('/')+' 準備段階スキップ' : '✓'}`);
+            _l6.push(`  unsafeDirectNight(stage<3夜勤有・新人): ${_tp_unsafeDirect.length}名 ${_tp_unsafeDirect.length ? '⚠ '+_tp_unsafeDirect.map(s=>s.name).join('/')+' 準備段階スキップ' : '✓'}`);
+            _l6.push(`  relocationNightReview(stage<3夜勤有・異動): ${_tp_relocNightReview.length}名 ${_tp_relocNightReview.length ? '🔄 '+_tp_relocNightReview.map(s=>s.name).join('/')+' フロア再適応中・夜勤経験活用検討' : '✓'}`);
 
             _l6.push(`  ── 異動適応 ──`);
             _l6.push(`  relocationDelay(fy≥2 fl<0.8): ${_tp_relocDelay.length}名 ${_tp_relocDelay.length ? '⚠ '+_tp_relocDelay.map(s=>s.name).join('/')+' 再適応長期化' : '✓'}`);
@@ -12904,6 +12933,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               // Q5: どの段階でsupport削減すべきか
               _l6.push(`  support削減最適タイミング: stage3→4移行時（progress≥0.6・burnout非high確認後）`);
             }
+            _l6.push(`  ── Relocation Differentiation (Training) ──`);
+            _l6.push(`  unsafeDirectNight誤警告削減: ${_tp_relocNightReview.length}名（異動ベテランを新人警告から除外）`);
+            _l6.push(`  relocationNightReview対象: ${_tp_relocNightReview.length}名${_tp_relocNightReview.length ? ' 🔄 ' + _tp_relocNightReview.map(s=>s.name).join('/') : ''}`);
             console.log(_l6.join('\n'));
           }
         }
@@ -24838,8 +24870,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const _gs_protected   = _gs_allArr.filter(e => e.isProtected);
             const _gs_supportReqs = _gs_allArr.filter(e => e.supportReq && e.nightOk);
             const _gs_nearBurnout = _gs_allArr.filter(e => e.nightOk && !e.isBurnout && e.utilRate > 0.85);
-            const _gs_relocating  = _gs_allArr.filter(e => e.inReloc);
-            const _gs_newStaff    = _gs_allArr.filter(e => e.stage <= 1 && e.nightOk);
+            const _gs_relocating      = _gs_allArr.filter(e => e.inReloc);
+            const _gs_newStaff        = _gs_allArr.filter(e => e.stage <= 1 && e.nightOk);
+            const _gs_relocatingStaff = _gs_allArr.filter(e => e.stage <= 1 && e.nightOk && e.inReloc);
             const _gs_nightStaff  = _gs_allArr.filter(e => e.nightOk);
             const _gs_shockScope  = score =>
               score >= 0.75 ? 'critical'
@@ -25113,6 +25146,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                           preparednessSupport      : _gs_audPrepSup      ? 'high ✓' : 'partial ⚠',
                           explainability           : _gs_audExplain      ? 'high ✓' : 'partial ⚠',
                           overall                  : _gs_overallAudit,
+                        },
+                        staffBreakdown            : {
+                          newStaff                : _gs_newStaff.length,
+                          newStaffNames           : _gs_newStaff.map(e => e.s.name),
+                          relocAdapting           : _gs_relocatingStaff.length,
+                          relocAdaptingNames      : _gs_relocatingStaff.map(e => e.s.name),
+                          shockSeparation         : _gs_relocatingStaff.length > 0 ? `separated ✓ (${_gs_relocatingStaff.map(e=>e.s.name).join('/')})` : 'separated ✓ (異動適応中なし)',
+                          sc7Note                 : 'sc7計算はnewStaff全体使用・staffBreakdownは表示のみ分離',
                         },
                       };
                       if (DEV_TEMPORAL_LOG) {
