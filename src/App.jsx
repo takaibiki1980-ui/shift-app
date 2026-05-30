@@ -20340,6 +20340,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               burnoutHigh: Math.max(0, _uc_boH.length - _uc_sbBo + _uc_sbAfter),
               coreCount:   _uc_core.length,
               unsafeCount: _uc_unsafe.length,
+              afterNote:   'core/unsafe は構造的指標のため介入後も変化なし',
             },
             preserved: [
               ...((_uc_core.length > 0) ? ['nightCore構造'] : []),
@@ -20393,8 +20394,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             clarity:            recommendations.length <= 5 ? 'high' : 'medium',
             operationalRealism: _uc_core.length >= (cd.minStaff?.['夜勤'] ?? 1),
             aiDominance:        recommendations.length <= 2 ? 'low' : recommendations.length <= 5 ? 'medium' : 'high',
-            infoOverload:       _uc_ds.length > 15 && riskDash.totalIssues > 8,
-            tradeoffVisible:    recommendations.every(r => r.tradeoff !== undefined),
+            infoOverload:       riskDash.totalIssues > Math.max(3, Math.floor(_uc_ds.length * 0.5)),
+            tradeoffVisible:    recommendations.length === 0 || recommendations.every(r => r.tradeoff !== undefined && r.tradeoff !== ''),
             overall:            _uc_govScore >= 4 ? 'humanOperationalConsole' : _uc_govScore >= 2 ? 'partialConsole' : 'aiDominant',
           };
 
@@ -20442,7 +20443,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             const isProtected = isBurnout || inLadder || inReloc || (hasPair && stage <= 3);
             const targetNc   = s.nightMax ?? 4;
             const nightCount = _snap_days.filter(day =>
-              nset.has(shifts[`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`])
+              nset.has(shifts[s.id]?.[day] ?? '')
             ).length;
             const utilRate   = targetNc > 0 ? nightCount / targetNc : 0;
             return { s, bo, ladder, stage, fl, hasPair, nightOk, supportReq,
@@ -25575,7 +25576,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                     _xf_l5.push(`  high: ${nrdHigh}名  medium: ${nrdMed}名  low: ${nrdLow}名`);
                     _xf_l5.push(`  ── 将来CrossFloor優先観測 ──`);
                     _xf_l5.push(`  優先観測対象日数: ${_xf_priorityDays}日 (thin+supportGap+relocOverlap)`);
-                    console.log(_xf_l5.join('\n'));
+                    if (DEV_TEMPORAL_LOG) { console.log(_xf_l5.join('\n')); }
 
                     // === Layer 6: Cross-Care-Floor Audit ===
                     {
