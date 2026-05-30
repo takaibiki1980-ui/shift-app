@@ -24324,7 +24324,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 value       : +_gd_burnoutNormRate.toFixed(3),
                 threshold   : 0.05,
                 drifting    : _gd_burnoutNormRate > 0.05,
-                description : _gd_burnoutNightCount > 0
+                description : _gd_burnoutOnNight > 0
                   ? `burnout staff ${_gd_burnoutOnNight}名が夜勤継続 — 慢性override傾向 ⚠`
                   : 'burnout override なし',
               });
