@@ -20412,7 +20412,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // Read-only shared pre-computation for the Temporal engine chain.
         // All _xx_ engines MAY reference _snap_* to eliminate redundant rebuilds.
         // Current engines use independent _xx_deptData; migration is incremental.
-        const _snap_days = getDays(year, month);
+        const _snap_days = Array.from({ length: getDays(year, month) }, (_, i) => i + 1);
         const _snap_deptData = {};
         for (const d of depts) {
           const ds     = cs.filter(s => s.dept === d.id);
