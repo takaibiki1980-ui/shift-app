@@ -7158,7 +7158,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // ── Phase S-1: keep innerTabRef in sync + fire lazy Temporal engines ────────
   useEffect(() => {
     innerTabRef.current = innerTab;
+    console.log('[INNER-TAB-CHANGE] innerTab=' + innerTab + ' hasPendingTemporal=' + !!pendingTemporalRef.current);
     if (innerTab === 'console' && pendingTemporalRef.current) {
+      console.log('[INNER-TAB-CHANGE] firing pendingTemporalRef (deferred _buildTemporalEngines)');
       pendingTemporalRef.current();
       pendingTemporalRef.current = null;
     }
@@ -7168,6 +7170,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // Section → bundle-key map (matches _ptl_ registry inside _buildTemporalEngines)
   useEffect(() => {
     consoleSectionRef.current = consoleSection;
+    console.log('[CONSOLE-SECTION-CHANGE] consoleSection=' + consoleSection + ' pendingBundles=[' + Object.keys(pendingTabBuildersRef.current).join(',') + ']');
     if (consoleSection !== null) {
       const _ptl_sectionBundleMap = {
         risk:     ['A'],
@@ -7176,12 +7179,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         sandbox:  ['C'],
         gov:      ['F', 'G'],
         audit:    ['E', 'H'],
+        xf:       ['G'],
       };
       const _ptl_bundles = _ptl_sectionBundleMap[consoleSection] || [];
+      console.log('[CONSOLE-SECTION-CHANGE] targetBundles=[' + _ptl_bundles.join(',') + ']');
       for (const bid of _ptl_bundles) {
         if (pendingTabBuildersRef.current[bid]) {
+          console.log('[CONSOLE-SECTION-CHANGE] firing Bundle ' + bid);
           pendingTabBuildersRef.current[bid]();
           delete pendingTabBuildersRef.current[bid];
+        } else {
+          console.log('[CONSOLE-SECTION-CHANGE] Bundle ' + bid + ' not in pending (already fired or not registered)');
         }
       }
     }
@@ -20408,6 +20416,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // Captures result/cs/depts/cd/year/month at generate time.
         // Runs immediately if console tab is open; otherwise deferred to tab open.
         const _buildTemporalEngines = () => {
+        console.log('[TEMPORAL ENTRY] _buildTemporalEngines called. innerTab=' + innerTabRef.current + ' consoleSection=' + consoleSectionRef.current);
         // ── [Temporal Shared Snapshot / _snap_] ──────────────────────────────
         // Read-only shared pre-computation for the Temporal engine chain.
         // All _xx_ engines MAY reference _snap_* to eliminate redundant rebuilds.
@@ -25801,8 +25810,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const _ptl_hotBundles = new Set(
             (_ptl_sectionBundleMap[_ptl_currentSection] || [])
           );
+          console.log('[TEMPORAL DISPATCH] consoleSection=' + _ptl_currentSection + ' hotBundles=[' + [..._ptl_hotBundles].join(',') + '] deferredBundles=[' + Object.keys(_ptl_allBundles).filter(b => !_ptl_hotBundles.has(b)).join(',') + ']');
           for (const [bid, fn] of Object.entries(_ptl_allBundles)) {
             if (_ptl_hotBundles.has(bid)) {
+              console.log('[TEMPORAL BUNDLE-' + bid + ' EXEC] immediate');
               fn(); // fire immediately — section already open
             } else {
               pendingTabBuildersRef.current[bid] = fn; // deferred
