@@ -20559,6 +20559,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             for (const d of depts) {
               const ds = cs.filter(s => s.dept === d.id);
               const shifts = d.id === cd.id ? result : (allShiftsRef.current[d.id] || {});
+              const nset = new Set(
+                (d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night')
+              );
+              const _cf_days = getDays(year, month);
               const arr = ds.map(s => {
                 const fy  = s.facilityYears ?? null;
                 const fl  = s.floorYears    ?? null;
@@ -20571,13 +20575,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 const nightOk  = !!s.nightOk;
                 const supportReq = !!s.foreignNightSupportRequired;
                 const isVeteran  = ladder >= 4 && bo !== 'high';
-                // count night shifts this month
-                const days = getDays(year, month);
                 let nightCount = 0;
-                const nset = new Set(
-                  (d.shiftTypes || []).filter(k => SHIFTS[k]?.category === 'night').map(k => k)
-                );
-                for (let dd = 1; dd <= days; dd++) {
+                for (let dd = 1; dd <= _cf_days; dd++) {
                   const sv = shifts[s.id]?.[dd] ?? '';
                   if (nset.has(sv)) nightCount++;
                 }
