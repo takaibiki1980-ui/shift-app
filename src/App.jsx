@@ -3637,7 +3637,7 @@ function TemporalConsolePanel({ data, consoleSection, setConsoleSection }) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Temporal Debug Flag — set true to enable heavy Temporal engine console output
-const DEV_TEMPORAL_LOG = process.env.NODE_ENV !== 'production' && false;
+const DEV_TEMPORAL_LOG = process.env.NODE_ENV !== 'production';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const deriveYears = (dateStr, refDate) => {
