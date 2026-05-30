@@ -20504,15 +20504,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // Concurrent heavy guard: _gs_ chained inside _gr_'s callback (no parallel burst).
         const _ite_token = Symbol('ite');
         iteSchedulerRef.current = _ite_token;
-        const _ite_schedule = (fn) => {
+        const _ite_schedule = (fn, _ite_label = '') => {
           const _ite_guard = () => {
-            if (iteSchedulerRef.current !== _ite_token) return; // stale — skip
+            if (iteSchedulerRef.current !== _ite_token) {
+              console.log(`[ITE CANCELLED] ${_ite_label}`);
+              return; // stale — skip
+            }
             if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
               typeof requestIdleCallback !== 'undefined'
                 ? requestIdleCallback(_ite_guard, { timeout: 2000 })
                 : setTimeout(_ite_guard, 200);
               return;
             }
+            console.log(`[ITE START] ${_ite_label}`);
             fn();
           };
           typeof requestIdleCallback !== 'undefined'
@@ -22274,7 +22278,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           profilerRef.current.engineTimes['_ho_'] = +(performance.now() - _bp_t_ho_).toFixed(3);
           profilerRef.current.idleDefers.push({ engine:'_ho_', waitMs: +(_bp_t_ho_ - _bp_disp_ho_).toFixed(1) });
         }
-        }); // _ite_schedule P2 · _ho_
+        }, 'P2:_ho_'); // _ite_schedule P2 · _ho_
         }; // _ptl_bC · sandbox
         const _ptl_bD = () => {
         // ══ [Recommendation Execution Preview System / _ep_] ここから ══
@@ -24125,7 +24129,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           profilerRef.current.engineTimes['_ge_'] = +(performance.now() - _bp_t_ge_).toFixed(3);
           profilerRef.current.idleDefers.push({ engine:'_ge_', waitMs: +(_bp_t_ge_ - _bp_disp_ge_).toFixed(1) });
         }
-        }); // _ite_schedule P2 · _ge_
+        }, 'P2:_ge_'); // _ite_schedule P2 · _ge_
         }; // _ptl_bF · gov(1/gp+ge) · timeline
         const _ptl_bG = () => {
         // ══ [Governance Drift Observation System / _gd_] ここから ══
@@ -25615,8 +25619,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Cross-Care-Floor Night Observation System / _xf_] ここまで ══
         if (profilerRef.current) profilerRef.current.engineTimes['_xf_'] = +(performance.now() - _bp_t_xf_).toFixed(3);
-        }); // _ite_schedule P3 · _gs_ + _sp_ + _xf_
-        }); // _ite_schedule P2 · _gr_
+        }, 'P3:_gs_+_sp_+_xf_'); // _ite_schedule P3 · _gs_ + _sp_ + _xf_
+        }, 'P2:_gr_'); // _ite_schedule P2 · _gr_
         }; // _ptl_bG · gov(2/gd+gr+gs)
         const _ptl_bH = () => {
         // ══ [Temporal Performance Audit / _pa_] ここから ══
