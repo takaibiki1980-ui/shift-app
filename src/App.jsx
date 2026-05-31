@@ -652,31 +652,6 @@ function computeSyncRate(shifts, staffList, dept, year, month, mergedTrend) {
   return totalWork >= 5 ? Math.round(syncWork / totalWork * 100) : null;
 }
 
-// スワップ成功パターン: 自動生成結果 vs 保存済みシフトのdiffを検出
-function detectSwapChanges(baseline, current, deptStaff, year, month) {
-  const changes = {};
-  for (const s of deptStaff) {
-    const base = baseline[s.id] || {}, curr = current[s.id] || {};
-    const days = getDays(year, month);
-    for (let d = 1; d <= days; d++) {
-      if (base[d] !== undefined && curr[d] !== undefined && base[d] !== curr[d] && curr[d]) {
-        const weekday = new Date(year, month, d).getDay();
-        if (!changes[s.id]) changes[s.id] = {};
-        if (!changes[s.id][weekday]) changes[s.id][weekday] = {};
-        changes[s.id][weekday][curr[d]] = (changes[s.id][weekday][curr[d]] || 0) + 1;
-      }
-    }
-  }
-  return changes;
-}
-function mergeSwapLearning(existing, newChanges) {
-  const result = { ...existing };
-  for (const [wd, shiftCounts] of Object.entries(newChanges)) {
-    if (!result[wd]) result[wd] = {};
-    for (const [shift, cnt] of Object.entries(shiftCounts)) result[wd][shift] = (result[wd][shift] || 0) + cnt;
-  }
-  return result;
-}
 
 // 希望休の前々日に夜勤を手動配置したパターンを検出（アンカー学習用）
 // baseline:自動生成直後, current:手動修正後。戻り値: { staffId: 新規パターン数 }
@@ -1798,693 +1773,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // ★[AG-Trend] Trend学習実効性検証ログ（診断のみ・アルゴリズム変更禁止）
-  //
-  // 目的: shiftTrend / dowShiftRate が生成結果へ実際に反映されているかを可視化。
-  //   ① per-staff: trend率 vs 生成結果率 vs diff を出力
-  //   ② roleGuess: night-core / day-buffer / balanced の診断分類（保存・学習なし）
-  //   ③ summary: ロールグループ別 avgDayRate
-  //   ④ diag: 新規スタッフ不利・trend固定化・fallback正常性チェック
-  // ══════════════════════════════════════════════════════════════════════════════
-  {
-    const _cds = dept.customShiftDefs || [];
-    const _baseOf = (k) => _cds.find(c => c.key === k)?.baseType || k;
-    // 診断対象: 勤務種別のみ（明けは夜勤連鎖で自動配置のため除外）
-    const _workTypes = [...new Set(dept.shiftTypes)].filter(k => deptWork.has(k) && k !== '明け');
-
-    const _staffStats = ds.map(s => {
-      const trend = getTrend(s);
-      const hasTrend = !!(trend && (trend._workTotal ?? 0) > 0);
-
-      // ── 生成結果の勤務種別カウント・比率 ──
-      const _genCounts = Object.fromEntries(_workTypes.map(k => [k, 0]));
-      let _genWorkTotal = 0;
-      for (let d = 1; d <= days; d++) {
-        const sh = res[s.id][d];
-        if (Object.prototype.hasOwnProperty.call(_genCounts, sh)) { _genCounts[sh]++; _genWorkTotal++; }
-      }
-      const genRate = Object.fromEntries(_workTypes.map(k => [k, _genWorkTotal > 0 ? _genCounts[k] / _genWorkTotal : 0]));
-
-      // ── trend学習率（shiftTrend由来）──
-      const trendRate = Object.fromEntries(_workTypes.map(k => [k, hasTrend ? (trend[k] ?? 0) : null]));
-
-      // ── diff（生成 - trend）──
-      const diff = Object.fromEntries(_workTypes.map(k => [k, trendRate[k] != null ? genRate[k] - trendRate[k] : null]));
-
-      // ── roleGuess（診断のみ・保存禁止・学習禁止）──
-      // trendベース優先、trend未学習はgenベースで推定
-      const _baseRates = hasTrend ? trendRate : genRate;
-      // night-core判定: 日勤base以外の勤務（夜勤・早番・遅番系）の合計率
-      const _nightSlotRate = _workTypes
-        .filter(k => _baseOf(k) !== '日勤')
-        .reduce((sum, k) => sum + (_baseRates[k] ?? 0), 0);
-      // day-buffer判定: 日勤base系の合計率
-      const _dayBaseRate = _workTypes
-        .filter(k => _baseOf(k) === '日勤')
-        .reduce((sum, k) => sum + (_baseRates[k] ?? 0), 0);
-
-      let roleGuess;
-      if (_nightSlotRate >= 0.45) roleGuess = 'night-core';
-      else if (_dayBaseRate >= 0.70) roleGuess = 'day-buffer';
-      else roleGuess = 'balanced';
-      if (!hasTrend) roleGuess += '(no-trend)';
-
-      // サマリー用: 生成結果の日勤base率
-      const genDayRate = _workTypes
-        .filter(k => _baseOf(k) === '日勤')
-        .reduce((sum, k) => sum + genRate[k], 0);
-
-      return { s, hasTrend, trendRate, genRate, diff, roleGuess, genDayRate, workTotal: trend?._workTotal ?? 0 };
-    });
-
-    // ── per-staff ログ ──
-    const _fmt  = (v) => v != null ? v.toFixed(2) : 'N/A';
-    const _fmtD = (v) => v != null ? (v >= 0 ? '+' : '') + v.toFixed(2) : 'N/A';
-    _staffStats.forEach(({ s, hasTrend, trendRate, genRate, diff, roleGuess, workTotal }) => {
-      const _tStr = _workTypes.map(k => `${k}=${_fmt(trendRate[k])}`).join(' ');
-      const _gStr = _workTypes.map(k => `${k}=${_fmt(genRate[k])}`).join(' ');
-      const _dStr = _workTypes.map(k => `${k}=${_fmtD(diff[k])}`).join(' ');
-      console.log(
-        `[AG-Trend] staff=${s.name} roleGuess=${roleGuess} trend_n=${workTotal}\n` +
-        `  trend:  ${_tStr}\n` +
-        `  gen:    ${_gStr}\n` +
-        `  diff:   ${_dStr}`
-      );
-    });
-
-    // ── [AG-Trend-Summary]: ロールグループ別 avgDayRate ──
-    const _groups = { 'night-core': [], 'day-buffer': [], 'balanced': [] };
-    _staffStats.forEach(({ roleGuess, genDayRate }) => {
-      const _g = roleGuess.replace('(no-trend)', '');
-      if (_groups[_g]) _groups[_g].push(genDayRate);
-    });
-    const _summaryStr = Object.entries(_groups)
-      .filter(([, arr]) => arr.length > 0)
-      .map(([role, arr]) => `  ${role}(n=${arr.length}): avgDayRate=${(arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2)}`)
-      .join('\n');
-    console.log(`[AG-Trend-Summary]\n${_summaryStr}`);
-
-    // ── [AG-Trend-Diag]: 新規・固定化・fallback 診断 ──
-    // ① 新規スタッフ（trend未学習）→ 生成で不利になっていないか
-    const _noTrendNames = _staffStats.filter(({ hasTrend }) => !hasTrend).map(({ s }) => s.name);
-    // ② trend固定化疑い（全差分が ±0.05 未満 → trend通りに固定化されすぎている可能性）
-    const _highConformNames = _staffStats
-      .filter(({ hasTrend, diff }) => hasTrend && Object.values(diff).every(v => v != null && Math.abs(v) < 0.05))
-      .map(({ s }) => s.name);
-    // ③ trend有/無の日勤率比較
-    const _avgDR = (arr) => arr.length > 0 ? (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2) : 'N/A';
-    const _noTrendDayRates  = _staffStats.filter(({ hasTrend }) => !hasTrend).map(({ genDayRate }) => genDayRate);
-    const _hasTrendDayRates = _staffStats.filter(({ hasTrend }) =>  hasTrend).map(({ genDayRate }) => genDayRate);
-    console.log(
-      `[AG-Trend-Diag] noTrend=${_noTrendNames.length}人[${_noTrendNames.join(',')||'なし'}]` +
-      ` highConform=${_highConformNames.length}人[${_highConformNames.join(',')||'なし'}]` +
-      ` genDayRate: hasTrend=${_avgDR(_hasTrendDayRates)} noTrend=${_avgDR(_noTrendDayRates)}`
-    );
-  }
-  // ══ [AG-Trend] 診断ログ ここまで ══
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // ★[AG-Trend-Risk] Trend固定化リスク診断（診断のみ・アルゴリズム変更禁止）
-  //
-  // 目的: 「学習しすぎ」による固定化リスクを5軸で観測する。
-  //   ① fixedShift   : 同一勤務固定化（trend率 >= 0.40）
-  //   ② fixedDow     : 曜日固定化（dowShiftRate 特定曜日 >= 0.75）
-  //   ③ pairBias     : pair固定化（A夜勤時にB早番の共起率）
-  //   ④ newbieLock   : 新人育成停止（trend_n<30 かつ 日勤gen率>=0.70）
-  //   ⑤ veteranLoad  : ベテラン過負荷（night-core の夜勤gen率>=0.35）
-  // ★自動補正・trend減衰・pair制御等は実装しない
-  // ══════════════════════════════════════════════════════════════════════════════
-  {
-    const _rcds = dept.customShiftDefs || [];
-    const _rBaseOf = (k) => _rcds.find(c => c.key === k)?.baseType || k;
-    const _rWorkTypes = [...new Set(dept.shiftTypes)].filter(k => deptWork.has(k) && k !== '明け');
-
-    // ── 生成結果から各スタッフの勤務集計 ──
-    const _rStaffData = ds.map(s => {
-      const trend = getTrend(s);
-      const hasTrend = !!(trend && (trend._workTotal ?? 0) > 0);
-      const workTotal = trend?._workTotal ?? 0;
-
-      // 生成: 全日のシフト
-      const genByDay = {};
-      for (let d = 1; d <= days; d++) genByDay[d] = res[s.id][d];
-
-      // 生成: 勤務日ベース比率
-      const _genCounts = Object.fromEntries(_rWorkTypes.map(k => [k, 0]));
-      let _genWork = 0;
-      for (let d = 1; d <= days; d++) {
-        const sh = genByDay[d];
-        if (Object.prototype.hasOwnProperty.call(_genCounts, sh)) { _genCounts[sh]++; _genWork++; }
-      }
-      const genRate = Object.fromEntries(_rWorkTypes.map(k => [k, _genWork > 0 ? _genCounts[k] / _genWork : 0]));
-
-      // 生成: 曜日別勤務カウント（dow=0:日 〜 6:土）
-      const genDowCounts = Array.from({ length: 7 }, () => ({}));
-      const genDowWorkTotal = Array(7).fill(0);
-      for (let d = 1; d <= days; d++) {
-        const sh = genByDay[d];
-        const dow = new Date(year, month, d).getDay();
-        if (Object.prototype.hasOwnProperty.call(_genCounts, sh)) {
-          genDowCounts[dow][sh] = (genDowCounts[dow][sh] || 0) + 1;
-          genDowWorkTotal[dow]++;
-        }
-      }
-      const genDowRate = genDowCounts.map((cnts, i) =>
-        Object.fromEntries(_rWorkTypes.map(k => [k, genDowWorkTotal[i] > 0 ? (cnts[k] || 0) / genDowWorkTotal[i] : 0]))
-      );
-
-      // roleGuess（night-core / day-buffer / balanced）
-      const _baseRates = hasTrend
-        ? Object.fromEntries(_rWorkTypes.map(k => [k, trend[k] ?? 0]))
-        : genRate;
-      const _nightRate = _rWorkTypes.filter(k => _rBaseOf(k) !== '日勤').reduce((s, k) => s + (_baseRates[k] ?? 0), 0);
-      const _dayRate   = _rWorkTypes.filter(k => _rBaseOf(k) === '日勤').reduce((s, k) => s + (_baseRates[k] ?? 0), 0);
-      const roleGuess  = _nightRate >= 0.45 ? 'night-core' : _dayRate >= 0.70 ? 'day-buffer' : 'balanced';
-
-      return { s, trend, hasTrend, workTotal, genRate, genByDay, genDowRate, roleGuess };
-    });
-
-    const DOW_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
-
-    // ── ① fixedShift: 同一勤務固定化（trend率 >= 0.40） ──
-    // trend で最大比率を持つシフトが 0.40 以上 → 固定化疑い
-    const FIXED_SHIFT_THR = 0.40;
-    const _fixedShiftItems = [];
-    _rStaffData.forEach(({ s, trend, hasTrend, genRate, workTotal }) => {
-      if (!hasTrend) return; // trend未学習は対象外（別途newbieLockで診断）
-      const topShift = _rWorkTypes.reduce((best, k) => (trend[k] ?? 0) > (trend[best] ?? 0) ? k : best, _rWorkTypes[0]);
-      const topRate  = trend[topShift] ?? 0;
-      if (topRate >= FIXED_SHIFT_THR) {
-        const diff = genRate[topShift] - topRate;
-        _fixedShiftItems.push(`  ${s.name}: trend_${topShift}=${topRate.toFixed(2)} gen=${genRate[topShift].toFixed(2)} diff=${diff >= 0 ? '+' : ''}${diff.toFixed(2)} n=${workTotal}`);
-      }
-    });
-
-    // ── ② fixedDow: 曜日固定化（dowShiftRate 特定曜日 >= 0.75） ──
-    // trend の dowShiftRate[dow][shiftType] >= 0.75 → その曜日のシフトが固定化
-    const FIXED_DOW_THR = 0.75;
-    const _fixedDowItems = [];
-    _rStaffData.forEach(({ s, trend, hasTrend, genDowRate }) => {
-      if (!hasTrend || !trend.dowShiftRate) return;
-      for (let dow = 0; dow < 7; dow++) {
-        const tDow = trend.dowShiftRate[dow];
-        if (!tDow) continue;
-        for (const k of _rWorkTypes) {
-          const tRate = tDow[k] ?? 0;
-          if (tRate >= FIXED_DOW_THR) {
-            const gRate = genDowRate[dow][k] ?? 0;
-            _fixedDowItems.push(`  ${s.name}: ${DOW_LABELS[dow]}曜_${k}=trend${tRate.toFixed(2)} gen${gRate.toFixed(2)}`);
-          }
-        }
-      }
-    });
-
-    // ── ③ pairBias: pair固定化（生成結果ベース）──
-    // 夜勤担当Aの日に、早番/遅番担当Bの共起率を計算
-    // slot管理シフト（夜勤含む）の組み合わせのみ診断
-    const PAIR_BIAS_THR = 0.65;
-    const _pairBiasItems = [];
-    {
-      // slotManagedTypes のうち 夜勤系 と 早番/遅番系 を特定
-      const _nightKeys  = [...new Set(dept.shiftTypes)].filter(k => {
-        if (!deptWork.has(k) || k === '明け') return false;
-        return k === '夜勤' || _rBaseOf(k) === '夜勤';
-      });
-      const _earlyKeys  = [...new Set(dept.shiftTypes)].filter(k => {
-        if (!deptWork.has(k) || k === '明け') return false;
-        const base = _rBaseOf(k);
-        return base === '早番' || base === '遅番';
-      });
-      if (_nightKeys.length > 0 && _earlyKeys.length > 0) {
-        for (const sA of ds) {
-          // sA が夜勤を担当した日一覧
-          const nightDays = [];
-          for (let d = 1; d <= days; d++) {
-            if (_nightKeys.includes(res[sA.id][d])) nightDays.push(d);
-          }
-          if (nightDays.length < 3) continue; // サンプル少なすぎ → スキップ
-          for (const sB of ds) {
-            if (sA.id === sB.id) continue;
-            // sA夜勤日に sB が早番/遅番の共起カウント
-            const coOccur = nightDays.filter(d => _earlyKeys.includes(res[sB.id][d])).length;
-            const rate = coOccur / nightDays.length;
-            if (rate >= PAIR_BIAS_THR) {
-              const bShift = _earlyKeys.find(k => {
-                const cnt = nightDays.filter(d => res[sB.id][d] === k).length;
-                return cnt / nightDays.length >= PAIR_BIAS_THR;
-              }) || '早番/遅番';
-              _pairBiasItems.push(`  ${sA.name}夜勤時→${sB.name}${bShift}: ${(rate * 100).toFixed(0)}% (${coOccur}/${nightDays.length}日)`);
-            }
-          }
-        }
-      }
-    }
-
-    // ── ④ newbieLock: 新人育成停止（trend_n<30 かつ 日勤gen率>=0.70） ──
-    const NEWBIE_N_THR  = 30;  // 学習サンプル数が少ない = 新人・新規
-    const NEWBIE_DAY_THR = 0.70;
-    const _newbieLockItems = [];
-    _rStaffData.forEach(({ s, workTotal, genRate }) => {
-      const _genDayRate = _rWorkTypes.filter(k => _rBaseOf(k) === '日勤').reduce((sum, k) => sum + genRate[k], 0);
-      if (workTotal < NEWBIE_N_THR && _genDayRate >= NEWBIE_DAY_THR) {
-        _newbieLockItems.push(`  ${s.name}: 日勤=${_genDayRate.toFixed(2)} trend_n=${workTotal}`);
-      }
-    });
-
-    // ── ⑤ veteranLoad: ベテラン過負荷（night-core の夜勤gen率>=0.35） ──
-    const VETERAN_NIGHT_THR = 0.35;
-    const _veteranLoadItems = [];
-    _rStaffData.forEach(({ s, roleGuess, genRate, workTotal }) => {
-      if (roleGuess !== 'night-core') return;
-      const _nightGenRate = _rWorkTypes.filter(k => k === '夜勤' || _rBaseOf(k) === '夜勤').reduce((sum, k) => sum + genRate[k], 0);
-      if (_nightGenRate >= VETERAN_NIGHT_THR) {
-        _veteranLoadItems.push(`  ${s.name}: 夜勤gen=${_nightGenRate.toFixed(2)} trend_n=${workTotal}`);
-      }
-    });
-
-    // ── 出力 ──
-    const _rLines = [];
-    _rLines.push('[AG-Trend-Risk]');
-    _rLines.push(`fixedShift(trend>=${FIXED_SHIFT_THR}):\n` +
-      (_fixedShiftItems.length > 0 ? _fixedShiftItems.join('\n') : '  なし'));
-    _rLines.push(`fixedDow(dowRate>=${FIXED_DOW_THR}):\n` +
-      (_fixedDowItems.length > 0 ? _fixedDowItems.join('\n') : '  なし'));
-    _rLines.push(`pairBias(共起>=${PAIR_BIAS_THR}):\n` +
-      (_pairBiasItems.length > 0 ? _pairBiasItems.join('\n') : '  なし'));
-    _rLines.push(`newbieLock(n<${NEWBIE_N_THR} & 日勤>=${NEWBIE_DAY_THR}):\n` +
-      (_newbieLockItems.length > 0 ? _newbieLockItems.join('\n') : '  なし'));
-    _rLines.push(`veteranLoad(夜勤gen>=${VETERAN_NIGHT_THR}):\n` +
-      (_veteranLoadItems.length > 0 ? _veteranLoadItems.join('\n') : '  なし'));
-    console.log(_rLines.join('\n'));
-  }
-  // ══ [AG-Trend-Risk] 診断ログ ここまで ══
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // ★[AG-Pair] Pair/Combination Trend診断（診断のみ・アルゴリズム変更禁止）
-  //
-  // 目的: 「誰が誰と組むか」の暗黙知・組み合わせ文化を可視化する。
-  //   ① night→early pair: A夜勤日にB早番/遅番系が入る共起率
-  //   ② early→明け 共起: A早番日にB明けが同日にいる率
-  //   ③ newbie-support: 新人(n<30)夜勤時にベテラン(n>=50)早番の共起率
-  //   ④ [AG-Pair-Risk]: 固定pair危険度 / nightCore同士共起
-  // ★pair制約・pair補正・pairスコア・pair優先生成は実装しない
-  // ★prevShifts=前月実績（1ヶ月分のみ）、gen=今回生成結果
-  // ══════════════════════════════════════════════════════════════════════════════
-  {
-    const _pcds = dept.customShiftDefs || [];
-    const _pBaseOf = (k) => _pcds.find(c => c.key === k)?.baseType || k;
-
-    // ── シフトカテゴリ ──
-    const _pNightKeys = [...new Set(dept.shiftTypes)].filter(k =>
-      deptWork.has(k) && k !== '明け' && (k === '夜勤' || _pBaseOf(k) === '夜勤')
-    );
-    const _pEarlyKeys = [...new Set(dept.shiftTypes)].filter(k =>
-      deptWork.has(k) && k !== '明け' && (_pBaseOf(k) === '早番' || _pBaseOf(k) === '遅番')
-    );
-
-    const PAIR_N_MIN  = 3;    // A 役割の最低サンプル日数（不足 → スキップ）
-    const PAIR_SHOW   = 0.55; // 表示閾値（gen率がこれ以上のみ出力）
-    const PAIR_RISK   = 0.80; // 固定pair危険閾値
-    const AVOID_SHOW  = 0.60; // 早番→明け共起 表示閾値
-    const AVOID_RISK  = 0.85; // 早番→明け共起 危険閾値
-    const NC_CO_RISK  = 0.40; // nightCore同士同日共起 危険閾値
-
-    // ── 前月データ有効性チェック ──
-    // prevShifts: { [staffId]: { [day(str|num)]: shiftType } }
-    const _prevDayNums = Object.values(prevShifts || {})
-      .flatMap(dMap => Object.keys(dMap || {}).map(Number))
-      .filter(n => n > 0 && !isNaN(n));
-    const _prevDays = _prevDayNums.length > 0 ? Math.max(..._prevDayNums) : 0;
-    const hasPrev = _prevDays >= 14; // 前月データが14日以上あれば診断に使う
-
-    // ── pair率計算ヘルパー ──
-    // shifts: res (res[id][d]) or prevShifts (prevShifts[id][d])
-    // aId/bId: staffId, aRoles: string[], bRoles: string[]
-    // 返値: { rate, n } or null（サンプル不足）
-    const _calcPair = (shifts, totalDays, aId, aRoles, bId, bRoles) => {
-      let aDays = 0, co = 0;
-      for (let d = 1; d <= totalDays; d++) {
-        if (aRoles.includes(shifts[aId]?.[d])) {
-          aDays++;
-          if (bRoles.includes(shifts[bId]?.[d])) co++;
-        }
-      }
-      return aDays >= PAIR_N_MIN ? { rate: co / aDays, n: aDays, co } : null;
-    };
-
-    const _fmtR = (r) => r ? `${r.rate.toFixed(2)}(n=${r.n})` : 'N/A';
-
-    // ── ① night→early pair ──
-    const _nightEarlyPairs = [];
-    if (_pNightKeys.length > 0 && _pEarlyKeys.length > 0) {
-      for (const sA of ds) {
-        for (const sB of ds) {
-          if (sA.id === sB.id) continue;
-          const _genR = _calcPair(res, days, sA.id, _pNightKeys, sB.id, _pEarlyKeys);
-          if (!_genR || _genR.rate < PAIR_SHOW) continue;
-          const _prevR = hasPrev ? _calcPair(prevShifts, _prevDays, sA.id, _pNightKeys, sB.id, _pEarlyKeys) : null;
-          // 具体的な早番/遅番シフトを特定（最多のもの）
-          const _topEarly = _pEarlyKeys.reduce((best, k) => {
-            const cnt = Array.from({ length: days }, (_, i) => i + 1)
-              .filter(d => _pNightKeys.includes(res[sA.id][d]) && res[sB.id][d] === k).length;
-            return cnt > (best.cnt ?? 0) ? { k, cnt } : best;
-          }, {}).k || _pEarlyKeys[0];
-          _nightEarlyPairs.push({ aName: sA.name, bName: sB.name, topEarly: _topEarly, genR: _genR, prevR: _prevR });
-        }
-      }
-      _nightEarlyPairs.sort((x, y) => y.genR.rate - x.genR.rate);
-    }
-
-    // ── ② early→明け 共起（A早番日にB明けが同日にいる率） ──
-    const _earlyAkePairs = [];
-    if (_pEarlyKeys.length > 0) {
-      for (const sA of ds) {
-        for (const sB of ds) {
-          if (sA.id === sB.id) continue;
-          const _genR = _calcPair(res, days, sA.id, _pEarlyKeys, sB.id, ['明け']);
-          if (!_genR || _genR.rate < AVOID_SHOW) continue;
-          const _prevR = hasPrev ? _calcPair(prevShifts, _prevDays, sA.id, _pEarlyKeys, sB.id, ['明け']) : null;
-          _earlyAkePairs.push({ aName: sA.name, bName: sB.name, genR: _genR, prevR: _prevR });
-        }
-      }
-      _earlyAkePairs.sort((x, y) => y.genR.rate - x.genR.rate);
-    }
-
-    // ── ③ newbie-support pair（新人夜勤時にベテラン早番） ──
-    const _newbieSupportPairs = [];
-    if (_pNightKeys.length > 0 && _pEarlyKeys.length > 0) {
-      const _newbies  = ds.filter(s => (getTrend(s)?._workTotal ?? 0) <  30); // 新人: n<30
-      const _veterans = ds.filter(s => (getTrend(s)?._workTotal ?? 0) >= 50); // ベテラン: n>=50
-      for (const sA of _newbies) {
-        for (const sB of _veterans) {
-          if (sA.id === sB.id) continue;
-          const _genR = _calcPair(res, days, sA.id, _pNightKeys, sB.id, _pEarlyKeys);
-          if (!_genR) continue; // サンプル不足も含め全て出力（新人夜勤自体が少ない）
-          const _prevR = hasPrev ? _calcPair(prevShifts, _prevDays, sA.id, _pNightKeys, sB.id, _pEarlyKeys) : null;
-          _newbieSupportPairs.push({ aName: sA.name, bName: sB.name, genR: _genR, prevR: _prevR });
-        }
-      }
-      _newbieSupportPairs.sort((x, y) => (y.genR?.rate ?? 0) - (x.genR?.rate ?? 0));
-    }
-
-    // ── [AG-Pair] 出力 ──
-    const _pLines = ['[AG-Pair]'];
-    if (_pNightKeys.length === 0 || _pEarlyKeys.length === 0) {
-      _pLines.push(`  ※ 夜勤系(${_pNightKeys.length}) or 早番系(${_pEarlyKeys.length})シフト不足 → pair診断スキップ`);
-    } else {
-      // ① night→early
-      _pLines.push(`night→early pair(gen>=${PAIR_SHOW}):`);
-      if (_nightEarlyPairs.length === 0) {
-        _pLines.push('  なし（pair率がしきい値以下 = pair依存低め）');
-      } else {
-        _nightEarlyPairs.slice(0, 8).forEach(({ aName, bName, topEarly, genR, prevR }) =>
-          _pLines.push(`  ${aName}夜勤→${bName}${topEarly}: gen=${genR.rate.toFixed(2)}(${genR.co}/${genR.n}日) prev=${_fmtR(prevR)}`));
-      }
-      // ② early→明け
-      _pLines.push(`early→明け共起(gen>=${AVOID_SHOW}):`);
-      if (_earlyAkePairs.length === 0) {
-        _pLines.push('  なし');
-      } else {
-        _earlyAkePairs.slice(0, 8).forEach(({ aName, bName, genR, prevR }) =>
-          _pLines.push(`  ${aName}早番時→${bName}明け: gen=${genR.rate.toFixed(2)}(${genR.co}/${genR.n}日) prev=${_fmtR(prevR)}`));
-      }
-      // ③ newbie-support
-      _pLines.push('newbie-support(新人夜勤→ベテラン早番):');
-      if (_newbieSupportPairs.length === 0) {
-        _pLines.push('  なし（新人夜勤なし / ベテランn>=50不足 / サンプル不足）');
-      } else {
-        _newbieSupportPairs.slice(0, 5).forEach(({ aName, bName, genR, prevR }) =>
-          _pLines.push(`  新人${aName}夜勤→ベテラン${bName}早番系: gen=${genR ? genR.rate.toFixed(2) + `(${genR.co}/${genR.n}日)` : 'n<3'} prev=${_fmtR(prevR)}`));
-      }
-    }
-    console.log(_pLines.join('\n'));
-
-    // ── [AG-Pair-Risk] 固定化危険度 + nightCore同士共起 ──
-    const _prLines = ['[AG-Pair-Risk]'];
-    // high pair（gen率 >= PAIR_RISK）
-    const _highPairItems = _nightEarlyPairs
-      .filter(({ genR }) => genR.rate >= PAIR_RISK)
-      .map(({ aName, bName, topEarly, genR }) =>
-        `  ${aName}夜勤→${bName}${topEarly}: ${(genR.rate * 100).toFixed(0)}%(${genR.co}/${genR.n}日) ★属人化注意`);
-    _prLines.push(`highPair(>=${PAIR_RISK}):\n` + (_highPairItems.length > 0 ? _highPairItems.join('\n') : '  なし'));
-    // high avoid（早番→明け gen率 >= AVOID_RISK）
-    const _highAvoidItems = _earlyAkePairs
-      .filter(({ genR }) => genR.rate >= AVOID_RISK)
-      .map(({ aName, bName, genR }) =>
-        `  ${aName}早番時→${bName}明け: ${(genR.rate * 100).toFixed(0)}%(${genR.co}/${genR.n}日)`);
-    _prLines.push(`highAvoid(早番→明け>=${AVOID_RISK}):\n` + (_highAvoidItems.length > 0 ? _highAvoidItems.join('\n') : '  なし'));
-    // nightCore同士の同日夜勤共起
-    if (_pNightKeys.length > 0) {
-      const _ncItems = [];
-      const _ncStaff = ds.filter(s => {
-        const tr = getTrend(s);
-        if (!tr || (tr._workTotal ?? 0) < 10) return false;
-        return [...new Set(dept.shiftTypes)]
-          .filter(k => deptWork.has(k) && k !== '明け' && _pBaseOf(k) !== '日勤')
-          .reduce((sum, k) => sum + (tr[k] ?? 0), 0) >= 0.45;
-      });
-      for (let i = 0; i < _ncStaff.length; i++) {
-        for (let j = i + 1; j < _ncStaff.length; j++) {
-          const sA = _ncStaff[i], sB = _ncStaff[j];
-          let _aDays = 0, _both = 0;
-          for (let d = 1; d <= days; d++) {
-            if (_pNightKeys.includes(res[sA.id][d])) {
-              _aDays++;
-              if (_pNightKeys.includes(res[sB.id][d])) _both++;
-            }
-          }
-          if (_aDays >= PAIR_N_MIN && _both / _aDays >= NC_CO_RISK) {
-            _ncItems.push(`  ${sA.name}&${sB.name}同日夜勤: ${(_both/_aDays).toFixed(2)}(${_both}/${_aDays}日)`);
-          }
-        }
-      }
-      _prLines.push(`nightCore同士同日共起(>=${NC_CO_RISK}):\n` + (_ncItems.length > 0 ? _ncItems.join('\n') : '  なし'));
-    }
-    console.log(_prLines.join('\n'));
-  }
-  // ══ [AG-Pair] 診断ログ ここまで ══
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // ★[AG-Pair-Effect] Pair効果分析 / Pair Stability Analysis
-  // 診断のみ・アルゴリズム変更禁止 / repair変更禁止 / pair強制禁止
-  //
-  // 手法: pair有り日 vs pair無し日 で「最終res上の安定性指標」を比較
-  //   badTrans  : その日 isBadTransition が起きたスタッフ数（遅→早 等）
-  //   consec    : その日 連続勤務超過しているスタッフ数（consecWork > maxConsec）
-  //   slotViol  : role-slot maxStaff超過シフト数
-  //   shortage  : minStaff未満シフト数
-  // ★repairロジック・trend重みは一切変更しない。最終resを観測するだけ。
-  // ══════════════════════════════════════════════════════════════════════════════
-  {
-    const _ef_cds    = dept.customShiftDefs || [];
-    const _ef_baseOf = (k) => _ef_cds.find(c => c.key === k)?.baseType || k;
-    const _ef_nightK = [...new Set(dept.shiftTypes)].filter(k =>
-      deptWork.has(k) && k !== '明け' && (k === '夜勤' || _ef_baseOf(k) === '夜勤')
-    );
-    const _ef_earlyK = [...new Set(dept.shiftTypes)].filter(k =>
-      deptWork.has(k) && k !== '明け' && (_ef_baseOf(k) === '早番' || _ef_baseOf(k) === '遅番')
-    );
-
-    // ── 日別安定性指標 計算ヘルパー ──
-    const _dayMetrics = (d) => {
-      let badTrans = 0, consec = 0, slotViol = 0, shortage = 0;
-      for (const s of ds) {
-        if (d > 1 && isBadTransition(res[s.id][d - 1], res[s.id][d])) badTrans++;
-        if (deptWork.has(res[s.id][d]) && res[s.id][d] !== '明け' && consecWork(s.id, d) > maxConsec) consec++;
-      }
-      for (const [k, limit] of Object.entries(maxStaff)) {
-        if (limit >= 99) continue;
-        if (ds.filter(s => res[s.id][d] === k).length > limit) slotViol++;
-      }
-      for (const [k, min] of Object.entries(dept.minStaff || {})) {
-        if (ds.filter(s => res[s.id][d] === k).length < min) shortage++;
-      }
-      return { badTrans, consec, slotViol, shortage };
-    };
-
-    // ── 日リストの指標平均 ──
-    const _avgM = (dayList) => {
-      if (!dayList || dayList.length === 0) return null;
-      const sum = dayList.reduce((acc, d) => {
-        const m = _dayMetrics(d);
-        return { badTrans: acc.badTrans + m.badTrans, consec: acc.consec + m.consec, slotViol: acc.slotViol + m.slotViol, shortage: acc.shortage + m.shortage };
-      }, { badTrans: 0, consec: 0, slotViol: 0, shortage: 0 });
-      const n = dayList.length;
-      return { badTrans: sum.badTrans / n, consec: sum.consec / n, slotViol: sum.slotViol / n, shortage: sum.shortage / n, n };
-    };
-
-    // ── stabilityGain: pair有り vs 無し の総合改善度 ──
-    // 「pair日の方が各指標が低い(=良い)」ほど gain が高い
-    const _stabilityGain = (pairM, noPairM) => {
-      if (!pairM || !noPairM) return 'N/A(片方サンプルなし)';
-      // 各指標: noPair - pair（正=pairの方が良い）
-      const delta = (noPairM.badTrans - pairM.badTrans)
-                  + (noPairM.consec   - pairM.consec)
-                  + (noPairM.slotViol - pairM.slotViol)
-                  + (noPairM.shortage - pairM.shortage);
-      if (delta >= 1.5) return 'high';
-      if (delta >= 0.5) return 'medium';
-      if (delta >= 0.0) return 'low';
-      return 'none(pair日が不安定)';
-    };
-
-    const _fmtM = (m) => m
-      ? `badTrans=${m.badTrans.toFixed(2)} consec=${m.consec.toFixed(2)} slotViol=${m.slotViol.toFixed(2)} shortage=${m.shortage.toFixed(2)} (n=${m.n})`
-      : 'N/A(日数不足)';
-
-    const EFFECT_THR = 0.55; // 分析対象 pair率下限
-    const PAIR_NMIN  = 3;    // pair日 最低サンプル数
-
-    // ════════════════════════════════════════
-    // [AG-Pair-Effect] 主要pair 安定性比較
-    // ════════════════════════════════════════
-    const _efLines = ['[AG-Pair-Effect]'];
-    if (_ef_nightK.length === 0 || _ef_earlyK.length === 0) {
-      _efLines.push('  ※ 夜勤/早番系シフト不足 → 効果分析スキップ');
-    } else {
-      const _analyzed = [];
-      for (const sA of ds) {
-        for (const sB of ds) {
-          if (sA.id === sB.id) continue;
-          const _pairDays   = [];
-          const _noPairDays = [];
-          for (let d = 1; d <= days; d++) {
-            if (!_ef_nightK.includes(res[sA.id][d])) continue;
-            if (_ef_earlyK.includes(res[sB.id][d])) _pairDays.push(d);
-            else _noPairDays.push(d);
-          }
-          const _total = _pairDays.length + _noPairDays.length;
-          if (_total < PAIR_NMIN || _pairDays.length < PAIR_NMIN) continue;
-          const _rate = _pairDays.length / _total;
-          if (_rate < EFFECT_THR) continue;
-
-          const _pM  = _avgM(_pairDays);
-          const _npM = _avgM(_noPairDays);
-          const _gain = _stabilityGain(_pM, _npM);
-
-          // 最多の早番シフト種別を特定（表示用）
-          const _topE = _ef_earlyK.reduce((best, k) => {
-            const cnt = _pairDays.filter(d => res[sB.id][d] === k).length;
-            return cnt > (best.cnt ?? 0) ? { k, cnt } : best;
-          }, {}).k || _ef_earlyK[0];
-
-          _analyzed.push({ aName: sA.name, bName: sB.name, topE: _topE, pn: _pairDays.length, npn: _noPairDays.length, rate: _rate, pM: _pM, npM: _npM, gain: _gain });
-        }
-      }
-      _analyzed.sort((a, b) => b.rate - a.rate);
-
-      if (_analyzed.length === 0) {
-        _efLines.push(`  なし（pair率>=${EFFECT_THR}かつpair日>=${PAIR_NMIN}の組合せなし）`);
-      } else {
-        _analyzed.slice(0, 5).forEach(({ aName, bName, topE, pn, npn, rate, pM, npM, gain }) => {
-          _efLines.push(
-            `${aName}夜勤→${bName}${topE}(pairDays=${pn} noPairDays=${npn} rate=${rate.toFixed(2)}):\n` +
-            `  pair:   ${_fmtM(pM)}\n` +
-            `  noPair: ${_fmtM(npM)}\n` +
-            `  stabilityGain=${gain}`
-          );
-        });
-      }
-    }
-    console.log(_efLines.join('\n'));
-
-    // ════════════════════════════════════════
-    // [AG-Newbie-Support] 新人支援効果分析
-    // ════════════════════════════════════════
-    const _nbLines = ['[AG-Newbie-Support]'];
-    if (_ef_nightK.length > 0 && _ef_earlyK.length > 0) {
-      const _newbies  = ds.filter(s => (getTrend(s)?._workTotal ?? 0) <  30);
-      const _veterans = ds.filter(s => (getTrend(s)?._workTotal ?? 0) >= 50);
-      if (_newbies.length === 0) {
-        _nbLines.push('  なし（新人スタッフ不在）');
-      } else {
-        _newbies.forEach(sA => {
-          const _nightDays = Array.from({ length: days }, (_, i) => i + 1)
-            .filter(d => _ef_nightK.includes(res[sA.id][d]));
-          if (_nightDays.length === 0) {
-            _nbLines.push(`  ${sA.name}(n=${getTrend(sA)?._workTotal ?? 0}): 夜勤なし → newbieLockの可能性`);
-            return;
-          }
-          // ベテランが早番にいる日 vs いない日
-          const _supDays  = _nightDays.filter(d =>  _veterans.some(v => _ef_earlyK.includes(res[v.id][d])));
-          const _noSupDays = _nightDays.filter(d => !_veterans.some(v => _ef_earlyK.includes(res[v.id][d])));
-          const _supM  = _avgM(_supDays);
-          const _noSupM = _avgM(_noSupDays);
-          const _gain  = _stabilityGain(_supM, _noSupM);
-          const _vetNames = _veterans
-            .filter(v => _supDays.some(d => _ef_earlyK.includes(res[v.id][d])))
-            .map(v => v.name).join(',');
-          _nbLines.push(
-            `新人${sA.name}(n=${getTrend(sA)?._workTotal ?? 0}) 夜勤${_nightDays.length}日 [ベテラン有=${_supDays.length}日/無=${_noSupDays.length}日]\n` +
-            `  support担当=[${_vetNames || 'なし'}]\n` +
-            `  ベテランあり: ${_fmtM(_supM)}\n` +
-            `  ベテランなし: ${_fmtM(_noSupM)}\n` +
-            `  supportEffect=${_gain}`
-          );
-        });
-      }
-    } else {
-      _nbLines.push('  ※ 夜勤/早番系シフト不足 → 新人支援分析スキップ');
-    }
-    console.log(_nbLines.join('\n'));
-
-    // ════════════════════════════════════════
-    // [AG-NightCore] night-core集中影響分析
-    // 同日共起 vs 単独 の安定性 + 負荷トレードオフ
-    // ════════════════════════════════════════
-    const _ncLines = ['[AG-NightCore]'];
-    if (_ef_nightK.length > 0) {
-      const _ncStaff = ds.filter(s => {
-        const tr = getTrend(s);
-        if (!tr || (tr._workTotal ?? 0) < 10) return false;
-        return [...new Set(dept.shiftTypes)]
-          .filter(k => deptWork.has(k) && k !== '明け' && _ef_baseOf(k) !== '日勤')
-          .reduce((sum, k) => sum + (tr[k] ?? 0), 0) >= 0.45;
-      });
-      _ncLines.push(`nightCoreスタッフ(trend_n>=10, 非日勤率>=0.45): [${_ncStaff.map(s => s.name).join(',') || 'なし'}]`);
-      if (_ncStaff.length < 2) {
-        _ncLines.push('  night-core 2人以上必要（不足）');
-      } else {
-        let _hasPair = false;
-        for (let i = 0; i < _ncStaff.length; i++) {
-          for (let j = i + 1; j < _ncStaff.length; j++) {
-            const sA = _ncStaff[i], sB = _ncStaff[j];
-            const _bothDays   = [];
-            const _singleDays = [];
-            for (let d = 1; d <= days; d++) {
-              if (!_ef_nightK.includes(res[sA.id][d])) continue;
-              if (_ef_nightK.includes(res[sB.id][d])) _bothDays.push(d);
-              else _singleDays.push(d);
-            }
-            if (_bothDays.length + _singleDays.length < 3) continue;
-            _hasPair = true;
-            const _bothM    = _avgM(_bothDays);
-            const _singleM  = _avgM(_singleDays);
-            const _ncGain   = _stabilityGain(_bothM, _singleM);
-            const _loadA    = Array.from({ length: days }, (_, k) => k + 1).filter(d => _ef_nightK.includes(res[sA.id][d])).length;
-            const _loadB    = Array.from({ length: days }, (_, k) => k + 1).filter(d => _ef_nightK.includes(res[sB.id][d])).length;
-            const _coRate   = (_bothDays.length + _singleDays.length) > 0
-              ? _bothDays.length / (_bothDays.length + _singleDays.length) : 0;
-            _ncLines.push(
-              `${sA.name}&${sB.name} 同日夜勤=${_bothDays.length}日/単独=${_singleDays.length}日 co=${_coRate.toFixed(2)}:\n` +
-              `  co:     ${_fmtM(_bothM)}\n` +
-              `  single: ${_fmtM(_singleM)}\n` +
-              `  stability=${_ncGain}` +
-              ` veteranLoad=${sA.name}:${_loadA}日/${sB.name}:${_loadB}日` +
-              ` diversificationRisk=${_coRate >= 0.60 ? 'high' : _coRate >= 0.40 ? 'medium' : 'low'}`
-            );
-          }
-        }
-        if (!_hasPair) _ncLines.push('  夜勤サンプル不足（3日未満）');
-      }
-    } else {
-      _ncLines.push('  ※ 夜勤系シフト不足 → nightCore分析スキップ');
-    }
-    console.log(_ncLines.join('\n'));
-  }
-  // ══ [AG-Pair-Effect] 診断ログ ここまで ══
-
   const warnings = {};
   for (let d = 1; d <= days; d++) {
     for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
@@ -3382,10 +2670,6 @@ function TemporalConsolePanel({ data, consoleSection, setConsoleSection }) {
     </div>
   );
 }
-// ─────────────────────────────────────────────────────────────────────────────
-// Temporal Debug Flag — set true to enable heavy Temporal engine console output
-const DEV_TEMPORAL_LOG = process.env.NODE_ENV !== 'production';
-// ─────────────────────────────────────────────────────────────────────────────
 
 const deriveYears = (dateStr, refDate) => {
   if (!dateStr) return null;
@@ -3836,7 +3120,6 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
     // Check if any cell (any column) has a recognizable staff name
     const anyColHasMatchedName = filled.some(r => r.some(cell => isNameLike(cell) && staffList.some(s => nameMatch(cell, s.name))));
 
-    console.log('[paste detect] totalShiftCells:', totalShiftCells, 'anyColHasMatchedName:', anyColHasMatchedName, 'rows:', filled.length);
 
     // Case 1: Names-only paste (≤2 shift cells total → treat as names)
     if (totalShiftCells <= 2) {
@@ -5754,7 +5037,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [month, setMonth] = useState(now.getMonth());
 
   const isInitializing = useRef(true);
-  const isMergingKibo = useRef(false); // kiboChannel同期中フラグ（現在はmergeStaffKiboで使用）
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
@@ -5800,7 +5082,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               setSaveStatus('error');
             } else {
               lastSavedDeptsRef.current = snapshot;
-              console.log('[sync] depts 保存OK');
               // 保存中に届いた変更を再保存
               if (pendingDeptsRef.current !== null) {
                 const pending = pendingDeptsRef.current;
@@ -5843,7 +5124,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               setSaveStatus('error');
             } else {
               lastSavedStaffListRef.current = snapshot;
-              console.log('[sync] staffList 保存OK');
               if (pendingStaffListRef.current !== null) {
                 const pending = pendingStaffListRef.current;
                 pendingStaffListRef.current = null;
@@ -5878,7 +5158,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       if (!s.floorJoinDate    && s.floorYears    != null) patch.floorJoinDate    = toDateStr(s.floorYears);
       return Object.keys(patch).length > 0 ? { ...s, ...patch } : s;
     }));
-    console.log('[Migration] facilityYears/floorYears → JoinDate 変換完了');
   }, [staffList]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // スタッフポータル用: 施設設定をSupabaseに公開保存（dbLoading完了後に必ず1回書く）
@@ -5943,8 +5222,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // ── Phase S-4: Per-Tab Lazy Temporal Architecture ─────────────────────────
   const [consoleSection, setConsoleSection] = useState(null);  // lifted from TemporalConsolePanel
   const consoleSectionRef   = useRef(null);       // shadow of consoleSection — closure-safe
-  // ── Phase S-5: Incremental Temporal Engine Architecture ──────────────────
-  const iteSchedulerRef = useRef(null);           // current-generation token — stale-cancel guard
   // ── Phase S-6: Temporal Benchmark & Profiling Framework ──────────────────
 
   // ── 初回: Supabase から全データを一括ロード ──
@@ -5971,7 +5248,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           if (migrated.some((d, i) => d !== loaded[i])) {
             setTimeout(() => {
               supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:migrated, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-                .then(({error}) => { if (!error) console.log('[migration] roleShiftTypes をDBへ復元保存しました'); });
+                .then(({error}) => { });
             }, 3000);
           }
         } else {
@@ -6005,7 +5282,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const merged = {};
           for (const [k, v] of deptShiftEntries) { merged[k.slice(shiftPrefix.length)] = v; }
           isLoadingMonth.current = true;
-          console.log("[setAllShifts]", "reason=initial_load", { year: now.getFullYear(), month: now.getMonth()+1, activeDeptId, keys: Object.keys(merged), stack: new Error().stack });
           setAllShifts(restoreShifts(merged));
           setTimeout(() => { isLoadingMonth.current = false; }, 100);
         } else {
@@ -6013,7 +5289,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const legacyKey = `shifts_${now.getFullYear()}_${now.getMonth()+1}`;
           if (byKey[legacyKey]) {
             isLoadingMonth.current = true;
-            console.log("[setAllShifts]", "reason=initial_load_legacy", { year: now.getFullYear(), month: now.getMonth()+1, activeDeptId, keys: [legacyKey], stack: new Error().stack });
             setAllShifts(restoreShifts(byKey[legacyKey]));
             setTimeout(() => { isLoadingMonth.current = false; }, 100);
           }
@@ -6057,7 +5332,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       }
       // 貼り付け後5秒間はRealtime上書きをブロック（保存完了前にRTが旧データを上書きするのを防ぐ）
       if (Date.now() - pasteTimestamp.current < 5000) {
-        console.log("[RT_GUARD] BLOCKED by pasteTimestamp", Date.now() - pasteTimestamp.current, "ms after paste");
         return;
       }
       // 保存完了後に実際にロードする際はdismissedフラグをリセット
@@ -6107,7 +5381,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
           isLoadingMonth.current = true;
-          console.log("[setAllShifts]", "reason=realtime_update", { year: yearRef.current, month: monthRef.current+1, activeDeptId: activeDeptIdRef.current, keys: deptShiftEntries.map(([k])=>k), stack: new Error().stack });
           // ★Fix W-3: RT適用時のundo stack リセット
           // 「RT更新前の古いundo履歴」でundoするとRT変更が消滅するリスクを防止
           // RT適用がseq不一致でキャンセルされる場合（ユーザー編集中）は、undo stackは保持する
@@ -6147,7 +5420,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const legacyKey = `shifts_${yearRef.current}_${monthRef.current+1}`;
           if (byKey[legacyKey]) {
             isLoadingMonth.current = true;
-            console.log("[setAllShifts]", "reason=realtime_update_legacy", { year: yearRef.current, month: monthRef.current+1, activeDeptId: activeDeptIdRef.current, key: legacyKey, stack: new Error().stack });
             setAllShifts(prev => {
               if (userEditSeq.current !== seqAtStart) return prev;
               seqAtLastRemoteLoad.current = userEditSeq.current;
@@ -6305,7 +5577,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (saveTimer.current) clearTimeout(saveTimer.current); // 旧月の保存タイマーを即キャンセル
     isLoadingMonth.current = true;
     setIsMonthLoading(true); // UIロック開始
-    console.log("[setAllShifts]", "reason=month_clear", { year, month: month+1, activeDeptId, stack: new Error().stack });
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
     undoStackRef.current = {}; // 月切替でアンドゥ履歴をリセット
     setUndoCount(0);
@@ -6315,7 +5586,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         console.warn('[fetch] 古いリクエストを破棄 reqId:', reqId, '最新:', fetchReqIdRef.current);
         return;
       }
-      console.log("[setAllShifts]", "reason=month_load_supabase", { year, month: month+1, activeDeptId, keys: Object.keys(data||{}), stack: new Error().stack });
       setAllShifts(restoreShifts(data));
       setTimeout(() => {
         if (reqId !== fetchReqIdRef.current) return;
@@ -6416,24 +5686,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current);
           if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
         }
-        // スワップ成功パターン: 生成後に手動で変更されたシフトを学習
         const genRef = lastAutoGenRef.current[currentDeptId];
         if (genRef) {
           const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
-          const changes = detectSwapChanges(genRef, deptData, deptStaff, year, month);
           const kiboPatterns = detectKiboNightPatterns(genRef, deptData, deptStaff, year, month);
-          if (Object.keys(changes).length > 0 || Object.keys(kiboPatterns).length > 0) {
+          if (Object.keys(kiboPatterns).length > 0) {
             setStaffList(prev => prev.map(s => {
-              const hasSwap = !!changes[s.id], hasKibo = !!kiboPatterns[s.id];
-              if (!hasSwap && !hasKibo) return s;
+              if (!kiboPatterns[s.id]) return s;
               return {
                 ...s,
-                ...(hasSwap ? {swapLearning: mergeSwapLearning(s.swapLearning || {}, changes[s.id])} : {}),
-                ...(hasKibo ? {kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id])} : {}),
+                kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id]),
               };
             }));
           }
-          lastAutoGenRef.current[currentDeptId] = {...deptData}; // 次回比較の基準を更新
+          lastAutoGenRef.current[currentDeptId] = {...deptData};
         }
       } catch(e) {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
@@ -6749,7 +6015,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // ユーザー操作はRealtimeより常に優先: 編集前にシーケンス番号を上げてRealtimeをキャンセル
     userEditSeq.current++;
     saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
-    console.log("[setAllShifts]", "reason=user_edit", { year, month: month+1, activeDeptId, stack: new Error().stack });
     setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater}));
   }, [activeDeptId]);
 
@@ -19922,7 +19187,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           };
         }
 
-        console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
         if (ratioFeedback && Object.keys(ratioFeedback).length > 0) {
@@ -19993,7 +19257,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setUndoCount(undoStackRef.current[activeDeptId].length);
     userEditSeq.current++;
     saveStatusRef.current = "unsaved";
-    console.log("[setAllShifts]", "reason=undo", { year, month: month+1, activeDeptId, stack: new Error().stack });
     setAllShifts(prev => ({...prev, [activeDeptId]: previous}));
   }, [activeDeptId]);
 
@@ -20049,7 +19312,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
 
   const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
-  const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{console.log("[setAllShifts]","reason=dept_delete",{deptId,stack:new Error().stack});const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
+  const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
   if (dbLoading) return (
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",userSelect:"none",pointerEvents:"none"}}>
@@ -20174,7 +19437,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});clearDeptJisseki();setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
-            console.log("[PASTE_APPLY]",pastedShifts);
             const snapshot=allShiftsRef.current[activeDeptId]||{};
             const stack=undoStackRef.current[activeDeptId]||[];
             undoStackRef.current[activeDeptId]=[...stack,snapshot].slice(-30);
@@ -20183,7 +19445,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             userEditSeq.current++;
             seqAtLastRemoteLoad.current = userEditSeq.current - 1; // 保存スキップされないよう保証
             saveStatusRef.current="unsaved";
-            console.log("[setAllShifts]","reason=paste_apply",{year,month:month+1,activeDeptId,keys:Object.keys(pastedShifts),userEditSeq:userEditSeq.current,seqAtLastRemoteLoad:seqAtLastRemoteLoad.current});
             setAllShifts(prev=>{const cur=prev[activeDeptId]||{};const next={};const allIds=new Set([...Object.keys(cur),...Object.keys(pastedShifts)]);allIds.forEach(id=>{next[id]={...(cur[id]||{}),...(pastedShifts[id]||{})};});return{...prev,[activeDeptId]:next};});
             setSaveStatus('unsaved');
             setExcelPasteModal(false);
@@ -20201,7 +19462,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         onClose={()=>setHistoryModal(false)}
         onRestore={(restoredData)=>{
           const restoreDeptId = activeDeptIdRef.current;
-          console.log("[setAllShifts]", "reason=history_restore", { year, month: month+1, activeDeptId: restoreDeptId, keys: Object.keys(restoredData||{}), stack: new Error().stack });
           setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
           // ★Fix W-3: 復元後のundo履歴をリセット（復元前の状態へ戻るundoを防止）
           // 復元を「新しい基準状態」として扱う → 復元前への逆行undoを不可能にする
