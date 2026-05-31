@@ -20418,6 +20418,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // Runs immediately if console tab is open; otherwise deferred to tab open.
         const _buildTemporalEngines = () => {
         console.log('[TEMPORAL ENTRY] _buildTemporalEngines called. innerTab=' + innerTabRef.current + ' consoleSection=' + consoleSectionRef.current);
+        return; // Bundle A-H disabled 2026-05-30
         // ── [Temporal Shared Snapshot / _snap_] ──────────────────────────────
         // Read-only shared pre-computation for the Temporal engine chain.
         // All _xx_ engines MAY reference _snap_* to eliminate redundant rebuilds.
