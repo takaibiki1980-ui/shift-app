@@ -6349,15 +6349,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const renderAuditTargetRef = useRef(null); // ★[Render-Audit]: engine result → post-commit 比較用
   // ── Phase S-1: Lazy Temporal Architecture ────────────────────────────────
   const innerTabRef        = useRef("shift");     // shadow of innerTab — no dep-array churn
-  const pendingTemporalRef = useRef(null);        // deferred _buildTemporalEngines closure
   // ── Phase S-4: Per-Tab Lazy Temporal Architecture ─────────────────────────
   const [consoleSection, setConsoleSection] = useState(null);  // lifted from TemporalConsolePanel
   const consoleSectionRef   = useRef(null);       // shadow of consoleSection — closure-safe
-  const pendingTabBuildersRef = useRef({});        // per-section deferred engine bundles
   // ── Phase S-5: Incremental Temporal Engine Architecture ──────────────────
   const iteSchedulerRef = useRef(null);           // current-generation token — stale-cancel guard
   // ── Phase S-6: Temporal Benchmark & Profiling Framework ──────────────────
-  const profilerRef = useRef(null);               // per-generate profiling accumulator
 
   // ── 初回: Supabase から全データを一括ロード ──
   useEffect(() => {
@@ -7181,41 +7178,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // ── Phase S-1: keep innerTabRef in sync + fire lazy Temporal engines ────────
   useEffect(() => {
     innerTabRef.current = innerTab;
-    console.log('[INNER-TAB-CHANGE] innerTab=' + innerTab + ' hasPendingTemporal=' + !!pendingTemporalRef.current);
-    if (innerTab === 'console' && pendingTemporalRef.current) {
-      console.log('[INNER-TAB-CHANGE] firing pendingTemporalRef (deferred _buildTemporalEngines)');
-      pendingTemporalRef.current();
-      pendingTemporalRef.current = null;
-    }
   }, [innerTab]);
 
-  // ── Phase S-4: Per-Tab lazy — fire section engine bundle when section opens ──
-  // Section → bundle-key map (matches _ptl_ registry inside _buildTemporalEngines)
+  // ── Phase S-4: consoleSectionRef sync ───────────────────────────────────────
   useEffect(() => {
     consoleSectionRef.current = consoleSection;
-    console.log('[CONSOLE-SECTION-CHANGE] consoleSection=' + consoleSection + ' pendingBundles=[' + Object.keys(pendingTabBuildersRef.current).join(',') + ']');
-    if (consoleSection !== null) {
-      const _ptl_sectionBundleMap = {
-        risk:     ['A'],
-        timeline: ['F'],
-        reco:     ['B', 'D'],
-        sandbox:  ['C'],
-        gov:      ['F', 'G'],
-        audit:    ['E', 'H'],
-        xf:       ['G'],
-      };
-      const _ptl_bundles = _ptl_sectionBundleMap[consoleSection] || [];
-      console.log('[CONSOLE-SECTION-CHANGE] targetBundles=[' + _ptl_bundles.join(',') + ']');
-      for (const bid of _ptl_bundles) {
-        if (pendingTabBuildersRef.current[bid]) {
-          console.log('[CONSOLE-SECTION-CHANGE] firing Bundle ' + bid);
-          pendingTabBuildersRef.current[bid]();
-          delete pendingTabBuildersRef.current[bid];
-        } else {
-          console.log('[CONSOLE-SECTION-CHANGE] Bundle ' + bid + ' not in pending (already fired or not registered)');
-        }
-      }
-    }
   }, [consoleSection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ★[Render-Audit] 描画整合性監査 useEffect
@@ -20440,23 +20407,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Console-UI] ここまで ══
 
-        // ── [Phase S-1: Lazy Temporal Engine Builder] ─────────────────────────
-        // Captures result/cs/depts/cd/year/month at generate time.
-        // Runs immediately if console tab is open; otherwise deferred to tab open.
-        const _buildTemporalEngines = () => {
-        console.log('[TEMPORAL ENTRY] _buildTemporalEngines called. innerTab=' + innerTabRef.current + ' consoleSection=' + consoleSectionRef.current);
-        return; // Bundle A-H disabled 2026-05-30
-        }; // end _buildTemporalEngines
-        // ── Phase S-1: dispatch ──────────────────────────────────────────────
-        if (innerTabRef.current === 'console') {
-          // Console visible at generate time — run immediately
-          _buildTemporalEngines();
-          pendingTemporalRef.current = null;
-        } else {
-          // Console hidden — defer until tab open (useEffect fires _buildTemporalEngines)
-          pendingTemporalRef.current = _buildTemporalEngines;
-        }
-        // ────────────────────────────────────────────────────────────────────
 
         // ★[Render-Audit] engine result を commit 前にキャプチャ（setAllShifts 後の useEffect で比較）
         {
