@@ -247,10 +247,16 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         cands = nightPool.filter(s => canNight(s)).sort(_nightSort);
       }
       // G-1: スロット単位動的ソート（外国人が割り当て済みならサポーターを優先）
+      const _isLowNR = (s) => { const fy=s.facilityYears,fl=s.floorYears; return fy!=null&&fl!=null&&(fy<0.5||fl<0.2); };
       let _cands = [...cands];
       while (need > 0 && _cands.length > 0) {
         const _foreignOnNight = ds.some(s => s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
         const _supporterOnNight = ds.some(s => !s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
+        // NG-2: nightReadiness=low 同士の夜勤ペア禁止（low が既にいれば low を候補から除外）
+        if (ds.some(s => _isLowNR(s) && res[s.id][d] === '夜勤')) {
+          _cands = _cands.filter(s => !_isLowNR(s));
+          if (_cands.length === 0) break; // shortage を許容
+        }
         if (_foreignOnNight && !_supporterOnNight) {
           _cands.sort((a, b) => {
             // G-1: foreignnessを第1キー（非外国人=サポーターを必ず先に）
