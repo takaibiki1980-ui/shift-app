@@ -253,12 +253,14 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         const _supporterOnNight = ds.some(s => !s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
         if (_foreignOnNight && !_supporterOnNight) {
           _cands.sort((a, b) => {
-            const nA = Object.values(res[a.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(a)];
-            const nB = Object.values(res[b.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(b)];
-            if (nA !== nB) return nA - nB;
+            // G-1: foreignnessを第1キー（非外国人=サポーターを必ず先に）
             const aF = a.foreignNightSupportRequired ? 1 : 0;
             const bF = b.foreignNightSupportRequired ? 1 : 0;
-            return aF - bF;
+            if (aF !== bF) return aF - bF;
+            // 第2キー: G-2仮想夜勤数
+            const nA = Object.values(res[a.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(a)];
+            const nB = Object.values(res[b.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(b)];
+            return nA - nB;
           });
         }
         const s = _cands.shift();
