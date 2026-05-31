@@ -1146,8 +1146,31 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         cands = nightPool.filter(s => canNight(s))
           .sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
       }
-      for (const s of cands) {
-        if (need <= 0) break;
+      // G-1/NG-2: スロット単位動的判定（配置ごとに夜勤状況を再評価）
+      const _isLowNR = (s) => {
+        const fy = s.facilityYears, fl = s.floorYears;
+        return fy != null && fl != null && (fy < 0.5 || fl < 0.2);
+      };
+      let _cands = [...cands];
+      while (need > 0 && _cands.length > 0) {
+        // NG-2: その日に low-NR が既に夜勤中なら low-NR 候補を除外（low+low 禁止）
+        if (ds.some(s => _isLowNR(s) && res[s.id][d] === '夜勤')) {
+          _cands = _cands.filter(s => !_isLowNR(s));
+          if (_cands.length === 0) break; // shortage を許容
+        }
+        // G-1: 外国人夜勤者がいてサポーター未配置なら非外国人を優先ソート
+        const _foreignOnNight = ds.some(s => s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
+        const _supporterOnNight = ds.some(s => !s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
+        if (_foreignOnNight && !_supporterOnNight) {
+          _cands.sort((a, b) => {
+            const aF = a.foreignNightSupportRequired ? 1 : 0;
+            const bF = b.foreignNightSupportRequired ? 1 : 0;
+            if (aF !== bF) return aF - bF;
+            return Object.values(res[a.id]).filter(v => v === '夜勤').length
+                 - Object.values(res[b.id]).filter(v => v === '夜勤').length;
+          });
+        }
+        const s = _cands.shift();
         res[s.id][d] = "夜勤";
         if (d + 1 <= days) res[s.id][d + 1] = "明け";
         if (d + 2 <= days && !res[s.id][d + 2]) res[s.id][d + 2] = "休み";
