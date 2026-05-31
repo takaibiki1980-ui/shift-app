@@ -231,11 +231,12 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         if (d + 2 <= days && lockedDays[s.id].has(d + 2) && deptWork.has(res[s.id][d + 2])) return false;
         return true;
       };
-      const _rrW = {low: 0, medium: 1, high: 2};
+      // G-2: rr=high に仮想夜勤数を加算（完全排除せず"後回し"に留める）
+      const _rrVN = {low: 0, medium: 2, high: 4};
       const _nightSort = (a, b) => {
-        const ra = _rrW[getRelocationRisk(a)], rb = _rrW[getRelocationRisk(b)];
-        if (ra !== rb) return ra - rb;
-        return Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length;
+        const nA = Object.values(res[a.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(a)];
+        const nB = Object.values(res[b.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(b)];
+        return nA - nB;
       };
       let cands = nightPool.filter(s => {
         if (!canNight(s)) return false;
@@ -245,38 +246,26 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       if (cands.length === 0) {
         cands = nightPool.filter(s => canNight(s)).sort(_nightSort);
       }
-      for (const s of cands) {
-        if (need <= 0) break;
+      // G-1: スロット単位動的ソート（外国人が割り当て済みならサポーターを優先）
+      let _cands = [...cands];
+      while (need > 0 && _cands.length > 0) {
+        const _foreignOnNight = ds.some(s => s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
+        const _supporterOnNight = ds.some(s => !s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
+        if (_foreignOnNight && !_supporterOnNight) {
+          _cands.sort((a, b) => {
+            const nA = Object.values(res[a.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(a)];
+            const nB = Object.values(res[b.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(b)];
+            if (nA !== nB) return nA - nB;
+            const aF = a.foreignNightSupportRequired ? 1 : 0;
+            const bF = b.foreignNightSupportRequired ? 1 : 0;
+            return aF - bF;
+          });
+        }
+        const s = _cands.shift();
         res[s.id][d] = "夜勤";
         if (d + 1 <= days) res[s.id][d + 1] = "明け";
         if (d + 2 <= days && !res[s.id][d + 2]) res[s.id][d + 2] = "休み";
         need--;
-      }
-    }
-  }
-
-  // G-1: 外国人夜勤サポート補完パス
-  if (dept.shiftTypes.includes("夜勤")) {
-    const supportPool = ds.filter(s => s.nightOk && _nightAllowed(s) && !s.foreignNightSupportRequired);
-    for (let d = 1; d <= days; d++) {
-      const nightStaff = ds.filter(s => res[s.id][d] === "夜勤");
-      if (!nightStaff.some(s => s.foreignNightSupportRequired)) continue;
-      if (nightStaff.some(s => !s.foreignNightSupportRequired)) continue;
-      const canNightSupport = (s) => {
-        if (lockedDays[s.id].has(d)) return false;
-        if (["夜勤","明け"].includes(res[s.id][d - 1])) return false;
-        if (d + 1 <= days && lockedDays[s.id].has(d + 1) && res[s.id][d+1] !== "明け") return false;
-        if (d + 2 <= days && lockedDays[s.id].has(d + 2) && deptWork.has(res[s.id][d + 2])) return false;
-        return true;
-      };
-      const supportCands = supportPool
-        .filter(s => canNightSupport(s))
-        .sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
-      if (supportCands.length > 0) {
-        const s = supportCands[0];
-        res[s.id][d] = "夜勤";
-        if (d + 1 <= days && !lockedDays[s.id].has(d + 1)) res[s.id][d + 1] = "明け";
-        if (d + 2 <= days && !res[s.id][d + 2] && !lockedDays[s.id].has(d + 2)) res[s.id][d + 2] = "休み";
       }
     }
   }
