@@ -7279,6 +7279,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setAllFloorSettings(prev => ({...prev, [activeDeptId]: newSettings}));
   }, [activeDeptId]);
 
+  const _runGenerateCore = useCallback((targetDept, cs, ct) => {
+    const genSnapshot = allShiftsRef.current[targetDept.id] || {};
+    const genStack = undoStackRef.current[targetDept.id] || [];
+    undoStackRef.current[targetDept.id] = [...genStack, genSnapshot].slice(-30);
+    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30);
+    lastAutoGenRef.current[targetDept.id] = result;
+    return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot };
+  }, [year, month]);
+
   const handleGenerate = useCallback(() => {
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
@@ -7304,13 +7313,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化
       try {
-        // 自動生成前の状態をアンドゥスタックに積む
-        const genSnapshot = allShiftsRef.current[cd.id] || {};
-        const genStack = undoStackRef.current[cd.id] || [];
-        undoStackRef.current[cd.id] = [...genStack, genSnapshot].slice(-30);
+        const {result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot} = _runGenerateCore(cd, cs, ct);
         setUndoCount(undoStackRef.current[cd.id].length);
-        const cs2 = allShiftsRef.current[cd.id] || {};
-        const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, cd, year, month, cs2, ct, 30);
 
         // ══════════════════════════════════════════════════════════════════════════
         // ★[Night-Sequence-Audit] 明け孤立 4段階トレース
@@ -26246,7 +26250,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           };
         }
 
-        lastAutoGenRef.current[cd.id] = result; // スワップパターン検出の基準点
         console.log("[setAllShifts]", "reason=auto_generate", { year, month: month+1, deptId: cd.id, stack: new Error().stack });
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
@@ -26262,7 +26265,52 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
     },700);
-  }, [staffList,dept,year,month,shiftTrend,learnedTrend]);
+  }, [staffList,dept,year,month,shiftTrend,learnedTrend,_runGenerateCore]);
+
+  const handleGenerateAllKaigo = useCallback(() => {
+    if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
+    setGenerating(true);
+    isInitializing.current = false;
+    const _gen_refDate = new Date();
+    const cs = staffList.map(s => {
+      const fy = s.facilityJoinDate ? deriveYears(s.facilityJoinDate, _gen_refDate) : (s.facilityYears ?? null);
+      const fl = s.floorJoinDate    ? deriveYears(s.floorJoinDate,    _gen_refDate) : (s.floorYears    ?? null);
+      return { ...s, facilityYears: fy, floorYears: fl };
+    });
+    generateTimerRef.current = setTimeout(() => {
+      if (year !== yearRef.current || month !== monthRef.current) {
+        setGenerating(false);
+        return;
+      }
+      userEditSeq.current++;
+      saveStatusRef.current = "unsaved";
+      try {
+        const newShifts = {};
+        const allRatioFeedback = {};
+        const targetDeptIds = ['kaigo1', 'kaigo2'].filter(id => depts.some(d => d.id === id));
+        for (const deptId of targetDeptIds) {
+          const cd = depts.find(d => d.id === deptId);
+          if (!cd) continue;
+          const ct = mergeShiftTrends(shiftTrend[deptId]||{}, learnedTrend);
+          const { result, ratioFeedback } = _runGenerateCore(cd, cs, ct);
+          newShifts[deptId] = result;
+          if (ratioFeedback) Object.assign(allRatioFeedback, ratioFeedback);
+        }
+        setUndoCount(undoStackRef.current[activeDeptIdRef.current]?.length ?? 0);
+        setAllShifts(prev => ({...prev, ...newShifts}));
+        if (Object.keys(allRatioFeedback).length > 0) {
+          setStaffList(prev => prev.map(s => {
+            const fb = allRatioFeedback[s.id];
+            if (!fb) return s;
+            return {...s, shiftRatioCorrection: fb};
+          }));
+        }
+        setSaveStatus("unsaved");
+      }
+      catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
+      finally{setGenerating(false);}
+    }, 700);
+  }, [staffList, depts, year, month, shiftTrend, learnedTrend, _runGenerateCore]);
 
   const handleUndo = useCallback(() => {
     if (isLockedRef.current) return;
@@ -26367,7 +26415,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"linear-gradient(135deg,#374151,#1f2937)",color:"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>🔒{!isMobile&&" 解錠する"}</button>
-            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}>{generating?"⏳":isMonthLoading?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button></>
+            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}>{generating?"⏳":isMonthLoading?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button>{depts.some(d=>d.id==='kaigo1')&&depts.some(d=>d.id==='kaigo2')&&<button onClick={handleGenerateAllKaigo} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":"介護1・介護2を一括自動生成"} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#e8e0f5":"linear-gradient(135deg,#7c3aed,#a855f7)",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#4a2a7a":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}>{generating?"⏳":"⚡⚡"}{!isMobile&&(generating?" 最適化中…":" 介護部一括生成")}</button>}</>
           }
           <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:700,opacity:saveStatus==="unsaved"?0.5:1}}>{isMobile?"📤":"📤 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
