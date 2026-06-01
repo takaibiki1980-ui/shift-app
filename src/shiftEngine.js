@@ -94,6 +94,12 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     return key ? shiftTrend[key] : null;
   };
 
+  const getRelocationRisk = (s) => {
+    const fy = s.facilityYears, fl = s.floorYears;
+    if (fy == null || fl == null) return 'low';
+    return (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+  };
+
   const pickWithTrend = (s, available, cnts) => {
     const trend = getTrend(s);
     return [...available].sort((a, b) => {
@@ -225,17 +231,45 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         if (d + 2 <= days && lockedDays[s.id].has(d + 2) && deptWork.has(res[s.id][d + 2])) return false;
         return true;
       };
+      // G-2: rr=high に仮想夜勤数を加算（完全排除せず"後回し"に留める）
+      const _rrVN = {low: 0, medium: 2, high: 4};
+      const _nightSort = (a, b) => {
+        const nA = Object.values(res[a.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(a)];
+        const nB = Object.values(res[b.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(b)];
+        return nA - nB;
+      };
       let cands = nightPool.filter(s => {
         if (!canNight(s)) return false;
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         return usedNight < Math.max(s.nightMax || 5, autoMax);
-      }).sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
+      }).sort(_nightSort);
       if (cands.length === 0) {
-        cands = nightPool.filter(s => canNight(s))
-          .sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
+        cands = nightPool.filter(s => canNight(s)).sort(_nightSort);
       }
-      for (const s of cands) {
-        if (need <= 0) break;
+      // G-1: スロット単位動的ソート（外国人が割り当て済みならサポーターを優先）
+      const _isLowNR = (s) => { const fy=s.facilityYears,fl=s.floorYears; return fy!=null&&fl!=null&&(fy<0.5||fl<0.2); };
+      let _cands = [...cands];
+      while (need > 0 && _cands.length > 0) {
+        const _foreignOnNight = ds.some(s => s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
+        const _supporterOnNight = ds.some(s => !s.foreignNightSupportRequired && res[s.id][d] === '夜勤');
+        // NG-2: nightReadiness=low 同士の夜勤ペア禁止（low が既にいれば low を候補から除外）
+        if (ds.some(s => _isLowNR(s) && res[s.id][d] === '夜勤')) {
+          _cands = _cands.filter(s => !_isLowNR(s));
+          if (_cands.length === 0) break; // shortage を許容
+        }
+        if (_foreignOnNight && !_supporterOnNight) {
+          _cands.sort((a, b) => {
+            // G-1: foreignnessを第1キー（非外国人=サポーターを必ず先に）
+            const aF = a.foreignNightSupportRequired ? 1 : 0;
+            const bF = b.foreignNightSupportRequired ? 1 : 0;
+            if (aF !== bF) return aF - bF;
+            // 第2キー: G-2仮想夜勤数
+            const nA = Object.values(res[a.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(a)];
+            const nB = Object.values(res[b.id]).filter(v => v === '夜勤').length + _rrVN[getRelocationRisk(b)];
+            return nA - nB;
+          });
+        }
+        const s = _cands.shift();
         res[s.id][d] = "夜勤";
         if (d + 1 <= days) res[s.id][d + 1] = "明け";
         if (d + 2 <= days && !res[s.id][d + 2]) res[s.id][d + 2] = "休み";
@@ -901,6 +935,24 @@ export function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
     }
     if (hasNight) score += (varN / ds.length) * 500;
     score += (varW / ds.length) * 200;
+  }
+  // G-1: 外国人夜勤サポート不在ペナルティ
+  if (dept.shiftTypes.includes('夜勤')) {
+    for (let d = 1; d <= days; d++) {
+      const nightStaff = ds.filter(s => res[s.id]?.[d] === '夜勤');
+      if (nightStaff.some(s => s.foreignNightSupportRequired) && !nightStaff.some(s => !s.foreignNightSupportRequired)) {
+        score += 5000;
+      }
+    }
+  }
+  // G-2: 異動ベテラン夜勤ペナルティ
+  for (const s of ds) {
+    const fy = s.facilityYears, fl = s.floorYears;
+    if (fy == null || fl == null) continue;
+    const rr = (fy >= 2 && fl < 0.5) ? 'high' : (fy >= 1 && fl < 0.3) ? 'medium' : 'low';
+    if (rr === 'low') continue;
+    const nightCnt = Object.values(res[s.id] || {}).filter(v => v === '夜勤').length;
+    score += nightCnt * (rr === 'high' ? 200 : 100);
   }
   if (dept.roleShiftTypes) {
     for (const s of ds) {
