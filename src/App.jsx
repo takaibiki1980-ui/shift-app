@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader } from 'lucide-react';
 
 const LOGO_CHARS = [
   { char: "し", color: "#F4847E" },
@@ -327,19 +328,19 @@ function PrivacyModal({ onClose }) {
 
 
 const SHIFTS = {
-  早番:  { short:"早", color:"#FB8C00", bg:"#fff3e0", border:"#FB8C00", time:"7:00〜16:00" },
-  日勤:  { short:"日", color:"#1E88E5", bg:"#e3f2fd", border:"#1E88E5", time:"9:00〜18:00" },
-  遅番:  { short:"遅", color:"#8E24AA", bg:"#f3e5f5", border:"#8E24AA", time:"11:30〜20:30" },
-  夜勤:  { short:"夜", color:"#263238", bg:"#eceff1", border:"#455A64", time:"16:30〜翌9:30" },
-  明け:  { short:"明", color:"#263238", bg:"#eceff1", border:"#455A64", time:"夜勤明け" },
-  休み:  { short:"休", color:"#E53935", bg:"#ffebee", border:"#E53935", time:"－" },
-  希望休: { short:"希", color:"#E53935", bg:"#ffffff", border:"#E53935", time:"希望休" },
-  有休:  { short:"有", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"有給" },
-  "日/休": { short:"日休", color:"#1E88E5", bg:"#e8f4fd", border:"#1E88E5", time:"午前日勤／午後休" },
-  "休/日": { short:"休日", color:"#E53935", bg:"#ffebee", border:"#E53935", time:"午前休／午後日勤" },
-  "早/休": { short:"早休", color:"#FB8C00", bg:"#fff3e0", border:"#FB8C00", time:"早番半日／午後休" },
-  "休/遅": { short:"休遅", color:"#8E24AA", bg:"#f3e5f5", border:"#8E24AA", time:"午前休／遅番半日" },
-  "": { short:"－", color:"#c8b8a8", bg:"transparent", border:"transparent", time:"" },
+  早番:  { short:"早", color:"#92400E", bg:"#FEF3C7", border:"#F59E0B", time:"7:00〜16:00" },
+  日勤:  { short:"日", color:"#1E40AF", bg:"#DBEAFE", border:"#3B82F6", time:"9:00〜18:00" },
+  遅番:  { short:"遅", color:"#5B21B6", bg:"#EDE9FE", border:"#8B5CF6", time:"11:30〜20:30" },
+  夜勤:  { short:"夜", color:"#F8FAFB", bg:"#374151", border:"#374151", time:"16:30〜翌9:30" },
+  明け:  { short:"明", color:"#374151", bg:"#E5E7EB", border:"#9CA3AF", time:"夜勤明け" },
+  休み:  { short:"休", color:"#991B1B", bg:"#FEE2E2", border:"#EF4444", time:"－" },
+  希望休: { short:"希", color:"#991B1B", bg:"#FFF1F2", border:"#EF4444", time:"希望休" },
+  有休:  { short:"有", color:"#5B21B6", bg:"#F5F3FF", border:"#8B5CF6", time:"有給" },
+  "日/休": { short:"日休", color:"#1E40AF", bg:"#EFF6FF", border:"#3B82F6", time:"午前日勤／午後休" },
+  "休/日": { short:"休日", color:"#991B1B", bg:"#FEE2E2", border:"#EF4444", time:"午前休／午後日勤" },
+  "早/休": { short:"早休", color:"#92400E", bg:"#FEF3C7", border:"#F59E0B", time:"早番半日／午後休" },
+  "休/遅": { short:"休遅", color:"#5B21B6", bg:"#EDE9FE", border:"#8B5CF6", time:"午前休／遅番半日" },
+  "": { short:"－", color:"#9CA3AF", bg:"transparent", border:"transparent", time:"" },
 };
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
 const SHIFT_KEYS_MANUAL = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅",""];
@@ -3833,8 +3834,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
         <thead>
           <tr>
             <th style={TH({sticky:true,w:148})}><span style={{color:"#2a5a57",fontSize:10}}>氏名</span></th>
-            {Array.from({length:days},(_,i)=>i+1).map(d=>{const wd=getWD(year,month,d),we=isWE(year,month,d),alert=isAlert(d);return(<th key={d} style={{...TH({}),background:we?"#edf8f7":"#f8fffe",minWidth:30,width:30,padding:"3px 1px"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}><span style={{fontSize:10,fontWeight:700,color:we?"#f472b6":"#5a9e9b"}}>{d}</span><span style={{fontSize:9,color:we?"#f472b6":"#2a5a57"}}>{wd}</span><span style={{fontSize:8}}>{alert?"⚠️":"　"}</span></div></th>);})}
-            {rightCols.map(col=><th key={col} style={TH({w:28})}><span style={{fontSize:9,color:"#2a5a57"}}>{col}</span></th>)}
+            {Array.from({length:days},(_,i)=>i+1).map(d=>{const wd=getWD(year,month,d),dow=new Date(year,month,d).getDay(),isSun=dow===0,isSat=dow===6,we=isSun||isSat,alert=isAlert(d);const hBg=isSun?"#FFF7ED":isSat?"#F8FAFC":"#FFFFFF";return(<th key={d} style={{...TH({}),background:hBg,minWidth:30,width:30,padding:"3px 1px"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}><span style={{fontSize:10,fontWeight:700,color:isSun?"#EA580C":isSat?"#6B7280":"#4B5563"}}>{d}</span><span style={{fontSize:9,color:isSun?"#EA580C":isSat?"#6B7280":"#9CA3AF"}}>{wd}</span><span style={{fontSize:8}}>{alert?"⚠️":"　"}</span></div></th>);})}
+            {rightCols.map(col=><th key={col} style={TH({w:28})}><span style={{fontSize:9,color:"#6B7280"}}>{col}</span></th>)}
           </tr>
           {onEventEdit&&<tr>
             <th style={{...TH({sticky:true,w:148}),background:"#fffbea",borderBottom:"2px solid #fde68a"}}><span style={{fontSize:10,color:"#92400e",fontWeight:700}}>行事</span></th>
@@ -3855,26 +3856,27 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             typeCnts["計"]=workCnt; typeCnts["休"]=restCnt; typeCnts["希"]=kibodays.length;
             return (
               <tr key={s.id} style={{background:si%2===0?"#ffffff":"#fafeff"}}>
-                <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#ffffff":"#fafeff",padding:"4px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda",minWidth:148}}>
-                  <div style={{fontWeight:700,fontSize:12,color:"#1a3635",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
+                <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#ffffff":"#F9FAFB",padding:"4px 10px",borderRight:"1px solid #D9E5E7",borderBottom:"1px solid #D9E5E7",minWidth:148}}>
+                  <div style={{fontWeight:700,fontSize:12,color:"#1F2937",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
                     {s.name}
                     {fairnessData[s.id]&&<span
                       style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:fairnessData[s.id].color,flexShrink:0,cursor:"help"}}
                       title={`【公平性】${fairnessData[s.id].tip}`}
                     />}
                   </div>
-                  <div style={{fontSize:10,color:"#2a5a57",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#c45c35",fontSize:9}}>🌙{nightCnt}/{s.nightMax}</span>}</div>
+                  <div style={{fontSize:10,color:"#6B7280",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#c45c35",fontSize:9}}>🌙{nightCnt}/{s.nightMax}</span>}</div>
                 </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
                   const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&type&&deptWork.has(type)&&type!=="明け"&&!_ra.includes(type);
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":undefined,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  const cdow=new Date(year,month,d).getDay(); const cellWeekBg=cdow===0?"#FFF7ED":cdow===6?"#F8FAFC":undefined;
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #D9E5E7",borderBottom:"1px solid #D9E5E7",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":cellWeekBg,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#c44b4b"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
                   let color,val;
-                  if(col==="計"){val=cnt;color=cnt<(s.targetWork-2)?"#f59e0b":cnt>(s.targetWork+2)?"#ef4444":"#2BBFBA";}
+                  if(col==="計"){val=cnt;color=cnt<(s.targetWork-2)?"#f59e0b":cnt>(s.targetWork+2)?"#ef4444":"#36C2B4";}
                   else if(col==="夜勤"){val=cnt||"－";color=nightOver?"#ef4444":"#1a9e9a";}
                   else if(col==="明け"){val=cnt||"－";color="#9e8d80";}
                   else if(col==="休"){val=cnt;color="#5cb87a";}
@@ -3886,21 +3888,21 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             );
           })}
           {dept.shiftTypes.map(shKey=>(
-            <tr key={shKey} style={{background:"#f0fffe"}}>
-              <td style={{position:"sticky",left:0,zIndex:2,background:"#f0fffe",padding:"3px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda"}}><ShiftBadge type={shKey} defs={dept.customShiftDefs}/></td>
-              {Array.from({length:days},(_,i)=>i+1).map(d=>{const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length,min=dept.minStaff?.[shKey]||0,max=dept.maxStaff?.[shKey]??99;const overMax=max<99&&cnt>max;return<td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:overMax?"#ef4444":cnt===0?"#ef4444":cnt>=min?"#5cb87a":"#f59e0b",background:overMax?"#ffe4e4":undefined,borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda"}}>{cnt||"0"}</td>;})}
+            <tr key={shKey} style={{background:"#F9FAFB"}}>
+              <td style={{position:"sticky",left:0,zIndex:2,background:"#F9FAFB",padding:"3px 10px",borderRight:"1px solid #D9E5E7",borderBottom:"1px solid #D9E5E7"}}><ShiftBadge type={shKey} defs={dept.customShiftDefs}/></td>
+              {Array.from({length:days},(_,i)=>i+1).map(d=>{const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length,min=dept.minStaff?.[shKey]||0,max=dept.maxStaff?.[shKey]??99;const overMax=max<99&&cnt>max;return<td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:overMax?"#ef4444":cnt===0?"#ef4444":cnt>=min?"#5cb87a":"#f59e0b",background:overMax?"#ffe4e4":undefined,borderRight:"1px solid #D9E5E7",borderBottom:"1px solid #D9E5E7"}}>{cnt||"0"}</td>;})}
               <td colSpan={rightColCount}/>
             </tr>
           ))}
           <tr style={{background:"#fff5f5"}}>
-            <td style={{position:"sticky",left:0,zIndex:2,background:"#fff5f5",padding:"3px 10px",borderRight:"1px solid #90cbc8",borderBottom:"1px solid #b8deda",fontSize:10,color:"#c44b4b",fontWeight:700,whiteSpace:"nowrap"}}>希望休</td>
+            <td style={{position:"sticky",left:0,zIndex:2,background:"#fff5f5",padding:"3px 10px",borderRight:"1px solid #D9E5E7",borderBottom:"1px solid #D9E5E7",fontSize:10,color:"#c44b4b",fontWeight:700,whiteSpace:"nowrap"}}>希望休</td>
             {Array.from({length:days},(_,i)=>i+1).map(d=>{
               const cnt=ds.reduce((acc,s)=>acc+((s.kiboByMonth?.[mk]||[]).includes(d)?1:0),0);
               const limit=dept.kiboLimit||3;
               const over=cnt>=limit, warn=cnt===limit-1;
-              return <td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:over?"#ef4444":warn?"#f59e0b":cnt>0?"#c44b4b":"#d5edeb",background:over?"#ffe4e4":warn?"#fffbeb":undefined,borderRight:"1px solid #b8deda",borderBottom:"1px solid #b8deda"}}>{over?"⚠":cnt>0?cnt:""}</td>;
+              return <td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:over?"#ef4444":warn?"#f59e0b":cnt>0?"#c44b4b":"#d5edeb",background:over?"#ffe4e4":warn?"#fffbeb":undefined,borderRight:"1px solid #D9E5E7",borderBottom:"1px solid #D9E5E7"}}>{over?"⚠":cnt>0?cnt:""}</td>;
             })}
-            <td colSpan={rightColCount} style={{borderBottom:"1px solid #b8deda"}}/>
+            <td colSpan={rightColCount} style={{borderBottom:"1px solid #D9E5E7"}}/>
           </tr>
         </tbody>
       </table>
@@ -3942,16 +3944,23 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
 }
 
 function Legend() {
-  const normalShifts=["早番","日勤","遅番","夜勤","明け","休み","希望休","有休"], halfShifts=["日/休","休/日","早/休","休/遅"];
+  const keys = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休"];
   return (
-    <div style={{padding:"6px 0 6px",borderBottom:"1px solid #b8deda",marginBottom:10}}>
-      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:4}}>{normalShifts.map(key=><div key={key} style={{display:"flex",alignItems:"center",gap:3}}><ShiftBadge type={key}/><span style={{fontSize:9,color:"#2a5a57"}}>{key}</span></div>)}</div>
-      <div style={{display:"flex",flexWrap:"wrap",gap:5,alignItems:"center"}}><span style={{fontSize:9,color:"#8ecece",fontWeight:700}}>半休:</span>{halfShifts.map(key=><div key={key} style={{display:"flex",alignItems:"center",gap:3}}><ShiftBadge type={key}/><span style={{fontSize:9,color:"#2a5a57"}}>{SHIFTS[key].time}</span></div>)}<span style={{fontSize:9,color:"#8ecece",marginLeft:4}}>左クリック：順番切替 ／ 右クリック：メニュー選択</span></div>
+    <div style={{padding:"4px 0",borderBottom:"1px solid #D9E5E7",marginBottom:6,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
+      {keys.map(key => {
+        const s = SHIFTS[key];
+        return (
+          <div key={key} title={key} style={{display:"flex",alignItems:"center",gap:3,cursor:"default"}}>
+            <ShiftBadge type={key}/>
+          </div>
+        );
+      })}
+      <span style={{fontSize:9,color:"#9CA3AF",marginLeft:4}}>左クリック：切替 ／ 右クリック：メニュー</span>
     </div>
   );
 }
 
-const MNAV = { background:"#ffffff", color:"#2BBFBA", border:"1px solid #90cbc8", borderRadius:6, width:28, height:28, cursor:"pointer", fontSize:11, display:"flex", alignItems:"center", justifyContent:"center" };
+const MNAV = { background:"#FFFFFF", color:"#36C2B4", border:"1px solid #D9E5E7", borderRadius:12, width:48, height:48, cursor:"pointer", fontSize:11, display:"flex", alignItems:"center", justifyContent:"center" };
 
 // ─────────────────────────────────────────────
 //  YOTEI (職員予定表)
@@ -5857,7 +5866,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
   const isMobile = (window.innerWidth || document.documentElement.clientWidth) < 900;
   const [tableZoom, setTableZoom] = useState(() => { try { return Number(localStorage.getItem("shiftTableZoom")) || 100; } catch { return 100; } });
-  const [zoomNumpadRect, setZoomNumpadRect] = useState(null); // テンキーポップアップ用
   const handleZoomChange = useCallback((v) => { const min=isMobile?30:40; const c=Math.min(100,Math.max(min,Math.round(v/5)*5)); setTableZoom(c); try{localStorage.setItem("shiftTableZoom",c);}catch{} }, [isMobile]);
   const autoFitZoom = useCallback((staffCount, days) => { const vw=window.innerWidth-(isMobile?8:24); const tableEstWidth=148+30*days+116; const min=isMobile?30:40; return Math.min(100,Math.max(min,Math.round(Math.floor(vw/tableEstWidth*100)/5)*5)); }, [isMobile]);
   const autoFitApplied = useRef(false);
@@ -6530,9 +6538,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   if (!dept) return <div style={{minHeight:"100vh",background:"#f0fbfa",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#c8b8a8",fontSize:14}}>読み込み中…</div></div>;
 
   return (
-    <div style={{width:"100%",minHeight:"100vh",boxSizing:"border-box",background:"#f0fbfa",fontFamily:"'Noto Sans JP',sans-serif",color:"#1a3635",maxWidth:"none",margin:0,padding:0,textAlign:"left"}}>
+    <div style={{width:"100%",minHeight:"100vh",boxSizing:"border-box",background:"#F8FAFB",fontFamily:"'Inter','Noto Sans JP',sans-serif",color:"#1F2937",maxWidth:"none",margin:0,padding:0,textAlign:"left"}}>
       {/* TOPBAR */}
-      <div style={{background:"#f0fffe",borderBottom:"1px solid #90cbc8",padding:"10px 14px",position:"sticky",top:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+      <div style={{background:"#FFFFFF",borderBottom:"1px solid #D9E5E7",padding:"8px 16px",position:"sticky",top:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <ShifuponIcon size={36} radius={9}/>
           <div>
@@ -6540,84 +6548,75 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <button onClick={prevMonth} style={MNAV}>◀</button>
-          <div style={{fontSize:14,fontWeight:800,color:"#2BBFBA",minWidth:104,textAlign:"center",background:"#ffffff",border:"1px solid #90cbc8",borderRadius:8,padding:"5px 10px"}}>{year}年 {month+1}月</div>
-          <button onClick={nextMonth} style={MNAV}>▶</button>
+          <button onClick={prevMonth} style={MNAV}><ChevronLeft size={20} strokeWidth={2}/></button>
+          <div style={{fontSize:15,fontWeight:700,color:"#1F2937",minWidth:120,textAlign:"center",background:"#F8FAFB",border:"1px solid #D9E5E7",borderRadius:12,padding:"8px 14px"}}>{year}年 {month+1}月</div>
+          <button onClick={nextMonth} style={MNAV}><ChevronRight size={20} strokeWidth={2}/></button>
         </div>
         {conflictBanner&&<span title="他の端末でデータが更新されました。保存完了後に自動反映されます。" style={{fontSize:16,cursor:"default",animation:"pulse 1.2s infinite",lineHeight:1}}>📡</span>}
-        <div style={{display:"flex",gap:isMobile?4:7,alignItems:"center",flexWrap:"wrap"}}>
-          <div style={{fontSize:10,fontWeight:700,color:saveStatus==="saved"?"#5cb87a":saveStatus==="error"?"#ef4444":"#6ab5b2",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:60}}>
-            {saveStatus==="saved"&&<><span>💾</span>{!isMobile&&<span>保存済</span>}</>}
-            {saveStatus==="unsaved"&&<><span>⏳</span>{!isMobile&&<span>未保存</span>}</>}
-            {saveStatus==="error"&&<><span>⚠️</span><span>保存失敗</span></>}
+        <div style={{display:"flex",gap:isMobile?4:6,alignItems:"center",flexWrap:"wrap"}}>
+          <div style={{fontSize:11,fontWeight:600,color:saveStatus==="saved"?"#16A34A":saveStatus==="error"?"#EF4444":"#9CA3AF",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:56}}>
+            {saveStatus==="saved"&&<><RefreshCw size={12} strokeWidth={2}/>{!isMobile&&<span>保存済</span>}</>}
+            {saveStatus==="unsaved"&&<><Loader size={12} strokeWidth={2}/>{!isMobile&&<span>未保存</span>}</>}
+            {saveStatus==="error"&&<><span style={{color:"#EF4444"}}>!</span><span>保存失敗</span></>}
           </div>
           {isLocked
-            ? <button onClick={()=>setPinModal(true)} style={{background:"linear-gradient(135deg,#374151,#1f2937)",color:"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>🔒{!isMobile&&" 解錠する"}</button>
-            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#2a5a57":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}>{generating?"⏳":isMonthLoading?"⏳":"⚡"}{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button>{depts.some(d=>d.id==='kaigo1')&&depts.some(d=>d.id==='kaigo2')&&<button onClick={handleGenerateAllKaigo} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":"介護1・介護2を一括自動生成"} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#e8e0f5":"linear-gradient(135deg,#7c3aed,#a855f7)",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#4a2a7a":"#fff",border:"none",borderRadius:8,padding:isMobile?"6px 10px":"7px 14px",cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:800,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}>{generating?"⏳":"⚡⚡"}{!isMobile&&(generating?" 最適化中…":" 介護部一括生成")}</button>}</>
+            ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:12,padding:"0 16px",height:44,cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6}}><Lock size={16} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
+            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E5E7EB":"#36C2B4",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#6B7280":"#fff",border:"none",borderRadius:12,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button>{depts.some(d=>d.id==='kaigo1')&&depts.some(d=>d.id==='kaigo2')&&<button onClick={handleGenerateAllKaigo} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":"介護1・介護2を一括自動生成"} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E5E7EB":"#7C3AED",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#6B7280":"#fff",border:"none",borderRadius:12,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":" 介護部一括生成")}</button>}</>
           }
-          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#ffffff",color:"#34d399",border:"1px solid #064e3b",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:isMobile?11:12,fontWeight:700,opacity:saveStatus==="unsaved"?0.5:1}}>{isMobile?"📤":"📤 書き出し"}</button>
-          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:isMobile?"6px 8px":"7px 12px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"📅":"📅 休み設定"}</button>
-          {!isMobile&&(()=>{const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=learnedCnt>0;const syncColor=syncRate!=null?(syncRate>=85?"#16a34a":syncRate>=70?"#ca8a04":"#dc2626"):"#2a9a96";const label=hasAny?`🎯 シンクロ率 ${syncRate!=null?syncRate+'%':'--%'}`:`📊 傾向学習`;return(<button onClick={()=>setExcelPasteModal(true)} style={{background:hasAny?"#f0f9ff":"#ffffff",color:syncColor,border:`1px solid ${hasAny?syncColor:"#90cbc8"}`,borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
-          {!isMobile&&<button onClick={()=>setExcelPasteModal(true)} style={{background:'#ffffff',color:'#7c3aed',border:'1px solid #7c3aed',borderRadius:8,padding:'7px 12px',cursor:'pointer',fontSize:12,fontWeight:700}} title="ExcelのシフトをコピーしてここにCtrl+Vで貼り付け">📋 貼付</button>}
-          <button onClick={()=>setHistoryModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}} title="過去15世代の履歴から復元">{isMobile?"🕐":"🕐 履歴復元"}</button>
-          {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#ffffff",color:"#ef4444",border:"1px solid #450a0a",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🗑":"🗑 クリア"}</button>}
-          <button onClick={()=>setShareModal(true)} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🔗":"🔗 共有"}</button>
-          {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#fff7ed",color:"#c2410c",border:"1px solid #fed7aa",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:700}}>{isMobile?"🏢":"🏢 管理"}</button>}
-          <button onClick={()=>setHelpModal(true)} style={{background:"#f0f8ff",color:"#1E88E5",border:"1px solid #90caf9",borderRadius:8,padding:isMobile?"6px 8px":"7px 10px",cursor:"pointer",fontSize:isMobile?12:13,fontWeight:800}}>?</button>
+          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:500,opacity:saveStatus==="unsaved"?0.5:1,display:"flex",alignItems:"center",gap:5}}><Download size={16} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
+          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={16} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
+          {!isMobile&&(()=>{const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=learnedCnt>0;const syncColor=syncRate!=null?(syncRate>=85?"#16A34A":syncRate>=70?"#D97706":"#DC2626"):"#36C2B4";const label=hasAny?`シンクロ率 ${syncRate!=null?syncRate+'%':'--%'}`:`傾向学習`;return(<button onClick={()=>setExcelPasteModal(true)} style={{background:"#FFFFFF",color:syncColor,border:`1px solid ${hasAny?syncColor:"#D9E5E7"}`,borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          {!isMobile&&<button onClick={()=>setExcelPasteModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="ExcelのシフトをコピーしてCtrl+Vで貼り付け"><ClipboardList size={16} strokeWidth={2}/> 貼付</button>}
+          <button onClick={()=>setHistoryModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="過去15世代の履歴から復元"><History size={16} strokeWidth={2}/>{!isMobile&&" 履歴"}</button>
+          {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#FFFFFF",color:"#EF4444",border:"1px solid #FECACA",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Trash2 size={16} strokeWidth={2}/>{!isMobile&&" クリア"}</button>}
+          <button onClick={()=>setShareModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Share2 size={16} strokeWidth={2}/>{!isMobile&&" 共有"}</button>
+          {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Building2 size={16} strokeWidth={2}/>{!isMobile&&" 管理"}</button>}
+          <button onClick={()=>setHelpModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,width:44,height:44,cursor:"pointer",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}><HelpCircle size={16} strokeWidth={2}/></button>
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
-            <span style={{fontSize:10,fontWeight:800,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
-            <span style={{fontSize:10,color:"#3a8a87",fontWeight:700}}>👤 ログアウト</span>
+            <span style={{fontSize:10,fontWeight:700,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
+            <span style={{fontSize:10,color:"#6B7280",fontWeight:500,display:"flex",alignItems:"center",gap:2}}><LogOut size={10} strokeWidth={2}/> ログアウト</span>
           </div>
         </div>
       </div>
 
       {/* DEPT TABS */}
-      <div style={{background:"#e0f4f2",borderBottom:"1px solid #90cbc8",display:"flex",overflowX:"auto",padding:"0 6px",alignItems:"center"}}>
-        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"9px 10px",background:"transparent",border:"none",color:act?"#2BBFBA":"#2a5a57",borderBottom:act?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?800:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5}}><span>{d.icon}</span><span>{d.label}</span><span style={{background:act?"#8ecece":"#d5edeb",color:act?"#2BBFBA":"#2a5a57",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"#2BBFBA",border:"none",borderRadius:6,color:"#fff",cursor:"pointer",fontSize:11,padding:"3px 8px",marginLeft:2,fontWeight:700,whiteSpace:"nowrap"}}>⚙️ 設定</button>}</div>);})}
-        <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #0e3a38",borderRadius:7,color:"#2a5a57",cursor:"pointer",fontSize:11,padding:"5px 10px",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>＋ 部署追加</button>
+      <div style={{background:"#FFFFFF",borderBottom:"1px solid #D9E5E7",display:"flex",overflowX:"auto",padding:"0 8px",alignItems:"center"}}>
+        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:act?"#36C2B4":"transparent",border:"none",color:act?"#FFFFFF":"#6B7280",borderRadius:act?8:0,borderBottom:act?"none":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?700:500,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"4px 2px"}}><span>{d.label}</span><span style={{background:act?"rgba(255,255,255,0.25)":"#F3F4F6",color:act?"#FFFFFF":"#6B7280",borderRadius:6,padding:"1px 6px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #D9E5E7",borderRadius:8,color:"#6B7280",cursor:"pointer",padding:"4px 8px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={14} strokeWidth={2}/></button>}</div>);})}
+        <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #D9E5E7",borderRadius:8,color:"#9CA3AF",cursor:"pointer",fontSize:11,padding:"6px 12px",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>
       </div>
 
       {/* INNER TABS */}
-      <div style={{background:"#eaf8f6",borderBottom:isMobile&&innerTab==="shift"?"none":"2px solid #2BBFBA",display:"flex",padding:"0 6px",gap:2,alignItems:"center",overflowX:"auto"}}>
-        {[["shift",isMobile?"📅 シフト":"📅 シフト表"],["staff",isMobile?"👥 スタッフ":"👥 スタッフ"],["jisseki","📋 実績"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab===k?"#1a9e9a":"#2a6a67",borderBottom:innerTab===k?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab===k?800:600,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
-        <button onClick={()=>setInnerTab("console")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab==="console"?"#7a35b0":"#2a6a67",borderBottom:innerTab==="console"?"2px solid #9b59b6":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab==="console"?800:600,whiteSpace:"nowrap",flexShrink:0}}>🧭 コンソール</button>
+      <div style={{background:"#F8FAFB",borderBottom:"1px solid #D9E5E7",display:"flex",padding:"0 8px",gap:2,alignItems:"center",overflowX:"auto"}}>
+        {[["shift","シフト表"],["staff","スタッフ"],["jisseki","実績"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab===k?"#36C2B4":"#6B7280",borderBottom:innerTab===k?"2px solid #36C2B4":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab===k?700:500,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
+        <button onClick={()=>setInnerTab("console")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="console"?"#7C3AED":"#6B7280",borderBottom:innerTab==="console"?"2px solid #7C3AED":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="console"?700:500,whiteSpace:"nowrap",flexShrink:0}}>コンソール</button>
         {profile?.plan==='free'
-          ? <button onClick={()=>alert("📋 予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:"#9ca3af",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:600,whiteSpace:"nowrap",flexShrink:0}}>🔒 予定表</button>
-          : <button onClick={()=>setInnerTab("yotei")} style={{padding:isMobile?"6px 8px":"7px 13px",background:"transparent",border:"none",color:innerTab==="yotei"?"#1a9e9a":"#2a6a67",borderBottom:innerTab==="yotei"?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:isMobile?11:12,fontWeight:innerTab==="yotei"?800:600,whiteSpace:"nowrap",flexShrink:0}}>📋 予定表</button>
+          ? <button onClick={()=>alert("予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 予定表</button>
+          : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#36C2B4":"#6B7280",borderBottom:innerTab==="yotei"?"2px solid #36C2B4":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
         }
-        {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+        {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
           {innerTab==="shift"&&(
-            <div style={{display:"flex",alignItems:"center",gap:4}}>
-              <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:26,height:26,borderRadius:"50%",border:"2px solid #90cbc8",background:"#ffffff",color:tableZoom<=30?"#c0e4e2":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:16,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>−</button>
-              <div onClick={e=>setZoomNumpadRect(e.currentTarget.getBoundingClientRect())} style={{minWidth:52,height:26,border:"1px solid #90cbc8",borderRadius:6,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",gap:2,fontWeight:800,fontSize:13,color:"#1a6a67",userSelect:"none"}}>
-                {tableZoom}<span style={{fontSize:10,color:"#6ab5b2",fontWeight:600}}>%</span>
-              </div>
-              <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:26,height:26,borderRadius:"50%",border:"2px solid #90cbc8",background:"#ffffff",color:tableZoom>=100?"#c0e4e2":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:16,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>＋</button>
-              <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#ffffff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"2px 6px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
-              {!isLocked && undoCount > 0 && <button onClick={handleUndo} title={`元に戻す (Ctrl+Z) — ${undoCount}ステップ`} style={{background:"#f0f6ff",color:"#3b82f6",border:"1px solid #93c5fd",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>↩ 元に戻す<span style={{fontSize:10,color:"#93c5fd"}}>×{undoCount}</span></button>}
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{width:100,accentColor:"#36C2B4",cursor:"pointer"}}/>
+              <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:36,textAlign:"right"}}>{tableZoom}%</span>
+              <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #D9E5E7",borderRadius:8,color:"#6B7280",fontSize:11,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:500}}>フィット</button>
+              {!isLocked && undoCount > 0 && <button onClick={handleUndo} title={`元に戻す (Ctrl+Z) — ${undoCount}ステップ`} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>↩ 戻す ×{undoCount}</button>}
             </div>
           )}
-          <div style={{fontSize:10,color:"#8ecece",padding:"0 4px",whiteSpace:"nowrap"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>
+          <div style={{fontSize:11,color:"#9CA3AF",padding:"0 4px",whiteSpace:"nowrap"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>
         </div>}
       </div>
       {/* スマホ用ズームコントロール行 */}
       {isMobile&&innerTab==="shift"&&(
-        <div style={{background:"#eaf8f6",borderBottom:"2px solid #2BBFBA",display:"flex",alignItems:"center",gap:4,padding:"4px 8px"}}>
-          <button onClick={()=>handleZoomChange(tableZoom-5)} disabled={tableZoom<=30} style={{width:30,height:30,borderRadius:"50%",border:"2px solid #90cbc8",background:"#fff",color:tableZoom<=30?"#c0e4e2":"#2BBFBA",cursor:tableZoom<=30?"not-allowed":"pointer",fontSize:18,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>−</button>
-          <div onClick={e=>setZoomNumpadRect(e.currentTarget.getBoundingClientRect())} style={{flex:1,maxWidth:72,height:30,border:"1px solid #90cbc8",borderRadius:6,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",gap:2,fontWeight:800,fontSize:15,color:"#1a6a67",userSelect:"none"}}>
-            {tableZoom}<span style={{fontSize:10,color:"#6ab5b2",fontWeight:600}}>%</span>
-          </div>
-          <button onClick={()=>handleZoomChange(tableZoom+5)} disabled={tableZoom>=100} style={{width:30,height:30,borderRadius:"50%",border:"2px solid #90cbc8",background:"#fff",color:tableZoom>=100?"#c0e4e2":"#2BBFBA",cursor:tableZoom>=100?"not-allowed":"pointer",fontSize:18,fontWeight:900,padding:0,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,flexShrink:0}}>＋</button>
-          <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:4,color:"#2BBFBA",fontSize:10,padding:"3px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>⊞ フィット</button>
-          {!isLocked && undoCount > 0 && <button onClick={handleUndo} title={`元に戻す (Ctrl+Z)`} style={{background:"#f0f6ff",color:"#3b82f6",border:"1px solid #93c5fd",borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>↩×{undoCount}</button>}
+        <div style={{background:"#F8FAFB",borderBottom:"1px solid #D9E5E7",display:"flex",alignItems:"center",gap:6,padding:"6px 10px"}}>
+          <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{flex:1,accentColor:"#36C2B4",cursor:"pointer"}}/>
+          <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:36,textAlign:"right"}}>{tableZoom}%</span>
+          <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #D9E5E7",borderRadius:8,color:"#6B7280",fontSize:10,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>フィット</button>
+          {!isLocked && undoCount > 0 && <button onClick={handleUndo} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:600}}>↩×{undoCount}</button>}
         </div>
       )}
 
-      {/* ズームテンキーポップアップ */}
-      {zoomNumpadRect&&<NumericKeypad value={tableZoom} anchorRect={zoomNumpadRect} onConfirm={v=>{handleZoomChange(+v);setZoomNumpadRect(null);}} onClose={()=>setZoomNumpadRect(null)}/>}
-
       {/* CONTENT */}
-      <div style={{padding:"10px 8px",minHeight:"calc(100vh - 180px)"}}>
+      <div style={{padding:"8px 12px",minHeight:"calc(100vh - 180px)"}}>
         {innerTab==="shift"&&(<><Legend/><div style={{position:"relative"}}>
           {isMonthLoading&&<div style={{position:"absolute",inset:0,zIndex:50,background:"rgba(240,251,250,0.85)",display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,backdropFilter:"blur(2px)"}}>
             <div style={{background:"#fff",border:"1px solid #2BBFBA",borderRadius:12,padding:"18px 32px",fontWeight:800,fontSize:14,color:"#1a9e99",boxShadow:"0 4px 16px rgba(43,191,186,0.2)",display:"flex",alignItems:"center",gap:10}}>
