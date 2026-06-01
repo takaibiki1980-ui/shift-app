@@ -6050,7 +6050,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const syncRate = useMemo(() => {
     if (!dept) return null;
     return computeSyncRate(deptShifts, staffList, dept, year, month, learnedTrend);
-  }, [deptShifts, staffList, dept, year, month, shiftTrend, learnedTrend, activeDeptId]);
+  }, [deptShifts, staffList, dept, year, month, learnedTrend, activeDeptId]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // ── Phase S-1: keep innerTabRef in sync + fire lazy Temporal engines ────────
@@ -6412,7 +6412,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
     },700);
-  }, [staffList,dept,year,month,shiftTrend,learnedTrend,_runGenerateCore]);
+  }, [staffList,dept,year,month,learnedTrend,_runGenerateCore]);
 
   const handleGenerateAllKaigo = useCallback(() => {
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
@@ -6457,7 +6457,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
     }, 700);
-  }, [staffList, depts, year, month, shiftTrend, learnedTrend, _runGenerateCore]);
+  }, [staffList, depts, year, month, learnedTrend, _runGenerateCore]);
 
   const handleUndo = useCallback(() => {
     if (isLockedRef.current) return;
