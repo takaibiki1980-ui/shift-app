@@ -36,7 +36,7 @@ function ShifuponIcon({ size = 48, radius = 12 }) {
         <radialGradient id="sp-body" cx="38%" cy="30%" r="65%">
           <stop offset="0%" stopColor="#ffffff"/>
           <stop offset="60%" stopColor="#f8f4f0"/>
-          <stop offset="100%" stopColor="#d5edec"/>
+          <stop offset="100%" stopColor="#F4F4F5"/>
         </radialGradient>
         <linearGradient id="sp-bg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
           <stop offset="0%" stopColor="#F9D4C8"/>
@@ -129,28 +129,28 @@ function LoginPage({ onLogin }) {
 
   return (
     <div style={{
-      minHeight:"100vh", background:"linear-gradient(135deg,#f0fbfa 0%,#d4f1ef 100%)",
+      minHeight:"100vh", background:"#F8F9FA",
       display:"flex", alignItems:"center", justifyContent:"center",
       fontFamily:"'Noto Sans JP',sans-serif", padding:16,
     }}>
       <div style={{
-        background:"#f5fffe", border:"1px solid #90cbc8", borderRadius:18,
+        background:"#FAFAFA", border:"1px solid #D4D4D8", borderRadius:18,
         padding:36, width:"100%", maxWidth:400,
         boxShadow:"0 20px 60px rgba(0,0,0,0.12)",
       }}>
         <div style={{textAlign:"center", marginBottom:28}}>
           <div style={{margin:"0 auto 12px", width:56, height:56}}><ShifuponIcon size={56} radius={14}/></div>
           <ShifuponLogo size={28} />
-          <div style={{fontSize:11, color:"#6ab5b2", marginTop:6}}>介護施設シフト管理システム</div>
+          <div style={{fontSize:11, color:"#71717A", marginTop:6}}>介護施設シフト管理システム</div>
         </div>
 
-        <div style={{display:"flex", background:"#d5edeb", borderRadius:10, padding:3, marginBottom:22}}>
+        <div style={{display:"flex", background:"#F4F4F5", borderRadius:10, padding:3, marginBottom:22}}>
           {[["login","ログイン"],["signup","新規登録"]].map(([k,l])=>(
             <button key={k} onClick={()=>{setMode(k);setError("");setMsg("");}} style={{
               flex:1, background:mode===k?"#fff":"transparent",
               border:"none", borderRadius:8, padding:"8px 0",
               fontSize:13, fontWeight:mode===k?800:400,
-              color:mode===k?"#2BBFBA":"#3a8a87",
+              color:mode===k?"#6366F1":"#52525B",
               cursor:"pointer",
               boxShadow:mode===k?"0 1px 4px rgba(0,0,0,0.1)":"none",
               transition:"all 0.15s",
@@ -160,40 +160,40 @@ function LoginPage({ onLogin }) {
 
         {mode==="signup"&&(
           <div style={{marginBottom:14}}>
-            <div style={{fontSize:11, color:"#3a8a87", marginBottom:5}}>施設名 <span style={{color:"#ef4444"}}>*</span></div>
+            <div style={{fontSize:11, color:"#52525B", marginBottom:5}}>施設名 <span style={{color:"#ef4444"}}>*</span></div>
             <input
               type="text" value={facilityName}
               onChange={e=>setFacilityName(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="〇〇介護施設"
-              style={{width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:8, color:"#1a3635", padding:"10px 12px", fontSize:13, boxSizing:"border-box", outline:"none"}}
+              style={{width:"100%", background:"#f0fffe", border:"1px solid #D4D4D8", borderRadius:8, color:"#18181B", padding:"10px 12px", fontSize:13, boxSizing:"border-box", outline:"none"}}
             />
           </div>
         )}
         <div style={{marginBottom:14}}>
-          <div style={{fontSize:11, color:"#3a8a87", marginBottom:5}}>メールアドレス</div>
+          <div style={{fontSize:11, color:"#52525B", marginBottom:5}}>メールアドレス</div>
           <input
             type="email" value={email}
             onChange={e=>setEmail(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="example@email.com"
             style={{
-              width:"100%", background:"#f0fffe", border:"1px solid #90cbc8",
-              borderRadius:8, color:"#1a3635", padding:"10px 12px", fontSize:13,
+              width:"100%", background:"#f0fffe", border:"1px solid #D4D4D8",
+              borderRadius:8, color:"#18181B", padding:"10px 12px", fontSize:13,
               boxSizing:"border-box", outline:"none",
             }}
           />
         </div>
         <div style={{marginBottom:20}}>
-          <div style={{fontSize:11, color:"#3a8a87", marginBottom:5}}>パスワード{mode==="signup"&&<span style={{color:"#6ab5b2"}}>（6文字以上）</span>}</div>
+          <div style={{fontSize:11, color:"#52525B", marginBottom:5}}>パスワード{mode==="signup"&&<span style={{color:"#71717A"}}>（6文字以上）</span>}</div>
           <input
             type="password" value={password}
             onChange={e=>setPassword(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="••••••••"
             style={{
-              width:"100%", background:"#f0fffe", border:"1px solid #90cbc8",
-              borderRadius:8, color:"#1a3635", padding:"10px 12px", fontSize:13,
+              width:"100%", background:"#f0fffe", border:"1px solid #D4D4D8",
+              borderRadius:8, color:"#18181B", padding:"10px 12px", fontSize:13,
               boxSizing:"border-box", outline:"none",
             }}
           />
@@ -213,12 +213,12 @@ function LoginPage({ onLogin }) {
         )}
 
         {mode==="signup"&&(
-          <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:16,padding:"10px 12px",background:"#f0fffe",borderRadius:8,border:"1px solid #b8deda"}}>
-            <input type="checkbox" id="agree" checked={agreed} onChange={e=>setAgreed(e.target.checked)} style={{marginTop:2,accentColor:"#2BBFBA",cursor:"pointer",flexShrink:0}}/>
-            <label htmlFor="agree" style={{fontSize:12,color:"#2a5a57",lineHeight:1.6,cursor:"pointer"}}>
-              <button onClick={()=>setShowTerms(true)} style={{background:"none",border:"none",color:"#2BBFBA",cursor:"pointer",fontSize:12,fontWeight:700,padding:0,textDecoration:"underline"}}>利用規約</button>
+          <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:16,padding:"10px 12px",background:"#f0fffe",borderRadius:8,border:"1px solid #E4E4E7"}}>
+            <input type="checkbox" id="agree" checked={agreed} onChange={e=>setAgreed(e.target.checked)} style={{marginTop:2,accentColor:"#6366F1",cursor:"pointer",flexShrink:0}}/>
+            <label htmlFor="agree" style={{fontSize:12,color:"#3F3F46",lineHeight:1.6,cursor:"pointer"}}>
+              <button onClick={()=>setShowTerms(true)} style={{background:"none",border:"none",color:"#6366F1",cursor:"pointer",fontSize:12,fontWeight:700,padding:0,textDecoration:"underline"}}>利用規約</button>
               {" および "}
-              <button onClick={()=>setShowPrivacy(true)} style={{background:"none",border:"none",color:"#2BBFBA",cursor:"pointer",fontSize:12,fontWeight:700,padding:0,textDecoration:"underline"}}>プライバシーポリシー</button>
+              <button onClick={()=>setShowPrivacy(true)} style={{background:"none",border:"none",color:"#6366F1",cursor:"pointer",fontSize:12,fontWeight:700,padding:0,textDecoration:"underline"}}>プライバシーポリシー</button>
               {" に同意します"}
             </label>
           </div>
@@ -226,7 +226,7 @@ function LoginPage({ onLogin }) {
 
         <button onClick={handleSubmit} disabled={loading} style={{
           width:"100%",
-          background:loading?"#b8deda":"linear-gradient(135deg,#2BBFBA,#45B7D1)",
+          background:loading?"#E4E4E7":"#6366F1",
           color:"#fff", border:"none", borderRadius:10,
           padding:"13px 0", fontSize:14, fontWeight:800,
           cursor:loading?"not-allowed":"pointer",
@@ -236,8 +236,8 @@ function LoginPage({ onLogin }) {
         </button>
 
         <div style={{textAlign:"center",marginTop:20,display:"flex",justifyContent:"center",gap:16}}>
-          <button onClick={()=>setShowTerms(true)} style={{background:"none",border:"none",color:"#6ab5b2",cursor:"pointer",fontSize:11,textDecoration:"underline"}}>利用規約</button>
-          <button onClick={()=>setShowPrivacy(true)} style={{background:"none",border:"none",color:"#6ab5b2",cursor:"pointer",fontSize:11,textDecoration:"underline"}}>プライバシーポリシー</button>
+          <button onClick={()=>setShowTerms(true)} style={{background:"none",border:"none",color:"#71717A",cursor:"pointer",fontSize:11,textDecoration:"underline"}}>利用規約</button>
+          <button onClick={()=>setShowPrivacy(true)} style={{background:"none",border:"none",color:"#71717A",cursor:"pointer",fontSize:11,textDecoration:"underline"}}>プライバシーポリシー</button>
         </div>
       </div>
       {showTerms&&<TermsModal onClose={()=>setShowTerms(false)}/>}
@@ -252,12 +252,12 @@ function LoginPage({ onLogin }) {
 function LegalModal({ title, onClose, children }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f5fffe",border:"1px solid #90cbc8",borderRadius:16,padding:24,width:"100%",maxWidth:560,maxHeight:"80vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,position:"sticky",top:0,background:"#f5fffe",paddingBottom:12,borderBottom:"1px solid #d5edeb"}}>
-          <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>{title}</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:22}}>✕</button>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,padding:24,width:"100%",maxWidth:560,maxHeight:"80vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,position:"sticky",top:0,background:"#FAFAFA",paddingBottom:12,borderBottom:"1px solid #F4F4F5"}}>
+          <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{title}</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:22}}>✕</button>
         </div>
-        <div style={{fontSize:12,color:"#2a5a57",lineHeight:2}}>{children}</div>
+        <div style={{fontSize:12,color:"#3F3F46",lineHeight:2}}>{children}</div>
       </div>
     </div>
   );
@@ -266,14 +266,14 @@ function LegalModal({ title, onClose, children }) {
 function TermsModal({ onClose }) {
   return (
     <LegalModal title="📄 利用規約" onClose={onClose}>
-      <p style={{color:"#6ab5b2",marginBottom:16}}>最終更新日：2026年4月26日</p>
-      <h3 style={{color:"#1a3635",marginBottom:8}}>第1条（サービスの目的）</h3>
+      <p style={{color:"#71717A",marginBottom:16}}>最終更新日：2026年4月26日</p>
+      <h3 style={{color:"#18181B",marginBottom:8}}>第1条（サービスの目的）</h3>
       <p>しふぽん（以下「本サービス」）は、介護施設向けのシフト管理を支援するWebアプリケーションです。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第2条（利用登録）</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第2条（利用登録）</h3>
       <p>本サービスの利用にはメールアドレスによるアカウント登録が必要です。登録内容は正確な情報を入力してください。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第3条（プランと料金）</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第3条（プランと料金）</h3>
       <p>本サービスは無料プラン・スタンダードプラン・フルプランを提供します。有料プランの料金・支払方法については別途ご案内します。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第4条（禁止事項）</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第4条（禁止事項）</h3>
       <p>以下の行為を禁止します。</p>
       <ul style={{paddingLeft:20,marginTop:8}}>
         <li>他のユーザーへの不正アクセス</li>
@@ -281,13 +281,13 @@ function TermsModal({ onClose }) {
         <li>虚偽の情報による登録</li>
         <li>法令または公序良俗に反する行為</li>
       </ul>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第5条（免責事項）</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第5条（免責事項）</h3>
       <p>運営者は本サービスの利用によって生じた損害について、運営者の故意または重過失がある場合を除き、責任を負いません。システム障害・データ消失等について最大限の努力をもって対応しますが、完全な保証はしかねます。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第6条（サービスの変更・停止）</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第6条（サービスの変更・停止）</h3>
       <p>運営者は事前の通知をもってサービス内容の変更または停止ができるものとします。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第7条（規約の変更）</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第7条（規約の変更）</h3>
       <p>本規約は必要に応じて変更されることがあります。変更後も本サービスを継続して利用した場合、変更後の規約に同意したものとみなします。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>第8条（準拠法）</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第8条（準拠法）</h3>
       <p>本規約は日本法に準拠し、日本国内の裁判所を専属的合意管轄とします。</p>
     </LegalModal>
   );
@@ -296,32 +296,32 @@ function TermsModal({ onClose }) {
 function PrivacyModal({ onClose }) {
   return (
     <LegalModal title="🔒 プライバシーポリシー" onClose={onClose}>
-      <p style={{color:"#6ab5b2",marginBottom:16}}>最終更新日：2026年4月26日</p>
-      <h3 style={{color:"#1a3635",marginBottom:8}}>1. 収集する情報</h3>
+      <p style={{color:"#71717A",marginBottom:16}}>最終更新日：2026年4月26日</p>
+      <h3 style={{color:"#18181B",marginBottom:8}}>1. 収集する情報</h3>
       <p>本サービスでは以下の情報を収集します。</p>
       <ul style={{paddingLeft:20,marginTop:8}}>
         <li>メールアドレス（アカウント認証のため）</li>
         <li>施設名（サービス管理のため）</li>
         <li>シフトデータ・職員情報（サービス提供のため）</li>
       </ul>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>2. 利用目的</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>2. 利用目的</h3>
       <p>収集した情報は以下の目的のみに利用します。</p>
       <ul style={{paddingLeft:20,marginTop:8}}>
         <li>本サービスの提供・運営</li>
         <li>お問い合わせへの対応</li>
         <li>サービス改善のための分析</li>
       </ul>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>3. 第三者への提供</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>3. 第三者への提供</h3>
       <p>収集した個人情報は、法令に基づく場合を除き、第三者に提供・開示しません。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>4. 安全管理</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>4. 安全管理</h3>
       <p>データはSupabase（米国）のサーバーで安全に管理されています。アクセス制御・暗号化により不正アクセス防止に努めます。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>5. Cookieについて</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>5. Cookieについて</h3>
       <p>本サービスはログイン状態の維持のためにローカルストレージを使用します。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>6. 個人情報の削除</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>6. 個人情報の削除</h3>
       <p>アカウントの削除をご希望の場合は、お問い合わせ先までご連絡ください。速やかに対応いたします。</p>
-      <h3 style={{color:"#1a3635",margin:"16px 0 8px"}}>7. お問い合わせ</h3>
+      <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>7. お問い合わせ</h3>
       <p>個人情報の取り扱いに関するお問い合わせは以下までご連絡ください。</p>
-      <p style={{marginTop:8,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>メール：takaibiki1980@icloud.com</p>
+      <p style={{marginTop:8,background:"#F4F4F5",borderRadius:8,padding:"8px 12px"}}>メール：takaibiki1980@icloud.com</p>
     </LegalModal>
   );
 }
@@ -2209,7 +2209,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
   return (
     <div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}}>
-        {["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10,color:i===0?"#f87171":i===6?"#2BBFBA":"#3a8a87",padding:"2px 0"}}>{w}</div>)}
+        {["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10,color:i===0?"#f87171":i===6?"#6366F1":"#52525B",padding:"2px 0"}}>{w}</div>)}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6}}>
         {cells.map((d,i) => {
@@ -2219,31 +2219,31 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
           const othersKibo = kiboCountByDay?.[d] || 0;
           const limit = kiboLimit || 3;
           const kiboOver = othersKibo >= limit, kiboWarn = othersKibo === limit - 1;
-          return <button key={d} onClick={()=>{ if(reqShift){setSelectedDay(isSelected?null:d);}else if(isKibo){toggleKibo(d);}else{setSelectedDay(isSelected?null:d);} }} style={{background:isSelected?"#ffe0b2":isKibo?"#fff0f0":reqShift?s.bg:"transparent",border:isSelected?"2px solid #2BBFBA":isKibo?"1px solid #dc2626":reqShift?`1px solid ${s.border}`:"1px solid #0e3a38",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isKibo?"#f87171":reqShift?s.color:we?"#2BBFBA":"#5a9e9b",fontSize:10,fontWeight:(isKibo||reqShift||isSelected)?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32,position:"relative"}}>{kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#ef4444",fontWeight:900,lineHeight:1}}>⚠</span>}{kiboWarn&&!kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#f59e0b",fontWeight:900,lineHeight:1}}>!</span>}<span>{d}</span>{isKibo&&<span style={{fontSize:8,lineHeight:1}}>希休</span>}{reqShift&&<span style={{fontSize:8,lineHeight:1}}>{s?.short||reqShift}</span>}{!isKibo&&!reqShift&&isSelected&&<span style={{fontSize:7,lineHeight:1}}>選択</span>}{othersKibo>0&&<span style={{fontSize:7,lineHeight:1,color:kiboOver?"#ef4444":kiboWarn?"#f59e0b":"#c44b4b"}}>{othersKibo}人</span>}</button>;
+          return <button key={d} onClick={()=>{ if(reqShift){setSelectedDay(isSelected?null:d);}else if(isKibo){toggleKibo(d);}else{setSelectedDay(isSelected?null:d);} }} style={{background:isSelected?"#ffe0b2":isKibo?"#fff0f0":reqShift?s.bg:"transparent",border:isSelected?"2px solid #6366F1":isKibo?"1px solid #dc2626":reqShift?`1px solid ${s.border}`:"1px solid #27272A",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isKibo?"#f87171":reqShift?s.color:we?"#6366F1":"#52525B",fontSize:10,fontWeight:(isKibo||reqShift||isSelected)?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32,position:"relative"}}>{kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#ef4444",fontWeight:900,lineHeight:1}}>⚠</span>}{kiboWarn&&!kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#f59e0b",fontWeight:900,lineHeight:1}}>!</span>}<span>{d}</span>{isKibo&&<span style={{fontSize:8,lineHeight:1}}>希休</span>}{reqShift&&<span style={{fontSize:8,lineHeight:1}}>{s?.short||reqShift}</span>}{!isKibo&&!reqShift&&isSelected&&<span style={{fontSize:7,lineHeight:1}}>選択</span>}{othersKibo>0&&<span style={{fontSize:7,lineHeight:1,color:kiboOver?"#ef4444":kiboWarn?"#f59e0b":"#c44b4b"}}>{othersKibo}人</span>}</button>;
         })}
       </div>
       {/* 選択中の日のシフト指定UI */}
       {selectedDay&&(
-        <div style={{background:"#ffffff",border:"1px solid #90cbc8",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
-          <div style={{fontSize:11,color:"#3a8a87",marginBottom:6,fontWeight:700}}>{selectedDay}日の設定</div>
+        <div style={{background:"#ffffff",border:"1px solid #D4D4D8",borderRadius:8,padding:"8px 10px",marginBottom:8}}>
+          <div style={{fontSize:11,color:"#52525B",marginBottom:6,fontWeight:700}}>{selectedDay}日の設定</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
             <button onClick={()=>{ onChange(selected.includes(selectedDay)?selected:[...selected,selectedDay]); const nr={...shiftRequests};delete nr[selectedDay];onShiftRequests(nr);setSelectedDay(null); }} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#c44b4b"}}>希 希望休</button>
-            {availableReqTypes.map(k=>{const s=getShiftDef(k,customDefs);return<button key={k} onClick={()=>setShiftReq(selectedDay,k)} style={{background:shiftRequests[selectedDay]===k?"#8ecece":s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:s.color}}>{s.short} {k}</button>;})}
-            {(selected.includes(selectedDay)||shiftRequests[selectedDay])&&<button onClick={()=>clearDay(selectedDay)} style={{background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,color:"#3a8a87"}}>クリア</button>}
+            {availableReqTypes.map(k=>{const s=getShiftDef(k,customDefs);return<button key={k} onClick={()=>setShiftReq(selectedDay,k)} style={{background:shiftRequests[selectedDay]===k?"#A1A1AA":s.bg,border:`1px solid ${s.border}`,borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:s.color}}>{s.short} {k}</button>;})}
+            {(selected.includes(selectedDay)||shiftRequests[selectedDay])&&<button onClick={()=>clearDay(selectedDay)} style={{background:"#F4F4F5",border:"1px solid #D4D4D8",borderRadius:6,padding:"4px 8px",cursor:"pointer",fontSize:11,color:"#52525B"}}>クリア</button>}
           </div>
         </div>
       )}
-      <div style={{marginTop:4,fontSize:11,color:"#3a8a87",display:"flex",gap:12,alignItems:"center"}}>
+      <div style={{marginTop:4,fontSize:11,color:"#52525B",display:"flex",gap:12,alignItems:"center"}}>
         <span>希望休：<span style={{color:"#f87171",fontWeight:700}}>{selected.length}日</span></span>
-        <span>シフト希望：<span style={{color:"#2BBFBA",fontWeight:700}}>{Object.keys(shiftRequests).length}件</span></span>
+        <span>シフト希望：<span style={{color:"#6366F1",fontWeight:700}}>{Object.keys(shiftRequests).length}件</span></span>
         {(selected.length>0||Object.keys(shiftRequests).length>0)&&<button onClick={clearAll} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11,marginLeft:"auto"}}>全クリア</button>}
       </div>
-      <div style={{fontSize:10,color:"#6ab5b2",marginTop:4}}>※ 日付タップ→種別を選択。希望休・シフト希望は自動生成で最優先されます。</div>
+      <div style={{fontSize:10,color:"#71717A",marginTop:4}}>※ 日付タップ→種別を選択。希望休・シフト希望は自動生成で最優先されます。</div>
     </div>
   );
 }
 
-const INPUT_STYLE = { width:"100%", background:"#f0fffe", border:"1px solid #90cbc8", borderRadius:7, color:"#1a3635", padding:"8px 10px", fontSize:13, fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
+const INPUT_STYLE = { width:"100%", background:"#f0fffe", border:"1px solid #D4D4D8", borderRadius:7, color:"#18181B", padding:"8px 10px", fontSize:13, fontFamily:"'Noto Sans JP',sans-serif", boxSizing:"border-box", outline:"none" };
 
 // テンキーポップアップ（写真参考: 上向き三角矢印で入力欄と接続するポップオーバー型）
 function NumericKeypad({ value, onConfirm, onClose, anchorRect, min = 0, max = 100, unit = "%", mode }) {
@@ -2713,21 +2713,21 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const ratioSum = deptDayShiftTypes.reduce((s, k) => s + (currentRatio?.[k] ?? 0) * 100, 0);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <h3 style={{color:"#1a3635",fontSize:15,fontWeight:900}}>{isNew?"スタッフ追加":"スタッフ編集"}</h3>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
+          <h3 style={{color:"#18181B",fontSize:15,fontWeight:900}}>{isNew?"スタッフ追加":"スタッフ編集"}</h3>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
-        <div style={{marginBottom:12}}><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>氏名</div><input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={INPUT_STYLE} placeholder="例：田中 花子"/></div>
-        <div style={{marginBottom:12}}><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>役職</div><select value={form.role} onChange={e=>set("role",e.target.value)} style={INPUT_STYLE}>{(deptRoles.includes(form.role)?deptRoles:[...deptRoles,form.role]).map(r=><option key={r}>{r}</option>)}</select></div>
+        <div style={{marginBottom:12}}><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>氏名</div><input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={INPUT_STYLE} placeholder="例：田中 花子"/></div>
+        <div style={{marginBottom:12}}><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>役職</div><select value={form.role} onChange={e=>set("role",e.target.value)} style={INPUT_STYLE}>{(deptRoles.includes(form.role)?deptRoles:[...deptRoles,form.role]).map(r=><option key={r}>{r}</option>)}</select></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-          <div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>目標勤務日数</div><div onClick={e=>setKp({value:form.targetWork,min:1,max:31,unit:"日",onConfirm:v=>set("targetWork",v===""?1:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.targetWork}</div></div>
-          <div><div style={{color:"#2BBFBA",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#2BBFBA",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>
+          <div><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>目標勤務日数</div><div onClick={e=>setKp({value:form.targetWork,min:1,max:31,unit:"日",onConfirm:v=>set("targetWork",v===""?1:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.targetWork}</div></div>
+          <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#6366F1",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>
         </div>
         {["kaigo1","kaigo2"].includes(deptId)&&(
           <div style={{marginBottom:14}}>
-            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:10}}><input type="checkbox" checked={!!form.nightOk} onChange={e=>set("nightOk",e.target.checked)} style={{width:15,height:15,accentColor:"#2BBFBA"}}/><span style={{color:"#6ab5b2",fontSize:13}}>夜勤対応可</span></label>
-            {form.nightOk&&<div><div style={{color:"#3a8a87",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div><div onClick={e=>setKp({value:form.nightMax,min:0,max:15,unit:"回",onConfirm:v=>set("nightMax",v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:80,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.nightMax}</div></div>}
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:10}}><input type="checkbox" checked={!!form.nightOk} onChange={e=>set("nightOk",e.target.checked)} style={{width:15,height:15,accentColor:"#6366F1"}}/><span style={{color:"#71717A",fontSize:13}}>夜勤対応可</span></label>
+            {form.nightOk&&<div><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div><div onClick={e=>setKp({value:form.nightMax,min:0,max:15,unit:"回",onConfirm:v=>set("nightMax",v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:80,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.nightMax}</div></div>}
           </div>
         )}
         <div style={{fontSize:11,color:"#7a5590",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 職員経験・適応状況（オプション）</div>
@@ -2774,7 +2774,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
                 <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
                 <div
                   onClick={e=>setNumpad({key:k,rect:e.currentTarget.getBoundingClientRect()})}
-                  style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",background:numpad?.key===k?"#e0f7f7":"#fff",fontWeight:700,fontSize:14,color:"#1a3635"}}
+                  style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",background:numpad?.key===k?"#e0f7f7":"#fff",fontWeight:700,fontSize:14,color:"#18181B"}}
                 >{getRatioPct(k)||"0"}</div>
                 <span style={{fontSize:11,color:"#92400e"}}>%</span>
               </div>
@@ -2784,17 +2784,17 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
           {numpad&&<NumericKeypad value={getRatioPct(numpad.key)} anchorRect={numpad.rect} onConfirm={v=>{setRatioPct(numpad.key,v);setNumpad(null);}} onClose={()=>setNumpad(null)}/>}
           {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
         </div>
-        <div style={{fontSize:11,color:"#8ecece",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
-        <div style={{background:"#d5edeb",borderRadius:8,padding:12,border:"1px solid #90cbc8"}}>
+        <div style={{fontSize:11,color:"#A1A1AA",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
+        <div style={{background:"#F4F4F5",borderRadius:8,padding:12,border:"1px solid #D4D4D8"}}>
           <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId} depts={depts} kiboCountByDay={kiboCountByDay} kiboLimit={kiboLimit}/>
         </div>
         <div style={{fontSize:11,color:"#9b4db5",fontWeight:700,marginBottom:10,marginTop:16}}>▍ {year}年{month+1}月 有休{yukyuSelected.length>0&&<span style={{marginLeft:8,background:"#f3e5f5",border:"1px solid #c07ad5",borderRadius:10,padding:"1px 8px",fontSize:10}}>{yukyuSelected.length}日</span>}</div>
         <div style={{background:"#faf0ff",borderRadius:8,padding:12,border:"1px solid #c07ad5"}}>
-          {(()=>{const days=getDays(year,month),firstDow=new Date(year,month,1).getDay(),cells=[];for(let i=0;i<firstDow;i++)cells.push(null);for(let d=1;d<=days;d++)cells.push(d);return(<div><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}}>{["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10,color:i===0?"#f87171":i===6?"#2BBFBA":"#3a8a87",padding:"2px 0"}}>{w}</div>)}</div><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6}}>{cells.map((d,i)=>{if(!d)return<div key={i}/>;const isY=yukyuSelected.includes(d),dow=(firstDow+d-1)%7,we=dow===0||dow===6;return<button key={d} onClick={()=>setYukyu(isY?yukyuSelected.filter(x=>x!==d):[...yukyuSelected,d])} style={{background:isY?"#e8d5f5":"transparent",border:isY?"1px solid #9b4db5":"1px solid #c4a0d4",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isY?"#6b21a8":we?"#2BBFBA":"#5a9e9b",fontSize:10,fontWeight:isY?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32}}><span>{d}</span>{isY&&<span style={{fontSize:8,lineHeight:1,color:"#9b4db5"}}>有休</span>}</button>;})}</div>{yukyuSelected.length>0&&<button onClick={()=>setYukyu([])} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>全てクリア</button>}</div>);})()}
+          {(()=>{const days=getDays(year,month),firstDow=new Date(year,month,1).getDay(),cells=[];for(let i=0;i<firstDow;i++)cells.push(null);for(let d=1;d<=days;d++)cells.push(d);return(<div><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}}>{["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10,color:i===0?"#f87171":i===6?"#6366F1":"#52525B",padding:"2px 0"}}>{w}</div>)}</div><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6}}>{cells.map((d,i)=>{if(!d)return<div key={i}/>;const isY=yukyuSelected.includes(d),dow=(firstDow+d-1)%7,we=dow===0||dow===6;return<button key={d} onClick={()=>setYukyu(isY?yukyuSelected.filter(x=>x!==d):[...yukyuSelected,d])} style={{background:isY?"#e8d5f5":"transparent",border:isY?"1px solid #9b4db5":"1px solid #c4a0d4",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isY?"#6b21a8":we?"#6366F1":"#52525B",fontSize:10,fontWeight:isY?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32}}><span>{d}</span>{isY&&<span style={{fontSize:8,lineHeight:1,color:"#9b4db5"}}>有休</span>}</button>;})}</div>{yukyuSelected.length>0&&<button onClick={()=>setYukyu([])} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>全てクリア</button>}</div>);})()}
         </div>
         <div style={{display:"flex",gap:10,marginTop:20}}>
-          <button onClick={()=>form.name&&onSave(form)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
-          <button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
+          <button onClick={()=>form.name&&onSave(form)} style={{flex:1,background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
+          <button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
         </div>
       </div>
     </div>
@@ -2815,28 +2815,28 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [requiredEnd, setRequiredEnd] = useState(dept?.requiredEnd || "");
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
   const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalThreshold:intervalThreshold!==""?Number(intervalThreshold):undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined}); };
-  const LS = { fontSize:11, color:"#3a8a87", fontWeight:700, marginBottom:5, display:"block" };
+  const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>{isNew?"➕ 部署を追加":"✏️ 部署を編集"}</div><button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button></div>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{isNew?"➕ 部署を追加":"✏️ 部署を編集"}</div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
         <label style={LS}>アイコン</label>
-        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{DEPT_ICONS.map(ic=><button key={ic} onClick={()=>setIcon(ic)} style={{width:36,height:36,borderRadius:8,fontSize:20,border:"none",cursor:"pointer",background:icon===ic?"#8ecece":"#d5edeb",outline:icon===ic?"2px solid #2BBFBA":"none"}}>{ic}</button>)}</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{DEPT_ICONS.map(ic=><button key={ic} onClick={()=>setIcon(ic)} style={{width:36,height:36,borderRadius:8,fontSize:20,border:"none",cursor:"pointer",background:icon===ic?"#A1A1AA":"#F4F4F5",outline:icon===ic?"2px solid #6366F1":"none"}}>{ic}</button>)}</div>
         <label style={LS}>部署名</label>
         <input style={{...INPUT_STYLE,marginBottom:14}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="例：介護部 3階"/>
         <label style={LS}>シフト種別</label>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>{SHIFT_TYPE_OPTIONS.map(k=>{const s=SHIFTS[k],checked=shiftTypes.includes(k);return <button key={k} onClick={()=>toggleShiftType(k)} style={{background:checked?s.bg:"#d5edeb",border:`1px solid ${checked?s.border:"#b8deda"}`,borderRadius:8,padding:"7px 14px",cursor:"pointer",color:checked?s.color:"#2a5a57",fontSize:13,fontWeight:checked?700:400,display:"flex",alignItems:"center",gap:6}}><span>{checked?"✅":"○"}</span>{k}</button>;})}</div>
-        {shiftTypes.length>0&&<div style={{background:"#d5edeb",border:"1px solid #0e3a38",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#3a8a87",marginBottom:8}}>最低配置人数 <span style={{fontSize:10,color:"#5a9e9b",fontWeight:400}}>（この人数を下回ると警告）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:minStaff[k]||0,min:0,max:20,unit:"名",onConfirm:v=>setMinStaff(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{minStaff[k]||0}</div><span style={{fontSize:11,color:"#2a5a57"}}>名</span></div>)}</div></div>}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>{SHIFT_TYPE_OPTIONS.map(k=>{const s=SHIFTS[k],checked=shiftTypes.includes(k);return <button key={k} onClick={()=>toggleShiftType(k)} style={{background:checked?s.bg:"#F4F4F5",border:`1px solid ${checked?s.border:"#E4E4E7"}`,borderRadius:8,padding:"7px 14px",cursor:"pointer",color:checked?s.color:"#3F3F46",fontSize:13,fontWeight:checked?700:400,display:"flex",alignItems:"center",gap:6}}><span>{checked?"✅":"○"}</span>{k}</button>;})}</div>
+        {shiftTypes.length>0&&<div style={{background:"#F4F4F5",border:"1px solid #27272A",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#52525B",marginBottom:8}}>最低配置人数 <span style={{fontSize:10,color:"#52525B",fontWeight:400}}>（この人数を下回ると警告）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:minStaff[k]||0,min:0,max:20,unit:"名",onConfirm:v=>setMinStaff(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{minStaff[k]||0}</div><span style={{fontSize:11,color:"#3F3F46"}}>名</span></div>)}</div></div>}
         {shiftTypes.length>0&&<div style={{background:"#fff3e0",border:"1px solid #e0a000",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#b45309",marginBottom:8}}>最大配置人数 <span style={{fontSize:10,color:"#a06010",fontWeight:400}}>（自動生成でこの人数を超えない・--=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=>{const mv=maxStaff[k]!=null?maxStaff[k]:((customShiftDefs.find(c=>c.key===k)?.baseType||k)==="日勤"?99:1);const isUnlim=mv>=99;return(<div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:mv,min:1,max:99,unit:"名",onConfirm:v=>setMaxStaff(p=>({...p,[k]:v===""?99:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:isUnlim?400:700,color:isUnlim?"#b0cece":"inherit"}}>{isUnlim?"--":mv}</div>{!isUnlim&&<span style={{fontSize:11,color:"#92400e"}}>名</span>}</div>);})}</div></div>}
         {shiftTypes.filter(k=>k!=="夜勤").length>0&&<div style={{background:"#f0f0ff",border:"1px solid #a0a0e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}><div style={{fontSize:11,color:"#5050b0",marginBottom:8}}>職員の月間上限回数 <span style={{fontSize:10,color:"#7070a0",fontWeight:400}}>（超過すると集計欄が赤表示・0=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.filter(k=>k!=="夜勤").map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:shiftMaxByType[k]||0,min:0,max:31,unit:"回",onConfirm:v=>setShiftMaxByType(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{shiftMaxByType[k]||0}</div><span style={{fontSize:11,color:"#5050b0"}}>回</span></div>)}</div></div>}
         {/* 勤務時間・インターバル設定 */}
         <div style={{background:"#f0f8ff",border:"1px solid #90c4e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
-          <div style={{fontSize:11,color:"#1a5a87",fontWeight:700,marginBottom:4}}>勤務時間設定 <span style={{fontSize:10,fontWeight:400,color:"#5a9e9b"}}>（遅番→早番の可否をインターバルで自動判定）</span></div>
-          <div style={{fontSize:10,color:"#5a9e9b",marginBottom:8}}>未入力の場合は介護標準の時間帯ルールを適用します。</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>{shiftTypes.filter(k=>k!=="明け").map(k=>{const def=DEFAULT_SHIFT_TIMES[k]||{};const sd=getShiftDef(k,customShiftDefs);const mkp=(field,cur,placeholder)=>e=>setKp({mode:"time",value:cur||"",unit:"",onConfirm:v=>setShiftTimes(p=>({...p,[k]:{...(p[k]||{}),[field]:v||undefined}})),anchorRect:e.currentTarget.getBoundingClientRect()});return(<div key={k} style={{display:"flex",alignItems:"center",gap:4,background:"#ffffff",border:"1px solid #b8deda",borderRadius:6,padding:"4px 8px"}}><span style={{fontSize:11,color:sd?.color,fontWeight:700,minWidth:36}}>{k}</span><div onClick={mkp("start",shiftTimes[k]?.start,def.start)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.start?"#1a3635":"#90b0ae"}}>{shiftTimes[k]?.start||def.start||"--:--"}</div><span style={{fontSize:10,color:"#90cbc8"}}>〜</span><div onClick={mkp("end",shiftTimes[k]?.end,def.end)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.end?"#1a3635":"#90b0ae"}}>{shiftTimes[k]?.end||def.end||"--:--"}</div></div>);})}</div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>インターバル閾値</span><div onClick={e=>setKp({mode:"decimal",value:intervalThreshold||"",unit:"h",onConfirm:v=>setIntervalThreshold(v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700}}>{intervalThreshold||"--"}</div><span style={{fontSize:10,color:"#5a9e9b"}}>時間未満を禁止（例：11）</span></div>
-          <div style={{marginTop:8,display:"flex",alignItems:"center",flexWrap:"wrap",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>必須運営時間</span><div onClick={e=>setKp({mode:"time",value:requiredStart||"",unit:"",onConfirm:v=>setRequiredStart(v||""),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:70,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:requiredStart?"#1a3635":"#90b0ae"}}>{requiredStart||"--:--"}</div><span style={{fontSize:10,color:"#90cbc8"}}>〜</span><div onClick={e=>setKp({mode:"time",value:requiredEnd||"",unit:"",onConfirm:v=>setRequiredEnd(v||""),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:70,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:requiredEnd?"#1a3635":"#90b0ae"}}>{requiredEnd||"--:--"}</div>{(requiredStart||requiredEnd)&&<button onClick={()=>{setRequiredStart("");setRequiredEnd("");}} style={{fontSize:10,color:"#dc2626",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}<span style={{fontSize:10,color:"#5a9e9b"}}>（設定時：時間軸ベースの自動生成に切替）</span></div>
+          <div style={{fontSize:11,color:"#1a5a87",fontWeight:700,marginBottom:4}}>勤務時間設定 <span style={{fontSize:10,fontWeight:400,color:"#52525B"}}>（遅番→早番の可否をインターバルで自動判定）</span></div>
+          <div style={{fontSize:10,color:"#52525B",marginBottom:8}}>未入力の場合は介護標準の時間帯ルールを適用します。</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>{shiftTypes.filter(k=>k!=="明け").map(k=>{const def=DEFAULT_SHIFT_TIMES[k]||{};const sd=getShiftDef(k,customShiftDefs);const mkp=(field,cur,placeholder)=>e=>setKp({mode:"time",value:cur||"",unit:"",onConfirm:v=>setShiftTimes(p=>({...p,[k]:{...(p[k]||{}),[field]:v||undefined}})),anchorRect:e.currentTarget.getBoundingClientRect()});return(<div key={k} style={{display:"flex",alignItems:"center",gap:4,background:"#ffffff",border:"1px solid #E4E4E7",borderRadius:6,padding:"4px 8px"}}><span style={{fontSize:11,color:sd?.color,fontWeight:700,minWidth:36}}>{k}</span><div onClick={mkp("start",shiftTimes[k]?.start,def.start)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.start?"#18181B":"#A1A1AA"}}>{shiftTimes[k]?.start||def.start||"--:--"}</div><span style={{fontSize:10,color:"#D4D4D8"}}>〜</span><div onClick={mkp("end",shiftTimes[k]?.end,def.end)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.end?"#18181B":"#A1A1AA"}}>{shiftTimes[k]?.end||def.end||"--:--"}</div></div>);})}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>インターバル閾値</span><div onClick={e=>setKp({mode:"decimal",value:intervalThreshold||"",unit:"h",onConfirm:v=>setIntervalThreshold(v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700}}>{intervalThreshold||"--"}</div><span style={{fontSize:10,color:"#52525B"}}>時間未満を禁止（例：11）</span></div>
+          <div style={{marginTop:8,display:"flex",alignItems:"center",flexWrap:"wrap",gap:8}}><span style={{fontSize:11,color:"#3a6a87",fontWeight:700}}>必須運営時間</span><div onClick={e=>setKp({mode:"time",value:requiredStart||"",unit:"",onConfirm:v=>setRequiredStart(v||""),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:70,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:requiredStart?"#18181B":"#A1A1AA"}}>{requiredStart||"--:--"}</div><span style={{fontSize:10,color:"#D4D4D8"}}>〜</span><div onClick={e=>setKp({mode:"time",value:requiredEnd||"",unit:"",onConfirm:v=>setRequiredEnd(v||""),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:70,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:requiredEnd?"#18181B":"#A1A1AA"}}>{requiredEnd||"--:--"}</div>{(requiredStart||requiredEnd)&&<button onClick={()=>{setRequiredStart("");setRequiredEnd("");}} style={{fontSize:10,color:"#dc2626",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}<span style={{fontSize:10,color:"#52525B"}}>（設定時：時間軸ベースの自動生成に切替）</span></div>
         </div>
         {/* カスタムシフト種別 */}
         <div style={{background:"#f0fff4",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
@@ -2854,9 +2854,9 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           <button onClick={()=>setCustomShiftDefs(p=>[...p,{key:"",startTime:"",endTime:"",baseType:"日勤"}])} style={{background:"#f0fdf4",border:"1px dashed #86efac",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,color:"#166534",fontWeight:700}}>＋ カスタムシフト追加</button>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-          <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:maxConsec,min:3,max:7,unit:"日",onConfirm:v=>setMaxConsec(v===""?5:Math.max(3,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{maxConsec}</div><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
-          <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:defKyuko,min:4,max:15,unit:"日",onConfirm:v=>setDefKyuko(v===""?8:Math.max(4,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{defKyuko}</div><span style={{fontSize:12,color:"#2a5a57"}}>日</span></div></div>
-          <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:kiboLimit,min:1,max:10,unit:"名",onConfirm:v=>setKiboLimit(v===""?3:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{kiboLimit}</div><span style={{fontSize:12,color:"#2a5a57"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
+          <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:maxConsec,min:3,max:7,unit:"日",onConfirm:v=>setMaxConsec(v===""?5:Math.max(3,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{maxConsec}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div></div>
+          <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:defKyuko,min:4,max:15,unit:"日",onConfirm:v=>setDefKyuko(v===""?8:Math.max(4,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{defKyuko}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div></div>
+          <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:kiboLimit,min:1,max:10,unit:"名",onConfirm:v=>setKiboLimit(v===""?3:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{kiboLimit}</div><span style={{fontSize:12,color:"#3F3F46"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
         </div>
         <label style={LS}>役職一覧（1行に1つ）</label>
         <textarea value={rolesText} onChange={e=>setRolesText(e.target.value)} rows={4} placeholder={"介護福祉士\n介護職員\n介護補助"} style={{...INPUT_STYLE,resize:"vertical",lineHeight:1.7,marginBottom:14}}/>
@@ -2875,7 +2875,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           return(
             <div style={{marginBottom:14}}>
               <label style={LS}>役職別シフト制限（任意）</label>
-              <div style={{fontSize:10,color:"#5a9e9b",marginBottom:6}}>チェックを外したシフト種別は自動生成で割り当てられません。全チェック＝制限なし。</div>
+              <div style={{fontSize:10,color:"#52525B",marginBottom:6}}>チェックを外したシフト種別は自動生成で割り当てられません。全チェック＝制限なし。</div>
               <div style={{background:"#f0f4ff",border:"1px solid #90aacb",borderRadius:8,padding:"10px 12px",overflowX:"auto"}}>
                 <table style={{borderCollapse:"collapse",width:"100%",fontSize:11}}>
                   <thead>
@@ -2889,10 +2889,10 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
                       const allowed=roleShiftTypes[role]||shiftTypes;
                       return(
                         <tr key={role}>
-                          <td style={{padding:"3px 8px 3px 0",color:"#1a3635",whiteSpace:"nowrap"}}>{role}</td>
+                          <td style={{padding:"3px 8px 3px 0",color:"#18181B",whiteSpace:"nowrap"}}>{role}</td>
                           {shiftTypes.map(k=>(
                             <td key={k} style={{textAlign:"center",padding:"3px 6px"}}>
-                              <input type="checkbox" checked={allowed.includes(k)} onChange={()=>toggleRoleShift(role,k)} style={{cursor:"pointer",width:14,height:14,accentColor:"#2BBFBA"}}/>
+                              <input type="checkbox" checked={allowed.includes(k)} onChange={()=>toggleRoleShift(role,k)} style={{cursor:"pointer",width:14,height:14,accentColor:"#6366F1"}}/>
                             </td>
                           ))}
                         </tr>
@@ -2909,11 +2909,11 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           <input type="text" inputMode="numeric" maxLength={4} value={pinCode} onChange={e=>setPinCode(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="例：1234（空欄でPINなし）" style={{...INPUT_STYLE,width:180,letterSpacing:6,textAlign:"center",marginBottom:0}}/>
           {pinCode&&<button onClick={()=>setPinCode("")} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11}}>✕ 解除</button>}
         </div>
-        <div style={{fontSize:10,color:"#5a9e9b",marginBottom:18}}>設定すると部署タブ切替後に編集前にPINが必要になります</div>
+        <div style={{fontSize:10,color:"#52525B",marginBottom:18}}>設定すると部署タブ切替後に編集前にPINが必要になります</div>
         <div style={{display:"flex",gap:10}}>
-          <button onClick={handleSave} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:9,padding:"12px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>{isNew?"➕ 追加する":"💾 保存する"}</button>
+          <button onClick={handleSave} style={{flex:1,background:"#6366F1",color:"#fff",border:"none",borderRadius:9,padding:"12px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>{isNew?"➕ 追加する":"💾 保存する"}</button>
           {!isNew&&onDelete&&<button onClick={()=>onConfirm(`「${label}」を削除します。この部署のスタッフとシフトデータもすべて削除されます。`,()=>onDelete(dept.id),"削除する")} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:9,padding:"12px 14px",cursor:"pointer",color:"#c44b4b",fontSize:12,fontWeight:700}}>🗑 削除</button>}
-          <button onClick={onClose} style={{background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:9,padding:"12px 16px",cursor:"pointer",fontSize:13}}>キャンセル</button>
+          <button onClick={onClose} style={{background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:9,padding:"12px 16px",cursor:"pointer",fontSize:13}}>キャンセル</button>
         </div>
       </div>
       {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
@@ -2924,11 +2924,11 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
 function ConfirmDialog({ message, onOk, onCancel, okLabel="削除" }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#00000099",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:24}} onClick={e=>e.target===e.currentTarget&&onCancel()}>
-      <div style={{background:"#f5fffe",border:"1px solid #b0e0de",borderRadius:14,padding:24,width:"100%",maxWidth:340,boxShadow:"0 20px 60px #0003"}}>
-        <div style={{fontSize:14,color:"#1a3635",lineHeight:1.7,marginBottom:20,whiteSpace:"pre-wrap"}}>{message}</div>
+      <div style={{background:"#FAFAFA",border:"1px solid #b0e0de",borderRadius:14,padding:24,width:"100%",maxWidth:340,boxShadow:"0 20px 60px #0003"}}>
+        <div style={{fontSize:14,color:"#18181B",lineHeight:1.7,marginBottom:20,whiteSpace:"pre-wrap"}}>{message}</div>
         <div style={{display:"flex",gap:10}}>
           <button onClick={onOk} style={{flex:1,background:"#fff0f0",border:"1px solid #e07070",borderRadius:9,padding:"12px 0",cursor:"pointer",color:"#c44b4b",fontSize:14,fontWeight:800}}>{okLabel}</button>
-          <button onClick={onCancel} style={{flex:1,background:"#ffffff",border:"1px solid #90cbc8",borderRadius:9,padding:"12px 0",cursor:"pointer",color:"#3a8a87",fontSize:14}}>キャンセル</button>
+          <button onClick={onCancel} style={{flex:1,background:"#ffffff",border:"1px solid #D4D4D8",borderRadius:9,padding:"12px 0",cursor:"pointer",color:"#52525B",fontSize:14}}>キャンセル</button>
         </div>
       </div>
     </div>
@@ -2938,11 +2938,11 @@ function ConfirmDialog({ message, onOk, onCancel, okLabel="削除" }) {
 function ClearModal({ deptLabel, onClearDept, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #450a0a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
+      <div style={{background:"#FAFAFA",border:"1px solid #450a0a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
         <div style={{fontSize:15,fontWeight:900,color:"#f87171",marginBottom:6}}>🗑 シフトのクリア</div>
-        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:20}}>「{deptLabel}」のシフトと実績を削除します。この操作は元に戻せません。</div>
+        <div style={{fontSize:12,color:"#52525B",marginBottom:20}}>「{deptLabel}」のシフトと実績を削除します。この操作は元に戻せません。</div>
         <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🗑</span><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトと実績をクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトと実績をすべて削除します</div></div></button>
-        <button onClick={onClose} style={{width:"100%",background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
+        <button onClick={onClose} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
       </div>
     </div>
   );
@@ -2971,20 +2971,20 @@ function PinModal({ deptLabel, onVerify, onClose }) {
   const filled = digits.every(d => d !== '');
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"2px solid #2BBFBA",borderRadius:16,padding:28,width:"100%",maxWidth:320,boxShadow:"0 30px 80px #000",textAlign:"center"}}>
+      <div style={{background:"#FAFAFA",border:"2px solid #6366F1",borderRadius:16,padding:28,width:"100%",maxWidth:320,boxShadow:"0 30px 80px #000",textAlign:"center"}}>
         <div style={{fontSize:32,marginBottom:8}}>🔒</div>
-        <div style={{fontSize:15,fontWeight:900,color:"#1a3635",marginBottom:4}}>{deptLabel} 編集ロック</div>
-        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:24}}>4桁のPINを入力してください</div>
+        <div style={{fontSize:15,fontWeight:900,color:"#18181B",marginBottom:4}}>{deptLabel} 編集ロック</div>
+        <div style={{fontSize:12,color:"#52525B",marginBottom:24}}>4桁のPINを入力してください</div>
         <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:16}}>
           {digits.map((d,i) => (
             <input key={i} ref={refs[i]} type="text" inputMode="numeric" maxLength={1} value={d}
               onChange={e=>handleChange(i,e.target.value)} onKeyDown={e=>handleKeyDown(i,e)}
               onKeyUp={e=>{ if(e.key==='Enter'&&filled) handleVerify(); }}
-              style={{width:52,height:56,textAlign:"center",fontSize:24,fontWeight:900,border:`2px solid ${error?"#ef4444":d?"#2BBFBA":"#90cbc8"}`,borderRadius:10,background:error?"#fff0f0":"#fff",outline:"none",color:"#1a3635",caretColor:"transparent"}}/>
+              style={{width:52,height:56,textAlign:"center",fontSize:24,fontWeight:900,border:`2px solid ${error?"#ef4444":d?"#6366F1":"#D4D4D8"}`,borderRadius:10,background:error?"#fff0f0":"#fff",outline:"none",color:"#18181B",caretColor:"transparent"}}/>
           ))}
         </div>
         {error && <div style={{color:"#ef4444",fontSize:12,marginBottom:12,fontWeight:700}}>PINが違います。もう一度お試しください。</div>}
-        <button onClick={handleVerify} disabled={!filled} style={{width:"100%",background:filled?"linear-gradient(135deg,#2BBFBA,#45B7D1)":"#d5edeb",color:filled?"#fff":"#7a9e9b",border:"none",borderRadius:9,padding:"12px 0",cursor:filled?"pointer":"not-allowed",fontSize:14,fontWeight:800,marginBottom:10}}>🔓 解錠する</button>
+        <button onClick={handleVerify} disabled={!filled} style={{width:"100%",background:filled?"#6366F1":"#F4F4F5",color:filled?"#fff":"#71717A",border:"none",borderRadius:9,padding:"12px 0",cursor:filled?"pointer":"not-allowed",fontSize:14,fontWeight:800,marginBottom:10}}>🔓 解錠する</button>
         <button onClick={onClose} style={{width:"100%",background:"none",border:"none",color:"#9ca3af",cursor:"pointer",fontSize:13}}>キャンセル</button>
       </div>
     </div>
@@ -3214,40 +3214,40 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
     <div style={{position:'fixed',inset:0,background:'#000000cc',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center',padding:8}}
       onPaste={handlePasteEvent}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:'#f3fffe',border:'1px solid #90cbc8',borderRadius:14,padding:'16px 18px',width:'100%',maxWidth:960,maxHeight:'95vh',boxShadow:'0 30px 80px #000',display:'flex',flexDirection:'column',gap:10}}>
+      <div style={{background:'#FAFAFA',border:'1px solid #D4D4D8',borderRadius:14,padding:'16px 18px',width:'100%',maxWidth:960,maxHeight:'95vh',boxShadow:'0 30px 80px #000',display:'flex',flexDirection:'column',gap:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:'#1a3635'}}>📋 シフト貼り付けグリッド</div>
-            <div style={{fontSize:11,color:'#3a8a87',marginTop:2}}>{year}年{month+1}月 ／ Ctrl+Vで読み込み・セルをクリックでシフト変更</div>
+            <div style={{fontSize:15,fontWeight:900,color:'#18181B'}}>📋 シフト貼り付けグリッド</div>
+            <div style={{fontSize:11,color:'#52525B',marginTop:2}}>{year}年{month+1}月 ／ Ctrl+Vで読み込み・セルをクリックでシフト変更</div>
           </div>
-          <button onClick={onClose} style={{background:'none',border:'none',color:'#3a8a87',cursor:'pointer',fontSize:20,lineHeight:1}}>✕</button>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#52525B',cursor:'pointer',fontSize:20,lineHeight:1}}>✕</button>
         </div>
 
         {/* Step guide */}
-        <div style={{background:'#e8f5f4',border:'1px solid #90cbc8',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#1a5a57'}}>
+        <div style={{background:'#e8f5f4',border:'1px solid #D4D4D8',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#1a5a57'}}>
           {lastPasteType === 'names'
             ? <span style={{color:'#16a34a',fontWeight:700}}>✅ ステップ1完了: {namedOrder?.length||0}名の名前を確認しました。次に先月末を除いた <b>シフト列だけ</b>（D〜AH等）をCtrl+Cして貼り付けてください。</span>
             : lastPasteType === 'shifts'
             ? <span style={{color:'#2563eb',fontWeight:700}}>✅ ステップ2完了: シフトをグリッドに反映しました。確認して「適用」してください。</span>
             : lastPasteType === 'full'
-            ? <span style={{color:'#1a3635'}}>✅ 名前＋シフトを一括読み込みしました。</span>
+            ? <span style={{color:'#18181B'}}>✅ 名前＋シフトを一括読み込みしました。</span>
             : <span><b>方法①</b> 名前列だけコピーして貼り付け → ②先月末を除くシフト列をコピーして貼り付け　　<b>方法②</b> 名前＋シフト（先月末含まず）をまとめてコピーして貼り付け</span>
           }
         </div>
 
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
           <button onClick={handleClickPaste} disabled={pasting}
-            style={{background:'linear-gradient(135deg,#2BBFBA,#45B7D1)',color:'#fff',border:'none',borderRadius:9,padding:'8px 14px',cursor:'pointer',fontSize:13,fontWeight:800,whiteSpace:'nowrap'}}>
+            style={{background:'#6366F1',color:'#fff',border:'none',borderRadius:9,padding:'8px 14px',cursor:'pointer',fontSize:13,fontWeight:800,whiteSpace:'nowrap'}}>
             {pasting ? '⏳ 読み込み中…' : '📋 クリップボードから読み込み'}
           </button>
-          <span style={{fontSize:11,color:'#6ab5b2'}}>または画面にCtrl+V</span>
+          <span style={{fontSize:11,color:'#71717A'}}>または画面にCtrl+V</span>
           {(lastPasteType === 'names' || lastPasteType === 'shifts') && (
-            <div style={{display:'flex',alignItems:'center',gap:6,background:'#fff',border:'1px solid #90cbc8',borderRadius:8,padding:'4px 10px'}}>
-              <span style={{fontSize:11,color:'#3a8a87',fontWeight:700}}>シフト開始日:</span>
-              <button onClick={()=>setPasteStartDay(d=>Math.max(1,d-1))} style={{width:22,height:22,border:'1px solid #b8deda',borderRadius:4,background:'#d5edeb',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>−</button>
-              <span style={{fontSize:13,fontWeight:900,color:'#1a3635',minWidth:20,textAlign:'center'}}>{pasteStartDay}</span>
-              <button onClick={()=>setPasteStartDay(d=>Math.min(daysInMonth,d+1))} style={{width:22,height:22,border:'1px solid #b8deda',borderRadius:4,background:'#d5edeb',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>＋</button>
-              <span style={{fontSize:11,color:'#3a8a87'}}>日から</span>
+            <div style={{display:'flex',alignItems:'center',gap:6,background:'#fff',border:'1px solid #D4D4D8',borderRadius:8,padding:'4px 10px'}}>
+              <span style={{fontSize:11,color:'#52525B',fontWeight:700}}>シフト開始日:</span>
+              <button onClick={()=>setPasteStartDay(d=>Math.max(1,d-1))} style={{width:22,height:22,border:'1px solid #E4E4E7',borderRadius:4,background:'#F4F4F5',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>−</button>
+              <span style={{fontSize:13,fontWeight:900,color:'#18181B',minWidth:20,textAlign:'center'}}>{pasteStartDay}</span>
+              <button onClick={()=>setPasteStartDay(d=>Math.min(daysInMonth,d+1))} style={{width:22,height:22,border:'1px solid #E4E4E7',borderRadius:4,background:'#F4F4F5',cursor:'pointer',fontSize:12,fontWeight:700,padding:0}}>＋</button>
+              <span style={{fontSize:11,color:'#52525B'}}>日から</span>
             </div>
           )}
           {unmatchedNames.length > 0 && (
@@ -3261,16 +3261,16 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
           <div style={{background:'#fff0f0',border:'1px solid #dc2626',borderRadius:8,padding:'7px 12px',color:'#dc2626',fontSize:12}}>{parseError}</div>
         )}
 
-        <div style={{overflowX:'auto',overflowY:'auto',flex:1,border:'1px solid #b8deda',borderRadius:8,minHeight:0}}>
+        <div style={{overflowX:'auto',overflowY:'auto',flex:1,border:'1px solid #E4E4E7',borderRadius:8,minHeight:0}}>
           <table style={{borderCollapse:'collapse',fontSize:11,tableLayout:'fixed',minWidth:'max-content',width:'100%'}}>
             <thead>
               <tr style={{position:'sticky',top:0,zIndex:2}}>
-                <th style={{width:88,padding:'5px 8px',border:'1px solid #b8deda',textAlign:'left',fontWeight:700,color:'#1a3635',position:'sticky',left:0,zIndex:3,background:'#c8e8e5'}}>スタッフ</th>
+                <th style={{width:88,padding:'5px 8px',border:'1px solid #E4E4E7',textAlign:'left',fontWeight:700,color:'#18181B',position:'sticky',left:0,zIndex:3,background:'#c8e8e5'}}>スタッフ</th>
                 {days.map(d => {
                   const dow = new Date(year, month, d).getDay();
                   return (
-                    <th key={d} style={{width:34,padding:'2px 1px',border:'1px solid #b8deda',textAlign:'center',fontWeight:700,background:'#d5edeb',
-                      color: dow===0?'#e53935':dow===6?'#1E88E5':'#1a3635'}}>
+                    <th key={d} style={{width:34,padding:'2px 1px',border:'1px solid #E4E4E7',textAlign:'center',fontWeight:700,background:'#F4F4F5',
+                      color: dow===0?'#e53935':dow===6?'#1E88E5':'#18181B'}}>
                       <div style={{fontSize:11}}>{d}</div>
                       <div style={{fontSize:9,fontWeight:400}}>{DOW[dow]}</div>
                     </th>
@@ -3289,7 +3289,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
                 const staffShifts = gridData[s.id] || {};
                 return (
                   <tr key={s.id} style={{background: si%2===0 ? '#fff' : '#f7fdfc'}}>
-                    <td style={{padding:'3px 8px',border:'1px solid #b8deda',fontWeight:600,color:'#1a3635',
+                    <td style={{padding:'3px 8px',border:'1px solid #E4E4E7',fontWeight:600,color:'#18181B',
                       background: isNamed ? (si%2===0 ? '#d5f0e8' : '#c8eadf') : (si%2===0 ? '#e8f5f4' : '#ddf0ee'),
                       position:'sticky',left:0,zIndex:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:88,fontSize:11}}>
                       {isNamed && <span style={{fontSize:9,color:'#16a34a',marginRight:3}}>#{namedIdx+1}</span>}
@@ -3317,7 +3317,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
         </div>
 
         <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
-          <span style={{color:'#3a8a87',fontWeight:700,fontSize:11}}>凡例:</span>
+          <span style={{color:'#52525B',fontWeight:700,fontSize:11}}>凡例:</span>
           {allCycleKeys.filter(k => k !== '').map(k => {
             const def = getShiftDef(k, customShiftDefs);
             return <span key={k} style={{background:def.bg,border:`1px solid ${def.border}`,borderRadius:6,padding:'2px 7px',color:def.color,fontWeight:700,fontSize:11}}>{k}</span>;
@@ -3330,7 +3330,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
             ✅ このシフトを適用する{totalCells>0?` (${totalCells}件)`:''}
           </button>
           <button onClick={onClose}
-            style={{flex:1,background:'#d5edeb',color:'#3a8a87',border:'1px solid #90cbc8',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14}}>
+            style={{flex:1,background:'#F4F4F5',color:'#52525B',border:'1px solid #D4D4D8',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14}}>
             キャンセル
           </button>
         </div>
@@ -3348,18 +3348,18 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   const totalStaff = staffList.length;
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>📅 休み日数 一括設定</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button></div>
-        <div style={{fontSize:11,color:"#2a5a57",marginBottom:20,marginTop:8,background:"#d5edeb",borderRadius:7,padding:"8px 12px",border:"1px solid #0e3a38"}}>💡 施設全体の休み日数を設定します。全部署・全スタッフ（{totalStaff}名）に一括適用されます。</div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:28,background:"#d5edeb",borderRadius:12,padding:"18px 20px",border:"1px solid #90cbc8"}}>
-          <button onClick={()=>setVal(days-1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📅 休み日数 一括設定</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
+        <div style={{fontSize:11,color:"#3F3F46",marginBottom:20,marginTop:8,background:"#F4F4F5",borderRadius:7,padding:"8px 12px",border:"1px solid #27272A"}}>💡 施設全体の休み日数を設定します。全部署・全スタッフ（{totalStaff}名）に一括適用されます。</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:28,background:"#F4F4F5",borderRadius:12,padding:"18px 20px",border:"1px solid #D4D4D8"}}>
+          <button onClick={()=>setVal(days-1)} style={{background:"#E4E4E7",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
           <div style={{textAlign:"center"}}>
-            <div onClick={e=>setKp({value:days,min:0,max:20,unit:"日",onConfirm:v=>setVal(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{width:72,background:"#f0fffe",border:"2px solid #2BBFBA",borderRadius:8,color:"#2BBFBA",fontSize:28,fontWeight:900,textAlign:"center",padding:"6px 0",cursor:"pointer",userSelect:"none",display:"flex",alignItems:"center",justifyContent:"center",minHeight:48}}>{days}</div>
-            <div style={{fontSize:12,color:"#2a5a57",marginTop:4,fontWeight:700}}>日 / 月</div>
+            <div onClick={e=>setKp({value:days,min:0,max:20,unit:"日",onConfirm:v=>setVal(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{width:72,background:"#f0fffe",border:"2px solid #6366F1",borderRadius:8,color:"#6366F1",fontSize:28,fontWeight:900,textAlign:"center",padding:"6px 0",cursor:"pointer",userSelect:"none",display:"flex",alignItems:"center",justifyContent:"center",minHeight:48}}>{days}</div>
+            <div style={{fontSize:12,color:"#3F3F46",marginTop:4,fontWeight:700}}>日 / 月</div>
           </div>
-          <button onClick={()=>setVal(days+1)} style={{background:"#b8deda",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
+          <button onClick={()=>setVal(days+1)} style={{background:"#E4E4E7",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
         </div>
-        <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(days,mk)} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
+        <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(days,mk)} style={{flex:1,background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
       </div>
       {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
     </div>
@@ -3375,14 +3375,14 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   const doPrint = () => { if(noSelection)return; const html=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents); printWithIframe(html); onClose(); };
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>📤 書き出し</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button></div>
-        <div style={{fontSize:11,color:"#3a8a87",fontWeight:700,marginBottom:7}}>対象部署</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:16}}>{depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#8ecece":"transparent",color:sel?"#2BBFBA":"#2a5a57",border:`1px solid ${sel?"#2BBFBA":"#b8deda"}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:sel?700:400}}>{d.icon} {d.label}</button>;})}</div>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📤 書き出し</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
+        <div style={{fontSize:11,color:"#52525B",fontWeight:700,marginBottom:7}}>対象部署</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:16}}>{depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#A1A1AA":"transparent",color:sel?"#6366F1":"#3F3F46",border:`1px solid ${sel?"#6366F1":"#E4E4E7"}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:sel?700:400}}>{d.icon} {d.label}</button>;})}</div>
         {noSelection&&<div style={{fontSize:11,color:"#ef4444",marginBottom:10}}>⚠ 部署を1つ以上選択してください</div>}
-        <button onClick={doPrint} disabled={noSelection} style={{width:"100%",background:noSelection?"#d5edec":"linear-gradient(135deg,#2BBFBA,#45B7D1)",border:"none",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>🖨️</span><div><div style={{fontSize:13,fontWeight:800,color:"#fff"}}>今すぐ印刷</div><div style={{fontSize:11,color:"#d5f5f5",marginTop:2}}>印刷ダイアログがすぐに開きます</div></div></button>
-        <button onClick={()=>doDownload("csv")} disabled={noSelection} style={{width:"100%",background:noSelection?"#d5edec":"#e8f5ee",border:"1px solid #2d8a52",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>📊</span><div><div style={{fontSize:13,fontWeight:800,color:"#34d399"}}>CSV（Excel・スプレッドシート）</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>Excel・Googleスプレッドシートで開けます</div></div></button>
-        <button onClick={()=>doDownload("html")} disabled={noSelection} style={{width:"100%",background:noSelection?"#d5edec":"#e8f8f7",border:"1px solid #8ecece",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1}}><span style={{fontSize:24}}>💾</span><div><div style={{fontSize:13,fontWeight:800,color:"#2BBFBA"}}>HTMLで保存（USB用）</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>他のPCやUSBで印刷する場合に使用</div></div></button>
+        <button onClick={doPrint} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#6366F1",border:"none",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>🖨️</span><div><div style={{fontSize:13,fontWeight:800,color:"#fff"}}>今すぐ印刷</div><div style={{fontSize:11,color:"#d5f5f5",marginTop:2}}>印刷ダイアログがすぐに開きます</div></div></button>
+        <button onClick={()=>doDownload("csv")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#e8f5ee",border:"1px solid #2d8a52",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>📊</span><div><div style={{fontSize:13,fontWeight:800,color:"#34d399"}}>CSV（Excel・スプレッドシート）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>Excel・Googleスプレッドシートで開けます</div></div></button>
+        <button onClick={()=>doDownload("html")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#F4F4F5",border:"1px solid #A1A1AA",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1}}><span style={{fontSize:24}}>💾</span><div><div style={{fontSize:13,fontWeight:800,color:"#6366F1"}}>HTMLで保存（USB用）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>他のPCやUSBで印刷する場合に使用</div></div></button>
       </div>
     </div>
   );
@@ -3456,34 +3456,34 @@ function HelpModal({ onClose }) {
   const sec = HELP_SECTIONS.find(s => s.id === activeId);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f5fffe",border:"1px solid #90cbc8",borderRadius:16,width:"100%",maxWidth:600,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 30px 80px #000"}}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,width:"100%",maxWidth:600,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 30px 80px #000"}}>
         {/* ヘッダー */}
-        <div style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",padding:"16px 20px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+        <div style={{background:"#6366F1",color:"#fff",padding:"16px 20px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <div style={{fontWeight:900,fontSize:16}}>❓ 使い方ガイド</div>
           <button onClick={onClose} style={{background:"rgba(255,255,255,0.25)",border:"none",color:"#fff",cursor:"pointer",fontSize:18,width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>✕</button>
         </div>
         {/* タブ */}
-        <div style={{display:"flex",overflowX:"auto",borderBottom:"2px solid #d5edeb",background:"#eaf8f6",flexShrink:0}}>
+        <div style={{display:"flex",overflowX:"auto",borderBottom:"2px solid #F4F4F5",background:"#eaf8f6",flexShrink:0}}>
           {HELP_SECTIONS.map(s=>(
-            <button key={s.id} onClick={()=>setActiveId(s.id)} style={{padding:"9px 12px",background:"transparent",border:"none",color:activeId===s.id?"#1a9e9a":"#2a6a67",borderBottom:activeId===s.id?"2px solid #2BBFBA":"2px solid transparent",cursor:"pointer",fontSize:11,fontWeight:activeId===s.id?800:500,whiteSpace:"nowrap",flexShrink:0}}>
+            <button key={s.id} onClick={()=>setActiveId(s.id)} style={{padding:"9px 12px",background:"transparent",border:"none",color:activeId===s.id?"#4F46E5":"#3F3F46",borderBottom:activeId===s.id?"2px solid #6366F1":"2px solid transparent",cursor:"pointer",fontSize:11,fontWeight:activeId===s.id?800:500,whiteSpace:"nowrap",flexShrink:0}}>
               {s.icon} {s.label}
             </button>
           ))}
         </div>
         {/* コンテンツ */}
         <div style={{overflowY:"auto",padding:"20px 24px",flex:1}}>
-          <div style={{fontSize:16,fontWeight:900,color:"#1a3635",marginBottom:16}}>{sec.icon} {sec.label}</div>
+          <div style={{fontSize:16,fontWeight:900,color:"#18181B",marginBottom:16}}>{sec.icon} {sec.label}</div>
           {sec.steps.map((st,i)=>(
             <div key={i} style={{display:"flex",gap:14,marginBottom:20,alignItems:"flex-start"}}>
-              <div style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",borderRadius:"50%",width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,flexShrink:0,marginTop:2}}>{i+1}</div>
+              <div style={{background:"#6366F1",color:"#fff",borderRadius:"50%",width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,flexShrink:0,marginTop:2}}>{i+1}</div>
               <div>
-                <div style={{fontSize:13,fontWeight:800,color:"#1a3635",marginBottom:4}}>{st.title}</div>
+                <div style={{fontSize:13,fontWeight:800,color:"#18181B",marginBottom:4}}>{st.title}</div>
                 <div style={{fontSize:12,color:"#3a5a57",lineHeight:1.8}}>{st.body}</div>
               </div>
             </div>
           ))}
           {sec.warn&&(
-            <div style={{background:"#fff3e0",borderLeft:"4px solid #FB8C00",borderRadius:"0 8px 8px 0",padding:"10px 14px",margin:"8px 0",fontSize:12,color:"#1a3635"}}>
+            <div style={{background:"#fff3e0",borderLeft:"4px solid #FB8C00",borderRadius:"0 8px 8px 0",padding:"10px 14px",margin:"8px 0",fontSize:12,color:"#18181B"}}>
               <div style={{fontWeight:800,color:"#FB8C00",marginBottom:3}}>⚠ 注意</div>
               {sec.warn}
             </div>
@@ -3491,7 +3491,7 @@ function HelpModal({ onClose }) {
           {sec.tips&&sec.tips.length>0&&(
             <div style={{background:"#e8f5ee",borderLeft:"4px solid #2d8a52",borderRadius:"0 8px 8px 0",padding:"10px 14px",margin:"8px 0"}}>
               <div style={{fontWeight:800,color:"#2d8a52",fontSize:12,marginBottom:6}}>💡 ポイント</div>
-              {sec.tips.map((t,i)=><div key={i} style={{fontSize:12,color:"#1a3635",lineHeight:1.8}}>・{t}</div>)}
+              {sec.tips.map((t,i)=><div key={i} style={{fontSize:12,color:"#18181B",lineHeight:1.8}}>・{t}</div>)}
             </div>
           )}
         </div>
@@ -3525,13 +3525,13 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, score, timelin
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>自動生成の警告</div><div style={{fontSize:12,color:"#5a9e9b"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
+        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>自動生成の警告</div><div style={{fontSize:12,color:"#52525B"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
         {score!=null&&<div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:7,padding:"6px 12px",marginBottom:14,fontSize:11,color:"#92400e"}}>30回試行して最もスコアが低い結果を採用しました（違反スコア: <span style={{fontWeight:800}}>{score}</span>）。残る警告は手動で調整してください。</div>}
         {entries.length>0&&<><div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:10,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
-        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>{entries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#f3fffe",border:`1px solid ${s.border||"#2a5a57"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#6ab5b2"}}>{shiftKey}</div><div style={{fontSize:11,color:"#3a8a87",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#b8deda",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#3a8a87",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div></>}
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>{entries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#FAFAFA",border:`1px solid ${s.border||"#3F3F46"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#71717A"}}>{shiftKey}</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#E4E4E7",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#52525B",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div></>}
         {hasTimeline&&<><div style={{background:"#fff8e1",border:"1px solid #f59e0b",borderRadius:8,padding:"10px 14px",marginBottom:10,fontSize:12,color:"#92400e",lineHeight:1.7}}>必須運営時間帯にカバーされていない時間帯があります（手動調整推奨）。</div>
         <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:14}}>{timelineWarnings.map(({day,gaps})=><div key={day} style={{background:"#fffbeb",border:"1px solid #fde68a",borderRadius:7,padding:"6px 10px",fontSize:11,color:"#78350f"}}><span style={{fontWeight:700}}>{month+1}/{day}</span>　未カバー：{gaps.map(g=>`${minsToTimeStr(g.start)}〜${minsToTimeStr(g.end)}`).join("、")}</div>)}</div></>}
-        <button onClick={onClose} style={{width:"100%",background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>確認しました</button>
+        <button onClick={onClose} style={{width:"100%",background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>確認しました</button>
       </div>
     </div>
   );
@@ -3623,10 +3623,10 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:420,maxHeight:"85vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,0.25)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-          <div style={{fontWeight:800,fontSize:16,color:"#1a3635"}}>🕐 変更履歴から復元</div>
+          <div style={{fontWeight:800,fontSize:16,color:"#18181B"}}>🕐 変更履歴から復元</div>
           <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#888",lineHeight:1}}>✕</button>
         </div>
-        <div style={{fontSize:12,color:"#6ab5b2",marginBottom:16,fontWeight:600}}>{deptLabel} — {year}年{month+1}月シフト</div>
+        <div style={{fontSize:12,color:"#71717A",marginBottom:16,fontWeight:600}}>{deptLabel} — {year}年{month+1}月シフト</div>
         {loading && <div style={{textAlign:"center",color:"#aaa",padding:32}}>読み込み中…</div>}
         {!loading && histories.length === 0 && (
           <div style={{textAlign:"center",padding:32}}>
@@ -3638,13 +3638,13 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
         {histories.map((h) => (
           <div key={h.id} style={{border:"1px solid #e5e7eb",borderRadius:10,padding:"12px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fafafa"}}>
             <div>
-              <div style={{fontWeight:700,fontSize:13,color:"#1a3635"}}>{fmt(h.archived_at)} に上書き保存</div>
+              <div style={{fontWeight:700,fontSize:13,color:"#18181B"}}>{fmt(h.archived_at)} に上書き保存</div>
               <div style={{fontSize:11,color:"#9ca3af",marginTop:2}}>この時点の直前の状態に戻せます</div>
             </div>
             <button
               disabled={!!restoring}
               onClick={() => handleRestore(h.id, h.archived_at)}
-              style={{background:restoring===h.id?"#d1fae5":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:restoring?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap",minWidth:80}}
+              style={{background:restoring===h.id?"#d1fae5":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:restoring?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap",minWidth:80}}
             >{restoring===h.id?"復元中…":"この状態\nに戻す"}</button>
           </div>
         ))}
@@ -3917,8 +3917,8 @@ function SummaryView({ staffList, shifts, dept, year, month }) {
   return (
     <div style={{overflowX:"auto"}}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
-        <thead><tr style={{background:"#d5edec"}}><th style={TH({sticky:true,w:148})}><span style={{color:"#2a5a57",fontSize:10}}>スタッフ</span></th>{shownKeys.map(k=><th key={k} style={TH({})}><ShiftBadge type={k}/></th>)}<th style={TH({w:50})}><span style={{fontSize:10,color:"#2a5a57"}}>勤務計</span></th><th style={TH({w:50})}><span style={{fontSize:10,color:"#2a5a57"}}>希望休</span></th></tr></thead>
-        <tbody>{ds.map((s,i)=>{const sv=shifts[s.id]||{},cnt={};shownKeys.forEach(k=>{cnt[k]=Object.values(sv).filter(v=>v===k).length;});const work=["早番","日勤","遅番","夜勤","明け"].reduce((a,k)=>a+(cnt[k]||0),0),kiboSel=(s.kiboByMonth?.[mk]||[]).length;return(<tr key={s.id} style={{background:i%2===0?"#ffffff":"#fafeff"}}><td style={{...TD,position:"sticky",left:0,zIndex:1,background:i%2===0?"#ffffff":"#fafeff",padding:"5px 10px",borderRight:"1px solid #90cbc8"}}><div style={{fontWeight:700,fontSize:12,color:"#1a3635"}}>{s.name}</div><div style={{fontSize:10,color:"#2a5a57"}}>{s.role}</div></td>{shownKeys.map(k=><td key={k} style={{...TD,color:cnt[k]>0?SHIFTS[k].color:"#8ecece",fontWeight:800,fontSize:13}}>{cnt[k]||"－"}</td>)}<td style={{...TD,color:"#2BBFBA",fontWeight:800,fontSize:14}}>{work}</td><td style={{...TD,color:"#f87171",fontWeight:700,fontSize:13}}>{kiboSel||"－"}</td></tr>);})}</tbody>
+        <thead><tr style={{background:"#F4F4F5"}}><th style={TH({sticky:true,w:148})}><span style={{color:"#3F3F46",fontSize:10}}>スタッフ</span></th>{shownKeys.map(k=><th key={k} style={TH({})}><ShiftBadge type={k}/></th>)}<th style={TH({w:50})}><span style={{fontSize:10,color:"#3F3F46"}}>勤務計</span></th><th style={TH({w:50})}><span style={{fontSize:10,color:"#3F3F46"}}>希望休</span></th></tr></thead>
+        <tbody>{ds.map((s,i)=>{const sv=shifts[s.id]||{},cnt={};shownKeys.forEach(k=>{cnt[k]=Object.values(sv).filter(v=>v===k).length;});const work=["早番","日勤","遅番","夜勤","明け"].reduce((a,k)=>a+(cnt[k]||0),0),kiboSel=(s.kiboByMonth?.[mk]||[]).length;return(<tr key={s.id} style={{background:i%2===0?"#ffffff":"#fafeff"}}><td style={{...TD,position:"sticky",left:0,zIndex:1,background:i%2===0?"#ffffff":"#fafeff",padding:"5px 10px",borderRight:"1px solid #D4D4D8"}}><div style={{fontWeight:700,fontSize:12,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46"}}>{s.role}</div></td>{shownKeys.map(k=><td key={k} style={{...TD,color:cnt[k]>0?SHIFTS[k].color:"#A1A1AA",fontWeight:800,fontSize:13}}>{cnt[k]||"－"}</td>)}<td style={{...TD,color:"#6366F1",fontWeight:800,fontSize:14}}>{work}</td><td style={{...TD,color:"#f87171",fontWeight:700,fontSize:13}}>{kiboSel||"－"}</td></tr>);})}</tbody>
       </table>
     </div>
   );
@@ -3931,12 +3931,12 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
   return (
     <div style={{maxWidth:680}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div style={{fontSize:13,color:"#2BBFBA",fontWeight:800}}>{dept.icon} {dept.label} — {ds.length}名</div>
-        <button onClick={onAdd} style={{background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
+        <div style={{fontSize:13,color:"#6366F1",fontWeight:800}}>{dept.icon} {dept.label} — {ds.length}名</div>
+        <button onClick={onAdd} style={{background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},55%,30%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#1a3635"}}>{s.name}</div><div style={{fontSize:10,color:"#2a5a57",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}</div></div></div><div style={{display:"flex",gap:6}}><button onClick={()=>onEdit(s)} style={ICON_BTN("#2BBFBA")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
-        {ds.length===0&&<div style={{background:"#f3fffe",border:"1px dashed #0e3a38",borderRadius:10,padding:32,textAlign:"center",color:"#8ecece",fontSize:13}}>スタッフが登録されていません</div>}
+        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},55%,30%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}</div></div></div><div style={{display:"flex",gap:6}}><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
+        {ds.length===0&&<div style={{background:"#FAFAFA",border:"1px dashed #27272A",borderRadius:10,padding:32,textAlign:"center",color:"#A1A1AA",fontSize:13}}>スタッフが登録されていません</div>}
       </div>
     </div>
   );
@@ -3945,7 +3945,7 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
 function Legend() {
   const keys = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休"];
   return (
-    <div style={{padding:"4px 0",borderBottom:"1px solid #D9E5E7",marginBottom:6,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
+    <div style={{padding:"4px 0",borderBottom:"1px solid #E4E4E7",marginBottom:6,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center"}}>
       {keys.map(key => {
         const s = SHIFTS[key];
         return (
@@ -3982,14 +3982,14 @@ function buildYoteiHTML(dept, staffList, shifts, year, month, yoteiDeptData, flo
     const date=new Date(year,month,d), wd=WD_NAMES[date.getDay()], isWE=date.getDay()===0||date.getDay()===6;
     const groups=getDayGroups(d);
     const memo=(yoteiDeptData||{})[String(d)]?.["_memo"]||"";
-    const hBg=isWE?'#ffe0e6':'#e0f4f2', hColor=isWE?'#c0392b':'#1a3635';
+    const hBg=isWE?'#ffe0e6':'#F4F4F5', hColor=isWE?'#c0392b':'#18181B';
     let ri=0, rows='';
-    groups.forEach((g, gi)=>{g.staff.forEach((s,si)=>{const bg=ri++%2===0?'#ffffff':'#f5fffe'; const borderTop=(si===0&&gi>0)?'border-top:2px solid #b8deda;':''; rows+=`<tr style="background:${bg};${borderTop}"><td style="color:${g.color};font-weight:bold;font-size:10px;padding:2px 5px;white-space:nowrap;vertical-align:middle;${borderTop}">${si===0?g.st:''}</td><td style="padding:2px 5px;font-size:10px;${borderTop}">${s.name}</td><td style="padding:2px 5px;font-size:10px;color:#1a9e9a;font-weight:bold;${borderTop}">${s.assignment}</td></tr>`;});});
-    if(!rows)rows=`<tr><td colspan="3" style="color:#b8deda;text-align:center;padding:6px;font-size:9px;">勤務なし</td></tr>`;
+    groups.forEach((g, gi)=>{g.staff.forEach((s,si)=>{const bg=ri++%2===0?'#ffffff':'#FAFAFA'; const borderTop=(si===0&&gi>0)?'border-top:2px solid #E4E4E7;':''; rows+=`<tr style="background:${bg};${borderTop}"><td style="color:${g.color};font-weight:bold;font-size:10px;padding:2px 5px;white-space:nowrap;vertical-align:middle;${borderTop}">${si===0?g.st:''}</td><td style="padding:2px 5px;font-size:10px;${borderTop}">${s.name}</td><td style="padding:2px 5px;font-size:10px;color:#4F46E5;font-weight:bold;${borderTop}">${s.assignment}</td></tr>`;});});
+    if(!rows)rows=`<tr><td colspan="3" style="color:#E4E4E7;text-align:center;padding:6px;font-size:9px;">勤務なし</td></tr>`;
     if(memo)rows+=`<tr><td colspan="3" style="background:#fffbea;color:#92400e;font-size:9px;padding:3px 5px;border-top:1px dashed #fde68a;">📝 ${memo}</td></tr>`;
-    return `<div style="border:1px solid #90cbc8;border-radius:6px;overflow:hidden;break-inside:avoid;"><div style="background:${hBg};color:${hColor};padding:4px 8px;font-weight:bold;font-size:11px;">${month+1}月${d}日（${wd}）</div><table style="width:100%;border-collapse:collapse;">${rows}</table></div>`;
+    return `<div style="border:1px solid #D4D4D8;border-radius:6px;overflow:hidden;break-inside:avoid;"><div style="background:${hBg};color:${hColor};padding:4px 8px;font-weight:bold;font-size:11px;">${month+1}月${d}日（${wd}）</div><table style="width:100%;border-collapse:collapse;">${rows}</table></div>`;
   });
-  return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>職員予定表 ${year}年${month+1}月 ${dept.label}</title><style>@media print{@page{size:A4 portrait;margin:10mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Noto Sans JP','ヒラギノ角ゴ ProN',Meiryo,sans-serif;margin:0;padding:10px;}h2{font-size:14px;border-bottom:2px solid #2BBFBA;padding-bottom:6px;margin:0 0 10px;color:#1a3635;}.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}</style></head><body><h2>📋 職員予定表　${year}年${month+1}月　${dept.label}</h2><div class="grid">${dayCards.join('')}</div></body></html>`;
+  return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>職員予定表 ${year}年${month+1}月 ${dept.label}</title><style>@media print{@page{size:A4 portrait;margin:10mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Noto Sans JP','ヒラギノ角ゴ ProN',Meiryo,sans-serif;margin:0;padding:10px;}h2{font-size:14px;border-bottom:2px solid #6366F1;padding-bottom:6px;margin:0 0 10px;color:#18181B;}.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}</style></head><body><h2>📋 職員予定表　${year}年${month+1}月　${dept.label}</h2><div class="grid">${dayCards.join('')}</div></body></html>`;
 }
 
 function autoAssignDay(d, dept, staffList, shifts, rules, floorSettings) {
@@ -4035,20 +4035,20 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
     onSave({floors:validGroups.map(n=>({name:n})), duties:validDuties.map(n=>({name:n})), rules});
     onClose();
   };
-  const LS = {fontSize:11,color:"#3a8a87",fontWeight:700,marginBottom:6,display:"block"};
+  const LS = {fontSize:11,color:"#52525B",fontWeight:700,marginBottom:6,display:"block"};
   const rowStyle = {display:"flex",alignItems:"center",gap:6,marginBottom:7};
   const delBtn = () => ({background:"#fff0f0",border:"1px solid #e07070",borderRadius:6,color:"#c44b4b",cursor:"pointer",padding:"5px 9px",fontSize:13});
-  const addBtn = {background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800};
+  const addBtn = {background:"#6366F1",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800};
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>⚙️ 予定表 設定</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
+          <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>⚙️ 予定表 設定</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
         <label style={LS}>📍 配置グループ（均等分配用）</label>
-        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:8}}>例：1階・2階など。自動配置で均等に振り分けたい場合に設定します。</div>
-        <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
+        <div style={{fontSize:10,color:"#71717A",marginBottom:8}}>例：1階・2階など。自動配置で均等に振り分けたい場合に設定します。</div>
+        <div style={{background:"#F4F4F5",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #D4D4D8"}}>
           {groups.map((name,i)=>(
             <div key={i} style={rowStyle}>
               <input value={name} onChange={e=>updateGroup(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`グループ${i+1}（例：1階）`}/>
@@ -4058,8 +4058,8 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           <button onClick={()=>setGroups(p=>[...p,""])} style={addBtn}>＋ グループを追加</button>
         </div>
         <label style={LS}>🎯 役割・業務</label>
-        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:8}}>入浴・フリーなどの業務担当を自由に追加できます。</div>
-        <div style={{background:"#d5edeb",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #90cbc8"}}>
+        <div style={{fontSize:10,color:"#71717A",marginBottom:8}}>入浴・フリーなどの業務担当を自由に追加できます。</div>
+        <div style={{background:"#F4F4F5",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #D4D4D8"}}>
           {duties.map((name,i)=>(
             <div key={i} style={rowStyle}>
               <input value={name} onChange={e=>updateDuty(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`役割${i+1}`}/>
@@ -4069,12 +4069,12 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           <button onClick={()=>setDuties(p=>[...p,""])} style={addBtn}>＋ 役割を追加</button>
         </div>
         <label style={LS}>⚡ 自動配置ルール</label>
-        <div style={{fontSize:10,color:"#6ab5b2",marginBottom:10}}>「自動配置」ボタンで全日程に一括適用されるルールです。</div>
+        <div style={{fontSize:10,color:"#71717A",marginBottom:10}}>「自動配置」ボタンで全日程に一括適用されるルールです。</div>
         <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:20}}>
           {rules.map(({shiftType,assignment})=>{
             const sh=SHIFTS[shiftType];
             return(
-              <div key={shiftType} style={{display:"flex",alignItems:"center",gap:10,background:"#d5edeb",borderRadius:8,padding:"8px 12px",border:"1px solid #90cbc8"}}>
+              <div key={shiftType} style={{display:"flex",alignItems:"center",gap:10,background:"#F4F4F5",borderRadius:8,padding:"8px 12px",border:"1px solid #D4D4D8"}}>
                 <ShiftBadge type={shiftType}/>
                 <span style={{fontSize:12,fontWeight:700,color:sh.color,minWidth:34}}>{shiftType}</span>
                 <select value={assignment} onChange={e=>setRule(shiftType,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"5px 8px",fontSize:12}}>
@@ -4085,8 +4085,8 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
           })}
         </div>
         <div style={{display:"flex",gap:10}}>
-          <button onClick={handleSave} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
-          <button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
+          <button onClick={handleSave} style={{flex:1,background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
+          <button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
         </div>
       </div>
     </div>
@@ -4104,20 +4104,20 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
   const handleSave = () => onSave({...local, _memo:memo});
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-          <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>{month+1}月{day}日（{wd}）担当配置</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
+          <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{month+1}月{day}日（{wd}）担当配置</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
-        {workingGroups.length===0&&<div style={{color:"#8ecece",fontSize:13,textAlign:"center",padding:"16px 0"}}>この日の勤務者がいません</div>}
+        {workingGroups.length===0&&<div style={{color:"#A1A1AA",fontSize:13,textAlign:"center",padding:"16px 0"}}>この日の勤務者がいません</div>}
         {workingGroups.map(({st,staff})=>{
           const sh=SHIFTS[st];
           return(
             <div key={st} style={{marginBottom:14}}>
               <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}><ShiftBadge type={st}/><span style={{fontSize:11,color:sh.color,fontWeight:700}}>{st}</span></div>
               {staff.map(s=>(
-                <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>
-                  <span style={{fontSize:13,fontWeight:700,color:"#1a3635",flex:1}}>{s.name}</span>
+                <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,background:"#F4F4F5",borderRadius:8,padding:"8px 12px"}}>
+                  <span style={{fontSize:13,fontWeight:700,color:"#18181B",flex:1}}>{s.name}</span>
                   <select value={local[s.id]||""} onChange={e=>set(s.id,e.target.value)} style={{...INPUT_STYLE,width:120,marginBottom:0,padding:"5px 8px"}}>
                     {floorOptions.map(opt=><option key={opt} value={opt}>{opt||"（未設定）"}</option>)}
                   </select>
@@ -4127,14 +4127,14 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
           );
         })}
         <div style={{marginTop:14}}>
-          <div style={{fontSize:11,color:"#3a8a87",marginBottom:5,fontWeight:700}}>📝 メモ・追加記入</div>
+          <div style={{fontSize:11,color:"#52525B",marginBottom:5,fontWeight:700}}>📝 メモ・追加記入</div>
           <textarea value={memo} onChange={e=>setMemo(e.target.value)}
             placeholder="例）午後から外部研修あり、浴室清掃担当あり"
             style={{...INPUT_STYLE,minHeight:56,resize:"vertical",fontFamily:"inherit"}}/>
         </div>
         <div style={{display:"flex",gap:10,marginTop:16}}>
-          <button onClick={handleSave} style={{flex:1,background:"linear-gradient(135deg,#2BBFBA,#b07fd4)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
-          <button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
+          <button onClick={handleSave} style={{flex:1,background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
+          <button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
         </div>
       </div>
     </div>
@@ -4186,14 +4186,14 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
   return (
     <div style={{maxWidth:960}}>
       {/* ツールバー */}
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-        <span style={{fontSize:12,fontWeight:800,color:"#2BBFBA",whiteSpace:"nowrap"}}>🏠 フロア</span>
-        {(floorSettings.duties||[]).map((d,i)=><span key={i} style={{background:"#d5edeb",borderRadius:6,padding:"3px 9px",fontSize:11,color:"#1a3635",fontWeight:700}}>{d.name}</span>)}
-        <button onClick={()=>setSettingsOpen(true)} style={{background:"#2BBFBA",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚙️ 設定</button>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,fontWeight:800,color:"#6366F1",whiteSpace:"nowrap"}}>🏠 フロア</span>
+        {(floorSettings.duties||[]).map((d,i)=><span key={i} style={{background:"#F4F4F5",borderRadius:6,padding:"3px 9px",fontSize:11,color:"#18181B",fontWeight:700}}>{d.name}</span>)}
+        <button onClick={()=>setSettingsOpen(true)} style={{background:"#6366F1",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚙️ 設定</button>
         <button onClick={handleAutoAssign} style={{background:"linear-gradient(135deg,#f5b942,#e07b30)",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚡ 自動配置</button>
         <button onClick={handleClearAssign} style={{background:"#fff0f0",color:"#c44b4b",border:"1px solid #e07070",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🗑 配置クリア</button>
-        <button onClick={handlePrint} style={{marginLeft:"auto",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🖨️ 印刷</button>
-        <button onClick={handleDownloadYotei} style={{background:"#ffffff",color:"#2BBFBA",border:"1px solid #90cbc8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>📥 USB保存</button>
+        <button onClick={handlePrint} style={{marginLeft:"auto",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🖨️ 印刷</button>
+        <button onClick={handleDownloadYotei} style={{background:"#ffffff",color:"#6366F1",border:"1px solid #D4D4D8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>📥 USB保存</button>
       </div>
       {/* 月カレンダー */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:7}}>
@@ -4204,11 +4204,11 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
           const memo=assign["_memo"]||"";
           const workCount=YOTEI_SHIFT_ORDER.reduce((acc,st)=>acc+ds.filter(s=>(shifts[s.id]?.[d]||"")===st).length,0);
           return(
-            <div key={d} onClick={()=>setEditDay(d)} style={{background:"#ffffff",border:`1px solid ${we?"#fca5a5":"#90cbc8"}`,borderRadius:9,padding:"8px 10px",cursor:"pointer",boxShadow:"0 1px 4px #0001"}}>
+            <div key={d} onClick={()=>setEditDay(d)} style={{background:"#ffffff",border:`1px solid ${we?"#fca5a5":"#D4D4D8"}`,borderRadius:9,padding:"8px 10px",cursor:"pointer",boxShadow:"0 1px 4px #0001"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <span style={{fontSize:13,fontWeight:800,color:we?"#e53e3e":"#1a3635"}}>{d}<span style={{fontSize:10,marginLeft:3,fontWeight:400,color:we?"#e53e3e":"#5a9e9b"}}>({wd})</span></span>
+                <span style={{fontSize:13,fontWeight:800,color:we?"#e53e3e":"#18181B"}}>{d}<span style={{fontSize:10,marginLeft:3,fontWeight:400,color:we?"#e53e3e":"#52525B"}}>({wd})</span></span>
                 <div style={{display:"flex",gap:3,alignItems:"center"}}>
-                  {assignedCnt>0&&<span style={{fontSize:9,background:"#d5edeb",color:"#2BBFBA",borderRadius:8,padding:"1px 5px",fontWeight:700}}>{assignedCnt}</span>}
+                  {assignedCnt>0&&<span style={{fontSize:9,background:"#F4F4F5",color:"#6366F1",borderRadius:8,padding:"1px 5px",fontWeight:700}}>{assignedCnt}</span>}
                   {memo&&<span style={{fontSize:9}}>📝</span>}
                 </div>
               </div>
@@ -4219,13 +4219,13 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
                 return(
                   <div key={st} style={{display:"flex",alignItems:"flex-start",gap:3,marginBottom:2}}>
                     <span style={{fontSize:10,fontWeight:800,color:sh.color,minWidth:22,textAlign:"center",background:sh.bg,borderRadius:2,flexShrink:0,lineHeight:"18px",padding:"0 2px"}}>{sh.short}</span>
-                    <div style={{fontSize:11,color:"#2a5a57",lineHeight:1.6,display:"flex",flexWrap:"wrap",gap:"2px 4px"}}>
-                      {group.map(s=>{const a=assign[s.id],nm=s.name.replace(/\s/g,"");return<span key={s.id}>{nm}{a&&<span style={{color:"#1a9e9a",fontWeight:700}}>({a.slice(0,4)})</span>}</span>;})}
+                    <div style={{fontSize:11,color:"#3F3F46",lineHeight:1.6,display:"flex",flexWrap:"wrap",gap:"2px 4px"}}>
+                      {group.map(s=>{const a=assign[s.id],nm=s.name.replace(/\s/g,"");return<span key={s.id}>{nm}{a&&<span style={{color:"#4F46E5",fontWeight:700}}>({a.slice(0,4)})</span>}</span>;})}
                     </div>
                   </div>
                 );
               })}
-              {workCount===0&&<div style={{fontSize:10,color:"#b8deda",textAlign:"center",paddingTop:4}}>勤務なし</div>}
+              {workCount===0&&<div style={{fontSize:10,color:"#E4E4E7",textAlign:"center",paddingTop:4}}>勤務なし</div>}
               {memo&&<div style={{fontSize:10,color:"#92400e",background:"#fffbea",borderRadius:3,padding:"2px 4px",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{memo.slice(0,20)}{memo.length>20?"…":""}</div>}
             </div>
           );
@@ -4269,7 +4269,7 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
   return (
     <div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:4}}>
-        {["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:11,color:i===0?"#f87171":i===6?"#2BBFBA":"#3a8a87",padding:"3px 0",fontWeight:700}}>{w}</div>)}
+        {["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:11,color:i===0?"#f87171":i===6?"#6366F1":"#52525B",padding:"3px 0",fontWeight:700}}>{w}</div>)}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
         {cells.map((d,i)=>{
@@ -4283,7 +4283,7 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
           const blocked = isDisabled || (!isMe && over);
           return (
             <button key={d} onClick={()=>toggle(d)} disabled={blocked}
-              style={{background:isMe?activeBg:blocked?"#f5f5f5":"transparent",border:isMe?`2px solid ${activeBorder}`:blocked?"1px solid #e5e5e5":"1px solid #0e3a38",borderRadius:6,padding:"4px 2px",cursor:blocked?"not-allowed":"pointer",color:isMe?activeColor:blocked?"#aaa":we?"#2BBFBA":"#1a3635",fontSize:11,fontWeight:isMe?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:38,position:"relative",opacity:blocked?0.5:1}}>
+              style={{background:isMe?activeBg:blocked?"#f5f5f5":"transparent",border:isMe?`2px solid ${activeBorder}`:blocked?"1px solid #e5e5e5":"1px solid #27272A",borderRadius:6,padding:"4px 2px",cursor:blocked?"not-allowed":"pointer",color:isMe?activeColor:blocked?"#aaa":we?"#6366F1":"#18181B",fontSize:11,fontWeight:isMe?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:38,position:"relative",opacity:blocked?0.5:1}}>
               {over&&!isMe&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#ef4444"}}>⚠</span>}
               {!over&&warn&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#f59e0b"}}>!</span>}
               <span style={{fontSize:12}}>{d}</span>
@@ -4295,12 +4295,12 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
         })}
       </div>
       {isYukyu ? (
-        <div style={{marginTop:8,fontSize:11,color:"#3a8a87"}}>
+        <div style={{marginTop:8,fontSize:11,color:"#52525B"}}>
           <span style={{color:"#9b4db5",fontWeight:700}}>■</span> 自分の有休
           <span style={{marginLeft:12,color:"#6b7280"}}>※ 人数上限なし・自由に選択可</span>
         </div>
       ) : (
-        <div style={{marginTop:8,fontSize:11,color:"#3a8a87"}}>
+        <div style={{marginTop:8,fontSize:11,color:"#52525B"}}>
           <span style={{color:"#ef4444",fontWeight:700}}>■</span> 自分の希望休
           <span style={{marginLeft:12,color:"#c44b4b"}}>数字</span> = 他のスタッフの人数
           <span style={{marginLeft:12,color:"#9ca3af"}}>■</span> 上限到達（選択不可）
@@ -4444,13 +4444,13 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   const prevMonth = () => { if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); setSubmitted(false); };
   const nextMonth = () => { if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); setSubmitted(false); };
 
-  const BASE = { minHeight:"100vh", background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)", fontFamily:"'Noto Sans JP',sans-serif", padding:16 };
+  const BASE = { minHeight:"100vh", background:"linear-gradient(135deg,#FAFAFA,#F4F4F5)", fontFamily:"'Noto Sans JP',sans-serif", padding:16 };
 
   if (loading) return (
     <div style={{...BASE,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{textAlign:"center"}}>
         <ShifuponIcon size={48} radius={12}/>
-        <div style={{color:"#6ab5b2",fontSize:13,marginTop:12}}>読み込み中…</div>
+        <div style={{color:"#71717A",fontSize:13,marginTop:12}}>読み込み中…</div>
       </div>
     </div>
   );
@@ -4461,7 +4461,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
         <div style={{fontSize:14,fontWeight:700}}>施設情報を読み込めませんでした</div>
         <div style={{fontSize:12,color:"#6b7280",marginTop:8}}>URLが正しいか確認してください</div>
-        <button onClick={loadConfig} style={{marginTop:16,background:"#2BBFBA",color:"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+        <button onClick={loadConfig} style={{marginTop:16,background:"#6366F1",color:"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
           🔄 再読込
         </button>
       </div>
@@ -4471,29 +4471,29 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   return (
     <div style={BASE}>
       {/* ヘッダー */}
-      <div style={{background:"#fff",borderRadius:14,padding:"12px 16px",marginBottom:16,boxShadow:"0 2px 12px #0e3a3820",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div style={{background:"#fff",borderRadius:14,padding:"12px 16px",marginBottom:16,boxShadow:"0 2px 12px #27272A20",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <ShifuponIcon size={36} radius={8}/>
           <div>
-            <div style={{fontSize:13,fontWeight:900,color:"#1a3635"}}>{config.facility_name || "しふぽん"}</div>
-            <div style={{fontSize:10,color:"#3a8a87"}}>希望休・有休 入力ポータル</div>
+            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{config.facility_name || "しふぽん"}</div>
+            <div style={{fontSize:10,color:"#52525B"}}>希望休・有休 入力ポータル</div>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          {!isMonthLocked&&<button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>◀</button>}
-          <span style={{fontSize:13,fontWeight:800,color:"#1a3635"}}>{year}年{month+1}月</span>
-          {!isMonthLocked&&<button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#2BBFBA",cursor:"pointer"}}>▶</button>}
+          {!isMonthLocked&&<button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#6366F1",cursor:"pointer"}}>◀</button>}
+          <span style={{fontSize:13,fontWeight:800,color:"#18181B"}}>{year}年{month+1}月</span>
+          {!isMonthLocked&&<button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#6366F1",cursor:"pointer"}}>▶</button>}
         </div>
       </div>
 
       {/* 部署選択（fixedDeptIdがない場合のみ表示） */}
       {!fixedDeptId && (
-        <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:10}}>▍ 部署を選んでください</div>
+        <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #27272A15"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#52525B",marginBottom:10}}>▍ 部署を選んでください</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {(config.depts||[]).map(d=>(
               <button key={d.id} onClick={()=>{setSelDeptId(d.id);setSelStaffId(null);setMyDays([]);setMyYukyuDays([]);setSubmitted(false);}}
-                style={{background:selDeptId===d.id?"linear-gradient(135deg,#2BBFBA,#45B7D1)":"#d5edeb",color:selDeptId===d.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selDeptId===d.id?800:400}}>
+                style={{background:selDeptId===d.id?"#6366F1":"#F4F4F5",color:selDeptId===d.id?"#fff":"#18181B",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selDeptId===d.id?800:400}}>
                 {d.icon} {d.label}
               </button>
             ))}
@@ -4502,20 +4502,20 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
       )}
       {/* 固定部署の場合は部署名をヘッダーに表示 */}
       {fixedDeptId && selDept && (
-        <div style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",borderRadius:12,padding:"10px 16px",marginBottom:12,textAlign:"center"}}>
+        <div style={{background:"#6366F1",borderRadius:12,padding:"10px 16px",marginBottom:12,textAlign:"center"}}>
           <span style={{color:"#fff",fontWeight:900,fontSize:14}}>{selDept.icon} {selDept.label}</span>
         </div>
       )}
 
       {/* スタッフ選択 */}
       {selDeptId && (
-        <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:10}}>▍ 自分の名前を選んでください</div>
+        <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #27272A15"}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#52525B",marginBottom:10}}>▍ 自分の名前を選んでください</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {deptStaff.length===0&&<div style={{fontSize:12,color:"#9ca3af"}}>スタッフが見つかりません。管理者がスタッフを登録後、<button onClick={loadConfig} style={{background:"none",border:"none",color:"#2BBFBA",cursor:"pointer",fontWeight:700,fontSize:12,padding:0,textDecoration:"underline"}}>再読込</button>してください。</div>}
+            {deptStaff.length===0&&<div style={{fontSize:12,color:"#9ca3af"}}>スタッフが見つかりません。管理者がスタッフを登録後、<button onClick={loadConfig} style={{background:"none",border:"none",color:"#6366F1",cursor:"pointer",fontWeight:700,fontSize:12,padding:0,textDecoration:"underline"}}>再読込</button>してください。</div>}
             {deptStaff.map(s=>(
               <button key={s.id} onClick={()=>{setSelStaffId(s.id);setMyDays([]);setMyYukyuDays([]);setSubmitted(false);}}
-                style={{background:selStaffId===s.id?"linear-gradient(135deg,#2BBFBA,#b07fd4)":"#d5edeb",color:selStaffId===s.id?"#fff":"#1a3635",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selStaffId===s.id?800:400}}>
+                style={{background:selStaffId===s.id?"linear-gradient(135deg,#6366F1,#7C3AED)":"#F4F4F5",color:selStaffId===s.id?"#fff":"#18181B",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selStaffId===s.id?800:400}}>
                 {s.name}
               </button>
             ))}
@@ -4536,11 +4536,11 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
       {selStaff && !submitted && !isPastDeadline && (
         <>
           {/* 希望休 */}
-          <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815"}}>
-            <div style={{fontSize:11,fontWeight:700,color:"#3a8a87",marginBottom:4}}>▍ {selStaff.name}さんの希望休（{year}年{month+1}月）</div>
+          <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #27272A15"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#52525B",marginBottom:4}}>▍ {selStaff.name}さんの希望休（{year}年{month+1}月）</div>
             <div style={{fontSize:10,color:"#c44b4b",marginBottom:10}}>※ 同じ日は上限{lim}名まで。上限に達した日は選択できません。</div>
             {kiboLoading ? (
-              <div style={{textAlign:"center",color:"#6ab5b2",padding:20}}>読み込み中…</div>
+              <div style={{textAlign:"center",color:"#71717A",padding:20}}>読み込み中…</div>
             ) : (
               <StaffKiboCalendar year={year} month={month} myDays={myDays} otherCounts={otherCounts} kiboLimit={lim} onChange={setMyDays} type="kibo" disabledDays={myYukyuDays}/>
             )}
@@ -4548,11 +4548,11 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           </div>
 
           {/* 有休 */}
-          <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #0e3a3815",border:"1px solid #e8d5f5"}}>
+          <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #27272A15",border:"1px solid #e8d5f5"}}>
             <div style={{fontSize:11,fontWeight:700,color:"#9b4db5",marginBottom:4}}>▍ {selStaff.name}さんの有休（{year}年{month+1}月）</div>
             <div style={{fontSize:10,color:"#9b4db5",marginBottom:10}}>※ 有休取得希望日を選んでください。人数制限はありません。</div>
             {kiboLoading ? (
-              <div style={{textAlign:"center",color:"#6ab5b2",padding:20}}>読み込み中…</div>
+              <div style={{textAlign:"center",color:"#71717A",padding:20}}>読み込み中…</div>
             ) : (
               <StaffKiboCalendar year={year} month={month} myDays={myYukyuDays} otherCounts={{}} kiboLimit={99} onChange={setMyYukyuDays} type="yukyu" disabledDays={myDays}/>
             )}
@@ -4562,7 +4562,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           {/* 送信ボタン */}
           <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
             <button onClick={handleSubmit} disabled={submitting}
-              style={{background:submitting?"#d5edeb":"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:submitting?"#2a5a57":"#fff",border:"none",borderRadius:10,padding:"12px 28px",cursor:submitting?"not-allowed":"pointer",fontSize:14,fontWeight:800}}>
+              style={{background:submitting?"#F4F4F5":"#6366F1",color:submitting?"#3F3F46":"#fff",border:"none",borderRadius:10,padding:"12px 28px",cursor:submitting?"not-allowed":"pointer",fontSize:14,fontWeight:800}}>
               {submitting?"送信中…":"✅ 送信する"}
             </button>
           </div>
@@ -4581,10 +4581,10 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
             <div style={{fontSize:12,color:"#9b4db5",marginBottom:4}}>有休：{myYukyuDays.sort((a,b)=>a-b).join("日・")}日</div>
           )}
           {myDays.length === 0 && myYukyuDays.length === 0 && (
-            <div style={{fontSize:12,color:"#3a8a87",marginBottom:4}}>{year}年{month+1}月の申請を送信しました。</div>
+            <div style={{fontSize:12,color:"#52525B",marginBottom:4}}>{year}年{month+1}月の申請を送信しました。</div>
           )}
           <div style={{fontSize:11,color:"#6b7280",margin:"8px 0 16px"}}>管理者に自動で反映されます。</div>
-          <button onClick={()=>setSubmitted(false)} style={{background:"#d5edeb",color:"#1a3635",border:"none",borderRadius:8,padding:"9px 20px",cursor:"pointer",fontSize:12,fontWeight:700}}>✏️ 修正する</button>
+          <button onClick={()=>setSubmitted(false)} style={{background:"#F4F4F5",color:"#18181B",border:"none",borderRadius:8,padding:"9px 20px",cursor:"pointer",fontSize:12,fontWeight:700}}>✏️ 修正する</button>
         </div>
       )}
     </div>
@@ -4714,52 +4714,52 @@ function JissekiInputModal({ staffName, day, year, month, plannedShift, record, 
   const plannedMins = calcWorkMinutes(defaults.start, defaults.end, defaults.breakMin ?? 60);
   const overtimeMins = (start && end && plannedMins > 0) ? Math.max(0, workMins - plannedMins) : 0;
   const dow = ["日","月","火","水","木","金","土"][new Date(year, month, day).getDay()];
-  const TS = { width:"100%", border:"1.5px solid #90cbc8", borderRadius:8, padding:"9px 12px", fontSize:14, fontFamily:"'Noto Sans JP',sans-serif", outline:"none", background:"#fff", boxSizing:"border-box" };
+  const TS = { width:"100%", border:"1.5px solid #D4D4D8", borderRadius:8, padding:"9px 12px", fontSize:14, fontFamily:"'Noto Sans JP',sans-serif", outline:"none", background:"#fff", boxSizing:"border-box" };
   const allTypes = [...(deptShiftTypes||["早番","日勤","遅番","夜勤"]), "明け", "休み", "有休"].filter((v,i,a)=>a.indexOf(v)===i);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:380,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:380,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>📋 実績入力</div>
-            <div style={{fontSize:12,color:"#3a8a87",marginTop:2}}>{staffName} — {month+1}月{day}日（{dow}）</div>
+            <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📋 実績入力</div>
+            <div style={{fontSize:12,color:"#52525B",marginTop:2}}>{staffName} — {month+1}月{day}日（{dow}）</div>
           </div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
         </div>
-        {plannedShift && <div style={{background:"#e0f4f2",borderRadius:8,padding:"6px 12px",marginBottom:14,fontSize:12,color:"#2a6a67"}}>予定シフト：<strong>{plannedShift}</strong></div>}
+        {plannedShift && <div style={{background:"#F4F4F5",borderRadius:8,padding:"6px 12px",marginBottom:14,fontSize:12,color:"#3F3F46"}}>予定シフト：<strong>{plannedShift}</strong></div>}
         <div style={{marginBottom:12}}>
-          <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>実績シフト</div>
+          <div style={{fontSize:11,color:"#52525B",marginBottom:4,fontWeight:700}}>実績シフト</div>
           <select value={actualShift} onChange={e=>setActualShift(e.target.value)} style={TS}>
             {allTypes.map(k=><option key={k} value={k}>{k}</option>)}
           </select>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
           <div>
-            <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>出勤時刻</div>
+            <div style={{fontSize:11,color:"#52525B",marginBottom:4,fontWeight:700}}>出勤時刻</div>
             <input type="time" value={start} onChange={e=>setStart(e.target.value)} style={TS}/>
           </div>
           <div>
-            <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>退勤時刻</div>
+            <div style={{fontSize:11,color:"#52525B",marginBottom:4,fontWeight:700}}>退勤時刻</div>
             <input type="time" value={end} onChange={e=>setEnd(e.target.value)} style={TS}/>
           </div>
         </div>
         <div style={{marginBottom:12}}>
-          <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>休憩時間（分）</div>
+          <div style={{fontSize:11,color:"#52525B",marginBottom:4,fontWeight:700}}>休憩時間（分）</div>
           <div onClick={e=>setKp({value:breakMin,min:0,max:180,unit:"分",onConfirm:v=>setBreakMin(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...TS,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{breakMin}分</div>
         </div>
-        {start&&end&&<div style={{background:"#d5edeb",borderRadius:8,padding:"10px 14px",marginBottom:14,textAlign:"center"}}>
-          <span style={{fontSize:12,color:"#2a6a67"}}>実労働時間 </span>
-          <span style={{fontSize:20,fontWeight:900,color:"#1a9e9a"}}>{fmtH(workMins)}</span>
+        {start&&end&&<div style={{background:"#F4F4F5",borderRadius:8,padding:"10px 14px",marginBottom:14,textAlign:"center"}}>
+          <span style={{fontSize:12,color:"#3F3F46"}}>実労働時間 </span>
+          <span style={{fontSize:20,fontWeight:900,color:"#4F46E5"}}>{fmtH(workMins)}</span>
           {overtimeMins>0&&<span style={{fontSize:12,color:"#c2410c",marginLeft:8,fontWeight:700}}>（うち残業 {fmtH(overtimeMins)}）</span>}
         </div>}
         <div style={{marginBottom:16}}>
-          <div style={{fontSize:11,color:"#3a8a87",marginBottom:4,fontWeight:700}}>備考</div>
+          <div style={{fontSize:11,color:"#52525B",marginBottom:4,fontWeight:700}}>備考</div>
           <input type="text" value={note} onChange={e=>setNote(e.target.value)} placeholder="例：残業あり" style={TS}/>
         </div>
         <div style={{display:"flex",gap:8}}>
-          <button onClick={()=>onSave({start,end,breakMin:+breakMin||0,actualShift,note})} style={{flex:2,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>💾 保存</button>
+          <button onClick={()=>onSave({start,end,breakMin:+breakMin||0,actualShift,note})} style={{flex:2,background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>💾 保存</button>
           {record&&<button onClick={onClear} style={{flex:1,background:"#fff0f0",border:"1px solid #e07070",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:12,color:"#c44b4b",fontWeight:700}}>🗑 削除</button>}
-          <button onClick={onClose} style={{flex:1,background:"#d5edeb",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:13}}>戻る</button>
+          <button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:13}}>戻る</button>
         </div>
         {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
       </div>
@@ -4781,19 +4781,19 @@ function JissekiDefaultsModal({ dept, defaults, onSave, onClose }) {
     return f;
   });
   const upd = (st, field, val) => setForm(p => ({...p, [st]:{...p[st],[field]:val}}));
-  const TS = {border:"1.5px solid #90cbc8",borderRadius:6,padding:"5px 8px",fontSize:13,fontFamily:"inherit",outline:"none",background:"#fff",width:"100%",boxSizing:"border-box"};
+  const TS = {border:"1.5px solid #D4D4D8",borderRadius:6,padding:"5px 8px",fontSize:13,fontFamily:"inherit",outline:"none",background:"#fff",width:"100%",boxSizing:"border-box"};
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
       <div style={{background:"#fff",borderRadius:16,padding:24,width:440,maxWidth:"95vw",maxHeight:"85vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontWeight:800,fontSize:16,color:"#1a3635",marginBottom:6}}>⏰ シフト別デフォルト時刻</div>
-        <div style={{fontSize:12,color:"#5a9e9b",marginBottom:16}}>「全予定を一括コピー」時に使うデフォルトの出退勤時刻を設定します。</div>
+        <div style={{fontWeight:800,fontSize:16,color:"#18181B",marginBottom:6}}>⏰ シフト別デフォルト時刻</div>
+        <div style={{fontSize:12,color:"#52525B",marginBottom:16}}>「全予定を一括コピー」時に使うデフォルトの出退勤時刻を設定します。</div>
         {shiftTypes.map(st=>(
-          <div key={st} style={{marginBottom:12,background:"#f0fbfa",borderRadius:8,padding:"10px 14px"}}>
-            <div style={{fontWeight:700,color:"#1a3635",marginBottom:8,fontSize:13}}>{st}</div>
+          <div key={st} style={{marginBottom:12,background:"#FAFAFA",borderRadius:8,padding:"10px 14px"}}>
+            <div style={{fontWeight:700,color:"#18181B",marginBottom:8,fontSize:13}}>{st}</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
               {[["出勤","start","time"],["退勤","end","time"],["休憩(分)","breakMin","number"]].map(([label,field,type])=>(
                 <div key={field}>
-                  <div style={{fontSize:11,color:"#5a9e9b",marginBottom:3}}>{label}</div>
+                  <div style={{fontSize:11,color:"#52525B",marginBottom:3}}>{label}</div>
                   <input type={type} value={form[st]?.[field]??""} min={type==="number"?0:undefined} max={type==="number"?240:undefined}
                     onChange={e=>upd(st,field,type==="number"?+e.target.value:e.target.value)} style={TS}/>
                 </div>
@@ -4802,7 +4802,7 @@ function JissekiDefaultsModal({ dept, defaults, onSave, onClose }) {
           </div>
         ))}
         <div style={{display:"flex",gap:8,marginTop:8}}>
-          <button onClick={()=>onSave(form)} style={{flex:2,background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontWeight:700,fontSize:14}}>💾 保存</button>
+          <button onClick={()=>onSave(form)} style={{flex:2,background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontWeight:700,fontSize:14}}>💾 保存</button>
           <button onClick={onClose} style={{flex:1,background:"#f0f0f0",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
         </div>
       </div>
@@ -4856,49 +4856,49 @@ function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCe
     empty:    { color:"#b0c8c8" },
   };
 
-  const TH = { padding:"4px 6px", fontSize:10, fontWeight:700, color:"#3a8a87", background:"#e0f4f2", textAlign:"center", whiteSpace:"nowrap", position:"sticky", top:0 };
-  const TD = (extra={}) => ({ padding:"3px 4px", fontSize:11, textAlign:"center", borderBottom:"1px solid #d5edeb", ...extra });
+  const TH = { padding:"4px 6px", fontSize:10, fontWeight:700, color:"#52525B", background:"#F4F4F5", textAlign:"center", whiteSpace:"nowrap", position:"sticky", top:0 };
+  const TD = (extra={}) => ({ padding:"3px 4px", fontSize:11, textAlign:"center", borderBottom:"1px solid #F4F4F5", ...extra });
   return (
     <div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:8}}>
-        <div style={{fontSize:12,color:"#3a8a87"}}>
-          <span style={{fontWeight:700,color:"#1a9e9a"}}>{recordCount}件</span> の実績 ／ 合計
-          <span style={{fontWeight:700,color:"#1a9e9a",marginLeft:4}}>{fmtH(grandTotal)}</span>
+        <div style={{fontSize:12,color:"#52525B"}}>
+          <span style={{fontWeight:700,color:"#4F46E5"}}>{recordCount}件</span> の実績 ／ 合計
+          <span style={{fontWeight:700,color:"#4F46E5",marginLeft:4}}>{fmtH(grandTotal)}</span>
         </div>
         <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-          <button onClick={()=>setShowDefModal(true)} style={{background:"#f0fbfa",color:"#3a8a87",border:"1px solid #90cbc8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>⚙️ デフォルト時刻</button>
+          <button onClick={()=>setShowDefModal(true)} style={{background:"#FAFAFA",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>⚙️ デフォルト時刻</button>
           <button onClick={()=>onBulkCopy(null)} style={{background:"linear-gradient(135deg,#f59e0b,#f97316)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📋 全予定を一括コピー</button>
           <button onClick={onClearZero} style={{background:"#fff0f0",color:"#c44b4b",border:"1px solid #e07070",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>🗑 0:00レコードを削除</button>
           <button onClick={onClearAll} style={{background:"#7f1d1d",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>🗑 全実績クリア</button>
           <button onClick={onXlsExport} style={{background:"linear-gradient(135deg,#217346,#2ecc71)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📊 Excel出力</button>
-          <button onClick={onCsvExport} style={{background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📥 CSV出力</button>
+          <button onClick={onCsvExport} style={{background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>📥 CSV出力</button>
         </div>
       </div>
-      <div style={{fontSize:11,color:"#5a9e9b",marginBottom:10,background:"#e0f4f2",borderRadius:7,padding:"6px 10px",display:"flex",flexWrap:"wrap",gap:"6px 12px",alignItems:"center"}}>
+      <div style={{fontSize:11,color:"#52525B",marginBottom:10,background:"#F4F4F5",borderRadius:7,padding:"6px 10px",display:"flex",flexWrap:"wrap",gap:"6px 12px",alignItems:"center"}}>
         <span>💡 セルクリックで個別修正。📋で一括コピー。</span>
         <span><span style={{background:"#fff3e0",color:"#c2410c",padding:"0 4px",borderRadius:3,fontWeight:700}}>橙</span>＝残業</span>
         <span><span style={{background:"#f1f3f4",color:"#6b7280",padding:"0 4px",borderRadius:3,fontStyle:"italic"}}>灰</span>＝早退/欠勤</span>
         <span><span style={{background:"#fff3b0",padding:"0 4px",borderRadius:3}}>黄</span>＝時刻変更</span>
         <span>📝＝備考あり</span>
       </div>
-      <div style={{overflowX:"auto",borderRadius:8,border:"1px solid #b8deda"}}>
+      <div style={{overflowX:"auto",borderRadius:8,border:"1px solid #E4E4E7"}}>
         <table style={{borderCollapse:"collapse",minWidth:"100%",fontSize:11}}>
           <thead>
             <tr>
               <th style={{...TH,left:0,zIndex:2,minWidth:90,textAlign:"left",paddingLeft:8}}>スタッフ</th>
               {Array.from({length:days},(_,i)=>i+1).map(d=>{
                 const dow=new Date(year,month,d).getDay();
-                return <th key={d} style={{...TH,color:dow===0?"#f87171":dow===6?"#2BBFBA":"#3a8a87",minWidth:38}}>
+                return <th key={d} style={{...TH,color:dow===0?"#f87171":dow===6?"#6366F1":"#52525B",minWidth:38}}>
                   <div>{d}</div><div style={{fontSize:9,fontWeight:400}}>{DOW_LABEL[dow]}</div>
                 </th>;
               })}
-              <th style={{...TH,minWidth:52,background:"#d5edeb"}}>合計</th>
+              <th style={{...TH,minWidth:52,background:"#F4F4F5"}}>合計</th>
             </tr>
           </thead>
           <tbody>
             {deptStaff.map((s,si)=>(
               <tr key={s.id} style={{background:si%2===0?"#fff":"#f7fffe"}}>
-                <td style={{...TD(),fontWeight:700,color:"#1a3635",textAlign:"left",paddingLeft:8,whiteSpace:"nowrap",position:"sticky",left:0,background:si%2===0?"#fff":"#f7fffe"}}>
+                <td style={{...TD(),fontWeight:700,color:"#18181B",textAlign:"left",paddingLeft:8,whiteSpace:"nowrap",position:"sticky",left:0,background:si%2===0?"#fff":"#f7fffe"}}>
                   {s.name}
                   <span title={`${s.name}の予定を一括コピー`} onClick={e=>{e.stopPropagation();onBulkCopy(s.id);}} style={{marginLeft:5,cursor:"pointer",fontSize:11,opacity:0.55,userSelect:"none"}} onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.55"}>📋</span>
                 </td>
@@ -4920,13 +4920,13 @@ function JissekiView({ staffList, allJisseki, allShifts, dept, year, month, onCe
                     </td>
                   );
                 })}
-                <td style={{...TD({background:"#e0f4f2",fontWeight:700,color:"#1a9e9a"})}}>{fmtH(staffTotal(s.id))}</td>
+                <td style={{...TD({background:"#F4F4F5",fontWeight:700,color:"#4F46E5"})}}>{fmtH(staffTotal(s.id))}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {deptStaff.length === 0 && <div style={{textAlign:"center",padding:40,color:"#90cbc8"}}>スタッフが登録されていません</div>}
+      {deptStaff.length === 0 && <div style={{textAlign:"center",padding:40,color:"#D4D4D8"}}>スタッフが登録されていません</div>}
       {showDefModal && <JissekiDefaultsModal dept={dept} defaults={defaultTimes||{}} onSave={defs=>{onDefaultsChange(defs);setShowDefModal(false);}} onClose={()=>setShowDefModal(false)}/>}
     </div>
   );
@@ -5075,10 +5075,10 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}>
+      <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#FAFAFA,#F4F4F5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif"}}>
         <div style={{textAlign:"center"}}>
           <div style={{margin:"0 auto 12px"}}><ShifuponIcon size={48} radius={12}/></div>
-          <div style={{color:"#6ab5b2",fontSize:13}}>読み込み中…</div>
+          <div style={{color:"#71717A",fontSize:13}}>読み込み中…</div>
         </div>
       </div>
     );
@@ -5093,7 +5093,7 @@ export default function App() {
 //  PLAN CONSTANTS
 // ─────────────────────────────────────────────
 const PLAN_LABELS = { free:"無料プラン", standard:"スタンダード", full:"フルプラン" };
-const PLAN_COLORS = { free:"#6b7280", standard:"#2BBFBA", full:"#f59e0b" };
+const PLAN_COLORS = { free:"#6b7280", standard:"#6366F1", full:"#f59e0b" };
 
 // ─────────────────────────────────────────────
 //  ADMIN PANEL
@@ -5115,19 +5115,19 @@ function AdminPanel({ onClose }) {
   const plans = ['free', 'standard', 'full'];
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:"#f5fffe",border:"1px solid #90cbc8",borderRadius:16,padding:24,width:"100%",maxWidth:680,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,padding:24,width:"100%",maxWidth:680,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <div style={{fontSize:16,fontWeight:900,color:"#1a3635"}}>🏢 施設管理（管理者）</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:22}}>✕</button>
+          <div style={{fontSize:16,fontWeight:900,color:"#18181B"}}>🏢 施設管理（管理者）</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:22}}>✕</button>
         </div>
-        {loading ? <div style={{textAlign:"center",color:"#6ab5b2",padding:40}}>読み込み中…</div> : (
+        {loading ? <div style={{textAlign:"center",color:"#71717A",padding:40}}>読み込み中…</div> : (
           <>
-            <div style={{fontSize:11,color:"#6ab5b2",marginBottom:12}}>登録施設数：{facilities.length}件</div>
+            <div style={{fontSize:11,color:"#71717A",marginBottom:12}}>登録施設数：{facilities.length}件</div>
             {facilities.map(f => (
-              <div key={f.id} style={{background:"#f0fffe",border:"1px solid #b8deda",borderRadius:10,padding:"12px 16px",marginBottom:8,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div key={f.id} style={{background:"#f0fffe",border:"1px solid #E4E4E7",borderRadius:10,padding:"12px 16px",marginBottom:8,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                 <div style={{flex:1,minWidth:160}}>
-                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635"}}>{f.facility_name||"（施設名未設定）"}</div>
-                  <div style={{fontSize:10,color:"#6ab5b2",marginTop:2}}>{f.created_at?.slice(0,10)} 登録</div>
+                  <div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{f.facility_name||"（施設名未設定）"}</div>
+                  <div style={{fontSize:10,color:"#71717A",marginTop:2}}>{f.created_at?.slice(0,10)} 登録</div>
                 </div>
                 <span style={{fontSize:11,fontWeight:700,color:PLAN_COLORS[f.plan]||"#6b7280",background:"#fff",border:`1px solid ${PLAN_COLORS[f.plan]||"#d1d5db"}`,borderRadius:12,padding:"2px 10px"}}>{PLAN_LABELS[f.plan]||f.plan}</span>
                 <div style={{display:"flex",gap:4}}>
@@ -6525,16 +6525,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
   if (dbLoading) return (
-    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#f0fbfa,#d4f1ef)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",userSelect:"none",pointerEvents:"none"}}>
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#FAFAFA,#F4F4F5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",userSelect:"none",pointerEvents:"none"}}>
       <div style={{textAlign:"center"}}>
         <div style={{margin:"0 auto 12px"}}><ShifuponIcon size={56} radius={14}/></div>
-        <div style={{color:"#2BBFBA",fontSize:14,fontWeight:700,marginBottom:6}}>データを読み込み中…</div>
-        <div style={{color:"#6ab5b2",fontSize:11}}>クラウドから最新データを取得しています</div>
+        <div style={{color:"#6366F1",fontSize:14,fontWeight:700,marginBottom:6}}>データを読み込み中…</div>
+        <div style={{color:"#71717A",fontSize:11}}>クラウドから最新データを取得しています</div>
         <div style={{color:"#a0d4d2",fontSize:10,marginTop:4}}>この間はデータの書き込みを一切行いません</div>
       </div>
     </div>
   );
-  if (!dept) return <div style={{minHeight:"100vh",background:"#f0fbfa",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#c8b8a8",fontSize:14}}>読み込み中…</div></div>;
+  if (!dept) return <div style={{minHeight:"100vh",background:"#FAFAFA",display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:"#c8b8a8",fontSize:14}}>読み込み中…</div></div>;
 
   return (
     <div style={{width:"100%",minHeight:"100vh",boxSizing:"border-box",background:"#F8F9FA",fontFamily:"'Inter','Noto Sans JP',sans-serif",color:"#18181B",maxWidth:"none",margin:0,padding:0,textAlign:"left"}}>
@@ -6562,15 +6562,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:12,padding:"0 16px",height:44,cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6}}><Lock size={16} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
             : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E4E4E7":"#18181B",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#A1A1AA":"#FFFFFF",border:"none",borderRadius:8,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button>{depts.some(d=>d.id==='kaigo1')&&depts.some(d=>d.id==='kaigo2')&&<button onClick={handleGenerateAllKaigo} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":"介護1・介護2を一括自動生成"} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E4E4E7":"#6366F1",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#A1A1AA":"#FFFFFF",border:"none",borderRadius:8,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":" 介護部一括生成")}</button>}</>
           }
-          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:500,opacity:saveStatus==="unsaved"?0.5:1,display:"flex",alignItems:"center",gap:5}}><Download size={16} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
-          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={16} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
+          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:500,opacity:saveStatus==="unsaved"?0.5:1,display:"flex",alignItems:"center",gap:5}}><Download size={16} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
+          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={16} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
           {!isMobile&&(()=>{const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=learnedCnt>0;const syncColor=syncRate!=null?(syncRate>=85?"#16A34A":syncRate>=70?"#D97706":"#DC2626"):"#71717A";const label=hasAny?`シンクロ率 ${syncRate!=null?syncRate+'%':'--%'}`:`傾向学習`;return(<button onClick={()=>setExcelPasteModal(true)} style={{background:"#F4F4F5",color:syncColor,border:`1px solid ${hasAny?syncColor:"#E4E4E7"}`,borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
-          {!isMobile&&<button onClick={()=>setExcelPasteModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="ExcelのシフトをコピーしてCtrl+Vで貼り付け"><ClipboardList size={16} strokeWidth={2}/> 貼付</button>}
-          <button onClick={()=>setHistoryModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="過去15世代の履歴から復元"><History size={16} strokeWidth={2}/>{!isMobile&&" 履歴"}</button>
+          {!isMobile&&<button onClick={()=>setExcelPasteModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="ExcelのシフトをコピーしてCtrl+Vで貼り付け"><ClipboardList size={16} strokeWidth={2}/> 貼付</button>}
+          <button onClick={()=>setHistoryModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="過去15世代の履歴から復元"><History size={16} strokeWidth={2}/>{!isMobile&&" 履歴"}</button>
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#FFFFFF",color:"#EF4444",border:"1px solid #FECACA",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Trash2 size={16} strokeWidth={2}/>{!isMobile&&" クリア"}</button>}
-          <button onClick={()=>setShareModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Share2 size={16} strokeWidth={2}/>{!isMobile&&" 共有"}</button>
-          {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Building2 size={16} strokeWidth={2}/>{!isMobile&&" 管理"}</button>}
-          <button onClick={()=>setHelpModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #D9E5E7",borderRadius:12,width:44,height:44,cursor:"pointer",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}><HelpCircle size={16} strokeWidth={2}/></button>
+          <button onClick={()=>setShareModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Share2 size={16} strokeWidth={2}/>{!isMobile&&" 共有"}</button>
+          {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Building2 size={16} strokeWidth={2}/>{!isMobile&&" 管理"}</button>}
+          <button onClick={()=>setHelpModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,width:44,height:44,cursor:"pointer",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}><HelpCircle size={16} strokeWidth={2}/></button>
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
             <span style={{fontSize:10,fontWeight:700,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
             <span style={{fontSize:10,color:"#6B7280",fontWeight:500,display:"flex",alignItems:"center",gap:2}}><LogOut size={10} strokeWidth={2}/> ログアウト</span>
@@ -6597,7 +6597,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{width:100,accentColor:"#6366F1",cursor:"pointer"}}/>
               <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:36,textAlign:"right"}}>{tableZoom}%</span>
-              <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #D9E5E7",borderRadius:8,color:"#6B7280",fontSize:11,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:500}}>フィット</button>
+              <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:11,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:500}}>フィット</button>
               {!isLocked && undoCount > 0 && <button onClick={handleUndo} title={`元に戻す (Ctrl+Z) — ${undoCount}ステップ`} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>↩ 戻す ×{undoCount}</button>}
             </div>
           )}
@@ -6609,7 +6609,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         <div style={{background:"#F8F9FA",borderBottom:"1px solid #E4E4E7",display:"flex",alignItems:"center",gap:6,padding:"6px 10px"}}>
           <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{flex:1,accentColor:"#6366F1",cursor:"pointer"}}/>
           <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:36,textAlign:"right"}}>{tableZoom}%</span>
-          <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #D9E5E7",borderRadius:8,color:"#6B7280",fontSize:10,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>フィット</button>
+          <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:10,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>フィット</button>
           {!isLocked && undoCount > 0 && <button onClick={handleUndo} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:600}}>↩×{undoCount}</button>}
         </div>
       )}
@@ -6618,7 +6618,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       <div style={{padding:"8px 12px",minHeight:"calc(100vh - 180px)"}}>
         {innerTab==="shift"&&(<><Legend/><div style={{position:"relative"}}>
           {isMonthLoading&&<div style={{position:"absolute",inset:0,zIndex:50,background:"rgba(240,251,250,0.85)",display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,backdropFilter:"blur(2px)"}}>
-            <div style={{background:"#fff",border:"1px solid #2BBFBA",borderRadius:12,padding:"18px 32px",fontWeight:800,fontSize:14,color:"#1a9e99",boxShadow:"0 4px 16px rgba(43,191,186,0.2)",display:"flex",alignItems:"center",gap:10}}>
+            <div style={{background:"#fff",border:"1px solid #6366F1",borderRadius:12,padding:"18px 32px",fontWeight:800,fontSize:14,color:"#4F46E5",boxShadow:"0 4px 16px rgba(43,191,186,0.2)",display:"flex",alignItems:"center",gap:10}}>
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
             </div>
           </div>}
@@ -6653,7 +6653,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
       {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} onClose={()=>setGenerateWarnings(null)}/>}
-      <div style={{position:"fixed",bottom:12,right:12,background:"#d5edeb",border:"1px solid #90cbc8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#8ecece",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#2BBFBA",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
+      <div style={{position:"fixed",bottom:12,right:12,background:"#F4F4F5",border:"1px solid #D4D4D8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#A1A1AA",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#6366F1",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
       {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
@@ -6674,27 +6674,27 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {eventEditDay!==null&&<EventEditModal day={eventEditDay} month={month} year={year} currentText={(allEvents[activeDeptId]?.[monthKey(year,month)]||{})[eventEditDay]||""} onSave={(text)=>{const mk2=monthKey(year,month);setAllEvents(prev=>{const prev2={...(prev[activeDeptId]||{})};const prev3={...(prev2[mk2]||{})};if(text)prev3[eventEditDay]=text;else delete prev3[eventEditDay];prev2[mk2]=prev3;return{...prev,[activeDeptId]:prev2};});setEventEditDay(null);}} onClose={()=>setEventEditDay(null)}/>}
       {shareModal&&(
         <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&setShareModal(false)}>
-          <div style={{background:"#f3fffe",border:"1px solid #90cbc8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+          <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-              <div style={{fontSize:15,fontWeight:900,color:"#1a3635"}}>🔗 スタッフ共有URL</div>
-              <button onClick={()=>setShareModal(false)} style={{background:"none",border:"none",color:"#3a8a87",cursor:"pointer",fontSize:20}}>✕</button>
+              <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>🔗 スタッフ共有URL</div>
+              <button onClick={()=>setShareModal(false)} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
             </div>
-            <div style={{fontSize:11,color:"#3a8a87",marginBottom:16,background:"#d5edeb",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
+            <div style={{fontSize:11,color:"#52525B",marginBottom:16,background:"#F4F4F5",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
 
             {/* ── サイト全体QR（新規登録・ログイン用） ── */}
-            <div style={{background:"#fff",border:"2px solid #2BBFBA",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
-              <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:4}}>🏠 しふぽん サイトQRコード</div>
-              <div style={{fontSize:10,color:"#3a8a87",marginBottom:10}}>自分のサイトに貼り付けると、スキャンしたらしふぽんのログイン・新規登録画面へ移動します。</div>
+            <div style={{background:"#fff",border:"2px solid #6366F1",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+              <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:4}}>🏠 しふぽん サイトQRコード</div>
+              <div style={{fontSize:10,color:"#52525B",marginBottom:10}}>自分のサイトに貼り付けると、スキャンしたらしふぽんのログイン・新規登録画面へ移動します。</div>
               <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
-                  <div style={{padding:8,background:"#fff",border:"2px solid #90cbc8",borderRadius:8,display:"inline-block"}}>
-                    <QRCodeSVG value={window.location.origin} size={160} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
+                  <div style={{padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
+                    <QRCodeSVG value={window.location.origin} size={160} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
                   </div>
-                  <div style={{fontSize:9,color:"#6ab5b2",wordBreak:"break-all",textAlign:"center",maxWidth:176}}>{window.location.origin}</div>
+                  <div style={{fontSize:9,color:"#71717A",wordBreak:"break-all",textAlign:"center",maxWidth:176}}>{window.location.origin}</div>
                 </div>
                 <div style={{flex:1,minWidth:160}}>
-                  <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:8}}>使い方</div>
-                  <div style={{fontSize:11,color:"#3a8a87",lineHeight:1.8}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:8}}>使い方</div>
+                  <div style={{fontSize:11,color:"#52525B",lineHeight:1.8}}>
                     ① このQRコードを<strong>スクリーンショット</strong><br/>
                     ② 自分のサイトに画像として貼り付け<br/>
                     ③ 読み取るとしふぽんに到達<br/>
@@ -6708,7 +6708,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               </div>
             </div>
 
-            <div style={{fontSize:11,color:"#3a8a87",marginBottom:10,fontWeight:700}}>▍ 部署別 スタッフ希望休ポータル</div>
+            <div style={{fontSize:11,color:"#52525B",marginBottom:10,fontWeight:700}}>▍ 部署別 スタッフ希望休ポータル</div>
             {depts.map(d=>{
               const ps=portalSettings[d.id]||{};
               const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
@@ -6730,23 +6730,23 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 alert(`✅ ${d.label} の設定を保存しました\n締め切り: ${ps.deadline||'なし'}`);
               };
               return(
-                <div key={d.id} style={{background:"#fff",border:"1px solid #90cbc8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                  <div style={{fontWeight:800,fontSize:13,color:"#1a3635",marginBottom:10}}>{d.icon} {d.label}</div>
+                <div key={d.id} style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
+                  <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:10}}>{d.icon} {d.label}</div>
                   {/* 締め切り */}
                   <div style={{marginBottom:12}}>
-                    <div style={{fontSize:11,fontWeight:700,color:"#2a5a57",marginBottom:4}}>⏰ 締め切り日</div>
+                    <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4}}>⏰ 締め切り日</div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <input type="date" value={ps.deadline||""} onChange={e=>setPsDept('deadline',e.target.value||null)} style={{border:"1px solid #90cbc8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#1a3635",outline:"none",background:"#f3fffe"}}/>
+                      <input type="date" value={ps.deadline||""} onChange={e=>setPsDept('deadline',e.target.value||null)} style={{border:"1px solid #D4D4D8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#18181B",outline:"none",background:"#FAFAFA"}}/>
                       {ps.deadline&&<button onClick={()=>setPsDept('deadline',null)} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}>✕ クリア</button>}
                     </div>
                     {ps.deadline&&<div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>⚠ {ps.deadline} 以降は送信不可になります</div>}
                   </div>
                   {/* 保存ボタン */}
-                  <button onClick={doSaveSettings} style={{width:"100%",background:"linear-gradient(135deg,#2BBFBA,#45B7D1)",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12}}>💾 この設定を保存する</button>
+                  <button onClick={doSaveSettings} style={{width:"100%",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12}}>💾 この設定を保存する</button>
                   <div style={{textAlign:"center",marginBottom:6}}>
-                    <div style={{fontSize:10,color:"#3a8a87",marginBottom:6,fontWeight:700}}>📷 カメラで読み取り</div>
-                    <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #90cbc8",borderRadius:8}}>
-                      <QRCodeSVG value={urlShort} size={140} bgColor="#ffffff" fgColor="#1a3635" level="L" includeMargin={false}/>
+                    <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700}}>📷 カメラで読み取り</div>
+                    <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8}}>
+                      <QRCodeSVG value={urlShort} size={140} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
                     </div>
                   </div>
                   <div style={{display:"flex",gap:8,marginTop:8}}>
