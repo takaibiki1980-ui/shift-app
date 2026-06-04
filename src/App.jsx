@@ -3643,8 +3643,8 @@ function ZoomWrapper({ zoom, onZoomChange, children }) {
   );
 }
 
-const TH = ({sticky,w}={}) => ({ position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1, background:"#FAFAFA", padding:"5px 3px", borderBottom:"1px solid #E4E4E7", borderRight:"1px solid #E4E4E7", fontSize:10, fontWeight:600, color:"#71717A", textAlign:"center", whiteSpace:"nowrap", width:w||"auto", minWidth:w||"auto" });
-const TD = { textAlign:"center", padding:"4px 2px", borderBottom:"1px solid #E4E4E7", borderRight:"1px solid #E4E4E7" };
+const TH = ({sticky,w}={}) => ({ position:sticky?"sticky":"static", left:sticky?0:"auto", zIndex:sticky?3:1, background:"#FAFAFA", padding:"5px 3px", borderBottom:"1px solid #F1F5F9", borderRight:"1px solid #F1F5F9", fontSize:10, fontWeight:600, color:"#71717A", textAlign:"center", whiteSpace:"nowrap", width:w||"auto", minWidth:w||"auto" });
+const TD = { textAlign:"center", padding:"4px 2px", borderBottom:"1px solid #F1F5F9", borderRight:"1px solid #F1F5F9" };
 
 // ── 変更履歴から復元モーダル ──────────────────────────────────
 function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, onRestore }) {
@@ -3922,22 +3922,22 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             typeCnts["計"]=workCnt; typeCnts["休"]=restCnt; typeCnts["希"]=kibodays.length;
             return (
               <tr key={s.id} style={{background:si%2===0?"#FFFFFF":"#FAFAFA"}}>
-                <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#FFFFFF":"#FAFAFA",padding:"4px 10px",borderRight:"1px solid #E4E4E7",borderBottom:"1px solid #E4E4E7",minWidth:148}}>
-                  <div style={{fontWeight:600,fontSize:13,color:"#1F2937",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
+                <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#FFFFFF":"#FAFAFA",padding:"7px 14px",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",minWidth:156}}>
+                  <div style={{fontWeight:600,fontSize:13,color:"#0F172A",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
                     {s.name}
                     {fairnessData[s.id]&&<span
                       style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:fairnessData[s.id].color,flexShrink:0,cursor:"help"}}
                       title={`【公平性】${fairnessData[s.id].tip}`}
                     />}
                   </div>
-                  <div style={{fontSize:10,color:"#94A3B8",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#0891b2",fontSize:9,fontWeight:600}}>N{nightCnt}/{s.nightMax}</span>}</div>
+                  <div style={{fontSize:10,color:"#94A3B8",display:"flex",gap:6,alignItems:"center",marginTop:2}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#DC2626":"#64748B",fontSize:10,fontWeight:nightOver?600:400}}>N{nightCnt}/{s.nightMax}</span>}</div>
                 </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
                   const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&type&&deptWork.has(type)&&type!=="明け"&&!_ra.includes(type);
                   const cdow=new Date(year,month,d).getDay(); const cellWeekBg=cdow===0?"#FFF5F5":cdow===6?"#F5F5FF":undefined;
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #E4E4E7",borderBottom:"1px solid #E4E4E7",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":cellWeekBg,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#BE123C"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":cellWeekBg,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-1px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#BE123C"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -3955,20 +3955,20 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
           })}
           {dept.shiftTypes.map(shKey=>(
             <tr key={shKey} style={{background:"#FAFAFA"}}>
-              <td style={{position:"sticky",left:0,zIndex:2,background:"#FAFAFA",padding:"3px 10px",borderRight:"1px solid #E4E4E7",borderBottom:"1px solid #E4E4E7"}}><ShiftBadge type={shKey} defs={dept.customShiftDefs}/></td>
-              {Array.from({length:days},(_,i)=>i+1).map(d=>{const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length,min=dept.minStaff?.[shKey]||0,max=dept.maxStaff?.[shKey]??99;const overMax=max<99&&cnt>max;return<td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:overMax?"#EF4444":cnt===0?"#EF4444":cnt>=min?"#6366F1":"#F59E0B",background:overMax?"#ffe4e4":undefined,borderRight:"1px solid #E4E4E7",borderBottom:"1px solid #E4E4E7"}}>{cnt||"0"}</td>;})}
+              <td style={{position:"sticky",left:0,zIndex:2,background:"#FAFAFA",padding:"3px 10px",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9"}}><ShiftBadge type={shKey} defs={dept.customShiftDefs}/></td>
+              {Array.from({length:days},(_,i)=>i+1).map(d=>{const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===shKey).length,min=dept.minStaff?.[shKey]||0,max=dept.maxStaff?.[shKey]??99;const overMax=max<99&&cnt>max;return<td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:overMax?"#EF4444":cnt===0?"#EF4444":cnt>=min?"#6366F1":"#F59E0B",background:overMax?"#ffe4e4":undefined,borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9"}}>{cnt||"0"}</td>;})}
               <td colSpan={rightColCount}/>
             </tr>
           ))}
           <tr style={{background:"#FFF5F5"}}>
-            <td style={{position:"sticky",left:0,zIndex:2,background:"#FFF5F5",padding:"3px 10px",borderRight:"1px solid #E4E4E7",borderBottom:"1px solid #E4E4E7",fontSize:10,color:"#BE123C",fontWeight:700,whiteSpace:"nowrap"}}>希望休</td>
+            <td style={{position:"sticky",left:0,zIndex:2,background:"#FFF5F5",padding:"3px 10px",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",fontSize:10,color:"#BE123C",fontWeight:700,whiteSpace:"nowrap"}}>希望休</td>
             {Array.from({length:days},(_,i)=>i+1).map(d=>{
               const cnt=ds.reduce((acc,s)=>acc+((s.kiboByMonth?.[mk]||[]).includes(d)?1:0),0);
               const limit=dept.kiboLimit||3;
               const over=cnt>=limit, warn=cnt===limit-1;
-              return <td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:over?"#EF4444":warn?"#F59E0B":cnt>0?"#BE123C":"#A1A1AA",background:over?"#ffe4e4":warn?"#fffbeb":undefined,borderRight:"1px solid #E4E4E7",borderBottom:"1px solid #E4E4E7"}}>{over?"⚠":cnt>0?cnt:""}</td>;
+              return <td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:over?"#EF4444":warn?"#F59E0B":cnt>0?"#BE123C":"#A1A1AA",background:over?"#ffe4e4":warn?"#fffbeb":undefined,borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9"}}>{over?"⚠":cnt>0?cnt:""}</td>;
             })}
-            <td colSpan={rightColCount} style={{borderBottom:"1px solid #E4E4E7"}}/>
+            <td colSpan={rightColCount} style={{borderBottom:"1px solid #F1F5F9"}}/>
           </tr>
         </tbody>
       </table>
