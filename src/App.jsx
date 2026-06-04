@@ -328,18 +328,18 @@ function PrivacyModal({ onClose }) {
 
 
 const SHIFTS = {
-  早番:  { short:"早", color:"#C2410C", bg:"#FFFBF5", border:"#FED7AA", time:"7:00〜16:00" },
+  早番:  { short:"早", color:"#D97706", bg:"#FFFFFF", border:"#FED7AA", time:"7:00〜16:00" },
   日勤:  { short:"日", color:"#374151", bg:"#FFFFFF", border:"#E5E7EB", time:"9:00〜18:00" },
-  遅番:  { short:"遅", color:"#7C3AED", bg:"#FDFAFF", border:"#E9D5FF", time:"11:30〜20:30" },
+  遅番:  { short:"遅", color:"#2563EB", bg:"#FFFFFF", border:"#DBEAFE", time:"11:30〜20:30" },
   夜勤:  { short:"夜", color:"#FFFFFF", bg:"#06B6D4", border:"transparent", time:"16:30〜翌9:30" },
   明け:  { short:"明", color:"#0369A1", bg:"#E0F2FE", border:"transparent", time:"夜勤明け" },
   休み:  { short:"休", color:"#991B1B", bg:"#F3E8E8", border:"transparent", time:"－" },
-  希望休: { short:"希", color:"#9F1239", bg:"#F3E8E8", border:"transparent", time:"希望休" },
-  有休:  { short:"有", color:"#4338CA", bg:"#EEF2FF", border:"transparent", time:"有給" },
+  希望休: { short:"希", color:"#991B1B", bg:"#F3E8E8", border:"transparent", time:"希望休" },
+  有休:  { short:"有", color:"#991B1B", bg:"#F3E8E8", border:"transparent", time:"有給" },
   "日/休": { short:"日休", color:"#374151", bg:"#FFFFFF", border:"#E5E7EB", time:"午前日勤／午後休" },
   "休/日": { short:"休日", color:"#991B1B", bg:"#F3E8E8", border:"transparent", time:"午前休／午後日勤" },
-  "早/休": { short:"早休", color:"#C2410C", bg:"#FFFBF5", border:"#FED7AA", time:"早番半日／午後休" },
-  "休/遅": { short:"休遅", color:"#7C3AED", bg:"#FDFAFF", border:"#E9D5FF", time:"午前休／遅番半日" },
+  "早/休": { short:"早休", color:"#D97706", bg:"#FFFFFF", border:"#FED7AA", time:"早番半日／午後休" },
+  "休/遅": { short:"休遅", color:"#2563EB", bg:"#FFFFFF", border:"#DBEAFE", time:"午前休／遅番半日" },
   "": { short:"－", color:"#9CA3AF", bg:"transparent", border:"transparent", time:"" },
 };
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
