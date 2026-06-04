@@ -328,19 +328,19 @@ function PrivacyModal({ onClose }) {
 
 
 const SHIFTS = {
-  早番:  { short:"早", color:"#FFFBEB", bg:"#B45309", border:"#92400E", time:"7:00〜16:00" },
-  日勤:  { short:"日", color:"#F0FDF4", bg:"#15803D", border:"#14532D", time:"9:00〜18:00" },
-  遅番:  { short:"遅", color:"#F5F3FF", bg:"#7C3AED", border:"#5B21B6", time:"11:30〜20:30" },
-  夜勤:  { short:"夜", color:"#E2E8F0", bg:"#0F172A", border:"#1E293B", time:"16:30〜翌9:30" },
-  明け:  { short:"明", color:"#94A3B8", bg:"#1E293B", border:"#334155", time:"夜勤明け" },
-  休み:  { short:"休", color:"#F4F4F5", bg:"#52525B", border:"#3F3F46", time:"－" },
-  希望休: { short:"希", color:"#FFF1F2", bg:"#BE123C", border:"#9F1239", time:"希望休" },
-  有休:  { short:"有", color:"#EEF2FF", bg:"#4F46E5", border:"#4338CA", time:"有給" },
-  "日/休": { short:"日休", color:"#F0FDF4", bg:"#15803D", border:"#14532D", time:"午前日勤／午後休" },
-  "休/日": { short:"休日", color:"#F4F4F5", bg:"#52525B", border:"#3F3F46", time:"午前休／午後日勤" },
-  "早/休": { short:"早休", color:"#FFFBEB", bg:"#B45309", border:"#92400E", time:"早番半日／午後休" },
-  "休/遅": { short:"休遅", color:"#F5F3FF", bg:"#7C3AED", border:"#5B21B6", time:"午前休／遅番半日" },
-  "": { short:"－", color:"#A1A1AA", bg:"transparent", border:"transparent", time:"" },
+  早番:  { short:"早", color:"#C2410C", bg:"#FFF7ED", border:"#FED7AA", time:"7:00〜16:00" },
+  日勤:  { short:"日", color:"#374151", bg:"#FFFFFF", border:"#D9E5E7", time:"9:00〜18:00" },
+  遅番:  { short:"遅", color:"#7C3AED", bg:"#FAF5FF", border:"#D8B4FE", time:"11:30〜20:30" },
+  夜勤:  { short:"夜", color:"#FFFFFF", bg:"#1E293B", border:"transparent", time:"16:30〜翌9:30" },
+  明け:  { short:"明", color:"#1E40AF", bg:"#DBEAFE", border:"transparent", time:"夜勤明け" },
+  休み:  { short:"休", color:"#B91C1C", bg:"#FEE2E2", border:"transparent", time:"－" },
+  希望休: { short:"希", color:"#9F1239", bg:"#FEF2F2", border:"transparent", time:"希望休" },
+  有休:  { short:"有", color:"#4338CA", bg:"#EEF2FF", border:"transparent", time:"有給" },
+  "日/休": { short:"日休", color:"#374151", bg:"#FFFFFF", border:"#D9E5E7", time:"午前日勤／午後休" },
+  "休/日": { short:"休日", color:"#B91C1C", bg:"#FEE2E2", border:"transparent", time:"午前休／午後日勤" },
+  "早/休": { short:"早休", color:"#C2410C", bg:"#FFF7ED", border:"#FED7AA", time:"早番半日／午後休" },
+  "休/遅": { short:"休遅", color:"#7C3AED", bg:"#FAF5FF", border:"#D8B4FE", time:"午前休／遅番半日" },
+  "": { short:"－", color:"#9CA3AF", bg:"transparent", border:"transparent", time:"" },
 };
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
 const SHIFT_KEYS_MANUAL = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅",""];
@@ -2182,7 +2182,7 @@ function triggerDownload(content, filename, type) {
 function ShiftBadge({ type, defs }) {
   const s = getShiftDef(type, defs);
   if (!type) return <span style={{color:"#A1A1AA",fontSize:10}}>－</span>;
-  return <span style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:700,display:"inline-block",minWidth:22,textAlign:"center",lineHeight:"18px",letterSpacing:"0.01em"}}>{s.short}</span>;
+  return <span style={{background:s.bg,color:s.color,border:`1px solid ${s.border||"transparent"}`,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700,display:"inline-block",minWidth:22,textAlign:"center",lineHeight:"18px",letterSpacing:"0.02em"}}>{s.short}</span>;
 }
 
 function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount, roleAllowed }) {
@@ -6628,11 +6628,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:12,padding:"0 16px",height:44,cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6}}><Lock size={16} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
-            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E4E4E7":"#18181B",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#A1A1AA":"#FFFFFF",border:"none",borderRadius:8,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button>{depts.some(d=>d.id==='kaigo1')&&depts.some(d=>d.id==='kaigo2')&&<button onClick={handleGenerateAllKaigo} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":"介護1・介護2を一括自動生成"} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E4E4E7":"#6366F1",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#A1A1AA":"#FFFFFF",border:"none",borderRadius:8,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":" 介護部一括生成")}</button>}</>
+            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E4E4E7":"#2563EB",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#A1A1AA":"#FFFFFF",border:"none",borderRadius:8,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button>{depts.some(d=>d.id==='kaigo1')&&depts.some(d=>d.id==='kaigo2')&&<button onClick={handleGenerateAllKaigo} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":"介護1・介護2を一括自動生成"} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E4E4E7":"#6366F1",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#A1A1AA":"#FFFFFF",border:"none",borderRadius:8,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":" 介護部一括生成")}</button>}</>
           }
           <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:500,opacity:saveStatus==="unsaved"?0.5:1,display:"flex",alignItems:"center",gap:5}}><Download size={16} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={16} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
-          {!isMobile&&(()=>{const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=learnedCnt>0;const syncColor=syncRate!=null?(syncRate>=85?"#16A34A":syncRate>=70?"#D97706":"#DC2626"):"#71717A";const label=hasAny?`シンクロ率 ${syncRate!=null?syncRate+'%':'--%'}`:`傾向学習`;return(<button onClick={()=>setExcelPasteModal(true)} style={{background:"#F4F4F5",color:syncColor,border:`1px solid ${hasAny?syncColor:"#E4E4E7"}`,borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:700}}>{label}</button>);})()}
+          {!isMobile&&(()=>{const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=learnedCnt>0;const pct=syncRate??0;const barColor=pct>=85?"#16A34A":pct>=70?"#D97706":"#6366F1";return(<div onClick={()=>setExcelPasteModal(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"0 12px",height:44,cursor:"pointer",borderRadius:8,border:"1px solid #E5E7EB",background:"#FFFFFF"}} title="傾向学習データを取り込む"><div><div style={{fontSize:10,color:"#6B7280",fontWeight:500,lineHeight:1,marginBottom:3}}>{hasAny?`シンクロ率 ${syncRate!=null?syncRate+'%':'--'}`:'傾向学習'}</div><div style={{width:72,height:4,background:"#E5E7EB",borderRadius:2,overflow:"hidden"}}><div style={{width:`${hasAny?pct:0}%`,height:"100%",background:barColor,borderRadius:2,transition:"width 0.3s"}}/></div></div></div>);})()}
           {!isMobile&&<button onClick={()=>setExcelPasteModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="ExcelのシフトをコピーしてCtrl+Vで貼り付け"><ClipboardList size={16} strokeWidth={2}/> 貼付</button>}
           <button onClick={()=>setHistoryModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="過去15世代の履歴から復元"><History size={16} strokeWidth={2}/>{!isMobile&&" 履歴"}</button>
           {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#FFFFFF",color:"#EF4444",border:"1px solid #FECACA",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Trash2 size={16} strokeWidth={2}/>{!isMobile&&" クリア"}</button>}
@@ -6648,7 +6648,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* DEPT TABS */}
       <div style={{background:"#FFFFFF",borderBottom:"1px solid #E4E4E7",display:"flex",overflowX:"auto",padding:"0 8px",alignItems:"center"}}>
-        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:act?"#18181B":"transparent",border:"none",color:act?"#FFFFFF":"#71717A",borderRadius:act?8:0,borderBottom:act?"none":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?700:500,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"4px 2px"}}><span>{d.label}</span><span style={{background:act?"rgba(255,255,255,0.15)":"#F4F4F5",color:act?"#FFFFFF":"#71717A",borderRadius:6,padding:"1px 6px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E4E4E7",borderRadius:8,color:"#71717A",cursor:"pointer",padding:"4px 8px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={14} strokeWidth={2}/></button>}</div>);})}
+        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:act?"#111827":"transparent",border:"none",color:act?"#FFFFFF":"#6B7280",borderRadius:act?8:0,borderBottom:act?"none":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?700:500,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"4px 2px"}}><span>{d.label}</span><span style={{background:act?"rgba(255,255,255,0.15)":"#F4F4F5",color:act?"#FFFFFF":"#6B7280",borderRadius:6,padding:"1px 6px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E4E4E7",borderRadius:8,color:"#71717A",cursor:"pointer",padding:"4px 8px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={14} strokeWidth={2}/></button>}</div>);})}
         <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #E4E4E7",borderRadius:8,color:"#A1A1AA",cursor:"pointer",fontSize:11,padding:"6px 12px",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>
       </div>
 
