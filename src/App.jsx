@@ -674,6 +674,42 @@ function detectKiboNightPatterns(baseline, current, deptStaff, year, month) {
   return result;
 }
 
+function buildNightExclusion(allCs, targetDept, allShifts, allDepts, year, month) {
+  // Gate①: OFFフロアは他フロアを参照しない
+  if (!targetDept.crossFloorNightEnabled) return allCs;
+  // ONフロアのみ参照（OFFフロアは参照されない）
+  const nightDepts = allDepts.filter(d =>
+    d.id !== targetDept.id &&
+    d.shiftTypes?.includes('夜勤') &&
+    d.crossFloorNightEnabled === true
+  );
+  // Gate②: 参照対象ONフロアなし
+  if (nightDepts.length === 0) return allCs;
+  const days = getDays(year, month);
+  // 全スタッフのnightLevelマップ（allCsには全部署スタッフが含まれる）
+  const staffLvMap = {};
+  for (const s of allCs) staffLvMap[s.id] = s.nightLevel;
+  // 他ONフロアにLv1夜勤がある日を収集
+  const lv1NightDays = new Set();
+  for (const dept of nightDepts) {
+    const deptShifts = allShifts[dept.id];
+    if (!deptShifts) continue;
+    for (const [staffId, dayShifts] of Object.entries(deptShifts)) {
+      if (staffLvMap[staffId] !== 1) continue; // nightLevel=1のみ対象
+      for (let d = 1; d <= days; d++) {
+        if (dayShifts[d] === '夜勤') lv1NightDays.add(d);
+      }
+    }
+  }
+  // Gate③: 除外すべき日なし
+  if (lv1NightDays.size === 0) return allCs;
+  // targetDeptのLv1スタッフのみにnightExcludeDaysを注入
+  return allCs.map(s => {
+    if (s.dept !== targetDept.id || s.nightLevel !== 1) return s;
+    return { ...s, nightExcludeDays: lv1NightDays };
+  });
+}
+
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}) {
   console.log('[AG-v7] start dept=', dept.id, 'maxStaff=', JSON.stringify(dept.maxStaff), 'minStaff=', JSON.stringify(dept.minStaff));
   const days = getDays(year, month);
@@ -933,6 +969,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const nightDay = D - 2, meakeDay = D - 1;
         if (nightDay < 1) continue; // 月頭すぎて前々日がない
         if (lockedDays[s.id].has(nightDay) || lockedDays[s.id].has(meakeDay)) continue; // どちらかが既にロック済み
+        if (s.nightExcludeDays?.has(nightDay)) continue; // クロスフロア夜勤制約
         if (["夜勤", "明け"].includes(res[s.id][nightDay - 1])) continue; // 夜勤の前日が夜勤/明けは不可
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue; // 夜勤上限超過
@@ -954,6 +991,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       let need = (dept.minStaff["夜勤"] || 0) - already;
       if (need <= 0) continue;
       const canNight = (s) => {
+        if (s.nightExcludeDays?.has(d)) return false; // クロスフロア夜勤制約
         if (lockedDays[s.id].has(d)) return false; // その日がロック済み
         if (["夜勤","明け"].includes(res[s.id][d - 1])) return false;
         if (d + 1 <= days && lockedDays[s.id].has(d + 1) && res[s.id][d+1] !== "明け") return false; // 翌日がロック済み（明けを入れられない）
@@ -6120,7 +6158,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化
       try {
-        const {result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot} = _runGenerateCore(cd, cs, ct);
+        const csForGenerate = buildNightExclusion(cs, cd, allShiftsRef.current, deptsRef.current, year, month);
+        const {result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot} = _runGenerateCore(cd, csForGenerate, ct);
         setUndoCount(undoStackRef.current[cd.id].length);
 
         const _p1_ds = cs.filter(s => s.dept === cd.id);
