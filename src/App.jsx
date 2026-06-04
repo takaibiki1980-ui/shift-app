@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
-import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader } from 'lucide-react';
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal } from 'lucide-react';
 
 const LOGO_CHARS = [
   { char: "し", color: "#F4847E" },
@@ -328,18 +328,18 @@ function PrivacyModal({ onClose }) {
 
 
 const SHIFTS = {
-  早番:  { short:"早", color:"#C2410C", bg:"#FFF7ED", border:"#FED7AA", time:"7:00〜16:00" },
-  日勤:  { short:"日", color:"#374151", bg:"#FFFFFF", border:"#D9E5E7", time:"9:00〜18:00" },
-  遅番:  { short:"遅", color:"#7C3AED", bg:"#FAF5FF", border:"#D8B4FE", time:"11:30〜20:30" },
-  夜勤:  { short:"夜", color:"#FFFFFF", bg:"#1E293B", border:"transparent", time:"16:30〜翌9:30" },
-  明け:  { short:"明", color:"#1E40AF", bg:"#DBEAFE", border:"transparent", time:"夜勤明け" },
-  休み:  { short:"休", color:"#B91C1C", bg:"#FEE2E2", border:"transparent", time:"－" },
-  希望休: { short:"希", color:"#9F1239", bg:"#FEF2F2", border:"transparent", time:"希望休" },
+  早番:  { short:"早", color:"#C2410C", bg:"#FFFBF5", border:"#FED7AA", time:"7:00〜16:00" },
+  日勤:  { short:"日", color:"#374151", bg:"#FFFFFF", border:"#E5E7EB", time:"9:00〜18:00" },
+  遅番:  { short:"遅", color:"#7C3AED", bg:"#FDFAFF", border:"#E9D5FF", time:"11:30〜20:30" },
+  夜勤:  { short:"夜", color:"#FFFFFF", bg:"#06B6D4", border:"transparent", time:"16:30〜翌9:30" },
+  明け:  { short:"明", color:"#0369A1", bg:"#E0F2FE", border:"transparent", time:"夜勤明け" },
+  休み:  { short:"休", color:"#991B1B", bg:"#F3E8E8", border:"transparent", time:"－" },
+  希望休: { short:"希", color:"#9F1239", bg:"#F3E8E8", border:"transparent", time:"希望休" },
   有休:  { short:"有", color:"#4338CA", bg:"#EEF2FF", border:"transparent", time:"有給" },
-  "日/休": { short:"日休", color:"#374151", bg:"#FFFFFF", border:"#D9E5E7", time:"午前日勤／午後休" },
-  "休/日": { short:"休日", color:"#B91C1C", bg:"#FEE2E2", border:"transparent", time:"午前休／午後日勤" },
-  "早/休": { short:"早休", color:"#C2410C", bg:"#FFF7ED", border:"#FED7AA", time:"早番半日／午後休" },
-  "休/遅": { short:"休遅", color:"#7C3AED", bg:"#FAF5FF", border:"#D8B4FE", time:"午前休／遅番半日" },
+  "日/休": { short:"日休", color:"#374151", bg:"#FFFFFF", border:"#E5E7EB", time:"午前日勤／午後休" },
+  "休/日": { short:"休日", color:"#991B1B", bg:"#F3E8E8", border:"transparent", time:"午前休／午後日勤" },
+  "早/休": { short:"早休", color:"#C2410C", bg:"#FFFBF5", border:"#FED7AA", time:"早番半日／午後休" },
+  "休/遅": { short:"休遅", color:"#7C3AED", bg:"#FDFAFF", border:"#E9D5FF", time:"午前休／遅番半日" },
   "": { short:"－", color:"#9CA3AF", bg:"transparent", border:"transparent", time:"" },
 };
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
@@ -3923,14 +3923,14 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             return (
               <tr key={s.id} style={{background:si%2===0?"#FFFFFF":"#FAFAFA"}}>
                 <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#FFFFFF":"#FAFAFA",padding:"4px 10px",borderRight:"1px solid #E4E4E7",borderBottom:"1px solid #E4E4E7",minWidth:148}}>
-                  <div style={{fontWeight:700,fontSize:12,color:"#1F2937",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
+                  <div style={{fontWeight:600,fontSize:13,color:"#1F2937",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
                     {s.name}
                     {fairnessData[s.id]&&<span
                       style={{display:"inline-block",width:7,height:7,borderRadius:"50%",background:fairnessData[s.id].color,flexShrink:0,cursor:"help"}}
                       title={`【公平性】${fairnessData[s.id].tip}`}
                     />}
                   </div>
-                  <div style={{fontSize:10,color:"#6B7280",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#c45c35",fontSize:9}}>🌙{nightCnt}/{s.nightMax}</span>}</div>
+                  <div style={{fontSize:10,color:"#94A3B8",display:"flex",gap:6,alignItems:"center"}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#ef4444":"#0891b2",fontSize:9,fontWeight:600}}>N{nightCnt}/{s.nightMax}</span>}</div>
                 </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
                   const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
@@ -6058,6 +6058,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [pinModal, setPinModal] = useState(false);
   const [historyModal, setHistoryModal] = useState(false); // 変更履歴から復元モーダル
   const [conflictBanner, setConflictBanner] = useState(false); // 他端末で更新通知バナー
+  const [overflowOpen, setOverflowOpen] = useState(false);
   const conflictBannerDismissed = useRef(false); // ×で閉じたら次のRealtimeで再表示しない
   // タブ切替で自動ロック
   useEffect(() => { setUnlockedDeptId(null); }, [activeDeptId]);
@@ -6607,58 +6608,75 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   return (
     <div style={{width:"100%",minHeight:"100vh",boxSizing:"border-box",background:"#F8F9FA",fontFamily:"'Inter','Noto Sans JP',sans-serif",color:"#18181B",maxWidth:"none",margin:0,padding:0,textAlign:"left"}}>
       {/* TOPBAR */}
-      <div style={{background:"#FFFFFF",borderBottom:"1px solid #E4E4E7",padding:"8px 16px",position:"sticky",top:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <ShifuponIcon size={36} radius={9}/>
+      <div style={{background:"#FFFFFF",borderBottom:"1px solid #E5E7EB",padding:"0 20px",height:52,position:"sticky",top:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+          <ShifuponIcon size={32} radius={8}/>
           <div>
-            <ShifuponLogo size={18}/>
+            <ShifuponLogo size={16}/>
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:6}}>
-          <button onClick={prevMonth} style={MNAV}><ChevronLeft size={20} strokeWidth={2}/></button>
-          <div style={{fontSize:15,fontWeight:700,color:"#18181B",minWidth:120,textAlign:"center",background:"#F4F4F5",border:"1px solid #E4E4E7",borderRadius:12,padding:"8px 14px"}}>{year}年 {month+1}月</div>
-          <button onClick={nextMonth} style={MNAV}><ChevronRight size={20} strokeWidth={2}/></button>
+        <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+          <button onClick={prevMonth} style={MNAV}><ChevronLeft size={18} strokeWidth={2}/></button>
+          <div style={{fontSize:14,fontWeight:600,color:"#111827",minWidth:110,textAlign:"center",background:"#F8FAFC",border:"1px solid #E5E7EB",borderRadius:8,padding:"6px 12px",letterSpacing:"0.01em"}}>{year}年 {month+1}月</div>
+          <button onClick={nextMonth} style={MNAV}><ChevronRight size={18} strokeWidth={2}/></button>
         </div>
-        {conflictBanner&&<span title="他の端末でデータが更新されました。保存完了後に自動反映されます。" style={{fontSize:16,cursor:"default",animation:"pulse 1.2s infinite",lineHeight:1}}>📡</span>}
-        <div style={{display:"flex",gap:isMobile?4:6,alignItems:"center",flexWrap:"wrap"}}>
-          <div style={{fontSize:11,fontWeight:600,color:saveStatus==="saved"?"#22C55E":saveStatus==="error"?"#EF4444":"#F59E0B",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:56}}>
-            {saveStatus==="saved"&&<><RefreshCw size={12} strokeWidth={2}/>{!isMobile&&<span>保存済</span>}</>}
-            {saveStatus==="unsaved"&&<><Loader size={12} strokeWidth={2}/>{!isMobile&&<span>未保存</span>}</>}
+        {conflictBanner&&<span title="他の端末でデータが更新されました。保存完了後に自動反映されます。" style={{fontSize:15,cursor:"default",animation:"pulse 1.2s infinite",lineHeight:1,flexShrink:0}}>📡</span>}
+        <div style={{display:"flex",gap:6,alignItems:"center",marginLeft:"auto"}}>
+          <div style={{fontSize:11,fontWeight:600,color:saveStatus==="saved"?"#22C55E":saveStatus==="error"?"#EF4444":"#F59E0B",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:52}}>
+            {saveStatus==="saved"&&<><RefreshCw size={11} strokeWidth={2}/>{!isMobile&&<span>保存済</span>}</>}
+            {saveStatus==="unsaved"&&<><Loader size={11} strokeWidth={2}/>{!isMobile&&<span>未保存</span>}</>}
             {saveStatus==="error"&&<><span style={{color:"#EF4444"}}>!</span><span>保存失敗</span></>}
           </div>
           {isLocked
-            ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:12,padding:"0 16px",height:44,cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6}}><Lock size={16} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
-            : <><button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E4E4E7":"#2563EB",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#A1A1AA":"#FFFFFF",border:"none",borderRadius:8,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成")}</button>{depts.some(d=>d.id==='kaigo1')&&depts.some(d=>d.id==='kaigo2')&&<button onClick={handleGenerateAllKaigo} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":"介護1・介護2を一括自動生成"} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E4E4E7":"#6366F1",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#A1A1AA":"#FFFFFF",border:"none",borderRadius:8,padding:"0 16px",height:44,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={16} strokeWidth={2}/>{!isMobile&&(generating?" 最適化中…":" 介護部一括生成")}</button>}</>
+            ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Lock size={14} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
+            : <button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E5E7EB":"#2563EB",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
           }
-          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:500,opacity:saveStatus==="unsaved"?0.5:1,display:"flex",alignItems:"center",gap:5}}><Download size={16} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
-          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={16} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
-          {!isMobile&&(()=>{const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=learnedCnt>0;const pct=syncRate??0;const barColor=pct>=85?"#16A34A":pct>=70?"#D97706":"#6366F1";return(<div onClick={()=>setExcelPasteModal(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"0 12px",height:44,cursor:"pointer",borderRadius:8,border:"1px solid #E5E7EB",background:"#FFFFFF"}} title="傾向学習データを取り込む"><div><div style={{fontSize:10,color:"#6B7280",fontWeight:500,lineHeight:1,marginBottom:3}}>{hasAny?`シンクロ率 ${syncRate!=null?syncRate+'%':'--'}`:'傾向学習'}</div><div style={{width:72,height:4,background:"#E5E7EB",borderRadius:2,overflow:"hidden"}}><div style={{width:`${hasAny?pct:0}%`,height:"100%",background:barColor,borderRadius:2,transition:"width 0.3s"}}/></div></div></div>);})()}
-          {!isMobile&&<button onClick={()=>setExcelPasteModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="ExcelのシフトをコピーしてCtrl+Vで貼り付け"><ClipboardList size={16} strokeWidth={2}/> 貼付</button>}
-          <button onClick={()=>setHistoryModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}} title="過去15世代の履歴から復元"><History size={16} strokeWidth={2}/>{!isMobile&&" 履歴"}</button>
-          {!isLocked && <button onClick={()=>setClearModal(true)} style={{background:"#FFFFFF",color:"#EF4444",border:"1px solid #FECACA",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Trash2 size={16} strokeWidth={2}/>{!isMobile&&" クリア"}</button>}
-          <button onClick={()=>setShareModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Share2 size={16} strokeWidth={2}/>{!isMobile&&" 共有"}</button>
-          {profile?.is_admin&&<button onClick={()=>setAdminModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,padding:"0 14px",height:44,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Building2 size={16} strokeWidth={2}/>{!isMobile&&" 管理"}</button>}
-          <button onClick={()=>setHelpModal(true)} style={{background:"#FFFFFF",color:"#6B7280",border:"1px solid #E4E4E7",borderRadius:12,width:44,height:44,cursor:"pointer",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}><HelpCircle size={16} strokeWidth={2}/></button>
-          <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={onLogout}>
-            <span style={{fontSize:10,fontWeight:700,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:8,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
-            <span style={{fontSize:10,color:"#6B7280",fontWeight:500,display:"flex",alignItems:"center",gap:2}}><LogOut size={10} strokeWidth={2}/> ログアウト</span>
+          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:500,opacity:saveStatus==="unsaved"?0.5:1,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
+          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
+          {/* Overflow [•••] */}
+          <div style={{position:"relative"}}>
+            <button onClick={()=>setOverflowOpen(o=>!o)} style={{background:overflowOpen?"#F1F5F9":"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}} title="その他のメニュー"><MoreHorizontal size={16} strokeWidth={2}/></button>
+            {overflowOpen&&<>
+              <div style={{position:"fixed",inset:0,zIndex:99}} onClick={()=>setOverflowOpen(false)}/>
+              <div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#FFFFFF",border:"1px solid #E5E7EB",borderRadius:10,boxShadow:"0 8px 24px rgba(0,0,0,0.10)",zIndex:100,minWidth:180,overflow:"hidden",padding:"4px 0"}}>
+                {(()=>{const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=learnedCnt>0;const pct=syncRate??0;const barColor=pct>=85?"#16A34A":pct>=70?"#D97706":"#2563EB";return(
+                  <div onClick={()=>{setExcelPasteModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151",borderBottom:"1px solid #F1F5F9"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <ClipboardList size={14} strokeWidth={2} style={{color:"#6B7280",flexShrink:0}}/>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:500}}>貼付 / 傾向学習</div>
+                      {hasAny&&<div style={{display:"flex",alignItems:"center",gap:6,marginTop:3}}><div style={{width:56,height:3,background:"#E5E7EB",borderRadius:2}}><div style={{width:`${pct}%`,height:"100%",background:barColor,borderRadius:2}}/></div><span style={{fontSize:10,color:"#6B7280"}}>シンクロ率 {syncRate!=null?syncRate+'%':'--'}</span></div>}
+                    </div>
+                  </div>
+                );})()}
+                <div onClick={()=>{setHistoryModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><History size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>履歴から復元</span></div>
+                <div onClick={()=>{setShareModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Share2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>共有</span></div>
+                {profile?.is_admin&&<div onClick={()=>{setAdminModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Building2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>管理</span></div>}
+                <div onClick={()=>{setHelpModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><HelpCircle size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>ヘルプ</span></div>
+                {!isLocked&&<><div style={{height:1,background:"#F1F5F9",margin:"4px 0"}}/>
+                <div onClick={()=>{setClearModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#DC2626"}} onMouseEnter={e=>e.currentTarget.style.background="#FEF2F2"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Trash2 size={14} strokeWidth={2}/><span>シフトをクリア</span></div></>}
+              </div>
+            </>}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer",marginLeft:4}} onClick={onLogout}>
+            <span style={{fontSize:10,fontWeight:700,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:6,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
+            <span style={{fontSize:10,color:"#9CA3AF",fontWeight:500,display:"flex",alignItems:"center",gap:2}}><LogOut size={10} strokeWidth={2}/> ログアウト</span>
           </div>
         </div>
       </div>
 
       {/* DEPT TABS */}
-      <div style={{background:"#FFFFFF",borderBottom:"1px solid #E4E4E7",display:"flex",overflowX:"auto",padding:"0 8px",alignItems:"center"}}>
-        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:act?"#111827":"transparent",border:"none",color:act?"#FFFFFF":"#6B7280",borderRadius:act?8:0,borderBottom:act?"none":"2px solid transparent",cursor:"pointer",fontSize:12,fontWeight:act?700:500,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"4px 2px"}}><span>{d.label}</span><span style={{background:act?"rgba(255,255,255,0.15)":"#F4F4F5",color:act?"#FFFFFF":"#6B7280",borderRadius:6,padding:"1px 6px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E4E4E7",borderRadius:8,color:"#71717A",cursor:"pointer",padding:"4px 8px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={14} strokeWidth={2}/></button>}</div>);})}
-        <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #E4E4E7",borderRadius:8,color:"#A1A1AA",cursor:"pointer",fontSize:11,padding:"6px 12px",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>
+      <div style={{background:"#F8FAFC",borderBottom:"1px solid #E5E7EB",display:"flex",overflowX:"auto",padding:"0 16px",alignItems:"center"}}>
+        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:act?"2px solid #2563EB":"2px solid transparent",color:act?"#111827":"#6B7280",borderRadius:0,cursor:"pointer",fontSize:12,fontWeight:act?600:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"0 1px"}}><span>{d.label}</span><span style={{background:act?"#EFF6FF":"#F1F5F9",color:act?"#2563EB":"#9CA3AF",borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",padding:"3px 6px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={13} strokeWidth={2}/></button>}</div>);})}
+        <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",fontSize:11,padding:"5px 11px",marginLeft:8,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>
       </div>
 
       {/* INNER TABS */}
       <div style={{background:"#F8F9FA",borderBottom:"1px solid #E4E4E7",display:"flex",padding:"0 8px",gap:2,alignItems:"center",overflowX:"auto"}}>
-        {[["shift","シフト表"],["staff","スタッフ"],["jisseki","実績"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab===k?"#18181B":"#71717A",borderBottom:innerTab===k?"2px solid #6366F1":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab===k?700:500,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
-        <button onClick={()=>setInnerTab("console")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="console"?"#18181B":"#71717A",borderBottom:innerTab==="console"?"2px solid #6366F1":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="console"?700:500,whiteSpace:"nowrap",flexShrink:0}}>コンソール</button>
+        {[["shift","シフト表"],["staff","スタッフ"],["jisseki","実績"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab===k?"#18181B":"#71717A",borderBottom:innerTab===k?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab===k?700:500,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
+        <button onClick={()=>setInnerTab("console")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="console"?"#18181B":"#71717A",borderBottom:innerTab==="console"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="console"?700:500,whiteSpace:"nowrap",flexShrink:0}}>コンソール</button>
         {profile?.plan==='free'
           ? <button onClick={()=>alert("予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 予定表</button>
-          : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#18181B":"#71717A",borderBottom:innerTab==="yotei"?"2px solid #6366F1":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
+          : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#18181B":"#71717A",borderBottom:innerTab==="yotei"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
         }
         {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
           {innerTab==="shift"&&(
