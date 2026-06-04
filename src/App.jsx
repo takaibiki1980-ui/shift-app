@@ -2803,6 +2803,21 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             </label>
           </div>
         )}
+        {form.nightOk && (
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:11,color:"#52525B",fontWeight:700,marginBottom:6}}>夜勤レベル</div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+              {[[undefined,"未設定"],[1,"Lv1（サポート必要）"],[2,"Lv2（通常）"]].map(([val,label])=>(
+                <label key={label} style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:12,color:"#3F3F46"}}>
+                  <input type="radio" name="nightLevel" checked={form.nightLevel===val}
+                    onChange={()=>set("nightLevel",val)}
+                    style={{cursor:"pointer",accentColor:"#6366F1"}}/>
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
         <div style={{background:"#fff8e6",border:"1px solid #f0c040",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
@@ -2847,12 +2862,13 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(initShiftTypes), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(initShiftTypes(),dept?.maxStaff,dept?.customShiftDefs)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
   const [shiftMaxByType,setShiftMaxByType]=useState(()=>{const d={};initShiftTypes().filter(k=>k!=="夜勤").forEach(k=>{d[k]=dept?.shiftMaxByType?.[k]||0;});return d;});
   const [customShiftDefs, setCustomShiftDefs] = useState(dept?.customShiftDefs || []);
+  const [crossFloorNightEnabled, setCrossFloorNightEnabled] = useState(!!dept?.crossFloorNightEnabled);
   const [shiftTimes, setShiftTimes] = useState(dept?.shiftTimes || {});
   const [intervalThreshold, setIntervalThreshold] = useState(dept?.intervalThreshold ?? "");
   const [requiredStart, setRequiredStart] = useState(dept?.requiredStart || "");
   const [requiredEnd, setRequiredEnd] = useState(dept?.requiredEnd || "");
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalThreshold:intervalThreshold!==""?Number(intervalThreshold):undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalThreshold:intervalThreshold!==""?Number(intervalThreshold):undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -2948,6 +2964,19 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           {pinCode&&<button onClick={()=>setPinCode("")} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11}}>✕ 解除</button>}
         </div>
         <div style={{fontSize:10,color:"#52525B",marginBottom:18}}>設定すると部署タブ切替後に編集前にPINが必要になります</div>
+        {shiftTypes.includes("夜勤") && (
+          <div style={{marginBottom:16}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"8px 10px",background:"#eef2ff",borderRadius:8,border:"1px solid #a5b4fc"}}>
+              <input type="checkbox" checked={crossFloorNightEnabled}
+                onChange={e=>setCrossFloorNightEnabled(e.target.checked)}
+                style={{width:14,height:14,accentColor:"#6366F1"}}/>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:"#4338ca"}}>クロスフロア夜勤連携を有効化</div>
+                <div style={{fontSize:10,color:"#6366F1"}}>ONにすると他フロアのLv1夜勤状況を参照して自動生成します</div>
+              </div>
+            </label>
+          </div>
+        )}
         <div style={{display:"flex",gap:10}}>
           <button onClick={handleSave} style={{flex:1,background:"#6366F1",color:"#fff",border:"none",borderRadius:9,padding:"12px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>{isNew?"➕ 追加する":"💾 保存する"}</button>
           {!isNew&&onDelete&&<button onClick={()=>onConfirm(`「${label}」を削除します。この部署のスタッフとシフトデータもすべて削除されます。`,()=>onDelete(dept.id),"削除する")} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:9,padding:"12px 14px",cursor:"pointer",color:"#c44b4b",fontSize:12,fontWeight:700}}>🗑 削除</button>}
