@@ -2743,6 +2743,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const getRatioPct = (k) => currentRatio ? Math.round((currentRatio[k] ?? 0) * 100) : "";
   const [numpad, setNumpad] = useState(null); // { key, rect }
   const [kp, setKp] = useState(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const setRatioPct = (k, v) => {
     const base = { ...(currentRatio || {}) };
     if (v === "" || isNaN(+v)) { delete base[k]; } else { base[k] = Math.min(100, Math.max(0, +v)) / 100; }
@@ -2818,25 +2819,35 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             </div>
           </div>
         )}
-        <div style={{fontSize:11,color:"#b45309",fontWeight:700,marginBottom:8,marginTop:4}}>▍ 勤務比率（任意）</div>
-        <div style={{background:"#fff8e6",border:"1px solid #f0c040",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
-          <div style={{fontSize:10,color:"#a06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
-          <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-            {deptDayShiftTypes.map(k=>(
-              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
-                <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
-                <div
-                  onClick={e=>setNumpad({key:k,rect:e.currentTarget.getBoundingClientRect()})}
-                  style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",background:numpad?.key===k?"#e0f7f7":"#fff",fontWeight:700,fontSize:14,color:"#18181B"}}
-                >{getRatioPct(k)||"0"}</div>
-                <span style={{fontSize:11,color:"#92400e"}}>%</span>
+        {/* ── 詳細設定（折りたたみ） ── */}
+        <div style={{marginBottom:14,borderTop:"1px solid #F1F5F9",paddingTop:12,marginTop:4}}>
+          <button onClick={()=>setShowAdvanced(a=>!a)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",fontSize:11,fontWeight:600,color:"#6B7280",padding:"4px 0",width:"100%",textAlign:"left"}}>
+            <span style={{fontSize:9,color:"#9CA3AF",transition:"transform 0.15s",display:"inline-block",transform:showAdvanced?"rotate(90deg)":"rotate(0deg)"}}>▶</span>
+            詳細設定
+            {currentRatio&&<span style={{fontSize:9,background:"#FEF3C7",color:"#92400E",borderRadius:4,padding:"1px 6px",marginLeft:4,fontWeight:600}}>設定済</span>}
+          </button>
+          {showAdvanced&&(
+            <div style={{marginTop:10}}>
+              <div style={{fontSize:10,color:"#9CA3AF",marginBottom:12,padding:"8px 10px",background:"#F8FAFC",borderRadius:6,border:"1px solid #F1F5F9",lineHeight:1.5}}>通常は未設定で問題ありません。日勤偏重の抑制は自動生成の順序制御が担っています。</div>
+              <div style={{fontSize:11,color:"#B45309",fontWeight:700,marginBottom:8}}>勤務比率（上級者向け・任意）</div>
+              <div style={{background:"#FFF8E6",border:"1px solid #F0C040",borderRadius:8,padding:"10px 12px"}}>
+                <div style={{fontSize:10,color:"#A06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                  {deptDayShiftTypes.map(k=>(
+                    <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                      <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
+                      <div onClick={e=>setNumpad({key:k,rect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",background:numpad?.key===k?"#e0f7f7":"#fff",fontWeight:700,fontSize:14,color:"#18181B"}}>{getRatioPct(k)||"0"}</div>
+                      <span style={{fontSize:11,color:"#92400e"}}>%</span>
+                    </div>
+                  ))}
+                  {currentRatio&&<button onClick={()=>set("shiftRatio",null)} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
+                </div>
               </div>
-            ))}
-            {currentRatio&&<button onClick={()=>set("shiftRatio",null)} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
-          </div>
-          {numpad&&<NumericKeypad value={getRatioPct(numpad.key)} anchorRect={numpad.rect} onConfirm={v=>{setRatioPct(numpad.key,v);setNumpad(null);}} onClose={()=>setNumpad(null)}/>}
-          {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
+            </div>
+          )}
         </div>
+        {numpad&&<NumericKeypad value={getRatioPct(numpad.key)} anchorRect={numpad.rect} onConfirm={v=>{setRatioPct(numpad.key,v);setNumpad(null);}} onClose={()=>setNumpad(null)}/>}
+        {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
         <div style={{fontSize:11,color:"#A1A1AA",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#F4F4F5",borderRadius:8,padding:12,border:"1px solid #D4D4D8"}}>
           <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId} depts={depts} kiboCountByDay={kiboCountByDay} kiboLimit={kiboLimit}/>
