@@ -4413,7 +4413,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         const c = JSON.parse(json);
         const cfg = {
           facility_name: c.fn || '',
-          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null }],
+          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null, targetYear: c.d.ty || null, targetMonth: c.d.tm || null }],
           staffList: (c.sl || []).map(s => ({ id: s.i ? shortToUuid(s.i) : s.id, name: s.n || s.name, dept: c.d.id }))
         };
         setConfig(cfg);
@@ -4449,11 +4449,18 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
   useEffect(() => { loadConfig(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 締め切り日の月を対象月として自動設定
+  // 対象月を設定: targetYear/targetMonth が優先、なければ従来の締切日フォールバック
   useEffect(() => {
     if (!config) return;
     const dept = config.depts?.find(d => d.id === (fixedDeptId || config.depts?.[0]?.id));
-    if (!dept?.deadline) return;
+    if (!dept) return;
+    if (dept.targetYear && dept.targetMonth) {
+      setYear(dept.targetYear);
+      setMonth(dept.targetMonth - 1);
+      return;
+    }
+    // フォールバック: 対象月未設定の場合は締切日の月を使用（既存互換）
+    if (!dept.deadline) return;
     const [dy, dm] = dept.deadline.split('-').map(Number);
     if (!isNaN(dy) && !isNaN(dm)) { setYear(dy); setMonth(dm - 1); }
   }, [config, fixedDeptId]);
@@ -4466,7 +4473,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
   // 締め切りチェック・月固定
   const isPastDeadline = selDept?.deadline ? new Date() > new Date(selDept.deadline + 'T23:59:59') : false;
-  const isMonthLocked = !!selDept?.deadline;
+  const isMonthLocked = !!(selDept?.deadline || (selDept?.targetYear && selDept?.targetMonth));
 
   useEffect(() => {
     if (!selStaffId || !selDeptId) return;
@@ -4557,10 +4564,13 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
             <div style={{fontSize:10,color:"#52525B"}}>希望休・有休 入力ポータル</div>
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          {!isMonthLocked&&<button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#6366F1",cursor:"pointer"}}>◀</button>}
-          <span style={{fontSize:13,fontWeight:800,color:"#18181B"}}>{year}年{month+1}月</span>
-          {!isMonthLocked&&<button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#6366F1",cursor:"pointer"}}>▶</button>}
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {!isMonthLocked&&<button onClick={prevMonth} style={{background:"none",border:"none",fontSize:18,color:"#6366F1",cursor:"pointer"}}>◀</button>}
+            <span style={{fontSize:13,fontWeight:800,color:"#18181B"}}>{year}年{month+1}月の希望休入力</span>
+            {!isMonthLocked&&<button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#6366F1",cursor:"pointer"}}>▶</button>}
+          </div>
+          {selDept?.deadline&&<div style={{fontSize:10,color:"#6B7280"}}>締切：{selDept.deadline.replace(/-/g,'/')}</div>}
         </div>
       </div>
 
@@ -5365,7 +5375,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       facility_name: profile?.facility_name || '',
       depts: depts.map(d => {
         const ps = portalSettings[d.id] || {};
-        return { id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null };
+        return { id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null, targetYear: ps.targetYear || null, targetMonth: ps.targetMonth || null };
       }),
       staffList: staffList.map(s => ({ id: s.id, dept: s.dept, name: s.name, role: s.role }))
     };
@@ -6810,25 +6820,35 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const ps=portalSettings[d.id]||{};
               const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
-              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:ps.deadline||null},sl:deptSl};
+              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               const urlShort=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlShort).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlShort}`));}else{alert(`URLをコピーしてください:\n${urlShort}`);}};
               const doLine=()=>{const lineUrl=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label}の希望休入力はこちら\n${urlShort}`)}`;window.open(lineUrl,'_blank');};              const doSaveSettings=async()=>{
-                const newPs={...portalSettings,[d.id]:{deadline:ps.deadline||null}};
-                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,icon:dep.icon,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null};});
+                const newPs={...portalSettings,[d.id]:{deadline:ps.deadline||null,targetYear:ps.targetYear||null,targetMonth:ps.targetMonth||null}};
+                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,icon:dep.icon,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null,targetYear:p.targetYear||null,targetMonth:p.targetMonth||null};});
                 const facilityVal={facility_name:profile?.facility_name||'',depts:deptsCfg,staffList:staffList.map(s=>({id:s.id,dept:s.dept,name:s.name,role:s.role}))};
                 const [r1,r2]=await Promise.all([
                   supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'portalSettings',data_value:newPs,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
                   supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'facilityConfig',data_value:facilityVal,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
                 ]);
                 if(r1.error||r2.error){alert('保存に失敗しました。もう一度お試しください。');return;}
-                alert(`✅ ${d.label} の設定を保存しました\n締め切り: ${ps.deadline||'なし'}`);
+                alert(`✅ ${d.label} の設定を保存しました\n対象月: ${ps.targetYear&&ps.targetMonth?`${ps.targetYear}年${ps.targetMonth}月`:'未設定'}\n締め切り: ${ps.deadline||'なし'}`);
               };
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
                   <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:10}}>{d.icon} {d.label}</div>
+                  {/* 対象シフト月 */}
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4}}>📅 対象シフト月</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <input type="month" value={(ps.targetYear&&ps.targetMonth)?`${ps.targetYear}-${String(ps.targetMonth).padStart(2,'0')}`:""} onChange={e=>{const v=e.target.value;if(!v){setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:null,targetMonth:null}}));}else{const[ty,tm]=v.split('-').map(Number);setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:ty,targetMonth:tm}}));}}} style={{border:"1px solid #D4D4D8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#18181B",outline:"none",background:"#FAFAFA"}}/>
+                      {(ps.targetYear||ps.targetMonth)&&<button onClick={()=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:null,targetMonth:null}}))} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}>✕ クリア</button>}
+                    </div>
+                    {(ps.targetYear&&ps.targetMonth)&&<div style={{fontSize:10,color:"#2563EB",marginTop:3}}>スタッフ画面に「{ps.targetYear}年{ps.targetMonth}月の希望休入力」と表示されます</div>}
+                    {!(ps.targetYear&&ps.targetMonth)&&<div style={{fontSize:10,color:"#9CA3AF",marginTop:3}}>未設定の場合は従来動作（締切日の月または当月）</div>}
+                  </div>
                   {/* 締め切り */}
                   <div style={{marginBottom:12}}>
                     <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4}}>⏰ 締め切り日</div>
