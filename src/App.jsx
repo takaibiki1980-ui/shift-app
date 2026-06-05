@@ -855,12 +855,17 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   const shiftIntervals = buildShiftIntervals(dept);
   const WORK = buildDeptWorkTypes(dept.customShiftDefs);
   const REST_SET = new Set(['休み','希望休','有休']);
+  // Fix1: maxStaff制約マップ（早番1人・遅番1人等）
+  const maxStaffMap = {};
+  (dept.shiftTypes || []).forEach(k => { maxStaffMap[k] = dept.maxStaff?.[k] ?? 99; });
 
   // Phase 0: 前処理
   const ds = staffList.filter(s => s.dept === dept.id);
   const locked = {};
   for (const s of ds) {
     locked[s.id] = {};
+    // Fix3: prevShiftsの有休を引き継ぎ（手動入力分をlocked扱い）
+    Object.entries(prevShifts[s.id] || {}).forEach(([d, v]) => { if (v === '有休') locked[s.id][Number(d)] = '有休'; });
     (s.kiboByMonth?.[mk] || []).forEach(d => { locked[s.id][Number(d)] = '希望休'; });
     (s.yukyuByMonth?.[mk] || []).forEach(d => { locked[s.id][Number(d)] = '有休'; });
     Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([d, sh]) => { locked[s.id][Number(d)] = sh; });
@@ -890,8 +895,20 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
 
   const exceedsConsec = (staffId, d) => {
     let c = 0;
-    for (let i = d - 1; i >= Math.max(1, d - maxConsec); i--) {
-      if (WORK.has(result[staffId]?.[i])) c++; else break;
+    // 当月分を後ろ向きに数える
+    for (let i = d - 1; i >= 1; i--) {
+      if (WORK.has(result[staffId]?.[i])) c++; else return c >= maxConsec;
+      if (c >= maxConsec) return true;
+    }
+    // Fix3: 月初の場合、前月末の連続勤務を prevShifts で引き継ぐ
+    const pm = prevShifts[staffId] || {};
+    const pmKeys = Object.keys(pm).map(Number).filter(n => n > 0);
+    if (pmKeys.length > 0) {
+      const pmMax = Math.max(...pmKeys);
+      for (let i = pmMax; i >= Math.max(1, pmMax - maxConsec); i--) {
+        if (WORK.has(pm[i])) c++; else break;
+        if (c >= maxConsec) return true;
+      }
     }
     return c >= maxConsec;
   };
@@ -912,6 +929,8 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     });
     return cov;
   };
+  // Fix1: シフト別現在配置人数カウント
+  const countShift = (d, sk) => ds.filter(s => result[s.id]?.[d] === sk).length;
 
   const calcMarginalGain = (s, shiftKey, d, currentCov) => {
     const iv = shiftIntervals[shiftKey];
@@ -944,12 +963,16 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   const assignBest = (candidates, d, currentCovFn) => {
     let bestGain = 0, bestStaff = null, bestShift = null;
     const cov = currentCovFn();
-    for (const s of candidates) {
+    // Fix2: シャッフルでタイブレーカー（同スコア時に毎回同じスタッフが選ばれるのを防ぐ）
+    const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+    for (const s of shuffled) {
       if (result[s.id][d] !== undefined) continue;
       if (exceedsConsec(s.id, d)) continue;
       if (needsRest(s.id, d)) continue;
       for (const sk of eligibleShifts[s.id]) {
         if (isBadTransition(result[s.id][d-1], sk)) continue;
+        // Fix1: maxStaff上限チェック
+        if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) continue;
         const gain = calcMarginalGain(s, sk, d, cov);
         if (gain > bestGain) { bestGain = gain; bestStaff = s; bestShift = sk; }
       }
@@ -1002,6 +1025,8 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         const cov = calcSlotCoverage(d);
         const bestSh = eligibleShifts[s.id].reduce((best, sk) => {
           if (isBadTransition(result[s.id][d-1], sk)) return best;
+          // Fix1: maxStaff上限チェック
+          if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) return best;
           const g = calcMarginalGain(s, sk, d, cov);
           return g > (best?.gain ?? -1) ? { sk, gain: g } : best;
         }, null);
