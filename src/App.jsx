@@ -1720,6 +1720,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         shuffled.forEach(d => { res[s.id][d] = '休み'; });
       }
     });
+    // [DEBUG PassA終了] 公休スナップショット
+    { const _R=new Set(['休み','希望休','有休']); console.log('── PassA終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
 
     // ── Pass B: 全スタッフの勤務シフトを確率サンプリングで配置 ──────────────
     // trend あり → dowShiftRate を重みにサンプリング（ratio指定があれば枠を先確保）
@@ -1827,6 +1829,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         });
       }
     });
+    // [DEBUG PassB終了] 公休スナップショット
+    { const _R=new Set(['休み','希望休','有休']); console.log('── PassB終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
 
     // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair] ────────────────────────────
     // 修復方針（介護型 Tier 構造に準拠）:
@@ -1872,11 +1876,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
             }
             const target = nikkinTarget ?? nonSlotTarget; // 日勤優先、なければ非 slot
             if (target !== null) {
+              console.log(`[PassC-Tier2休み追加] ${s.name} day=${target} before=${res[s.id][target]} (streak切断のため)`);
               res[s.id][target] = '休み'; // ← Tier2（日勤層）を削除して streak を断ち切る
               _absorbedByTier2++;
             }
             continue; // d 自体（role-slot）は変更しない
           }
+          console.log(`[PassC-非slot休み追加] ${s.name} day=${d} before=${res[s.id][d]} consecWork=${consecWork(s.id,d)}`);
           res[s.id][d] = '休み';
           _fixedNonSlot++;
         }
@@ -1901,6 +1907,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       else
         console.log('[AG-Phase1] PassC後 連続違反: ゼロ ✓');
     }
+    // [DEBUG PassC終了] 公休スナップショット
+    { const _R=new Set(['休み','希望休','有休']); console.log('── PassC終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
 
     // ── 公休数調整 ─ [Tier2 repair / shortage補正は shouldProtectSlot 保護済み] ──
     ds.forEach(s => {
@@ -2304,19 +2312,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     }
   }
-  // ★ 生成完了: 実公休数一覧ログ（調査用 — 修正前の実態把握）
-  {
-    const _REST = new Set(['休み', '希望休', '有休']);
-    const _summary = ds.map(s => {
-      const tgt = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-      const actual = Object.values(res[s.id] || {}).filter(v => _REST.has(v)).length;
-      const yukyuCount = Object.values(res[s.id] || {}).filter(v => v === '有休').length;
-      const kiboCount  = Object.values(res[s.id] || {}).filter(v => v === '希望休').length;
-      const yasumiCount = Object.values(res[s.id] || {}).filter(v => v === '休み').length;
-      return { name: s.name, targetKyuko: tgt, actualKyuko: actual, diff: actual - tgt, 有休: yukyuCount, 希望休: kiboCount, 休み: yasumiCount };
-    });
-    console.table(_summary);
-  }
+  // [DEBUG 最終出力] 公休スナップショット
+  { const _R=new Set(['休み','希望休','有休']); console.log('── 最終出力 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,diff:Object.values(res[s.id]).filter(v=>_R.has(v)).length-(s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8),休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
   return { shifts: res, warnings, timelineWarnings };
 }
 
