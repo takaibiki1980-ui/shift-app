@@ -1714,10 +1714,42 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const picked = weightedSampleN(validDays, weights, restTarget);
         picked.forEach(d => { res[s.id][d] = '休み'; });
       } else {
-        // trendなし → canRest 制約を満たす日から等確率ランダムサンプリング
-        const eligible = validDays.filter(d => canRest(s.id, d));
-        const shuffled = weightedSampleN(eligible, eligible.map(() => 1), restTarget);
-        shuffled.forEach(d => { res[s.id][d] = '休み'; });
+        // trendなし → 均等分散配置（±2日揺らぎ + maxConsec制約保証）
+        // 均等間隔 step = validDays.length / (restTarget+1) を基準に
+        // ランダム揺らぎ±2日を加えつつ「前の休みから maxConsec+1 日以内」を保証
+        const N = validDays.length;
+        const step = N / (restTarget + 1);
+        const usedSet = new Set();
+        let prevDay = 0; // 前に配置した休みの日付（0=月初前）
+
+        for (let i = 1; i <= restTarget; i++) {
+          const isLast = (i === restTarget);
+
+          // ─ 制約範囲 ─
+          const minDay = prevDay + 1;
+          const maxDay = Math.min(days, prevDay + maxConsec + 1);
+          // 末尾制約: 最後の休みは days-maxConsec 以降（月末の連続勤務防止）
+          const minDayAdj = isLast ? Math.max(minDay, days - maxConsec) : minDay;
+
+          // ─ 理想位置 ± 揺らぎ ─
+          const idealIdx = Math.min(Math.max(0, Math.round(i * step) - 1), N - 1);
+          const idealDay = validDays[idealIdx];
+          const jitter   = Math.round((Math.random() - 0.5) * 4); // -2〜+2 均等
+          const targetDay = idealDay + jitter;
+
+          // ─ 候補: [minDayAdj, maxDay] ∩ validDays ∩ 未使用 ─
+          const cands = validDays.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
+          if (!cands.length) break; // 配置不可能なら以降スキップ
+
+          // targetDay に最も近い候補を選択
+          const best = cands.reduce((a, b) =>
+            Math.abs(a - targetDay) < Math.abs(b - targetDay) ? a : b
+          );
+
+          usedSet.add(best);
+          res[s.id][best] = '休み';
+          prevDay = best;
+        }
       }
     });
     // [DEBUG PassA終了] 公休スナップショット
