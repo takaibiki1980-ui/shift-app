@@ -2022,6 +2022,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
   }
 
+  // [DEBUG フェーズ追跡①] 公休数調整後
+  { const _R=new Set(['休み','希望休','有休']); console.error('── 公休数調整後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
+
   enforceMaxStaff(); // 1回目: Pass B/C 後の超過を除去
 
   // 遷移違反 repair ─ [Tier2 repair / shouldProtectSlot 保護済み（休み→日勤代替）]
@@ -2141,6 +2144,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   enforceMaxStaff(); // 3回目: 最低配置保証後の超過を除去
 
+  // [DEBUG フェーズ追跡②] minStaff保証+enforceMaxStaff×3後
+  { const _R=new Set(['休み','希望休','有休']); console.error('── enforceMaxStaff×3後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
+
   // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
   // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
   {
@@ -2177,6 +2183,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     }
   }
+
+  // [DEBUG フェーズ追跡③] 公休数回復フェーズ後
+  { const _R=new Set(['休み','希望休','有休']); console.error('── 公休数回復後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
 
   // ★公休数超過バリデーション: 他ルールを破らない範囲で超過した休みを日勤へ変換
   // 変換できない場合は10日のまま受け入れる（無理強いしない）
@@ -2226,6 +2235,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       // 変換できる枠がなければ「惜しい状態」のまま終了（スコアで後評価）
     }
   }
+
+  // [DEBUG フェーズ追跡④] 公休数超過バリデーション後
+  { const _R=new Set(['休み','希望休','有休']); console.error('── 超過バリデーション後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
 
   // ratio 修復 ─ [Tier2 repair / fromShift削減は shouldProtectSlot 保護済み]
   // ★比率修復パス: minStaff保証後の比率乖離を実際のシフト変換で修正する
