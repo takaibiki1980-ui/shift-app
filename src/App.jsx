@@ -1722,6 +1722,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     });
     // [DEBUG PassA終了] 公休スナップショット
     { const _R=new Set(['休み','希望休','有休']); console.error('── PassA終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
+    // [DEBUG PassA-連続チェック] PassA後の潜在連続勤務違反（未割当日=PassBで勤務と仮定）
+    { const _RA=new Set(['休み','希望休','有休']); let _vs=0,_vc=0,_mx=0; const _rows=ds.map(s=>{let st=0,vc=0,ms=0; for(let d=1;d<=days;d++){const v=res[s.id][d]; const br=_RA.has(v)||v==='明け'; if(br){st=0;}else{st++;if(st>maxConsec)vc++;} ms=Math.max(ms,st);} if(vc>0)_vs++; _vc+=vc; _mx=Math.max(_mx,ms); return{name:s.name,最大連続:ms,超過日数:vc};}); console.error(`[PassA-連続チェック] maxConsec=${maxConsec} 超過職員数=${_vs}/${ds.length} 超過日数合計=${_vc} 最大連続=${_mx}`); if(_vs>0)console.table(_rows.filter(r=>r.超過日数>0)); }
 
     // ── Pass B: 全スタッフの勤務シフトを確率サンプリングで配置 ──────────────
     // trend あり → dowShiftRate を重みにサンプリング（ratio指定があれば枠を先確保）
@@ -1887,7 +1889,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           _fixedNonSlot++;
         }
       });
-      console.log(`[AG-Phase1] PassC: 非slot修復=${_fixedNonSlot} Tier2吸収(日勤層)=${_absorbedByTier2}`);
+      console.error(`[AG-Phase1] PassC: 非slot修復=${_fixedNonSlot} Tier2吸収(日勤層)=${_absorbedByTier2} 合計追加休み=${_fixedNonSlot+_absorbedByTier2}`);
     }
     // ★Phase1 diagnostic: Pass C 後の連続勤務違反残存チェック（読み取り専用・ロジック変更なし）
     // [AG-Phase1] log: total=残存違反数 slotProtected=shouldProtectSlot が守った件数（Tier1衝突）
