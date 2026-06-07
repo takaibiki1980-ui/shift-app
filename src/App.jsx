@@ -2304,6 +2304,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     }
   }
+  // ★ 生成完了: 実公休数一覧ログ（調査用 — 修正前の実態把握）
+  {
+    const _REST = new Set(['休み', '希望休', '有休']);
+    const _summary = ds.map(s => {
+      const tgt = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const actual = Object.values(res[s.id] || {}).filter(v => _REST.has(v)).length;
+      const yukyuCount = Object.values(res[s.id] || {}).filter(v => v === '有休').length;
+      const kiboCount  = Object.values(res[s.id] || {}).filter(v => v === '希望休').length;
+      const yasumiCount = Object.values(res[s.id] || {}).filter(v => v === '休み').length;
+      return { name: s.name, targetKyuko: tgt, actualKyuko: actual, diff: actual - tgt, 有休: yukyuCount, 希望休: kiboCount, 休み: yasumiCount };
+    });
+    console.table(_summary);
+  }
   return { shifts: res, warnings, timelineWarnings };
 }
 
