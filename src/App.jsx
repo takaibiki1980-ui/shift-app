@@ -801,7 +801,7 @@ function scoreShiftsTime(shifts, ds, dept, days, year, month, shiftTrend = {}) {
       if (bad) score += 100;
     }
 
-    // Tier5: 学習傾向（shiftTrend参照・タイブレーカーのみ）
+    // Tier5a: 学習傾向（dowShiftRate × 20・タイブレーカー）
     if (shiftTrend && Object.keys(shiftTrend).length > 0) {
       const tKey = Object.keys(shiftTrend).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, s.name));
       const trend = tKey ? shiftTrend[tKey] : null;
@@ -812,6 +812,16 @@ function scoreShiftsTime(shifts, ds, dept, days, year, month, shiftTrend = {}) {
           const dow = new Date(year, month, d).getDay();
           const prob = trend.dowShiftRate?.[dow]?.[sh] ?? (typeof trend[sh] === 'number' ? trend[sh] : null);
           if (prob != null) score += (1 - prob) * 20;
+        }
+        // Tier5b: 遷移学習（transitionRate × 500）
+        if (trend.transitionRate) {
+          for (let d = 2; d <= days; d++) {
+            const prev = shifts[s.id]?.[d-1];
+            const curr = shifts[s.id]?.[d];
+            if (!prev || !curr) continue;
+            const transProb = trend.transitionRate[prev]?.[curr];
+            if (transProb !== undefined) score += (1 - transProb) * 500;
+          }
         }
       }
     }
@@ -879,12 +889,36 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     eligibleShifts[s.id] = (allowed || []).filter(k => k !== '明け' && k !== '夜勤' && shiftIntervals[k]);
   });
 
-  // Tier分類: 専門スタッフ（eligible1種のみ）と柔軟スタッフ
-  const singleShiftStaff = ds.filter(s => eligibleShifts[s.id].length === 1);
-  const flexibleStaff = ds.filter(s => eligibleShifts[s.id].length > 1);
+  // Phase1a: eligible数で制約強度グループ化（少ない=制約強=優先）
+  const eligibilityGroups = {};
+  for (const s of ds) {
+    const len = Math.max(eligibleShifts[s.id].length, 1);
+    if (!eligibilityGroups[len]) eligibilityGroups[len] = [];
+    eligibilityGroups[len].push(s);
+  }
+  const sortedLengths = Object.keys(eligibilityGroups).map(Number).sort((a, b) => a - b);
 
   const result = {};
   ds.forEach(s => { result[s.id] = { ...locked[s.id] }; });
+
+  // Phase0.5: preferredRestDays — 公休を月内均等分散（ソフトロック）
+  const softRest = {};
+  for (const s of ds) {
+    softRest[s.id] = new Set();
+    const lockedRestCount = Object.values(locked[s.id]).filter(v => REST_SET.has(v)).length;
+    const needed = Math.max(0, targetKyuko[s.id] - lockedRestCount);
+    if (needed <= 0) continue;
+    const available = [];
+    for (let d = 1; d <= days; d++) { if (!locked[s.id][d]) available.push(d); }
+    if (available.length === 0) continue;
+    const step = available.length / (needed + 1);
+    const used = new Set();
+    for (let i = 1; i <= needed; i++) {
+      const idx = Math.min(Math.round(i * step) - 1, available.length - 1);
+      const day = available[idx];
+      if (!used.has(day)) { used.add(day); softRest[s.id].add(day); result[s.id][day] = '休み'; }
+    }
+  }
 
   const th = dept.intervalThreshold ?? null;
   const isBadTransition = (prev, curr) => {
@@ -947,14 +981,20 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         }
       }
     }
-    // Tier5: shiftTrend タイブレーカー（スケール小）
+    // Tier5: shiftTrend タイブレーカー（スケール小・coverageゲインを逆転しない）
     if (shiftTrend && Object.keys(shiftTrend).length > 0) {
       const tKey = Object.keys(shiftTrend).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, s.name));
       const trend = tKey ? shiftTrend[tKey] : null;
       if (trend) {
         const dow = new Date(year, month, d).getDay();
         const prob = trend.dowShiftRate?.[dow]?.[shiftKey] ?? (typeof trend[shiftKey] === 'number' ? trend[shiftKey] : 0);
-        gain += prob * 0.001; // coverageゲインを絶対に逆転しないスケール
+        gain += prob * 0.001;
+        // transitionRate: 前日→当日の遷移確率もタイブレーカーに追加
+        const prevShift = result[s.id]?.[d-1];
+        if (prevShift && trend.transitionRate) {
+          const transProb = trend.transitionRate[prevShift]?.[shiftKey];
+          if (transProb !== undefined) gain += transProb * 0.001;
+        }
       }
     }
     return gain;
@@ -963,10 +1003,20 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   const assignBest = (candidates, d, currentCovFn) => {
     let bestGain = 0, bestStaff = null, bestShift = null;
     const cov = currentCovFn();
+    // coverage不足判定（Phase0.5 softRest上書きの前提条件チェック用）
+    const hasCoverageDeficit = rules.length > 0 && rules.some(rule => {
+      const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+      if (rS == null || rE == null) return false;
+      for (let m = rS; m < rE; m += 15) { if ((cov[m] || 0) < rule.min) return true; }
+      return false;
+    });
     // Fix2: シャッフルでタイブレーカー（同スコア時に毎回同じスタッフが選ばれるのを防ぐ）
     const shuffled = [...candidates].sort(() => Math.random() - 0.5);
     for (const s of shuffled) {
-      if (result[s.id][d] !== undefined) continue;
+      const isSoftRest = softRest[s.id]?.has(d);
+      if (result[s.id][d] !== undefined && !isSoftRest) continue;
+      // Phase0.5: softRestはcoverage不足時のみ上書き可
+      if (isSoftRest && !hasCoverageDeficit) continue;
       if (exceedsConsec(s.id, d)) continue;
       if (needsRest(s.id, d)) continue;
       for (const sk of eligibleShifts[s.id]) {
@@ -977,32 +1027,39 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         if (gain > bestGain) { bestGain = gain; bestStaff = s; bestShift = sk; }
       }
     }
-    if (bestStaff) result[bestStaff.id][d] = bestShift;
+    if (bestStaff) {
+      result[bestStaff.id][d] = bestShift;
+      softRest[bestStaff.id]?.delete(d); // Phase0.5: coverage上書き時にsoftRest解除
+    }
     return !!bestStaff;
   };
 
-  // Phase 1: coverage充足グリーディ配置
+  // Phase 1: coverage充足グリーディ配置（Phase1a: 制約強スタッフ優先）
   for (let d = 1; d <= days; d++) {
-    // Pass1: 専門スタッフ優先配置
+    // 最制約グループ（eligible最少）: coverage状況によらず全員配置試行
+    const firstGroup = eligibilityGroups[sortedLengths[0]] || [];
     let changed = true;
     while (changed) {
-      changed = assignBest(singleShiftStaff, d, () => calcSlotCoverage(d));
+      changed = assignBest(firstGroup, d, () => calcSlotCoverage(d));
     }
-    // Pass2: 柔軟スタッフで残りを充填
-    for (let iter = 0; iter < ds.length * 2; iter++) {
-      const cov = calcSlotCoverage(d);
-      const hasDeficit = rules.some(rule => {
-        const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
-        if (rS == null || rE == null) return false;
-        for (let m = rS; m < rE; m += 15) {
-          if ((cov[m] || 0) < rule.min) return true;
-        }
-        return false;
-      });
-      if (!hasDeficit) break;
-      if (!assignBest(flexibleStaff, d, () => cov)) break;
+    // 残りグループ: eligible少ない順にcoverage不足時のみ配置（社員など万能スタッフは後回し）
+    for (let gi = 1; gi < sortedLengths.length; gi++) {
+      const group = eligibilityGroups[sortedLengths[gi]];
+      for (let iter = 0; iter < group.length * 2; iter++) {
+        const cov = calcSlotCoverage(d);
+        const hasDeficit = rules.some(rule => {
+          const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+          if (rS == null || rE == null) return false;
+          for (let m = rS; m < rE; m += 15) {
+            if ((cov[m] || 0) < rule.min) return true;
+          }
+          return false;
+        });
+        if (!hasDeficit) break;
+        if (!assignBest(group, d, () => cov)) break;
+      }
     }
-    // 未配置スタッフを休みに
+    // 未配置スタッフを休みに（softRest済みは既に'休み'なので変化なし）
     ds.forEach(s => { if (result[s.id][d] === undefined) result[s.id][d] = '休み'; });
   }
 
