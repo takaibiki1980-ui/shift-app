@@ -1704,6 +1704,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       const lockedRest = Object.values(res[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
       const restTarget = Math.max(0, totalTarget - lockedRest);
 
+      { const _night=Object.values(res[s.id]).filter(v=>v==='夜勤').length; const _ake=Object.values(res[s.id]).filter(v=>v==='明け').length; const _kibo=Object.values(res[s.id]).filter(v=>v==='希望休').length; console.error(`[PassA入力] ${s.name} target=${totalTarget} lockedRest=${lockedRest} kiboCount=${_kibo} restTarget=${restTarget} night=${_night} ake=${_ake}`); const _fixedAkeRest=Object.entries(res[s.id]).filter(([d,v])=>v==='休み'&&res[s.id][+d-1]==='明け').length; const _normalRest=Object.values(res[s.id]).filter(v=>v==='休み').length-_fixedAkeRest; console.error(`[PassA内訳] ${s.name} fixedAkeRest=${_fixedAkeRest} normalRest=${_normalRest} kibo=${_kibo}`); }
+
       const validDays = freeDays.filter(d => res[s.id][d - 1] !== '明け');
       if (trend?.dowRestRate) {
         // ★確率サンプリング: dowRestRate を重みにして非復元サンプリング
@@ -1747,7 +1749,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           if (!cands.length) {
             cands = validDays.filter(d => d >= minDay && !usedSet.has(d));
           }
-          if (!cands.length) break;
+          if (!cands.length) { console.error(`[PassA-BREAK] ${s.name} i=${i} restTarget=${restTarget} placed=${usedSet.size} prevDay=${prevDay} days=${days} validDays=${N}`); break; }
 
           // targetDay に最も近い候補を選択
           const best = cands.reduce((a, b) =>
