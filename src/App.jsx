@@ -621,35 +621,22 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   // ── [診断] 学習信頼度 実測ログ（確認後に削除） ─────────────────────
   {
     const DOW_NAMES = ['月','火','水','木','金','土','日'];
-    const lines = ['═══ [学習信頼度診断] ═══'];
-    lines.push('名前               月数 | 月        火        水        木        金        土        日');
-    lines.push('                        | wTot da   wTot da   wTot da   wTot da   wTot da   wTot da   wTot da');
-    lines.push('─'.repeat(110));
+    console.error('═══ [学習信頼度診断] START ═══');
     for (const staff of staffList) {
       if (!counts[staff.id] || totals[staff.id] < 1) continue;
       const shiftArr = dowShifts[staff.id] || [{},{},{},{},{},{},{}];
       const totArr   = dowTotalsR[staff.id] || [0,0,0,0,0,0,0];
-      const cells = DOW_NAMES.map((_, j) => {
+      console.error(`[学習] ── ${staff.name} 学習月数=${monthSets[staff.id].size} 総重み=${totals[staff.id]} ──`);
+      for (let j = 0; j < 7; j++) {
         const siIdx = (j + 1) % 7;
         const wTot = Object.values(shiftArr[siIdx]).reduce((s,v)=>s+v,0);
         const da   = Math.min(1, wTot / 2).toFixed(2);
         const rTot = totArr[j];
         const ra   = rTot === 0 ? '0.00' : Math.min(1, rTot / 3).toFixed(2);
-        return `${String(wTot).padStart(4)} ${da}`;
-      });
-      const nm = staff.name.padEnd(16).slice(0,16);
-      const mo = String(monthSets[staff.id].size).padStart(2);
-      lines.push(`${nm}  ${mo}月  | ${cells.join('  ')}`);
-      // ra行
-      const raCells = DOW_NAMES.map((_, j) => {
-        const rTot = totArr[j];
-        const ra = rTot === 0 ? '0.00' : Math.min(1, rTot / 3).toFixed(2);
-        return `${String(rTot).padStart(4)} ${ra}`;
-      });
-      lines.push(`${''.padEnd(18)}  ra | ${raCells.join('  ')}`);
+        console.error(`[学習]   ${DOW_NAMES[j]}曜: workTot=${String(wTot).padStart(3)} da=${da}  tot=${String(rTot).padStart(3)} ra=${ra}`);
+      }
     }
-    lines.push('═'.repeat(110));
-    console.error(lines.join('\n'));
+    console.error('═══ [学習信頼度診断] END ═══');
   }
   result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
   return result;
