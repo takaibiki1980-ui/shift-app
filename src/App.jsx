@@ -1568,78 +1568,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
   };
 
-  // ★ステップ2.5: 早番・遅番 slot-first 配置（maxStaff<99 の「役割席」シフト）
-  // 夜勤と同じ slot-first アーキテクチャ：「席へ人を配置する」介護型の核心。
-  // maxStaff≥99（日勤等）は後続 Pass B の buffer として従来通り扱う。
-  // ──────────────────────────────────────────────────────────────────────────
-  // [Phase1 generation-heavy] maxConsecutive aware を cands filter に追加
-  //   「d に配置した場合の連続勤務数（前後ストリーク合算）が maxConsec を超えるなら候補外」
-  //   ・prevConsec = consecWork(s.id, d-1): d-1 までの後ろ向きストリーク（既存関数）
-  //   ・fwdConsec  = d+1 以降の確定済み前向きストリーク（inline ループ）
-  //   ・合計 prevConsec + 1(今日) + fwdConsec > maxConsec → 候補外
-  //   効果: Pass C の shouldProtectSlot 保護発動を減らし repair-heavy 依存を軽減
-  {
-    const slotFirstTypes = [...new Set(dept.shiftTypes)].filter(k =>
-      k !== '夜勤' && isSlotManaged(k)  // 夜勤はstep1で処理済み・明けはisSlotManaged内で除外済み
-    );
-    console.log('[AG-v7] slotFirstTypes=', slotFirstTypes, 'maxStaff=', JSON.stringify(maxStaff));
-    let _slotMaxConsecExcluded = 0; // ★Phase1 diagnostic: maxConsec aware により除外された候補数
-    for (const shiftType of slotFirstTypes) {
-      const limit = maxStaff[shiftType];
-      if (limit <= 0) continue;
-      const slotPool = ds.filter(s => getAllowedTypes(s).includes(shiftType));
-      for (let d = 1; d <= days; d++) {
-        const already = ds.filter(s => res[s.id][d] === shiftType).length;
-        const need = limit - already;
-        if (need <= 0) continue;
-        const cands = slotPool.filter(s => {
-          if (lockedDays[s.id].has(d)) return false;
-          if (res[s.id][d]) return false;
-          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
-          if (prev === '明け') return false;
-          if (isBadTransition(prev, shiftType)) return false;
-          if (isBadTransition(shiftType, next)) return false;
-          // ★Phase1 generation-heavy: maxConsecutive aware
-          // d に配置した結果の連続勤務数 = 後ろストリーク + 1 + 前ストリーク
-          // これが maxConsec を超える → このまま配置すると Pass C が発火する → 候補外
-          const prevConsec = consecWork(s.id, d - 1);
-          let fwdConsec = 0;
-          for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) fwdConsec++; else break; }
-          if (prevConsec + 1 + fwdConsec > maxConsec) { _slotMaxConsecExcluded++; return false; }
-          return true;
-        }).sort((a, b) => {
-          const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
-          const ub = Object.values(res[b.id]).filter(v => v === shiftType).length;
-          if (ua !== ub) return ua - ub;
-          const weekday = new Date(year, month, d).getDay();
-          const tA = getTrend(a), tB = getTrend(b);
-          const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
-          const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
-          if (Math.abs(wA - wB) > 0.05) return wB - wA;
-          return Math.random() - 0.5;
-        });
-        let filled = 0;
-        for (const s of cands) {
-          if (filled >= need) break;
-          res[s.id][d] = shiftType;
-          filled++;
-        }
-      }
-    }
-    // ★Phase1 diagnostic: slot-first 完了後の統計ログ
-    {
-      let _unfilledSlots = 0;
-      for (const shiftType of slotFirstTypes) {
-        const limit = maxStaff[shiftType];
-        for (let d = 1; d <= days; d++) {
-          const cnt = ds.filter(s => res[s.id][d] === shiftType).length;
-          if (cnt < limit) _unfilledSlots += limit - cnt;
-        }
-      }
-      console.log(`[AG-Phase1] slot-first完了: maxConsecExcluded=${_slotMaxConsecExcluded} unfilledSlots=${_unfilledSlots}`);
-    }
-  }
-
   // ═══════════════════════════════════════════════════════════════════════════
   // 確率優先配置フェーズ（確率サンプリング主軸アーキテクチャ）
   //  Pass A: 休み日 → dowRestRate で確率的サンプリング（30試行に多様性）
@@ -1768,6 +1696,67 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     { const _R=new Set(['休み','希望休','有休']); ['高野','伊藤','郡司','柳','川村'].forEach(nm=>{const _s=ds.find(s=>s.name&&s.name.includes(nm));if(_s){const _t=_s.kyukoDaysByMonth?.[mk]??_s.kyukoDays??8;const _d=Object.entries(res[_s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[公休追跡] PassA終了 ${_s.name} target=${_t} actual=${_d.length} 休み日=[${_d.join(',')}]`);}}); }
     // [DEBUG PassA-連続チェック] PassA後の潜在連続勤務違反（未割当日=PassBで勤務と仮定）
     { const _RA=new Set(['休み','希望休','有休']); let _vs=0,_vc=0,_mx=0; const _rows=ds.map(s=>{let st=0,vc=0,ms=0; for(let d=1;d<=days;d++){const v=res[s.id][d]; const br=_RA.has(v)||v==='明け'; if(br){st=0;}else{st++;if(st>maxConsec)vc++;} ms=Math.max(ms,st);} if(vc>0)_vs++; _vc+=vc; _mx=Math.max(_mx,ms); return{name:s.name,最大連続:ms,超過日数:vc};}); console.error(`[PassA-連続チェック] maxConsec=${maxConsec} 超過職員数=${_vs}/${ds.length} 超過日数合計=${_vc} 最大連続=${_mx}`); if(_vs>0)console.table(_rows.filter(r=>r.超過日数>0)); }
+
+    // ── ステップ2.5: 早番・遅番 slot-first 配置（PassA公休確定後に実行）─────
+    // PassA で休み日を先確定してから早番・遅番を配置することで、
+    // 夜勤5回スタッフの残り空き日数が不足してPassAのbreakが発火する問題を防ぐ。
+    {
+      const slotFirstTypes = [...new Set(dept.shiftTypes)].filter(k =>
+        k !== '夜勤' && isSlotManaged(k)
+      );
+      console.log('[AG-v7] slotFirstTypes=', slotFirstTypes, 'maxStaff=', JSON.stringify(maxStaff));
+      let _slotMaxConsecExcluded = 0;
+      for (const shiftType of slotFirstTypes) {
+        const limit = maxStaff[shiftType];
+        if (limit <= 0) continue;
+        const slotPool = ds.filter(s => getAllowedTypes(s).includes(shiftType));
+        for (let d = 1; d <= days; d++) {
+          const already = ds.filter(s => res[s.id][d] === shiftType).length;
+          const need = limit - already;
+          if (need <= 0) continue;
+          const cands = slotPool.filter(s => {
+            if (lockedDays[s.id].has(d)) return false;
+            if (res[s.id][d]) return false;
+            const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+            if (prev === '明け') return false;
+            if (isBadTransition(prev, shiftType)) return false;
+            if (isBadTransition(shiftType, next)) return false;
+            const prevConsec = consecWork(s.id, d - 1);
+            let fwdConsec = 0;
+            for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) fwdConsec++; else break; }
+            if (prevConsec + 1 + fwdConsec > maxConsec) { _slotMaxConsecExcluded++; return false; }
+            return true;
+          }).sort((a, b) => {
+            const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
+            const ub = Object.values(res[b.id]).filter(v => v === shiftType).length;
+            if (ua !== ub) return ua - ub;
+            const weekday = new Date(year, month, d).getDay();
+            const tA = getTrend(a), tB = getTrend(b);
+            const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
+            const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
+            if (Math.abs(wA - wB) > 0.05) return wB - wA;
+            return Math.random() - 0.5;
+          });
+          let filled = 0;
+          for (const s of cands) {
+            if (filled >= need) break;
+            res[s.id][d] = shiftType;
+            filled++;
+          }
+        }
+      }
+      {
+        let _unfilledSlots = 0;
+        for (const shiftType of slotFirstTypes) {
+          const limit = maxStaff[shiftType];
+          for (let d = 1; d <= days; d++) {
+            const cnt = ds.filter(s => res[s.id][d] === shiftType).length;
+            if (cnt < limit) _unfilledSlots += limit - cnt;
+          }
+        }
+        console.log(`[AG-Phase1] slot-first完了: maxConsecExcluded=${_slotMaxConsecExcluded} unfilledSlots=${_unfilledSlots}`);
+      }
+    }
 
     // ── Pass B: 全スタッフの勤務シフトを確率サンプリングで配置 ──────────────
     // trend あり → dowShiftRate を重みにサンプリング（ratio指定があれば枠を先確保）
