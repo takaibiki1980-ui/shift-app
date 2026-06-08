@@ -1738,8 +1738,16 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
           const targetDay = idealDay + jitter;
 
           // ─ 候補: [minDayAdj, maxDay] ∩ validDays ∩ 未使用 ─
-          const cands = validDays.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
-          if (!cands.length) break; // 配置不可能なら以降スキップ
+          // フォールバック①: isLast 末尾制約を緩和
+          // フォールバック②: maxDay 制約も緩和（連続違反は PassC が修正）
+          let cands = validDays.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
+          if (!cands.length && isLast) {
+            cands = validDays.filter(d => d >= minDay && d <= maxDay && !usedSet.has(d));
+          }
+          if (!cands.length) {
+            cands = validDays.filter(d => d >= minDay && !usedSet.has(d));
+          }
+          if (!cands.length) break;
 
           // targetDay に最も近い候補を選択
           const best = cands.reduce((a, b) =>
