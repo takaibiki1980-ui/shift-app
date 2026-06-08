@@ -1181,7 +1181,7 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
 }
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}) {
-  console.log('[AG-v7] start dept=', dept.id, 'maxStaff=', JSON.stringify(dept.maxStaff), 'minStaff=', JSON.stringify(dept.minStaff));
+  console.error('[AG-v7d] start dept=', dept.id, 'maxStaff=', JSON.stringify(dept.maxStaff), 'minStaff=', JSON.stringify(dept.minStaff));
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
@@ -1714,12 +1714,48 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         const picked = weightedSampleN(validDays, weights, restTarget);
         picked.forEach(d => { res[s.id][d] = '休み'; });
       } else {
-        // trendなし → canRest 制約を満たす日から等確率ランダムサンプリング
-        const eligible = validDays.filter(d => canRest(s.id, d));
-        const shuffled = weightedSampleN(eligible, eligible.map(() => 1), restTarget);
-        shuffled.forEach(d => { res[s.id][d] = '休み'; });
+        // trendなし → 均等分散配置（±2日揺らぎ + maxConsec制約保証）
+        // 均等間隔 step = validDays.length / (restTarget+1) を基準に
+        // ランダム揺らぎ±2日を加えつつ「前の休みから maxConsec+1 日以内」を保証
+        const N = validDays.length;
+        const step = N / (restTarget + 1);
+        const usedSet = new Set();
+        let prevDay = 0; // 前に配置した休みの日付（0=月初前）
+
+        for (let i = 1; i <= restTarget; i++) {
+          const isLast = (i === restTarget);
+
+          // ─ 制約範囲 ─
+          const minDay = prevDay + 1;
+          const maxDay = Math.min(days, prevDay + maxConsec + 1);
+          // 末尾制約: 最後の休みは days-maxConsec 以降（月末の連続勤務防止）
+          const minDayAdj = isLast ? Math.max(minDay, days - maxConsec) : minDay;
+
+          // ─ 理想位置 ± 揺らぎ ─
+          const idealIdx = Math.min(Math.max(0, Math.round(i * step) - 1), N - 1);
+          const idealDay = validDays[idealIdx];
+          const jitter   = Math.round((Math.random() - 0.5) * 4); // -2〜+2 均等
+          const targetDay = idealDay + jitter;
+
+          // ─ 候補: [minDayAdj, maxDay] ∩ validDays ∩ 未使用 ─
+          const cands = validDays.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
+          if (!cands.length) break; // 配置不可能なら以降スキップ
+
+          // targetDay に最も近い候補を選択
+          const best = cands.reduce((a, b) =>
+            Math.abs(a - targetDay) < Math.abs(b - targetDay) ? a : b
+          );
+
+          usedSet.add(best);
+          res[s.id][best] = '休み';
+          prevDay = best;
+        }
       }
     });
+    // [DEBUG PassA終了] 公休スナップショット
+    { const _R=new Set(['休み','希望休','有休']); console.error('── PassA終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
+    // [DEBUG PassA-連続チェック] PassA後の潜在連続勤務違反（未割当日=PassBで勤務と仮定）
+    { const _RA=new Set(['休み','希望休','有休']); let _vs=0,_vc=0,_mx=0; const _rows=ds.map(s=>{let st=0,vc=0,ms=0; for(let d=1;d<=days;d++){const v=res[s.id][d]; const br=_RA.has(v)||v==='明け'; if(br){st=0;}else{st++;if(st>maxConsec)vc++;} ms=Math.max(ms,st);} if(vc>0)_vs++; _vc+=vc; _mx=Math.max(_mx,ms); return{name:s.name,最大連続:ms,超過日数:vc};}); console.error(`[PassA-連続チェック] maxConsec=${maxConsec} 超過職員数=${_vs}/${ds.length} 超過日数合計=${_vc} 最大連続=${_mx}`); if(_vs>0)console.table(_rows.filter(r=>r.超過日数>0)); }
 
     // ── Pass B: 全スタッフの勤務シフトを確率サンプリングで配置 ──────────────
     // trend あり → dowShiftRate を重みにサンプリング（ratio指定があれば枠を先確保）
@@ -1827,6 +1863,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
         });
       }
     });
+    // [DEBUG PassB終了] 公休スナップショット
+    { const _R=new Set(['休み','希望休','有休']); console.error('── PassB終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
+    // [DEBUG PassB-連続チェック] PassB後の実際の連続勤務違反（勤務シフト配置済み）
+    { let _vs=0,_vc=0,_mx=0; const _rows=ds.map(s=>{let st=0,vc=0,ms=0; for(let d=1;d<=days;d++){const v=res[s.id][d]; const isW=deptWork.has(v)&&v!=='明け'; if(!isW){st=0;}else{st++;if(st>maxConsec)vc++;} ms=Math.max(ms,st);} if(vc>0)_vs++; _vc+=vc; _mx=Math.max(_mx,ms); return{name:s.name,最大連続:ms,超過日数:vc};}); console.error(`[PassB-連続チェック] maxConsec=${maxConsec} 超過職員数=${_vs}/${ds.length} 超過日数合計=${_vc} 最大連続=${_mx}`); if(_vs>0)console.table(_rows.filter(r=>r.超過日数>0)); }
 
     // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair] ────────────────────────────
     // 修復方針（介護型 Tier 構造に準拠）:
@@ -1872,16 +1912,18 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
             }
             const target = nikkinTarget ?? nonSlotTarget; // 日勤優先、なければ非 slot
             if (target !== null) {
+              console.log(`[PassC-Tier2休み追加] ${s.name} day=${target} before=${res[s.id][target]} (streak切断のため)`);
               res[s.id][target] = '休み'; // ← Tier2（日勤層）を削除して streak を断ち切る
               _absorbedByTier2++;
             }
             continue; // d 自体（role-slot）は変更しない
           }
+          console.log(`[PassC-非slot休み追加] ${s.name} day=${d} before=${res[s.id][d]} consecWork=${consecWork(s.id,d)}`);
           res[s.id][d] = '休み';
           _fixedNonSlot++;
         }
       });
-      console.log(`[AG-Phase1] PassC: 非slot修復=${_fixedNonSlot} Tier2吸収(日勤層)=${_absorbedByTier2}`);
+      console.error(`[AG-Phase1] PassC: 非slot修復=${_fixedNonSlot} Tier2吸収(日勤層)=${_absorbedByTier2} 合計追加休み=${_fixedNonSlot+_absorbedByTier2}`);
     }
     // ★Phase1 diagnostic: Pass C 後の連続勤務違反残存チェック（読み取り専用・ロジック変更なし）
     // [AG-Phase1] log: total=残存違反数 slotProtected=shouldProtectSlot が守った件数（Tier1衝突）
@@ -1901,6 +1943,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       else
         console.log('[AG-Phase1] PassC後 連続違反: ゼロ ✓');
     }
+    // [DEBUG PassC終了] 公休スナップショット
+    { const _R=new Set(['休み','希望休','有休']); console.error('── PassC終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
 
     // ── 公休数調整 ─ [Tier2 repair / shortage補正は shouldProtectSlot 保護済み] ──
     ds.forEach(s => {
@@ -1977,6 +2021,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     });
   }
+
+  // [DEBUG フェーズ追跡①] 公休数調整後
+  { const _R=new Set(['休み','希望休','有休']); console.error('── 公休数調整後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
 
   enforceMaxStaff(); // 1回目: Pass B/C 後の超過を除去
 
@@ -2097,6 +2144,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   enforceMaxStaff(); // 3回目: 最低配置保証後の超過を除去
 
+  // [DEBUG フェーズ追跡②] minStaff保証+enforceMaxStaff×3後
+  { const _R=new Set(['休み','希望休','有休']); console.error('── enforceMaxStaff×3後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
+
   // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
   // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
   {
@@ -2133,6 +2183,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     }
   }
+
+  // [DEBUG フェーズ追跡③] 公休数回復フェーズ後
+  { const _R=new Set(['休み','希望休','有休']); console.error('── 公休数回復後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
 
   // ★公休数超過バリデーション: 他ルールを破らない範囲で超過した休みを日勤へ変換
   // 変換できない場合は10日のまま受け入れる（無理強いしない）
@@ -2182,6 +2235,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       // 変換できる枠がなければ「惜しい状態」のまま終了（スコアで後評価）
     }
   }
+
+  // [DEBUG フェーズ追跡④] 公休数超過バリデーション後
+  { const _R=new Set(['休み','希望休','有休']); console.error('── 超過バリデーション後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
 
   // ratio 修復 ─ [Tier2 repair / fromShift削減は shouldProtectSlot 保護済み]
   // ★比率修復パス: minStaff保証後の比率乖離を実際のシフト変換で修正する
@@ -2304,6 +2360,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
       }
     }
   }
+  // [DEBUG 最終出力] 公休スナップショット
+  { const _R=new Set(['休み','希望休','有休']); console.error('── 最終出力 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,diff:Object.values(res[s.id]).filter(v=>_R.has(v)).length-(s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8),休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
   return { shifts: res, warnings, timelineWarnings };
 }
 
