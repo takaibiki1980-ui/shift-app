@@ -1947,7 +1947,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
     }
     // [DEBUG PassC終了] 公休スナップショット
     { const _R=new Set(['休み','希望休','有休']); console.error('── PassC終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
-    { const _L=ds.find(s=>s.name&&s.name.includes('ララ')); if(_L){const _R=new Set(['休み','希望休','有休']);const _tgt=_L.kyukoDaysByMonth?.[mk]??_L.kyukoDays??8;const _ds=Object.entries(res[_L.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[ララ] PassC終了 target=${_tgt} actual=${_ds.length} diff=${_ds.length-_tgt} 休み日=[${_ds.join(',')}]`);} }
+    { const _R=new Set(['休み','希望休','有休']); ['柳','川村','高野'].forEach(nm=>{const _s=ds.find(s=>s.name&&s.name.includes(nm));if(_s){const _tgt=_s.kyukoDaysByMonth?.[mk]??_s.kyukoDays??8;const _d2=Object.entries(res[_s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[3名] PassC終了 ${_s.name} target=${_tgt} actual=${_d2.length} diff=${_d2.length-_tgt} 休み日=[${_d2.join(',')}]`);}}); }
 
     // ── 公休数調整 ─ [Tier2 repair / shortage補正は shouldProtectSlot 保護済み] ──
     ds.forEach(s => {
@@ -2027,7 +2027,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   // [DEBUG フェーズ追跡①] 公休数調整後
   { const _R=new Set(['休み','希望休','有休']); console.error('── 公休数調整後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
-  { const _L=ds.find(s=>s.name&&s.name.includes('ララ')); if(_L){const _R=new Set(['休み','希望休','有休']);const _tgt=_L.kyukoDaysByMonth?.[mk]??_L.kyukoDays??8;const _ds=Object.entries(res[_L.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[ララ] 公休数調整後 target=${_tgt} actual=${_ds.length} diff=${_ds.length-_tgt} 休み日=[${_ds.join(',')}]`);} }
+  { const _R=new Set(['休み','希望休','有休']); ['柳','川村','高野'].forEach(nm=>{const _s=ds.find(s=>s.name&&s.name.includes(nm));if(_s){const _tgt=_s.kyukoDaysByMonth?.[mk]??_s.kyukoDays??8;const _d2=Object.entries(res[_s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[3名] 公休数調整後 ${_s.name} target=${_tgt} actual=${_d2.length} diff=${_d2.length-_tgt} 休み日=[${_d2.join(',')}]`);}}); }
 
   enforceMaxStaff(); // 1回目: Pass B/C 後の超過を除去
 
@@ -2150,7 +2150,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {})
 
   // [DEBUG フェーズ追跡②] minStaff保証+enforceMaxStaff×3後
   { const _R=new Set(['休み','希望休','有休']); console.error('── enforceMaxStaff×3後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
-  { const _L=ds.find(s=>s.name&&s.name.includes('ララ')); if(_L){const _R=new Set(['休み','希望休','有休']);const _tgt=_L.kyukoDaysByMonth?.[mk]??_L.kyukoDays??8;const _ds=Object.entries(res[_L.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[ララ] enforceMaxStaff×3後 target=${_tgt} actual=${_ds.length} diff=${_ds.length-_tgt} 休み日=[${_ds.join(',')}]`);} }
+  { const _R=new Set(['休み','希望休','有休']); ['柳','川村','高野'].forEach(nm=>{const _s=ds.find(s=>s.name&&s.name.includes(nm));if(_s){const _tgt=_s.kyukoDaysByMonth?.[mk]??_s.kyukoDays??8;const _d2=Object.entries(res[_s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[3名] enforceMaxStaff×3後 ${_s.name} target=${_tgt} actual=${_d2.length} diff=${_d2.length-_tgt} 休み日=[${_d2.join(',')}]`);}}); }
 
   // ★公休数回復フェーズ: 目標公休数に不足しているスタッフの日勤を休みに強制変換
   // minStaff を割らない範囲で、日勤配置数が最多の日から優先して変換する
