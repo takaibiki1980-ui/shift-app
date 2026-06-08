@@ -6808,7 +6808,30 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           return;
         }
         const csForGenerate = buildNightExclusion(cs, cd, allShiftsRef.current, deptsRef.current, year, month);
-        const {result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot} = _runGenerateCore(cd, csForGenerate, ct);
+
+        // ── 公休日数仕様保証リトライ ──────────────────────────────────────────
+        // actualKyuko !== targetKyuko の職員が1人でもいれば再生成（最大50回）
+        // 全員一致した最初の結果を採用。全試行で一致しなければ最高スコアを採用。
+        const _RETRY_REST = new Set(['休み', '希望休', '有休']);
+        const _retryDept  = cs.filter(s => s.dept === cd.id);
+        const _retryMk    = monthKey(year, month);
+        const _kyukoAllMatch = (res) => _retryDept.every(s => {
+          const tgt = s.kyukoDaysByMonth?.[_retryMk] ?? s.kyukoDays ?? 8;
+          const act = Object.values(res[s.id] || {}).filter(v => _RETRY_REST.has(v)).length;
+          return act === tgt;
+        });
+        let _gen = _runGenerateCore(cd, csForGenerate, ct);
+        if (!_kyukoAllMatch(_gen.result)) {
+          let _best = _gen;
+          for (let _r = 1; _r < 50; _r++) {
+            const _cand = _runGenerateCore(cd, csForGenerate, ct);
+            if (_kyukoAllMatch(_cand.result)) { _best = _cand; break; }
+            if (_cand.score > _best.score)    _best = _cand;
+          }
+          _gen = _best;
+          console.error(`[公休保証] リトライ結果: 全員一致=${_kyukoAllMatch(_gen.result)}`);
+        }
+        const {result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot} = _gen;
         setUndoCount(undoStackRef.current[cd.id].length);
 
         const _p1_ds = cs.filter(s => s.dept === cd.id);
