@@ -85,7 +85,9 @@ for (const s of staffList) trend[s.name] = buildTrend(s.name);
 function deepZero(obj) {
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
-    out[k] = typeof v === 'object' ? deepZero(v) : 0;
+    if (Array.isArray(v)) out[k] = [];
+    else if (typeof v === 'object' && v !== null) out[k] = deepZero(v);
+    else out[k] = 0;
   }
   return out;
 }
@@ -93,6 +95,7 @@ function deepZero(obj) {
 function deepAdd(acc, src) {
   for (const [k, v] of Object.entries(src)) {
     if (typeof v === 'number') acc[k] = (acc[k] ?? 0) + v;
+    else if (Array.isArray(v)) { if (Array.isArray(acc[k])) acc[k].push(...v); }
     else if (typeof v === 'object' && v !== null && acc[k]) deepAdd(acc[k], v);
   }
 }
@@ -142,8 +145,13 @@ console.log('='.repeat(70));
   console.log(`  学習提案数 (top person/slot): ${fmt(s.proposals)}`);
   console.log(`  採用:                         ${fmt(s.adopted)}  (${pct(s.adopted, s.proposals)})`);
   console.log(`  棄却 - 候補外 計:             ${fmt(notElig)}  (${pct(notElig, s.proposals)})`);
-  console.log(`    └ 希望休/夜勤ロック:        ${fmt(s.rejectedLocked ?? 0)}  (${pct(s.rejectedLocked ?? 0, s.proposals)})`);
-  console.log(`    └ 既割当(PassA休み等):      ${fmt(s.rejectedAlreadyAssigned ?? 0)}  (${pct(s.rejectedAlreadyAssigned ?? 0, s.proposals)})`);
+  console.log(`    └ lockedDays該当:           ${fmt(s.rejectedLocked ?? 0)}  (${pct(s.rejectedLocked ?? 0, s.proposals)})`);
+  console.log(`    └ res[d]既入力 計:          ${fmt(s.rejectedAlreadyAssigned ?? 0)}  (${pct(s.rejectedAlreadyAssigned ?? 0, s.proposals)})`);
+  console.log(`        └ '夜勤'配置済み:       ${fmt(s.rejectedAssigned_nightShift ?? 0)}`);
+  console.log(`        └ '明け'配置済み:       ${fmt(s.rejectedAssigned_meake ?? 0)}`);
+  console.log(`        └ '休み'配置済み:       ${fmt(s.rejectedAssigned_rest ?? 0)}`);
+  console.log(`        └ 希望休/有休:          ${fmt(s.rejectedAssigned_kiboKyu ?? 0)}`);
+  console.log(`        └ その他シフト:         ${fmt(s.rejectedAssigned_other ?? 0)}`);
   console.log(`    └ 遷移制約:                 ${fmt(s.rejectedBadTransition ?? 0)}  (${pct(s.rejectedBadTransition ?? 0, s.proposals)})`);
   console.log(`  棄却 - 公平性(カウント差):    ${fmt(s.rejectedByFairness)}  (${pct(s.rejectedByFairness, s.proposals)})`);
   console.log(`  棄却 - ランダム(差≤0.05):     ${fmt(s.rejectedByRandom)}  (${pct(s.rejectedByRandom, s.proposals)})`);
@@ -173,11 +181,33 @@ console.log('='.repeat(70));
 
 // ─── TierIV ──────────────────────────────────────────────────────────────────
 {
-  const t = acc.tierIV;
+  const t  = acc.tierIV;
+  const t4 = acc.tier4;
+  const adoptedTotal = acc.passB.adopted + acc.step25.adopted + acc.passA.adopted;
   console.log('\n【TierIV: 後処理(enforceMaxStaff/minStaff/公休数調整)】');
   console.log(`  変更セル数(total):            ${fmt(t.changed)}`);
   console.log(`  うち学習採用済み→変更:        ${fmt(t.changedFromAdopted)}  (${pct(t.changedFromAdopted, t.changed)})`);
-  console.log(`  学習採用ベースの変更率:       ${pct(t.changedFromAdopted, acc.passB.adopted + acc.step25.adopted + acc.passA.adopted)}`);
+  console.log(`  学習採用ベースの変更率:       ${pct(t.changedFromAdopted, adoptedTotal)}`);
+  console.log('\n【TierIV内訳: サブフェーズ別】');
+  const sub = [
+    ['restAdjust  (公休数調整)',  t4.restAdjust],
+    ['enforceMax  (最大人数)',    t4.enforceMax],
+    ['transitionFix(遷移修正)',   t4.transitionFix],
+    ['minStaff   (最小人数)',     t4.minStaff],
+  ];
+  console.log(`  ${'サブフェーズ'.padEnd(22)} ${'変更計'.padStart(7)}  ${'学習採用→変更'.padStart(10)}  採用比`);
+  for (const [label, s] of sub) {
+    console.log(`  ${label.padEnd(22)} ${fmt(s.changed)}  ${fmt(s.changedFromAdopted).padStart(10)}  (${pct(s.changedFromAdopted, adoptedTotal)})`);
+  }
+  const evts = t4.events.slice(0, 10);
+  if (evts.length) {
+    console.log('\n  [eventsサンプル (学習採用→変更 最初10件)]');
+    for (const e of evts) {
+      console.log(`    ${String(e.staff).padEnd(16)} day=${String(e.day).padStart(2)}  ${e.before}→${e.after}  (${e.reason})`);
+    }
+  } else {
+    console.log('\n  [events: 学習採用→変更 なし]');
+  }
 }
 
 // ─── 統合サマリー ─────────────────────────────────────────────────────────────
@@ -185,7 +215,10 @@ console.log('='.repeat(70));
   const totalProposals  = acc.passA.proposals + acc.step25.proposals + acc.passB.proposals;
   const adoptedAtPhase  = acc.passA.adopted + acc.step25.adopted + acc.passB.adopted;
   const changedPassC    = acc.passC.changedFromAdopted;
-  const changedTierIV   = acc.tierIV.changedFromAdopted;
+  const changedTierIV   = (acc.tier4.restAdjust.changedFromAdopted ?? 0)
+                        + (acc.tier4.enforceMax.changedFromAdopted ?? 0)
+                        + (acc.tier4.transitionFix.changedFromAdopted ?? 0)
+                        + (acc.tier4.minStaff.changedFromAdopted ?? 0);
   const finalAdopted    = adoptedAtPhase - changedPassC - changedTierIV;
 
   const rejLocked   = (acc.step25.rejectedLocked ?? 0) + acc.passA.rejectedNotValid;

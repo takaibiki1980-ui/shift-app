@@ -15,14 +15,26 @@ export function enableDiag()  { _diag = {
     passA:  { proposals: 0, adopted: 0, rejectedNotValid: 0, rejectedBySampling: 0, noTrend: 0 },
     step25: {
       proposals: 0, adopted: 0,
-      rejectedLocked: 0,          // lockedDays (希望休/夜勤アンカー)
-      rejectedAlreadyAssigned: 0, // res[d] 既入力 (PassA休み・明け等)
-      rejectedBadTransition: 0,   // 遷移制約
+      rejectedLocked: 0,              // lockedDays 該当（希望休/夜勤アンカー/明け翌日ロック）
+      rejectedAlreadyAssigned: 0,     // res[d] 既入力・合計
+      rejectedAssigned_nightShift: 0, // res[d]==='夜勤'（Step2配置済み）
+      rejectedAssigned_meake: 0,      // res[d]==='明け'（夜勤翌日）
+      rejectedAssigned_rest: 0,       // res[d]==='休み'（夜勤翌々日 or prevShifts休み）
+      rejectedAssigned_kiboKyu: 0,    // res[d]==='希望休'/'有休'（locked漏れ）
+      rejectedAssigned_other: 0,      // 上記以外の既割当シフト
+      rejectedBadTransition: 0,       // 遷移制約（明け前後 or isBadTransition）
       rejectedByFairness: 0, rejectedByRandom: 0, tieNoSignal: 0,
     },
     passB:  { proposals: 0, adopted: 0, rejectedByCapacity: 0, rejectedByDeficit: 0, rejectedBySampling: 0, noTrend: 0 },
     passC:  { changed: 0, changedFromAdopted: 0 },
     tierIV: { changed: 0, changedFromAdopted: 0 },
+    tier4: {
+      restAdjust:    { changed: 0, changedFromAdopted: 0 },
+      enforceMax:    { changed: 0, changedFromAdopted: 0 },
+      transitionFix: { changed: 0, changedFromAdopted: 0 },
+      minStaff:      { changed: 0, changedFromAdopted: 0 },
+      events: [],
+    },
   },
 }; }
 export function disableDiag() { _diag = null; }
@@ -383,12 +395,21 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             _diag.topTrend.step25.proposals++;
             const inEligible = eligible.some(s => s.id === topPerson.id);
             if (!inEligible) {
-              // 棄却理由を分解: 優先順位で最初に当てはまる理由を記録
+              // 棄却理由を分解: eligible フィルタの実際の分岐条件と同じ順序で判定
               if (lockedDays[topPerson.id].has(d)) {
+                // ① lockedDays: 希望休/有休/夜勤アンカー/夜勤明け翌日ロック
                 _diag.topTrend.step25.rejectedLocked++;
               } else if (res[topPerson.id][d]) {
+                // ② res[d] に値がある: Step2 配置の 夜勤/明け/翌日休み 等
                 _diag.topTrend.step25.rejectedAlreadyAssigned++;
+                const v = res[topPerson.id][d];
+                if      (v === '夜勤')                        _diag.topTrend.step25.rejectedAssigned_nightShift++;
+                else if (v === '明け')                        _diag.topTrend.step25.rejectedAssigned_meake++;
+                else if (v === '休み')                        _diag.topTrend.step25.rejectedAssigned_rest++;
+                else if (v === '希望休' || v === '有休')      _diag.topTrend.step25.rejectedAssigned_kiboKyu++;
+                else                                          _diag.topTrend.step25.rejectedAssigned_other++;
               } else {
+                // ③ 遷移違反 (prev==='明け' or isBadTransition)
                 _diag.topTrend.step25.rejectedBadTransition++;
               }
             } else {
@@ -757,6 +778,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
 
     // ── 公休数調整 ────────────────────────────────────────────────────────────
+    const _snapRestAdj = _diag?.topTrend?.tier4
+      ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
+      : null;
     ds.forEach(s => {
       const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
       const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休").length;
@@ -823,10 +847,29 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         res[s.id][d] = [...av].sort((a, b) => fixCnts[a] - fixCnts[b])[0];
       }
     });
+    if (_snapRestAdj && _diag?.topTrend?.tier4) {
+      const tier = _diag.topTrend.tier4.restAdjust;
+      for (const s of ds) {
+        for (let d = 1; d <= days; d++) {
+          const before = _snapRestAdj[s.id][d], after = res[s.id][d];
+          if (before !== after) {
+            tier.changed++;
+            const proposed = _trendTopMap?.get(`${s.id}:${d}`);
+            if (proposed && proposed === before) {
+              tier.changedFromAdopted++;
+              _diag.topTrend.tier4.events.push({ staff: s.name || s.id, day: d, before, after, reason: 'restAdjust' });
+            }
+          }
+        }
+      }
+    }
   }
 
   // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
   const enforceMaxStaff = () => {
+    const _snap = _diag?.topTrend?.tier4
+      ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
+      : null;
     for (let d = 1; d <= days; d++) {
       for (const [shiftKey, limit] of Object.entries(maxStaff)) {
         const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
@@ -852,35 +895,76 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         }
       }
     }
+    if (_snap && _diag?.topTrend?.tier4) {
+      const tier = _diag.topTrend.tier4.enforceMax;
+      for (const s of ds) {
+        for (let d = 1; d <= days; d++) {
+          const before = _snap[s.id][d], after = res[s.id][d];
+          if (before !== after) {
+            tier.changed++;
+            const proposed = _trendTopMap?.get(`${s.id}:${d}`);
+            if (proposed && proposed === before) {
+              tier.changedFromAdopted++;
+              _diag.topTrend.tier4.events.push({ staff: s.name || s.id, day: d, before, after, reason: 'enforceMax' });
+            }
+          }
+        }
+      }
+    }
   };
   enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
 
-  const isViolation = (prev, curr) => isBadTransition(prev, curr);
-  for (const s of ds) {
-    for (let d = 2; d <= days; d++) {
-      if (!isViolation(res[s.id][d - 1], res[s.id][d])) continue;
-      const fixDay = (target) => {
-        if (lockedDays[s.id].has(target)) return false;
-        const p = res[s.id][target - 1];
-        const n = res[s.id][target + 1];
-        const cnts = {};
-        dayTypes.forEach(k => { cnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][target] === k).length; });
-        const alt = dayTypes.find(k => {
-          if (!getAllowedTypes(s).includes(k)) return false;
-          if (isBadTransition(p, k)) return false;
-          if (isBadTransition(k, n)) return false;
-          return cnts[k] < (maxStaff[k] ?? 99);
-        }) || "休み";
-        res[s.id][target] = alt;
-        return true;
-      };
-      if (!fixDay(d)) fixDay(d - 1);
+  {
+    const _snapTransFix = _diag?.topTrend?.tier4
+      ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
+      : null;
+    const isViolation = (prev, curr) => isBadTransition(prev, curr);
+    for (const s of ds) {
+      for (let d = 2; d <= days; d++) {
+        if (!isViolation(res[s.id][d - 1], res[s.id][d])) continue;
+        const fixDay = (target) => {
+          if (lockedDays[s.id].has(target)) return false;
+          const p = res[s.id][target - 1];
+          const n = res[s.id][target + 1];
+          const cnts = {};
+          dayTypes.forEach(k => { cnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][target] === k).length; });
+          const alt = dayTypes.find(k => {
+            if (!getAllowedTypes(s).includes(k)) return false;
+            if (isBadTransition(p, k)) return false;
+            if (isBadTransition(k, n)) return false;
+            return cnts[k] < (maxStaff[k] ?? 99);
+          }) || "休み";
+          res[s.id][target] = alt;
+          return true;
+        };
+        if (!fixDay(d)) fixDay(d - 1);
+      }
+    }
+    if (_snapTransFix && _diag?.topTrend?.tier4) {
+      const tier = _diag.topTrend.tier4.transitionFix;
+      for (const s of ds) {
+        for (let d = 1; d <= days; d++) {
+          const before = _snapTransFix[s.id][d], after = res[s.id][d];
+          if (before !== after) {
+            tier.changed++;
+            const proposed = _trendTopMap?.get(`${s.id}:${d}`);
+            if (proposed && proposed === before) {
+              tier.changedFromAdopted++;
+              _diag.topTrend.tier4.events.push({ staff: s.name || s.id, day: d, before, after, reason: 'transitionFix' });
+            }
+          }
+        }
+      }
     }
   }
 
   enforceMaxStaff(); // 2回目
 
-  for (let pass = 0; pass < 3; pass++) {
+  {
+    const _snapMinStaff = _diag?.topTrend?.tier4
+      ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
+      : null;
+    for (let pass = 0; pass < 3; pass++) {
     let anyFixed = false;
     for (let d = 1; d <= days; d++) {
       for (const [shiftKey, minCount] of Object.entries(dept.minStaff || {})) {
@@ -942,9 +1026,29 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
     if (!anyFixed) break;
   }
+    if (_snapMinStaff && _diag?.topTrend?.tier4) {
+      const tier = _diag.topTrend.tier4.minStaff;
+      for (const s of ds) {
+        for (let d = 1; d <= days; d++) {
+          const before = _snapMinStaff[s.id][d], after = res[s.id][d];
+          if (before !== after) {
+            tier.changed++;
+            const proposed = _trendTopMap?.get(`${s.id}:${d}`);
+            if (proposed && proposed === before) {
+              tier.changedFromAdopted++;
+              _diag.topTrend.tier4.events.push({ staff: s.name || s.id, day: d, before, after, reason: 'minStaff' });
+            }
+          }
+        }
+      }
+    }
+  }
 
   enforceMaxStaff(); // 3回目
 
+  const _snapRestAdj2 = _diag?.topTrend?.tier4
+    ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
+    : null;
   {
     const REST_KYU = new Set(["休み","希望休"]);
     for (const s of ds) {
@@ -1062,6 +1166,22 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         }
       }
       console.log('[比率修復] 完了', s.name, '実績:', JSON.stringify(actuals));
+    }
+    if (_snapRestAdj2 && _diag?.topTrend?.tier4) {
+      const tier = _diag.topTrend.tier4.restAdjust;
+      for (const s of ds) {
+        for (let d = 1; d <= days; d++) {
+          const before = _snapRestAdj2[s.id][d], after = res[s.id][d];
+          if (before !== after) {
+            tier.changed++;
+            const proposed = _trendTopMap?.get(`${s.id}:${d}`);
+            if (proposed && proposed === before) {
+              tier.changedFromAdopted++;
+              _diag.topTrend.tier4.events.push({ staff: s.name || s.id, day: d, before, after, reason: 'restAdjust' });
+            }
+          }
+        }
+      }
     }
   }
 
