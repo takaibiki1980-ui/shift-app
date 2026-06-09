@@ -13,7 +13,13 @@ export function enableDiag()  { _diag = {
   passBPath: { pathA: 0, pathB: 0 },
   topTrend: {
     passA:  { proposals: 0, adopted: 0, rejectedNotValid: 0, rejectedBySampling: 0, noTrend: 0 },
-    step25: { proposals: 0, adopted: 0, rejectedNotEligible: 0, rejectedByFairness: 0, rejectedByRandom: 0, tieNoSignal: 0 },
+    step25: {
+      proposals: 0, adopted: 0,
+      rejectedLocked: 0,          // lockedDays (希望休/夜勤アンカー)
+      rejectedAlreadyAssigned: 0, // res[d] 既入力 (PassA休み・明け等)
+      rejectedBadTransition: 0,   // 遷移制約
+      rejectedByFairness: 0, rejectedByRandom: 0, tieNoSignal: 0,
+    },
     passB:  { proposals: 0, adopted: 0, rejectedByCapacity: 0, rejectedByDeficit: 0, rejectedBySampling: 0, noTrend: 0 },
     passC:  { changed: 0, changedFromAdopted: 0 },
     tierIV: { changed: 0, changedFromAdopted: 0 },
@@ -377,7 +383,14 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             _diag.topTrend.step25.proposals++;
             const inEligible = eligible.some(s => s.id === topPerson.id);
             if (!inEligible) {
-              _diag.topTrend.step25.rejectedNotEligible++;
+              // 棄却理由を分解: 優先順位で最初に当てはまる理由を記録
+              if (lockedDays[topPerson.id].has(d)) {
+                _diag.topTrend.step25.rejectedLocked++;
+              } else if (res[topPerson.id][d]) {
+                _diag.topTrend.step25.rejectedAlreadyAssigned++;
+              } else {
+                _diag.topTrend.step25.rejectedBadTransition++;
+              }
             } else {
               // Will check adoption after pick is determined — store for later
               // Use a temporary variable in the scope
