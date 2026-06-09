@@ -623,6 +623,31 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = [], diagDep
     const DOW_NAMES = ['月','火','水','木','金','土','日'];
     const diagStaff = staffList.filter(s => s.dept === diagDeptId);
     console.error(`═══ [学習信頼度診断] dept=${diagDeptId} START ═══`);
+
+    // 1. kaigo1シフトキー一覧
+    const shiftKeys = Object.keys(allDBData).filter(k => k.startsWith('shifts_') && k.includes(diagDeptId));
+    console.error(`[診断1] ${diagDeptId}シフトキー(${shiftKeys.length}件): ${JSON.stringify(shiftKeys)}`);
+
+    // 2. diagStaff の name/id/dept
+    console.error(`[診断2] diagStaff(${diagStaff.length}名):`);
+    for (const s of diagStaff) console.error(`[診断2]   name=${s.name} id=${s.id} dept=${s.dept}`);
+
+    // 3. counts に存在する staffId 一覧
+    const countsIds = Object.keys(counts);
+    console.error(`[診断3] counts staffId一覧(${countsIds.length}件): ${JSON.stringify(countsIds)}`);
+
+    // 4. totals に存在する staffId 一覧
+    const totalsIds = Object.keys(totals);
+    console.error(`[診断4] totals staffId一覧(${totalsIds.length}件): ${JSON.stringify(totalsIds)}`);
+
+    // 5. 各diagStaff について counts/totals の突合
+    console.error(`[診断5] diagStaff × counts/totals 突合:`);
+    for (const staff of diagStaff) {
+      const c = counts[staff.id];
+      const t = totals[staff.id];
+      console.error(`[診断5]   ${staff.name} | id=${staff.id} | counts=${JSON.stringify(c ?? null)} | totals=${t ?? 'undefined'}`);
+    }
+
     for (const staff of diagStaff) {
       if (!counts[staff.id] || totals[staff.id] < 1) continue;
       const shiftArr = dowShifts[staff.id] || [{},{},{},{},{},{},{}];
