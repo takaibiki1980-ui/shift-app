@@ -4,7 +4,10 @@
 let _diag = null;
 export function enableDiag()  { _diag = {
   passA:   { usedTrend: 0, noTrend: 0, highWeightDayPicked: 0, highWeightDayMissed: 0 },
-  step25:  { resolvedByCount: 0, resolvedByTrend: 0, resolvedByRandom: 0, singleCand: 0, total: 0 },
+  step25:  {
+    resolvedByCount: 0, resolvedByTrend: 0, resolvedByRandom: 0, singleCand: 0, total: 0,
+    randWdiffEq0: 0, randWdiff0to005: 0, randWdiffSum: 0,
+  },
   passBWeight: { usedDowShiftRate: 0, usedFreqTrend: 0, usedRatio: 0, usedDeptAvg: 0, usedUniform: 0 },
   passBDecision: { trendTopPicked: 0, trendTopOverridden: 0, deficitOverride: 0, capacityZero: 0 },
   passBPath: { pathA: 0, pathB: 0 },
@@ -90,7 +93,23 @@ export const monthKey = (y,m) => `${y}-${m+1}`;
 export const normName = (s) => String(s||'').replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[\s　・･．.\-ー－]/g,'').toLowerCase();
 export const nameMatch = (a, b) => { const na=normName(a), nb=normName(b); return na===nb||na.includes(nb)||nb.includes(na); };
 
-export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}) {
+export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, options = {}) {
+  // 配列 items から n件を確率 weights で非復元サンプリング
+  const weightedSampleN = (items, weights, n) => {
+    const pool = items.map((item, i) => ({ item, w: weights[i] ?? 1 }));
+    const result = [];
+    while (result.length < n && pool.length) {
+      const total = pool.reduce((s, x) => s + x.w, 0);
+      if (total <= 0) { result.push(...pool.slice(0, n - result.length).map(x => x.item)); break; }
+      let r = Math.random() * total;
+      const idx = pool.findIndex(x => { r -= x.w; return r <= 0; });
+      const picked = idx >= 0 ? idx : pool.length - 1;
+      result.push(pool[picked].item);
+      pool.splice(picked, 1);
+    }
+    return result;
+  };
+
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
@@ -316,53 +335,72 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         const already = ds.filter(s => res[s.id][d] === shiftType).length;
         const need = fillTarget - already;
         if (need <= 0) continue;
-        const cands = slotPool.filter(s => {
-          if (lockedDays[s.id].has(d)) return false;  // 希望休・夜勤アンカー等でロック
-          if (res[s.id][d]) return false;              // 既に何か割り当て済み
+        const eligible = slotPool.filter(s => {
+          if (lockedDays[s.id].has(d)) return false;
+          if (res[s.id][d]) return false;
           const prev = res[s.id][d - 1], next = res[s.id][d + 1];
           if (prev === '明け') return false;
           if (isBadTransition(prev, shiftType)) return false;
           if (isBadTransition(shiftType, next)) return false;
           return true;
-        }).sort((a, b) => {
-          // ①今月の担当回数が少ない人を優先（公平配分）
-          const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
-          const ub = Object.values(res[b.id]).filter(v => v === shiftType).length;
-          if (ua !== ub) return ua - ub;
-          // ②trend がある場合は当日曜の割り当て確率を加味
-          const weekday = new Date(year, month, d).getDay();
-          const tA = getTrend(a), tB = getTrend(b);
-          const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
-          const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
-          if (Math.abs(wA - wB) > 0.05) return wB - wA;
-          return Math.random() - 0.5;
         });
-        if (_diag && cands.length > 0) {
-          _diag.step25.total++;
-          if (cands.length === 1) {
-            _diag.step25.singleCand++;
-          } else {
-            const a = cands[0], b = cands[1];
+
+        let picked;
+        if (options.step25Mode === 'weighted') {
+          // 重み付きサンプリングモード:
+          // 公平重み(1/(count+1)) × trend重み を合成してサンプリング
+          const weekday = new Date(year, month, d).getDay();
+          const wts = eligible.map(s => {
+            const cnt = Object.values(res[s.id]).filter(v => v === shiftType).length;
+            const tr = getTrend(s);
+            const tw = Math.max(0.01, tr?.dowShiftRate?.[weekday]?.[shiftType] ?? tr?.[shiftType] ?? 0.5);
+            return (1 / (cnt + 1)) * tw;
+          });
+          picked = weightedSampleN(eligible, wts, need);
+        } else {
+          // デフォルト: ソートベース（公平カウント→trend閾値→ランダム）
+          const cands = [...eligible].sort((a, b) => {
             const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
             const ub = Object.values(res[b.id]).filter(v => v === shiftType).length;
-            if (ua !== ub) {
-              _diag.step25.resolvedByCount++;
+            if (ua !== ub) return ua - ub;
+            const weekday = new Date(year, month, d).getDay();
+            const tA = getTrend(a), tB = getTrend(b);
+            const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
+            const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
+            if (Math.abs(wA - wB) > 0.05) return wB - wA;
+            return Math.random() - 0.5;
+          });
+          if (_diag && cands.length > 0) {
+            _diag.step25.total++;
+            if (cands.length === 1) {
+              _diag.step25.singleCand++;
             } else {
-              const weekday = new Date(year, month, d).getDay();
-              const tA = getTrend(a), tB = getTrend(b);
-              const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
-              const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
-              if (Math.abs(wA - wB) > 0.05) _diag.step25.resolvedByTrend++;
-              else                           _diag.step25.resolvedByRandom++;
+              const a = cands[0], b = cands[1];
+              const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
+              const ub = Object.values(res[b.id]).filter(v => v === shiftType).length;
+              if (ua !== ub) {
+                _diag.step25.resolvedByCount++;
+              } else {
+                const weekday = new Date(year, month, d).getDay();
+                const tA = getTrend(a), tB = getTrend(b);
+                const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
+                const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
+                if (Math.abs(wA - wB) > 0.05) {
+                  _diag.step25.resolvedByTrend++;
+                } else {
+                  _diag.step25.resolvedByRandom++;
+                  const diff = Math.abs(wA - wB);
+                  _diag.step25.randWdiffSum += diff;
+                  if (diff === 0) _diag.step25.randWdiffEq0++;
+                  else            _diag.step25.randWdiff0to005++;
+                }
+              }
             }
           }
+          picked = cands.slice(0, need);
         }
-        let filled = 0;
-        for (const s of cands) {
-          if (filled >= need) break;
-          res[s.id][d] = shiftType;
-          filled++;
-        }
+
+        for (const s of picked) res[s.id][d] = shiftType;
       }
     }
   }
@@ -383,22 +421,6 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     let r = Math.random() * total;
     for (const [k, w] of entries) { r -= w; if (r <= 0) return k; }
     return entries[entries.length - 1][0];
-  };
-
-  // 配列 items から n件を確率 weights で非復元サンプリング
-  const weightedSampleN = (items, weights, n) => {
-    const pool = items.map((item, i) => ({ item, w: weights[i] ?? 1 }));
-    const result = [];
-    while (result.length < n && pool.length) {
-      const total = pool.reduce((s, x) => s + x.w, 0);
-      if (total <= 0) { result.push(...pool.slice(0, n - result.length).map(x => x.item)); break; }
-      let r = Math.random() * total;
-      const idx = pool.findIndex(x => { r -= x.w; return r <= 0; });
-      const picked = idx >= 0 ? idx : pool.length - 1;
-      result.push(pool[picked].item);
-      pool.splice(picked, 1);
-    }
-    return result;
   };
 
   // 部署全体の平均シフト比率（trendなしスタッフの fallback）
