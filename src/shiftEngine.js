@@ -1,5 +1,18 @@
 // Pure shift engine functions - no React/Supabase dependencies
 
+// ── [診断] 学習影響度カウンタ ─────────────────────────────────────────────
+let _diag = null;
+export function enableDiag()  { _diag = {
+  passA:   { usedTrend: 0, noTrend: 0, highWeightDayPicked: 0, highWeightDayMissed: 0 },
+  step25:  { resolvedByCount: 0, resolvedByTrend: 0, resolvedByRandom: 0, singleCand: 0, total: 0 },
+  passBWeight: { usedDowShiftRate: 0, usedFreqTrend: 0, usedRatio: 0, usedDeptAvg: 0, usedUniform: 0 },
+  passBDecision: { trendTopPicked: 0, trendTopOverridden: 0, deficitOverride: 0, capacityZero: 0 },
+  passBPath: { pathA: 0, pathB: 0 },
+}; }
+export function disableDiag() { _diag = null; }
+export function getDiag()     { return _diag ? JSON.parse(JSON.stringify(_diag)) : null; }
+// ──────────────────────────────────────────────────────────────────────────
+
 export const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 export const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]);
 export const WORK_TYPES  = new Set(["早番","日勤","遅番","夜勤"]);
@@ -324,6 +337,26 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           if (Math.abs(wA - wB) > 0.05) return wB - wA;
           return Math.random() - 0.5;
         });
+        if (_diag && cands.length > 0) {
+          _diag.step25.total++;
+          if (cands.length === 1) {
+            _diag.step25.singleCand++;
+          } else {
+            const a = cands[0], b = cands[1];
+            const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
+            const ub = Object.values(res[b.id]).filter(v => v === shiftType).length;
+            if (ua !== ub) {
+              _diag.step25.resolvedByCount++;
+            } else {
+              const weekday = new Date(year, month, d).getDay();
+              const tA = getTrend(a), tB = getTrend(b);
+              const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
+              const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
+              if (Math.abs(wA - wB) > 0.05) _diag.step25.resolvedByTrend++;
+              else                           _diag.step25.resolvedByRandom++;
+            }
+          }
+        }
         let filled = 0;
         for (const s of cands) {
           if (filled >= need) break;
@@ -398,13 +431,27 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
 
       const validDays = freeDays.filter(d => res[s.id][d - 1] !== '明け');
       if (trend?.dowRestRate) {
+        if (_diag) _diag.passA.usedTrend++;
         const weights = validDays.map(d => {
           const dow6 = (new Date(year, month, d).getDay() + 6) % 7;
           return Math.max(0.01, trend.dowRestRate[dow6] ?? 0.01);
         });
         const picked = weightedSampleN(validDays, weights, restTarget);
+        if (_diag && validDays.length > 0) {
+          // "高確率日" = 全バリデート日の重み上位1/3
+          const sorted = [...weights].sort((a,b) => b-a);
+          const threshold = sorted[Math.floor(sorted.length / 3)] ?? 0;
+          const pickedSet = new Set(picked);
+          validDays.forEach((d, i) => {
+            if (weights[i] >= threshold) {
+              if (pickedSet.has(d)) _diag.passA.highWeightDayPicked++;
+              else                  _diag.passA.highWeightDayMissed++;
+            }
+          });
+        }
         picked.forEach(d => { res[s.id][d] = '休み'; });
       } else {
+        if (_diag) _diag.passA.noTrend++;
         const eligible = validDays.filter(d => canRest(s.id, d));
         const shuffled = weightedSampleN(eligible, eligible.map(() => 1), restTarget);
         shuffled.forEach(d => { res[s.id][d] = '休み'; });
@@ -449,18 +496,35 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
 
       const getShiftWeight = (d, k) => {
         const weekday = new Date(year, month, d).getDay();
-        if (trend?.dowShiftRate?.[weekday]?.[k] != null) return Math.max(0.01, trend.dowShiftRate[weekday][k]);
-        if (trend && typeof trend[k] === 'number') return Math.max(0.01, trend[k]);
+        if (trend?.dowShiftRate?.[weekday]?.[k] != null) {
+          if (_diag) _diag.passBWeight.usedDowShiftRate++;
+          return Math.max(0.01, trend.dowShiftRate[weekday][k]);
+        }
+        if (trend && typeof trend[k] === 'number') {
+          if (_diag) _diag.passBWeight.usedFreqTrend++;
+          return Math.max(0.01, trend[k]);
+        }
         if (!trend && ratio) {
           const ratioTotal = allowed.reduce((sum, j) => sum + (ratio[j] || 0), 0);
-          if (ratioTotal > 0) return Math.max(0.01, (ratio[k] || 0.01) / ratioTotal);
+          if (ratioTotal > 0) {
+            if (_diag) _diag.passBWeight.usedRatio++;
+            return Math.max(0.01, (ratio[k] || 0.01) / ratioTotal);
+          }
         }
-        if (!trend && dept.roleShiftTypes?.[s.role]) return 1 / allowed.length;
-        if (deptAvgRatio?.[k] != null) return Math.max(0.01, deptAvgRatio[k]);
+        if (!trend && dept.roleShiftTypes?.[s.role]) {
+          if (_diag) _diag.passBWeight.usedDeptAvg++;
+          return 1 / allowed.length;
+        }
+        if (deptAvgRatio?.[k] != null) {
+          if (_diag) _diag.passBWeight.usedDeptAvg++;
+          return Math.max(0.01, deptAvgRatio[k]);
+        }
+        if (_diag) _diag.passBWeight.usedUniform++;
         return 1 / allowed.length;
       };
 
       if (ratio && Object.values(targetShiftCounts[s.id]).some(v => v > 0)) {
+        if (_diag) _diag.passBPath.pathA++;
         const remaining = new Set(workDays);
         allowed.filter(k => k !== '日勤').forEach(shiftType => {
           // slot-first 済み（maxStaff<99）のシフトは Pass B では扱わない
@@ -485,20 +549,31 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           assignedShiftCounts[s.id][nikkin] = (assignedShiftCounts[s.id][nikkin] || 0) + 1;
         });
       } else {
+        if (_diag) _diag.passBPath.pathB++;
         workDays.forEach(d => {
           const probs = {};
           allowed.forEach(k => { probs[k] = getShiftWeight(d, k); });
+          const trendTop = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0];
           const dayCnts = {};
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
+          let hasDeficit = false, hasCapacity = false;
           allowed.forEach(k => {
             const deficit = Math.max(0, (dept.minStaff[k] || 0) - (dayCnts[k] || 0));
-            if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
-            if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) probs[k] = 0;
+            if (deficit > 0) { probs[k] = (probs[k] || 0.01) * (1 + deficit * 2); hasDeficit = true; }
+            if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) { probs[k] = 0; hasCapacity = true; }
           });
+          if (_diag) {
+            if (hasDeficit)  _diag.passBDecision.deficitOverride++;
+            if (hasCapacity) _diag.passBDecision.capacityZero++;
+          }
           const pick = sampleFromProbs(probs)
             || allowed.find(k => (dayCnts[k]||0) < (maxStaff[k]??99))
             || allowed.find(k => k === '日勤')
             || allowed[0];
+          if (_diag) {
+            if (pick === trendTop) _diag.passBDecision.trendTopPicked++;
+            else                   _diag.passBDecision.trendTopOverridden++;
+          }
           res[s.id][d] = pick;
           assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
         });

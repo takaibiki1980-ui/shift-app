@@ -7,7 +7,7 @@
  *   Q3. 曜日固定化（特定職員の休み曜日エントロピー）
  */
 
-import { autoGenerate } from './src/shiftEngine.js';
+import { autoGenerate, enableDiag, getDiag } from './src/shiftEngine.js';
 
 const YEAR = 2026, MONTH = 5; // 6月 (0始まり)
 const DAYS = new Date(YEAR, MONTH + 1, 0).getDate();
@@ -117,8 +117,24 @@ function runBatch(trend, label) {
   // Q1: trend ONのみ: 各日で最多予測シフトと一致したカウント
   let q1Match = 0, q1Total = 0;
 
+  // 学習影響度カウンタ（学習ONのみ有意）
+  const diagAcc = {
+    passA:   { usedTrend: 0, noTrend: 0, highWeightDayPicked: 0, highWeightDayMissed: 0 },
+    step25:  { resolvedByCount: 0, resolvedByTrend: 0, resolvedByRandom: 0, singleCand: 0, total: 0 },
+    passBWeight: { usedDowShiftRate: 0, usedFreqTrend: 0, usedRatio: 0, usedDeptAvg: 0, usedUniform: 0 },
+    passBDecision: { trendTopPicked: 0, trendTopOverridden: 0, deficitOverride: 0, capacityZero: 0 },
+    passBPath: { pathA: 0, pathB: 0 },
+  };
+
   for (let run = 0; run < N_RUNS; run++) {
+    enableDiag();
     const { shifts } = autoGenerate(staffList, dept, YEAR, MONTH, {}, trend);
+    const d = getDiag();
+    if (d) {
+      for (const [sec, vals] of Object.entries(d)) {
+        for (const [k, v] of Object.entries(vals)) diagAcc[sec][k] += v;
+      }
+    }
 
     for (const s of staffList) {
       const sch = shifts[s.id] || {};
@@ -188,7 +204,7 @@ function runBatch(trend, label) {
     entropyMap[s.id] = { H: H.toFixed(3), top: `${DOW_NAMES[maxI]}(${dom}%)`, arr };
   }
 
-  return { label, avgShortage, avgKyukoViol, avgConsecViol, q1Rate, entropyMap };
+  return { label, avgShortage, avgKyukoViol, avgConsecViol, q1Rate, entropyMap, diagAcc };
 }
 
 // ── 実行 ────────────────────────────────────────────────────────────
@@ -241,6 +257,55 @@ for (const sName of ['ㇲミャッノーエイン', 'ケイシーサパナ']) {
   console.log(`  ${sName}:`);
   console.log(`    学習ON : ${DOW_NAMES.map((d, i) => `${d}:${on.arr[i]}`).join(' ')}`);
   console.log(`    学習OFF: ${DOW_NAMES.map((d, i) => `${d}:${off.arr[i]}`).join(' ')}`);
+}
+
+// ── 学習影響度診断（学習ONのみ）──────────────────────────────────────────
+{
+  const d = resultON.diagAcc;
+  const runs = N_RUNS;
+
+  console.log('\n【診断: 学習が各フェーズの意思決定に与えた影響 (学習ONのみ)】');
+
+  // Pass A
+  const pA = d.passA;
+  console.log('\n  [Pass A: 休み日サンプリング]');
+  console.log(`    学習あり: ${pA.usedTrend}回 / 学習なし(fallback): ${pA.noTrend}回`);
+  const paTot = pA.highWeightDayPicked + pA.highWeightDayMissed;
+  const paRate = paTot > 0 ? (pA.highWeightDayPicked / paTot * 100).toFixed(1) : '-';
+  console.log(`    高重み日採用率: ${paRate}% (${pA.highWeightDayPicked}/${paTot})  ← 高いほど学習通りに休みが入る`);
+
+  // Step 2.5
+  const s25 = d.step25;
+  const s25tot = s25.total;
+  const pct = (v) => s25tot > 0 ? (v / s25tot * 100).toFixed(1) : '-';
+  console.log('\n  [Step 2.5: 早番/遅番 slot-first ソート]');
+  console.log(`    総スロット決定数: ${s25tot} (${runs}run合計)`);
+  console.log(`    ①公平カウントで決定: ${s25.resolvedByCount} (${pct(s25.resolvedByCount)}%)`);
+  console.log(`    ②学習trendで決定:    ${s25.resolvedByTrend} (${pct(s25.resolvedByTrend)}%)  ← ここが学習の効いている部分`);
+  console.log(`    ③ランダムで決定:     ${s25.resolvedByRandom} (${pct(s25.resolvedByRandom)}%)`);
+  console.log(`    候補1人(自明):       ${s25.singleCand} (${pct(s25.singleCand)}%)`);
+
+  // Pass B weight source
+  const pw = d.passBWeight;
+  const pwTot = Object.values(pw).reduce((a, b) => a + b, 0);
+  const pwPct = (v) => pwTot > 0 ? (v / pwTot * 100).toFixed(1) : '-';
+  console.log('\n  [Pass B: シフト種別重み source]');
+  console.log(`    dowShiftRate(学習):  ${pw.usedDowShiftRate} (${pwPct(pw.usedDowShiftRate)}%)`);
+  console.log(`    freqTrend(学習):     ${pw.usedFreqTrend} (${pwPct(pw.usedFreqTrend)}%)`);
+  console.log(`    shiftRatio:          ${pw.usedRatio} (${pwPct(pw.usedRatio)}%)`);
+  console.log(`    deptAvg(部署平均):   ${pw.usedDeptAvg} (${pwPct(pw.usedDeptAvg)}%)`);
+  console.log(`    uniform(均等):       ${pw.usedUniform} (${pwPct(pw.usedUniform)}%)`);
+
+  // Pass B path & decision
+  const pp = d.passBPath;
+  const pd = d.passBDecision;
+  const pdTot = pd.trendTopPicked + pd.trendTopOverridden;
+  const pdPct = (v) => pdTot > 0 ? (v / pdTot * 100).toFixed(1) : '-';
+  console.log('\n  [Pass B: パス分岐 & 意思決定]');
+  console.log(`    Path A (shiftRatio使用): ${pp.pathA}人分 / Path B (確率サンプリング): ${pp.pathB}人分`);
+  console.log(`    trendTop採用:   ${pd.trendTopPicked} (${pdPct(pd.trendTopPicked)}%)  ← 学習通りに決まった割合`);
+  console.log(`    trendTop非採用: ${pd.trendTopOverridden} (${pdPct(pd.trendTopOverridden)}%)  ← 他の要因で学習が覆された割合`);
+  console.log(`    deficit乗算発動: ${pd.deficitOverride} / capacityZero発動: ${pd.capacityZero}`);
 }
 
 console.log('\n' + '='.repeat(65));
