@@ -727,6 +727,22 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     });
 
+    if (_diag?.topTrend && _snapPostPassB) {
+      for (const s of ds) {
+        for (let d = 1; d <= days; d++) {
+          const before = _snapPostPassB[s.id]?.[d];
+          const after = res[s.id][d];
+          if (before !== after) {
+            _diag.topTrend.passC.changed++;
+            const proposed = _trendTopMap?.get(`${s.id}:${d}`);
+            if (proposed && proposed === before) _diag.topTrend.passC.changedFromAdopted++;
+          }
+        }
+      }
+      _snapPostPassC = {};
+      for (const s of ds) _snapPostPassC[s.id] = { ...res[s.id] };
+    }
+
     // ── 公休数調整 ────────────────────────────────────────────────────────────
     ds.forEach(s => {
       const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
@@ -1057,6 +1073,19 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         const dayKeys = ds.filter(s => deptWork.has(res[s.id][d]) && res[s.id][d] !== "明け").map(s => res[s.id][d]);
         const gaps = coverageGaps(buildDayIntervals(dayKeys, dept), reqS, reqE);
         if (gaps.length > 0) timelineWarnings.push({ day: d, gaps });
+      }
+    }
+  }
+  if (_diag?.topTrend && _snapPostPassC) {
+    for (const s of ds) {
+      for (let d = 1; d <= days; d++) {
+        const before = _snapPostPassC[s.id]?.[d];
+        const after = res[s.id][d];
+        if (before !== after) {
+          _diag.topTrend.tierIV.changed++;
+          const proposed = _trendTopMap?.get(`${s.id}:${d}`);
+          if (proposed && proposed === before) _diag.topTrend.tierIV.changedFromAdopted++;
+        }
       }
     }
   }
