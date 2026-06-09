@@ -132,7 +132,10 @@ function runBatch(trend, label) {
     const d = getDiag();
     if (d) {
       for (const [sec, vals] of Object.entries(d)) {
-        for (const [k, v] of Object.entries(vals)) diagAcc[sec][k] += v;
+        if (!diagAcc[sec] || typeof vals !== 'object' || vals === null) continue;
+        for (const [k, v] of Object.entries(vals)) {
+          if (typeof v === 'number' && k in diagAcc[sec]) diagAcc[sec][k] += v;
+        }
       }
     }
 

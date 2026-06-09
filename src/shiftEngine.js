@@ -11,6 +11,13 @@ export function enableDiag()  { _diag = {
   passBWeight: { usedDowShiftRate: 0, usedFreqTrend: 0, usedRatio: 0, usedDeptAvg: 0, usedUniform: 0 },
   passBDecision: { trendTopPicked: 0, trendTopOverridden: 0, deficitOverride: 0, capacityZero: 0 },
   passBPath: { pathA: 0, pathB: 0 },
+  topTrend: {
+    passA:  { proposals: 0, adopted: 0, rejectedNotValid: 0, rejectedBySampling: 0, noTrend: 0 },
+    step25: { proposals: 0, adopted: 0, rejectedNotEligible: 0, rejectedByFairness: 0, rejectedByRandom: 0, tieNoSignal: 0 },
+    passB:  { proposals: 0, adopted: 0, rejectedByCapacity: 0, rejectedByDeficit: 0, rejectedBySampling: 0, noTrend: 0 },
+    passC:  { changed: 0, changedFromAdopted: 0 },
+    tierIV: { changed: 0, changedFromAdopted: 0 },
+  },
 }; }
 export function disableDiag() { _diag = null; }
 export function getDiag()     { return _diag ? JSON.parse(JSON.stringify(_diag)) : null; }
@@ -109,6 +116,11 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
     return result;
   };
+
+  // learning proposal tracking (only allocated when topTrend diagnostics enabled)
+  const _trendTopMap = _diag?.topTrend ? new Map() : null;  // key: `${sid}:${d}`, value: proposedShift
+  let _snapPostPassB = null;   // snapshot of res after PassB
+  let _snapPostPassC = null;   // snapshot of res after PassC
 
   const days = getDays(year, month);
   const mk = monthKey(year, month);
@@ -345,6 +357,39 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           return true;
         });
 
+        // Track top trend candidate before sort
+        if (_diag?.topTrend) {
+          const weekday = new Date(year, month, d).getDay();
+          // Find globally top-weight person from slotPool (not just eligible)
+          let topPerson = null, topW = -1;
+          slotPool.forEach(s => {
+            const tr = getTrend(s);
+            const w = tr?.dowShiftRate?.[weekday]?.[shiftType] ?? tr?.[shiftType] ?? 0;
+            if (w > topW) { topW = w; topPerson = s; }
+          });
+          // Check if all weights are equal (no signal)
+          const allEqual = slotPool.every(s => {
+            const tr = getTrend(s);
+            const w = tr?.dowShiftRate?.[weekday]?.[shiftType] ?? tr?.[shiftType] ?? 0;
+            return Math.abs(w - topW) < 0.001;
+          });
+          if (topPerson && !allEqual && topW > 0) {
+            _diag.topTrend.step25.proposals++;
+            const inEligible = eligible.some(s => s.id === topPerson.id);
+            if (!inEligible) {
+              _diag.topTrend.step25.rejectedNotEligible++;
+            } else {
+              // Will check adoption after pick is determined — store for later
+              // Use a temporary variable in the scope
+              _diag.topTrend.step25._pendingTopPerson = topPerson;
+              _diag.topTrend.step25._pendingShiftType = shiftType;
+              _diag.topTrend.step25._pendingDay = d;
+            }
+          } else if (allEqual) {
+            _diag.topTrend.step25.tieNoSignal++;
+          }
+        }
+
         let picked;
         if (options.step25Mode === 'weighted') {
           // 重み付きサンプリングモード:
@@ -398,6 +443,32 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             }
           }
           picked = cands.slice(0, need);
+        }
+
+        if (_diag?.topTrend && _diag.topTrend.step25._pendingTopPerson) {
+          const { _pendingTopPerson: topPerson, _pendingShiftType: st, _pendingDay: pd } = _diag.topTrend.step25;
+          if (pd === d && st === shiftType) {
+            const wasAdopted = picked.some(s => s.id === topPerson.id);
+            if (wasAdopted) {
+              _diag.topTrend.step25.adopted++;
+              _trendTopMap?.set(`${topPerson.id}:${d}`, shiftType);
+            } else {
+              // Was in eligible, but not picked — determine why
+              const weekday = new Date(year, month, d).getDay();
+              const topCount = Object.values(res[topPerson.id]).filter(v => v === shiftType).length;
+              const pickedMinCount = picked.length > 0
+                ? Math.min(...picked.map(s => Object.values(res[s.id]).filter(v => v === shiftType).length))
+                : Infinity;
+              if (topCount > pickedMinCount) {
+                _diag.topTrend.step25.rejectedByFairness++;
+              } else {
+                _diag.topTrend.step25.rejectedByRandom++;
+              }
+            }
+          }
+          delete _diag.topTrend.step25._pendingTopPerson;
+          delete _diag.topTrend.step25._pendingShiftType;
+          delete _diag.topTrend.step25._pendingDay;
         }
 
         for (const s of picked) res[s.id][d] = shiftType;
@@ -472,11 +543,33 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           });
         }
         picked.forEach(d => { res[s.id][d] = '休み'; });
+        if (_diag?.topTrend) {
+          // Find top-weight day across ALL free days (not just validDays)
+          const allFreeDays = freeDays;
+          let topDay = null, topW = -1;
+          allFreeDays.forEach(d => {
+            const dow6 = (new Date(year, month, d).getDay() + 6) % 7;
+            const w = trend.dowRestRate[dow6] ?? 0;
+            if (w > topW) { topW = w; topDay = d; }
+          });
+          if (topDay !== null) {
+            _diag.topTrend.passA.proposals++;
+            if (!validDays.includes(topDay)) {
+              _diag.topTrend.passA.rejectedNotValid++;
+            } else if (res[s.id][topDay] === '休み') {
+              _diag.topTrend.passA.adopted++;
+              _trendTopMap?.set(`${s.id}:${topDay}`, '休み');
+            } else {
+              _diag.topTrend.passA.rejectedBySampling++;
+            }
+          }
+        }
       } else {
         if (_diag) _diag.passA.noTrend++;
         const eligible = validDays.filter(d => canRest(s.id, d));
         const shuffled = weightedSampleN(eligible, eligible.map(() => 1), restTarget);
         shuffled.forEach(d => { res[s.id][d] = '休み'; });
+        if (_diag?.topTrend) _diag.topTrend.passA.noTrend++;
       }
     });
 
@@ -593,14 +686,36 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             || allowed.find(k => k === '日勤')
             || allowed[0];
           if (_diag) {
-            if (pick === trendTop) _diag.passBDecision.trendTopPicked++;
-            else                   _diag.passBDecision.trendTopOverridden++;
+            if (pick === trendTop) {
+              _diag.passBDecision.trendTopPicked++;
+            } else {
+              _diag.passBDecision.trendTopOverridden++;
+            }
+            if (_diag.topTrend) {
+              _diag.topTrend.passB.proposals++;
+              if (pick === trendTop) {
+                _diag.topTrend.passB.adopted++;
+                _trendTopMap?.set(`${s.id}:${d}`, trendTop);
+              } else if (probs[trendTop] === 0) {
+                _diag.topTrend.passB.rejectedByCapacity++;
+              } else if (hasDeficit) {
+                _diag.topTrend.passB.rejectedByDeficit++;
+              } else {
+                _diag.topTrend.passB.rejectedBySampling++;
+              }
+            }
           }
           res[s.id][d] = pick;
           assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
         });
       }
     });
+
+    // Snapshot for PassC/TierIV change tracking
+    if (_diag?.topTrend) {
+      _snapPostPassB = {};
+      for (const s of ds) _snapPostPassB[s.id] = { ...res[s.id] };
+    }
 
     // ── Pass C: 連続勤務超過の修正 ────────────────────────────────────────────
     ds.forEach(s => {
