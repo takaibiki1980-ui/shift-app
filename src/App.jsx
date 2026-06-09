@@ -490,7 +490,7 @@ function filterExpiredExceptions(list) {
 }
 
 // しふぽん蓄積データからスタッフごとのシフト傾向を学習する
-function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
+function computeLearnedTrend(allDBData, staffList, exceptionMonths = [], diagDeptId = null) {
   const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
   const counts = {}, totals = {}, monthSets = {};
   const transitions = {}, transitionTotals = {}; // 遷移確率集計: [staffId][prev][curr]
@@ -619,10 +619,11 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
     monthCounts[staff.name] = monthSets[staff.id].size;
   }
   // ── [診断] 学習信頼度 実測ログ（確認後に削除） ─────────────────────
-  {
+  if (diagDeptId) {
     const DOW_NAMES = ['月','火','水','木','金','土','日'];
-    console.error('═══ [学習信頼度診断] START ═══');
-    for (const staff of staffList) {
+    const diagStaff = staffList.filter(s => s.dept === diagDeptId);
+    console.error(`═══ [学習信頼度診断] dept=${diagDeptId} START ═══`);
+    for (const staff of diagStaff) {
       if (!counts[staff.id] || totals[staff.id] < 1) continue;
       const shiftArr = dowShifts[staff.id] || [{},{},{},{},{},{},{}];
       const totArr   = dowTotalsR[staff.id] || [0,0,0,0,0,0,0];
@@ -636,7 +637,7 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
         console.error(`[学習]   ${DOW_NAMES[j]}曜: workTot=${String(wTot).padStart(3)} da=${da}  tot=${String(rTot).padStart(3)} ra=${ra}`);
       }
     }
-    console.error('═══ [学習信頼度診断] END ═══');
+    console.error(`═══ [学習信頼度診断] dept=${diagDeptId} END ═══`);
   }
   result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
   return result;
@@ -6469,7 +6470,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // → 調整済みシフトが同セッション内の次月生成に即座に反映される
         allDBDataRef.current[key] = deptData;
         {
-          const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current);
+          const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current, currentDeptId);
           if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
         }
         const genRef = lastAutoGenRef.current[currentDeptId];
