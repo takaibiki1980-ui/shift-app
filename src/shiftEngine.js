@@ -918,10 +918,17 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     const _snapTransFix = _diag?.topTrend?.tier4
       ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
       : null;
+    // key: "sid:d" → 違反ルール名（fixDay実行時に記録）
+    const _transfixRuleMap = _diag?.topTrend?.tier4 ? new Map() : null;
     const isViolation = (prev, curr) => isBadTransition(prev, curr);
     for (const s of ds) {
       for (let d = 2; d <= days; d++) {
-        if (!isViolation(res[s.id][d - 1], res[s.id][d])) continue;
+        const vPrev = res[s.id][d - 1], vCurr = res[s.id][d];
+        if (!isViolation(vPrev, vCurr)) continue;
+        let rule = 'その他';
+        if (vPrev === '遅番' && vCurr === '早番') rule = '遅番→早番禁止';
+        else if (vPrev === '遅番' && vCurr === '日勤') rule = '遅番→日勤禁止';
+        else if (vPrev === '日勤' && vCurr === '早番') rule = '日勤→早番禁止';
         const fixDay = (target) => {
           if (lockedDays[s.id].has(target)) return false;
           const p = res[s.id][target - 1];
@@ -935,6 +942,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             return cnts[k] < (maxStaff[k] ?? 99);
           }) || "休み";
           res[s.id][target] = alt;
+          if (_transfixRuleMap) _transfixRuleMap.set(`${s.id}:${target}`, rule);
           return true;
         };
         if (!fixDay(d)) fixDay(d - 1);
@@ -950,7 +958,15 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             const proposed = _trendTopMap?.get(`${s.id}:${d}`);
             if (proposed && proposed === before) {
               tier.changedFromAdopted++;
-              _diag.topTrend.tier4.events.push({ staff: s.name || s.id, day: d, before, after, reason: 'transitionFix' });
+              const rule     = _transfixRuleMap?.get(`${s.id}:${d}`) ?? 'その他';
+              const prevSnap = _snapTransFix[s.id][d - 1];
+              const nextSnap = _snapTransFix[s.id][d + 1];
+              _diag.topTrend.tier4.events.push({
+                staff: s.name || s.id, day: d,
+                before, after,
+                prevSnap, nextSnap,
+                rule, reason: 'transitionFix',
+              });
             }
           }
         }
