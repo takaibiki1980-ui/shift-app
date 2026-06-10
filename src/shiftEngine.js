@@ -118,7 +118,7 @@ export const monthKey = (y,m) => `${y}-${m+1}`;
 export const normName = (s) => String(s||'').replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[\s　・･．.\-ー－]/g,'').toLowerCase();
 export const nameMatch = (a, b) => { const na=normName(a), nb=normName(b); return na===nb||na.includes(nb)||nb.includes(na); };
 
-export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, options = {}) {
+export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, options = {}, prevTail = {}) {
   // 配列 items から n件を確率 weights で非復元サンプリング
   const weightedSampleN = (items, weights, n) => {
     const pool = items.map((item, i) => ({ item, w: weights[i] ?? 1 }));
@@ -143,6 +143,11 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
+  // 前月末日数と「前月最終日のシフト」参照ヘルパー（res への負数キー格納なし）
+  const prevMonthYear = month === 0 ? year - 1 : year;
+  const prevMonthIdx  = month === 0 ? 11 : month - 1;
+  const prevDays = getDays(prevMonthYear, prevMonthIdx);
+  const prevShift = (id) => prevTail[id]?.[prevDays] ?? null;
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
   const maxStaff = {};
@@ -187,7 +192,21 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   const ds = staffList.filter(s => s.dept === dept.id);
   ds.forEach(s => { res[s.id] = {}; });
 
-  const consecWork = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptWork.has(res[id][i])) c++; else break; } return c; };
+  const consecWork = (id, d) => {
+    let c = 0;
+    for (let i = d; i >= 1; i--) {
+      if (deptWork.has(res[id][i])) c++;
+      else return c;          // 勤務外で途切れた → 前月参照不要
+    }
+    // d=0 またはd=1..day0 が全て勤務日だった場合のみ前月末へ遡る
+    if (prevTail[id]) {
+      for (let i = prevDays; i >= Math.max(1, prevDays - 4); i--) {
+        if (deptWork.has(prevTail[id][i])) c++;
+        else break;
+      }
+    }
+    return c;
+  };
   const consecRest = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   const consecRestFwd = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   const intervalThreshold = dept.intervalThreshold ?? null;
@@ -228,6 +247,19 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   const lockedDays = {};
   ds.forEach(s => { lockedDays[s.id] = new Set(Object.keys(res[s.id]).map(Number)); });
 
+  // 前月末夜勤/明けの当月繰り越し（正キーへの書き込み・res への負数格納なし）
+  ds.forEach(s => {
+    const ps = prevShift(s.id);
+    if (ps === '夜勤') {
+      // 前月末が夜勤 → 当月1日=明け、2日=休み を確定
+      if (!lockedDays[s.id].has(1)) { res[s.id][1] = '明け'; lockedDays[s.id].add(1); }
+      if (days >= 2 && !lockedDays[s.id].has(2)) { res[s.id][2] = '休み'; lockedDays[s.id].add(2); }
+    } else if (ps === '明け') {
+      // 前月末が明け（前月29日が夜勤）→ 当月1日=休み を確定
+      if (!lockedDays[s.id].has(1)) { res[s.id][1] = '休み'; lockedDays[s.id].add(1); }
+    }
+  });
+
   // 勤務指定の夜勤・明けに連鎖して翌日を自動セット
   ds.forEach(s => {
     for (let d = 1; d <= days; d++) {
@@ -267,7 +299,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         const nightDay = D - 2, meakeDay = D - 1;
         if (nightDay < 1) continue;
         if (lockedDays[s.id].has(nightDay) || lockedDays[s.id].has(meakeDay)) continue;
-        if (["夜勤", "明け"].includes(res[s.id][nightDay - 1])) continue;
+        if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue;
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue;
         res[s.id][nightDay] = "夜勤";
@@ -288,7 +320,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       if (need <= 0) continue;
       const canNight = (s) => {
         if (lockedDays[s.id].has(d)) return false;
-        if (["夜勤","明け"].includes(res[s.id][d - 1])) return false;
+        // d=1 のとき前月末シフトを参照（res[s.id][0] は存在しない）
+        if (["夜勤","明け"].includes(d === 1 ? prevShift(s.id) : res[s.id][d - 1])) return false;
         if (d + 1 <= days && lockedDays[s.id].has(d + 1) && res[s.id][d+1] !== "明け") return false;
         if (d + 2 <= days && lockedDays[s.id].has(d + 2) && deptWork.has(res[s.id][d + 2])) return false;
         return true;
@@ -368,7 +401,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         const eligible = slotPool.filter(s => {
           if (lockedDays[s.id].has(d)) return false;
           if (res[s.id][d]) return false;
-          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          // d=1 のとき前月末シフトを参照（res[s.id][0] は存在しない）
+          const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1];
+          const next = res[s.id][d + 1];
           if (prev === '明け') return false;
           if (isBadTransition(prev, shiftType)) return false;
           if (isBadTransition(shiftType, next)) return false;
@@ -1463,7 +1498,7 @@ export function localSearchImprove(shifts, ds, dept, days, year, month, shiftTre
 }
 
 // N回試行して最もスコアが低い結果を返す
-export function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30) {
+export function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, prevTail = {}) {
   const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
   let best = null, bestScore = Infinity;
@@ -1477,7 +1512,7 @@ export function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n 
       const cap = nikkinMin + (i % (range + 1));
       deptVariant = { ...dept, maxStaff: { ...dept.maxStaff, "日勤": cap } };
     }
-    const { shifts, warnings, timelineWarnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend);
+    const { shifts, warnings, timelineWarnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend, {}, prevTail);
     const score = scoreShifts(shifts, ds, dept, days, year, month, shiftTrend);
     if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score }; }
     if (bestScore === 0) break;
