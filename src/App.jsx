@@ -1926,8 +1926,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
             if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) probs[k] = 0;
           });
+          if (d === 1) { const ps = prevShift(s.id); if (ps) allowed.forEach(k => { if (isBadTransition(ps, k)) probs[k] = 0; }); }
           const pick = sampleFromProbs(probs)
-            || allowed.find(k => (dayCnts[k]||0) < (maxStaff[k]??99))
+            || allowed.find(k => !isBadTransition(d === 1 ? prevShift(s.id) : null, k) && (dayCnts[k]||0) < (maxStaff[k]??99))
             || allowed.find(k => k === '日勤')
             || allowed[0];
           res[s.id][d] = pick;
@@ -2044,15 +2045,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
           av = av.filter(k => getAllowedTypes(s).includes(k));
-          { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
+          { const p=d===1?prevShift(s.id):res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
           if (!av.length) {
-            const prevShift = res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
+            const prevSh = d === 1 ? prevShift(s.id) : res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
             const roleAllowed = getAllowedTypes(s);
             // maxStaff を守りつつ遷移ルール内で選択（両方NG なら maxStaff 優先・遷移妥協）
             const forceShift = (() => {
               const base = roleAllowed.length < dayTypes.length ? roleAllowed : dayTypes;
               // ①遷移OK + maxStaff内
-              const best = base.find(k => !isBadTransition(prevShift,k) && !isBadTransition(k,nextShift) && ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
+              const best = base.find(k => !isBadTransition(prevSh,k) && !isBadTransition(k,nextShift) && ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
               if (best) return best;
               // ②遷移妥協でも maxStaff内（日勤を優先）
               const safe = base.filter(k=>ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
@@ -2092,7 +2093,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
         let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
         av = av.filter(k => getAllowedTypes(s).includes(k));
-        { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
+        { const p=d===1?prevShift(s.id):res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
         if (!av.length) continue;
         res[s.id][d] = [...av].sort((a, b) => fixCnts[a] - fixCnts[b])[0];
       }
@@ -2177,7 +2178,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (WORK_TYPES.has(cur) === false) return false; // 勤務中のみ
           if (lockedDays[s.id].has(d)) return false;
           if (!getAllowedTypes(s).includes(shiftKey)) return false;
-          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1], next = res[s.id][d + 1];
           if (isBadTransition(prev, shiftKey)) return false;
           if (isBadTransition(shiftKey, next)) return false;
           // スライド元シフトのminStaffを割らないか確認
@@ -2215,7 +2216,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (res[s.id][d] !== "休み") return false;
           if (lockedDays[s.id].has(d)) return false;
           if (!getAllowedTypes(s).includes(shiftKey)) return false;
-          const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+          const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1], next = res[s.id][d + 1];
           if (prev === "夜勤" || prev === "明け") return false;
           if (isBadTransition(prev, shiftKey)) return false;
           if (isBadTransition(shiftKey, next)) return false;
