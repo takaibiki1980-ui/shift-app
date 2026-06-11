@@ -1785,7 +1785,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           const cands = slotPool.filter(s => {
             if (lockedDays[s.id].has(d)) return false;
             if (res[s.id][d]) return false;
-            const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+            const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1], next = res[s.id][d + 1];
             if (s.id === 'kaigo1_6' && d === 1) {
               console.log('[day1-check]', s.name, 'prev=', prev, 'candidate=', shiftType, 'blocked=', isBadTransition(prev, shiftType));
             }
