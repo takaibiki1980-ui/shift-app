@@ -1396,6 +1396,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   const prevMonthIdx  = month === 0 ? 11 : month - 1;
   const prevDays = getDays(prevMonthYear, prevMonthIdx);
   const prevShift = (id) => prevTail[id]?.[prevDays] ?? null;
+  console.log('[prevTail-autoGenerate]', '宇賀神', prevShift('kaigo1_6'));
 
   const consecWork = (id, d) => {
     let c = 0;
@@ -1785,6 +1786,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (lockedDays[s.id].has(d)) return false;
             if (res[s.id][d]) return false;
             const prev = res[s.id][d - 1], next = res[s.id][d + 1];
+            if (s.id === 'kaigo1_6' && d === 1) {
+              console.log('[day1-check]', s.name, 'prev=', prev, 'candidate=', shiftType, 'blocked=', isBadTransition(prev, shiftType));
+            }
             if (prev === '明け') return false;
             if (isBadTransition(prev, shiftType)) return false;
             if (isBadTransition(shiftType, next)) return false;
@@ -2017,6 +2021,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     { const _R=new Set(['休み','希望休','有休']); console.error('── PassC終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
     { const _R=new Set(['休み','希望休','有休']); const _sh=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_R.has(v)).length<t;}); console.error(`[不足] PassC終了: ${_sh.length}名`); _sh.forEach(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const days=Object.entries(res[s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);const ake=Object.values(res[s.id]).filter(v=>v==='明け').length;console.error(`  ${s.name} target=${t} actual=${days.length} diff=${days.length-t} 明け=${ake} 休み日=[${days.join(',')}]`);}); }
     { const _R=new Set(['休み','希望休','有休']); ['高野','伊藤','郡司','柳','川村'].forEach(nm=>{const _s=ds.find(s=>s.name&&s.name.includes(nm));if(_s){const _t=_s.kyukoDaysByMonth?.[mk]??_s.kyukoDays??8;const _d=Object.entries(res[_s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[公休追跡] PassC終了 ${_s.name} target=${_t} actual=${_d.length} 休み日=[${_d.join(',')}]`);}}); }
+    console.log('[day1-track]', 'PassC後', res['kaigo1_6']?.[1]);
 
     // ── 公休数調整 ─ [Tier2 repair / shortage補正は shouldProtectSlot 保護済み] ──
     ds.forEach(s => {
@@ -2152,6 +2157,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
 
   enforceMaxStaff(); // 2回目: 違反修正後の超過を除去
+  console.log('[day1-track]', 'transitionFix後', res['kaigo1_6']?.[1]);
 
   // minStaff 保証 ─ [Tier2 repair / slide元は shouldProtectSlot 保護済み]
   // 最低配置保証フェーズ: minStaff未満の日にスタッフを補充
@@ -2236,6 +2242,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
 
   enforceMaxStaff(); // 3回目: 最低配置保証後の超過を除去
+  console.log('[day1-track]', 'minStaff後', res['kaigo1_6']?.[1]);
 
   // [DEBUG フェーズ追跡②] minStaff保証+enforceMaxStaff×3後
   { const _R=new Set(['休み','希望休','有休']); console.error('── enforceMaxStaff×3後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
@@ -2459,6 +2466,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   // [DEBUG 最終出力] 公休スナップショット
   { const _R=new Set(['休み','希望休','有休']); console.error('── 最終出力 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,diff:Object.values(res[s.id]).filter(v=>_R.has(v)).length-(s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8),休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
   { const _L=ds.find(s=>s.name&&s.name.includes('ララ')); if(_L){const _R=new Set(['休み','希望休','有休']);const _tgt=_L.kyukoDaysByMonth?.[mk]??_L.kyukoDays??8;const _ds=Object.entries(res[_L.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[ララ] 最終出力 target=${_tgt} actual=${_ds.length} diff=${_ds.length-_tgt} 休み日=[${_ds.join(',')}]`);} }
+  console.log('[day1-final]', '宇賀神', 'day1=', res['kaigo1_6']?.[1], 'day2=', res['kaigo1_6']?.[2], 'day3=', res['kaigo1_6']?.[3]);
+  console.log('[day1-track]', 'return直前', res['kaigo1_6']?.[1]);
   return { shifts: res, warnings, timelineWarnings };
 }
 
@@ -2680,6 +2689,7 @@ function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}
 
 // N回試行して最もスコアが低い（違反が少ない）結果を返す
 function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, prevTail = {}) {
+  console.log('[prevTail-bestOfN]', Object.keys(prevTail || {}).length, prevTail['kaigo1_6']);
   const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
   let best = null, bestScore = Infinity;
@@ -6854,6 +6864,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     } else {
       console.log(`[prevTail] 前月キー=${prevMonthKey} データなし（前月シフト未保存）`);
     }
+    console.log('[prevTail-build]', targetDept.id, Object.keys(builtPrevTail).length, builtPrevTail['kaigo1_6']);
 
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
     const genStack = undoStackRef.current[targetDept.id] || [];
