@@ -6831,11 +6831,34 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setAllFloorSettings(prev => ({...prev, [activeDeptId]: newSettings}));
   }, [activeDeptId]);
 
-  const _runGenerateCore = useCallback((targetDept, cs, ct, prevTail = {}) => {
+  const _runGenerateCore = useCallback((targetDept, cs, ct) => {
+    // 前月シフトデータから prevTail を組み立て（allDBDataRef は全月分をキャッシュ済み）
+    const prevMonthYear = month === 0 ? year - 1 : year;
+    const prevMonthIdx  = month === 0 ? 11 : month - 1;
+    const prevMonthKey  = `shifts_${prevMonthYear}_${prevMonthIdx + 1}_${targetDept.id}`;
+    const prevMonthRaw  = allDBDataRef.current[prevMonthKey]; // { [staffId]: { [dayStr]: shift } }
+    const builtPrevTail = {};
+    if (prevMonthRaw) {
+      const prevDays = getDays(prevMonthYear, prevMonthIdx);
+      const tailStart = Math.max(1, prevDays - 4); // 末尾5日分
+      let staffCount = 0, dayCount = 0;
+      for (const [staffId, dayShifts] of Object.entries(prevMonthRaw)) {
+        const tail = {};
+        for (let d = tailStart; d <= prevDays; d++) {
+          const v = dayShifts[String(d)];
+          if (v) { tail[d] = v; dayCount++; }
+        }
+        if (Object.keys(tail).length > 0) { builtPrevTail[staffId] = tail; staffCount++; }
+      }
+      console.log(`[prevTail] 前月キー=${prevMonthKey} 職員数=${staffCount} 格納日数=${dayCount}`);
+    } else {
+      console.log(`[prevTail] 前月キー=${prevMonthKey} データなし（前月シフト未保存）`);
+    }
+
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
     const genStack = undoStackRef.current[targetDept.id] || [];
     undoStackRef.current[targetDept.id] = [...genStack, genSnapshot].slice(-30);
-    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, prevTail);
+    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
     lastAutoGenRef.current[targetDept.id] = result;
     return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot };
   }, [year, month]);
