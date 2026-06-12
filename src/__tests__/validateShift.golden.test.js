@@ -52,9 +52,16 @@ describe('validateShift ゴールデンテスト', () => {
     const result = validateShift({ shifts, dept, staffs, requests, prevTail: {}, year: YEAR, month: MONTH });
 
     expect(result.hardViolations).toEqual([]);
-    expect(result.softViolations).toEqual([]);
-    expect(result.score).toBeNull();
-    expect(result.breakdown).toEqual({});
+    // Step10以降: stb が sta より日勤2件多いため fairness Soft違反1件
+    // stb 日勤 30回 vs チーム平均 28.0回 → imbalance=2.0 → score=40
+    expect(result.softViolations).toHaveLength(1);
+    expect(result.softViolations[0]).toMatchObject({
+      ok:       false,
+      rule:     'fairness',
+      dedupKey: 'fairness:stb:日勤',
+    });
+    expect(result.score).toBe(40); // fairness penalty(20) × imbalance(2.0)
+    expect(result.breakdown).toEqual({ fairness: 40 });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
