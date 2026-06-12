@@ -103,6 +103,23 @@ export function check(staffId, date, shiftKey, context) {
     }
   }
 
+  // ─── D. 前日が夜勤 → 当日は明けのはず（A の逆方向：候補フィルタ用）──────────
+  // A は「夜勤[d]を見て翌日をチェック」するが、
+  // getCandidates では「候補[d]を見て前日が夜勤かをチェック」が必要。
+  // date>1 に限定することで、d=1 の月跨ぎケースと二重報告しない。
+  if (shiftKey !== '明け' && date > 1) {
+    const prev = staffShifts[date - 1];
+    if (prev === '夜勤') {
+      violations.push({
+        ok:       false,
+        rule:     RULE,
+        detail:   `前日(${date - 1}日)が夜勤のため${date}日は明けが必要です`,
+        expected: ['明け'],
+        actual:   shiftKey,
+      });
+    }
+  }
+
   // 違反なし → ok オブジェクトを1件返す
   if (violations.length === 0) {
     return [{ ok: true, rule: RULE }];
