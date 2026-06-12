@@ -53,55 +53,19 @@ export function validateShift({ shifts, dept, staffs, requests = {}, prevTail = 
       days,
     };
 
+    // 適用するルールを部署設定に応じて選択
+    const activeChecks = [
+      checkRoleAllowedShifts,
+      checkMinInterval,
+      checkRequestLock,
+      ...(hasNight ? [checkNightSetPattern] : []),
+    ];
+
     for (let d = 1; d <= days; d++) {
       const shiftKey = staffShifts[d];
 
-      // ── 1. roleAllowedShifts ─────────────────────────────────────────────
-      const raResult = checkRoleAllowedShifts(s.id, d, shiftKey, baseCtx);
-      if (!raResult.ok) {
-        hardViolations.push({
-          rule:      raResult.rule,
-          staffId:   s.id,
-          staffName: s.name,
-          date:      d,
-          actual:    raResult.actual,
-          expected:  raResult.expected,
-          detail:    raResult.detail,
-        });
-      }
-
-      // ── 2. minInterval ───────────────────────────────────────────────────
-      const miResult = checkMinInterval(s.id, d, shiftKey, baseCtx);
-      if (!miResult.ok) {
-        hardViolations.push({
-          rule:      miResult.rule,
-          staffId:   s.id,
-          staffName: s.name,
-          date:      d,
-          actual:    miResult.actual,
-          expected:  miResult.expected,
-          detail:    miResult.detail,
-        });
-      }
-
-      // ── 3. requestLock ───────────────────────────────────────────────────
-      const rlResult = checkRequestLock(s.id, d, shiftKey, baseCtx);
-      if (!rlResult.ok) {
-        hardViolations.push({
-          rule:      rlResult.rule,
-          staffId:   s.id,
-          staffName: s.name,
-          date:      d,
-          actual:    rlResult.actual,
-          expected:  rlResult.expected,
-          detail:    rlResult.detail,
-        });
-      }
-
-      // ── 4. nightSetPattern（hasNight 部署のみ） ──────────────────────────
-      if (hasNight) {
-        const nspResults = checkNightSetPattern(s.id, d, shiftKey, baseCtx);
-        for (const r of nspResults) {
+      for (const checkFn of activeChecks) {
+        for (const r of checkFn(s.id, d, shiftKey, baseCtx)) {
           if (!r.ok) {
             hardViolations.push({
               rule:      r.rule,

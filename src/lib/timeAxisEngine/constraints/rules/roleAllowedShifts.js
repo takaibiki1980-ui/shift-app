@@ -17,25 +17,25 @@ const RULE = 'roleAllowedShifts';
  *   dept   部署設定オブジェクト（dept.roleShiftTypes を getAllowedShiftTypes 経由で参照）
  *   role   スタッフの役職文字列
  *
- * @returns {{ ok: boolean, rule: string, detail?: string, expected?: string[], actual?: string }}
+ * @returns {Array<{ ok: boolean, rule: string, detail?: string, expected?: string[], actual?: string }>}
  */
 export function check(staffId, date, shiftKey, context) {
   const { dept, role } = context;
 
   if (!shiftKey || !WORK_TYPES.has(shiftKey) || shiftKey === '明け') {
-    return { ok: true, rule: RULE };
+    return [];
   }
 
   const allowed = getAllowedShiftTypes(dept, role);
   if (!allowed.includes(shiftKey)) {
-    return {
+    return [{
       ok:       false,
       rule:     RULE,
       detail:   '許可外シフトが配置されています',
       expected: allowed,
       actual:   shiftKey,
-    };
+    }];
   }
 
-  return { ok: true, rule: RULE };
+  return [];
 }

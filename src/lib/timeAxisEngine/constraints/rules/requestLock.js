@@ -16,25 +16,25 @@ const RULE = 'requestLock';
  *   requests  buildRequests() の返値
  *             { [staffId]: { [day: number]: { type, shiftKey } } }
  *
- * @returns {{ ok: boolean, rule: string, detail?: string, expected?: string[], actual?: string }}
+ * @returns {Array<{ ok: boolean, rule: string, detail?: string, expected?: string[], actual?: string }>}
  */
 export function check(staffId, date, shiftKey, context) {
   const { requests } = context;
 
   const lock = getLockedRequest(staffId, date, requests);
-  if (!lock) return { ok: true, rule: RULE };
+  if (!lock) return [];
 
-  if (shiftKey === lock.shiftKey) return { ok: true, rule: RULE };
+  if (shiftKey === lock.shiftKey) return [];
 
   const detail = lock.type === 'kiboRest' ? '希望休が上書きされています'
                : lock.type === 'yukyu'    ? '有休が上書きされています'
                : `希望勤務(${lock.shiftKey})が反映されていません`;
 
-  return {
+  return [{
     ok:       false,
     rule:     RULE,
     detail,
     expected: [lock.shiftKey],
     actual:   shiftKey ?? '(空欄)',
-  };
+  }];
 }

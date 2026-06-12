@@ -32,34 +32,34 @@ function intervalHours(prevKey, nextKey, dept) {
  *   dept              部署設定オブジェクト
  *   intervalThreshold 下限時間（null なら無効 → ok を返す）
  *
- * @returns {{ ok: boolean, rule: string, detail?: string, expected?: string, actual?: string }}
+ * @returns {Array<{ ok: boolean, rule: string, detail?: string, expected?: string, actual?: string }>}
  */
 export function check(staffId, date, shiftKey, context) {
   const { shifts, prevTail, dept, intervalThreshold } = context;
 
-  if (intervalThreshold == null) return { ok: true, rule: RULE };
+  if (intervalThreshold == null) return [];
 
   if (!shiftKey || !WORK_TYPES.has(shiftKey) || shiftKey === '明け') {
-    return { ok: true, rule: RULE };
+    return [];
   }
 
   const staffShifts = shifts[staffId] || {};
   const prev = date === 1 ? getPrevShift(prevTail, staffId) : staffShifts[date - 1];
 
   if (!prev || !WORK_TYPES.has(prev) || prev === '明け') {
-    return { ok: true, rule: RULE };
+    return [];
   }
 
   const hours = intervalHours(prev, shiftKey, dept);
   if (hours < intervalThreshold) {
-    return {
+    return [{
       ok:       false,
       rule:     RULE,
       detail:   `インターバル ${hours.toFixed(1)}h（下限 ${intervalThreshold}h）`,
       expected: `前日(${prev})終了から${intervalThreshold}h以上`,
       actual:   shiftKey,
-    };
+    }];
   }
 
-  return { ok: true, rule: RULE };
+  return [];
 }
