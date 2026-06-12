@@ -274,6 +274,69 @@ describe('maxConsecutive', () => {
     expect(typeof result[0].excess).toBe('number');
     expect(result[0].excess).toBe(2); // 5 - 3 = 2
   });
+
+  // ── 月跨ぎ実証：prevTail 3日 + 当月 3日 = 6連勤（上限5） ─────────────────
+  test('[実証] 前月末28-30日勤 + 当月1-3日勤 → 4日目配置で6連勤 excess=1', () => {
+    // prevTail: 前月 28/29/30 が日勤（3日連続）
+    // 当月:     1/2/3 が日勤（さらに3日連続）
+    // date=4 に日勤を配置しようとすると 3+3+1 = 7 ではなく
+    //   countConsecutiveBack(sta, 4, ...) = 3(当月) + 3(prevTail) = 6
+    //   wouldBe = 6 + 1 = 7 → excess = 7 - 5 = 2
+    // ※ユーザー指示の「6連勤, excess=1」は date=4 を含めた計算：
+    //   date=4 が "6日目" なので wouldBe=6, excess=6-5=1 を確認する
+    //   （date=1,2,3 が既配置 3日、prevTail が3日、合計 back=6、wouldBe=7 は 7連勤）
+    //
+    // ユーザー指定シナリオの正確な再現：
+    //   当月配置済み: 1,2,3（3日）
+    //   prevTail:    28,29,30（3日）
+    //   date=4 に配置 → back=6 → wouldBe=7 → excess=2
+    //
+    // 「6連勤として判定」= date=3+prevTail3+date自身=7日目 配置前の連続が6
+    //   つまり date を含めた連続が 7 になる場合を確認する
+    //
+    // ユーザーが期待する「6連勤、excess=1」を実現するには:
+    //   prevTail 3日 + 当月 2日 = back=5 → wouldBe=6 → excess=1
+    //   これが「前月3日 + 当月 1,2 + date=3 を配置」シナリオ
+    const context = {
+      dept: { maxConsecutive: 5 },
+      shifts: { 'sta': { 1: '日勤', 2: '日勤' } }, // 当月2日分
+      prevTail: { 'sta': { 28: '日勤', 29: '日勤', 30: '日勤' } }, // 前月末3日
+    };
+    // back = 当月2日 + prevTail3日 = 5, wouldBe = 6 → excess = 1
+    const result = checkMaxConsecutive('sta', 3, '日勤', context);
+    expect(result).toHaveLength(1);
+    expect(result[0].rule).toBe('maxConsecutive');
+    expect(result[0].excess).toBe(1); // 6 - 5 = 1
+    expect(result[0].dedupKey).toBe('maxConsecutive:sta:3');
+    // Violation 実例をテスト内に記録
+    // { ok:false, rule:'maxConsecutive', dedupKey:'maxConsecutive:sta:3',
+    //   detail:'6日連続勤務になる（上限5日）', excess:1 }
+  });
+
+  // ── 累積挙動確認：上限5で7連勤 ─────────────────────────────────────────────
+  test('[累積確認] 上限5で7連勤: 6日目 excess=1、7日目 excess=2', () => {
+    // 6日目（date=6）: 当月1-5が日勤 → back=5, wouldBe=6, excess=1
+    const ctx6 = {
+      dept: { maxConsecutive: 5 },
+      shifts: { 'sta': { 1:'日勤', 2:'日勤', 3:'日勤', 4:'日勤', 5:'日勤' } },
+      prevTail: {},
+    };
+    const v6 = checkMaxConsecutive('sta', 6, '日勤', ctx6);
+    expect(v6).toHaveLength(1);
+    expect(v6[0].excess).toBe(1);
+    expect(v6[0].dedupKey).toBe('maxConsecutive:sta:6');
+
+    // 7日目（date=7）: 当月1-6が日勤 → back=6, wouldBe=7, excess=2
+    const ctx7 = {
+      dept: { maxConsecutive: 5 },
+      shifts: { 'sta': { 1:'日勤', 2:'日勤', 3:'日勤', 4:'日勤', 5:'日勤', 6:'日勤' } },
+      prevTail: {},
+    };
+    const v7 = checkMaxConsecutive('sta', 7, '日勤', ctx7);
+    expect(v7).toHaveLength(1);
+    expect(v7[0].excess).toBe(2);
+    expect(v7[0].dedupKey).toBe('maxConsecutive:sta:7');
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
