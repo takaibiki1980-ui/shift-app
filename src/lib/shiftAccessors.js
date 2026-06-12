@@ -189,7 +189,30 @@ export function getPrevShift(prevTail, staffId) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 6. getStaffTrend
+// 6. getShiftRatio
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * スタッフの目標シフト比率を取得する。
+ *
+ * 解決優先順位（App.jsx の getShiftRatioOf と同一）:
+ *   ① s.shiftRatio           — 恒常的な比率設定
+ *   ② s.shiftRatioByMonth[mk] — 月別上書き設定
+ *
+ * @param {{ shiftRatio?: object, shiftRatioByMonth?: object } | null} staff
+ * @param {string | null} monthKey  "${year}-${month+1}" 形式（例: "2026-6"）
+ * @returns {{ [shiftKey: string]: number } | null}
+ *   例: { 早番: 0.2, 日勤: 0.6, 遅番: 0.2 }
+ *   設定なしの場合は null
+ */
+export function getShiftRatio(staff, monthKey) {
+  if (!staff) return null;
+  return staff.shiftRatio
+    || (monthKey ? (staff.shiftRatioByMonth?.[monthKey] ?? null) : null)
+    || null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 7. getStaffTrend
 // ═════════════════════════════════════════════════════════════════════════════
 /**
  * learnedTrend からスタッフのトレンドオブジェクトを取得する。

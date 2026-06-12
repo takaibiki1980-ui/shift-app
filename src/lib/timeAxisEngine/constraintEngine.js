@@ -28,16 +28,25 @@ import { check as checkNightSetPattern  } from './constraints/rules/nightSetPatt
 import { check as checkMinInterval      } from './constraints/rules/minInterval.js';
 import { check as checkRoleAllowedShifts} from './constraints/rules/roleAllowedShifts.js';
 import { check as checkRequestLock      } from './constraints/rules/requestLock.js';
+import { check as checkShiftRatio       } from './constraints/rules/shiftRatio.js';
+import { check as checkFairness         } from './constraints/rules/fairness.js';
+import { check as checkMaxConsecutive   } from './constraints/rules/maxConsecutive.js';
+import { check as checkMaxStaff         } from './constraints/rules/maxStaff.js';
 
 // ── ルールレジストリ ──────────────────────────────────────────────────────────
 // 制約ID → check関数 のマッピング。
-// Step 6 で Soft制約の実装が追加されたらここに登録する。
 // 登録のないIDは check が存在しないため「常に通過」扱い（空配列返し相当）。
 const RULE_REGISTRY = {
+  // Hard制約
   nightSetPattern:   checkNightSetPattern,
   minInterval:       checkMinInterval,
   roleAllowedShifts: checkRoleAllowedShifts,
   requestLock:       checkRequestLock,
+  // Soft制約（Step9で追加）
+  shiftRatio:        checkShiftRatio,
+  fairness:          checkFairness,
+  maxConsecutive:    checkMaxConsecutive,
+  maxStaff:          checkMaxStaff,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
