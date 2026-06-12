@@ -187,3 +187,63 @@ export function getPrevShift(prevTail, staffId) {
   if (!dayNums.length) return null;
   return tail[Math.max(...dayNums)] ?? null;
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 6. getStaffTrend
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * learnedTrend からスタッフのトレンドオブジェクトを取得する。
+ *
+ * learnedTrend のキーは staffName（computeLearnedTrend の仕様）。
+ * staffName キーへのアクセスはこの関数が唯一の吸収点とし、
+ * エンジン内の他コードは staffId・staffName を直接参照しない。
+ *
+ * @param {object} learnedTrend  computeLearnedTrend() の返値
+ * @param {{ name: string }}   staff  スタッフオブジェクト（name フィールドを使用）
+ * @returns {object | null}
+ */
+export function getStaffTrend(learnedTrend, staff) {
+  return learnedTrend?.[staff?.name] ?? null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 7. getDowShiftRate
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * 指定日の曜日別シフト確率マップを返す。
+ *
+ * dowShiftRate の曜日インデックスは getDay() 準拠（0=日〜6=土）。
+ * 曜日変換はこの関数内で完結させ、呼び出し元に漏らさない。
+ *
+ * @param {object | null} trend  getStaffTrend() の返値
+ * @param {Date | string} date   Date オブジェクト、または "YYYY-MM-DD" 文字列
+ * @returns {{ [shiftKey: string]: number } | null}
+ *   例: { 早番: 0.4, 日勤: 0.4, 遅番: 0.2 }
+ *   trend が null、または該当曜日がデータ薄の場合は null
+ */
+export function getDowShiftRate(trend, date) {
+  if (!trend?.dowShiftRate) return null;
+  const dow = (date instanceof Date ? date : new Date(date)).getDay(); // 0=日〜6=土
+  return trend.dowShiftRate[dow] ?? null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 8. getDowRestRate
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * 指定日の曜日別休み出現率を返す。
+ *
+ * dowRestRate の曜日インデックスは (getDay()+6)%7 準拠（0=月〜6=日）。
+ * dowShiftRate とインデックス体系が異なるため、変換はこの関数内で完結させる。
+ *
+ * @param {object | null} trend  getStaffTrend() の返値
+ * @param {Date | string} date   Date オブジェクト、または "YYYY-MM-DD" 文字列
+ * @returns {number | null}  0-1 の休み出現率、またはデータなしの場合 null
+ */
+export function getDowRestRate(trend, date) {
+  if (!trend?.dowRestRate) return null;
+  const dow = (date instanceof Date ? date : new Date(date)).getDay();
+  const idx = (dow + 6) % 7; // 0=月〜6=日
+  const v = trend.dowRestRate[idx];
+  return v != null ? v : null;
+}
