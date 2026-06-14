@@ -487,4 +487,44 @@ describe('generateTimeAxisShift', () => {
     // maxStaff は全 relaxation イベントで必ず含まれる（最後に解除される）
     expect(stats.relaxationBreakdown.maxStaff).toBe(stats.relaxationCount);
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 13.1: Phase1 公休アンカー 同日集中バグ修正テスト
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ── Test 21: learnedTrend=null でも全員休みの日が発生しない ──────────────
+  test('Step13.1: 3名・kyukoDays=8・learnedTrend=null で全員休みの日がなくなる', () => {
+    const staffs = [
+      mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 8 }),
+      mkStaff('stb', 'B', '調理師',     { kyukoDays: 8 }),
+      mkStaff('stc', 'C', '調理補助',   { kyukoDays: 8 }),
+    ];
+    const dept = {
+      shiftTypes:    ['早番', '日勤'],
+      roleShiftTypes: { '調理補助': ['日勤'] },
+      coverageRules: [
+        { start: '07:00', end: '09:00', min: 1 },
+        { start: '09:00', end: '18:00', min: 1 },
+      ],
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { shifts, stats } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    }, { trials: 1 });
+
+    // 全員休みの日がないこと
+    const REST_SET = new Set(['休み', '希望休', '有休', '公休', '明け']);
+    const allRestDays = [];
+    for (let d = 1; d <= 31; d++) {
+      if (staffs.every(s => REST_SET.has(shifts[s.id][d]))) allRestDays.push(d);
+    }
+    expect(allRestDays).toHaveLength(0);
+
+    // stats に maxRestPerDay / minRestPerDay が含まれること
+    expect(typeof stats.maxRestPerDay).toBe('number');
+    expect(typeof stats.minRestPerDay).toBe('number');
+    // 最大でも全員同日休みにはならない（staffs.length 未満）
+    expect(stats.maxRestPerDay).toBeLessThan(staffs.length);
+  });
 });

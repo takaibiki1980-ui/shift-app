@@ -40,21 +40,31 @@ function resolveRelaxationOrder(dept) {
  * 休みを優先的に配置すべき日リストを rate 降順で返す。
  * trend データがない日は rate=0 として末尾に回す。
  *
+ * learnedTrend が null / スタッフ未収録の場合は全日 rate=0 で同順になるため、
+ * staffIndex × floor(totalDays/staffCount) の開始オフセットをタイブレーカーとして使い
+ * スタッフ間で休み候補日を分散させる（全員同日集中バグの防止）。
+ *
  * @param {object} staff         スタッフオブジェクト（name フィールドを使用）
  * @param {object|null} learnedTrend  computeLearnedTrend() の返値
  * @param {number} year
  * @param {number} month  0-indexed
+ * @param {number} staffIndex   スタッフの通し番号（デフォルト 0）
+ * @param {number} staffCount   チーム総人数（デフォルト 1）
  * @returns {number[]}  day 番号の配列（1-indexed）
  */
-export function buildPreferredRestDays(staff, learnedTrend, year, month) {
+export function buildPreferredRestDays(staff, learnedTrend, year, month, staffIndex = 0, staffCount = 1) {
   const totalDays = new Date(year, month + 1, 0).getDate();
   const trend = getStaffTrend(learnedTrend, staff);
+  // 同 rate の日が並んだとき staffIndex × offset だけ先頭をずらす
+  const offset = staffCount > 1 ? staffIndex * Math.floor(totalDays / staffCount) : 0;
   const dayRates = [];
   for (let d = 1; d <= totalDays; d++) {
     const rate = getDowRestRate(trend, new Date(year, month, d)) ?? 0;
-    dayRates.push({ d, rate });
+    // adjustedOrder: offset 回転後の並び順（同 rate 時タイブレーカー）
+    const adjustedOrder = (d - 1 - offset + totalDays) % totalDays;
+    dayRates.push({ d, rate, adjustedOrder });
   }
-  dayRates.sort((a, b) => b.rate - a.rate);
+  dayRates.sort((a, b) => b.rate - a.rate || a.adjustedOrder - b.adjustedOrder);
   return dayRates.map(x => x.d);
 }
 
@@ -165,9 +175,11 @@ function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, mon
   }
 
   // Phase 1 前処理: 優先休日リストを一括構築
+  // staffIndex / staffCount を渡して全員同日集中を防ぐ
   const preferredRestDaysMap = {};
-  for (const s of staffs) {
-    preferredRestDaysMap[s.id] = buildPreferredRestDays(s, learnedTrend, year, month);
+  for (let i = 0; i < staffs.length; i++) {
+    const s = staffs[i];
+    preferredRestDaysMap[s.id] = buildPreferredRestDays(s, learnedTrend, year, month, i, staffs.length);
   }
 
   // Phase 1: 公休アンカー
@@ -333,6 +345,14 @@ export function generateTimeAxisShift(
     }
   }
 
+  // ── Phase 1 診断: 採用解の各日休み人数を集計 ──────────────────────────────
+  const restCountsByDay = [];
+  for (let d = 1; d <= days; d++) {
+    restCountsByDay.push(staffs.filter(s => REST_SET.has(best.shifts[s.id]?.[d])).length);
+  }
+  const maxRestPerDay = Math.max(...restCountsByDay);
+  const minRestPerDay = Math.min(...restCountsByDay);
+
   const stats = {
     trials,
     bestScore:              best.validation.score,
@@ -341,6 +361,8 @@ export function generateTimeAxisShift(
     relaxationCount,
     relaxationBreakdown,
     blockingConstraintBreakdown,
+    maxRestPerDay,
+    minRestPerDay,
   };
 
   return { shifts: best.shifts, relaxationLog: best.relaxationLog, infeasible: best.infeasible, stats };
