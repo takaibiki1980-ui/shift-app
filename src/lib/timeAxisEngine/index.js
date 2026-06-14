@@ -167,10 +167,19 @@ function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, mon
   const relaxationLog = [];
 
   // Phase 0: requestLock — 希望休・有休・希望勤務を先行固定
+  // roleShiftTypes Hard制約: shiftRequest が役職外の勤務シフトを要求している場合は無視する
   for (const s of staffs) {
     for (let d = 1; d <= days; d++) {
       const locked = getLockedRequest(s.id, d, requests);
-      if (locked) shifts[s.id][d] = locked.shiftKey;
+      if (!locked) continue;
+      if (locked.type === 'shiftRequest') {
+        const ra = dept.roleShiftTypes?.[s.role];
+        if (ra && !ra.includes(locked.shiftKey) && locked.shiftKey !== '明け'
+            && locked.shiftKey !== '希望休' && locked.shiftKey !== '有休' && locked.shiftKey !== '休み') {
+          continue; // 役職外勤務シフトリクエストは配置しない
+        }
+      }
+      shifts[s.id][d] = locked.shiftKey;
     }
   }
 

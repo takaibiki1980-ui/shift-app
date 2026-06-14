@@ -527,4 +527,53 @@ describe('generateTimeAxisShift', () => {
     // 最大でも全員同日休みにはならない（staffs.length 未満）
     expect(stats.maxRestPerDay).toBeLessThan(staffs.length);
   });
+
+  // ── Test 22: roleShiftTypes Hard制約 — カスタムシフト含む完全禁止テスト ───
+  test('roleShiftTypes Hard: 栄養士(日勤のみ)設定時にA/B/C/早番/遅番が1件も生成されない', () => {
+    // 栄養科を想定: 早番・日勤・遅番 に加えカスタムシフト A/B/C が存在する
+    // 栄養士ロールは '日勤' のみ許可。A/B/C/早番/遅番 は割り当て不可。
+    const dept = {
+      id: 'eiyoka',
+      shiftTypes: ['早番', '日勤', '遅番', 'A', 'B', 'C'],
+      roleShiftTypes: { '栄養士': ['日勤'] },
+      coverageRules: [
+        { start: '07:00', end: '09:00', min: 1 },   // 早番/A のみカバー → 栄養士は不可
+        { start: '09:00', end: '18:00', min: 3 },   // 全シフト区間 → 多人数必要
+        { start: '18:00', end: '21:00', min: 1 },   // 遅番/C のみカバー → 栄養士は不可
+      ],
+      customShiftDefs: [
+        { key: 'A', baseType: '早番', startTime: '07:00', endTime: '16:00' },
+        { key: 'B', baseType: '日勤', startTime: '09:00', endTime: '18:00' },
+        { key: 'C', baseType: '遅番', startTime: '12:00', endTime: '21:00' },
+      ],
+    };
+    const staffs = [
+      mkStaff('eiy1', '栄養士A', '栄養士'),    // 日勤のみ許可
+      mkStaff('cho1', '調理師A', '調理師'),    // 制限なし
+      mkStaff('cho2', '調理師B', '調理師'),    // 制限なし
+      mkStaff('cho3', '調理師C', '調理師'),    // 制限なし
+      mkStaff('cho4', '調理師D', '調理師'),    // 制限なし
+    ];
+    const requests = buildRequests(staffs, YEAR, MONTH);
+    const days = new Date(YEAR, MONTH + 1, 0).getDate(); // 31日
+
+    const { shifts } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    });
+
+    const FORBIDDEN = new Set(['早番', '遅番', 'A', 'B', 'C']);
+    const violations = [];
+    for (let d = 1; d <= days; d++) {
+      const shift = shifts['eiy1']?.[d];
+      if (shift && FORBIDDEN.has(shift)) {
+        violations.push(`${d}日: ${shift}`);
+      }
+    }
+
+    expect(violations).toHaveLength(0);
+    // violations がある場合に詳細を出す
+    if (violations.length > 0) {
+      console.error('栄養士A に禁止シフトが割り当てられた:', violations);
+    }
+  });
 });

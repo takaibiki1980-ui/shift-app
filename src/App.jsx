@@ -924,7 +924,12 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     Object.entries(prevShifts[s.id] || {}).forEach(([d, v]) => { if (v === '有休') locked[s.id][Number(d)] = '有休'; });
     (s.kiboByMonth?.[mk] || []).forEach(d => { locked[s.id][Number(d)] = '希望休'; });
     (s.yukyuByMonth?.[mk] || []).forEach(d => { locked[s.id][Number(d)] = '有休'; });
-    Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([d, sh]) => { locked[s.id][Number(d)] = sh; });
+    Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([d, sh]) => {
+      // roleShiftTypes Hard制約: 役職外の勤務シフトリクエストは配置しない
+      const ra = dept.roleShiftTypes?.[s.role];
+      if (ra && WORK.has(sh) && sh !== '明け' && !ra.includes(sh)) return;
+      locked[s.id][Number(d)] = sh;
+    });
   }
   const targetKyuko = {};
   ds.forEach(s => { targetKyuko[s.id] = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8; });
