@@ -182,6 +182,109 @@ describe('fairness', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
+// fairness 母集団限定・明け除外（修正検証テスト）
+// ═════════════════════════════════════════════════════════════════════════════
+describe('fairness 母集団限定・明け除外', () => {
+
+  test('早番可能2人で均等配分 → 違反なし（母集団2人）', () => {
+    // 両スタッフが早番可能・均等配分 → チーム平均＝自分の回数 → 差1 < 2 → 違反なし
+    const dept = { shiftTypes: ['早番', '日勤'] };
+    const staffs = [
+      { id: 'sta', role: '管理栄養士' },
+      { id: 'stb', role: '管理栄養士' },
+    ];
+    const shifts = {
+      'sta': { 1:'早番', 2:'早番', 3:'早番' },
+      'stb': { 1:'早番', 2:'早番', 3:'早番' },
+    };
+    // counts excl 4: sta=3, stb=3 → teamAvg=3, myCountAfter=4, 4-3=1 < 2 → 違反なし
+    expect(checkFairness('sta', 4, '早番', { dept, staffs, shifts })).toHaveLength(0);
+  });
+
+  test('早番可能1人・不可1人 → 独占しても違反なし（母集団1人）', () => {
+    // stb は補助（日勤のみ）→ 早番 fairness の母集団から除外
+    // sta のみが母集団 → チーム平均 = sta 自身のカウント → 差は常に1 → 違反なし
+    const dept = {
+      shiftTypes: ['早番', '日勤'],
+      roleShiftTypes: { '補助': ['日勤'] },
+    };
+    const staffs = [
+      { id: 'sta', role: '管理栄養士' }, // 早番可能
+      { id: 'stb', role: '補助' },       // 早番不可 → 母集団外
+    ];
+    const shifts = {
+      'sta': { 1:'早番', 2:'早番', 3:'早番', 4:'早番', 5:'早番', 6:'早番', 7:'早番', 8:'早番' },
+      'stb': { 1:'日勤', 2:'日勤', 3:'日勤', 4:'日勤', 5:'日勤', 6:'日勤', 7:'日勤', 8:'日勤' },
+    };
+    // 母集団=[sta], counts excl 9: sta=8, teamAvg=8, myCountAfter=9, 9-8=1 < 2 → 違反なし
+    expect(checkFairness('sta', 9, '早番', { dept, staffs, shifts })).toHaveLength(0);
+  });
+
+  test('同一シフト可能な3人で1人が極端に多い → 違反あり', () => {
+    // 3人全員早番可能、staが突出して多い
+    const dept = { shiftTypes: ['早番', '日勤'] };
+    const staffs = [
+      { id: 'sta', role: '管理栄養士' },
+      { id: 'stb', role: '管理栄養士' },
+      { id: 'stc', role: '管理栄養士' },
+    ];
+    const shifts = {
+      'sta': { 1:'早番', 2:'早番', 3:'早番', 4:'早番', 5:'早番', 6:'早番', 7:'早番', 8:'早番', 9:'早番' },
+      'stb': { 1:'早番', 2:'早番', 3:'早番' },
+      'stc': { 1:'早番', 2:'早番', 3:'早番' },
+    };
+    // counts excl 10: sta=9, stb=3, stc=3 → teamTotal=15, teamAvg=5
+    // myCountAfter=10, 10-5=5 >= 2 → 違反
+    const result = checkFairness('sta', 10, '早番', { dept, staffs, shifts });
+    expect(result).toHaveLength(1);
+    expect(result[0].rule).toBe('fairness');
+    expect(result[0].imbalance).toBeGreaterThanOrEqual(2);
+  });
+
+  test('明けシフトの配置は fairness チェック対象外', () => {
+    // sta が明け×多数でも fairness 違反なし（明けは SKIP_TYPES 対象）
+    const dept = { shiftTypes: ['日勤', '夜勤', '明け'] };
+    const staffs = [
+      { id: 'sta', role: '管理栄養士' },
+      { id: 'stb', role: '管理栄養士' },
+    ];
+    const shifts = {
+      'sta': { 1:'明け', 2:'明け', 3:'明け', 4:'明け', 5:'明け' },
+      'stb': {},
+    };
+    // '明け' は isFairnessTarget → false → return []
+    expect(checkFairness('sta', 6, '明け', { dept, staffs, shifts })).toHaveLength(0);
+  });
+
+  test('明けの多い夜勤者が日勤公平性で誤発火しない（母集団限定）', () => {
+    // sta は夜勤専従（日勤不可）、stb は日勤専従
+    // 旧実装: sta が日勤0でチーム平均を下げ、stb が誤発火していた
+    // 修正後: sta は '日勤' の母集団から除外 → stb のみで計算 → 差=1 → 違反なし
+    const dept = {
+      shiftTypes: ['日勤', '夜勤', '明け'],
+      roleShiftTypes: {
+        '夜勤専従': ['夜勤', '明け'], // 日勤不可 → fairness の日勤母集団から除外
+        '日勤専従': ['日勤'],
+      },
+    };
+    const staffs = [
+      { id: 'sta', role: '夜勤専従' }, // 日勤不可
+      { id: 'stb', role: '日勤専従' }, // 日勤可
+    ];
+    // stb が日勤を20日担当、sta は明けのみ
+    const stbShifts = {};
+    for (let d = 1; d <= 20; d++) stbShifts[d] = '日勤';
+    const shifts = {
+      'sta': { 1:'夜勤', 2:'明け', 3:'夜勤', 4:'明け', 5:'夜勤', 6:'明け' },
+      'stb': stbShifts,
+    };
+    // 母集団=[stb] のみ。counts excl 21: stb=20, teamAvg=20
+    // myCountAfter=21, 21-20=1 < 2 → 違反なし（旧実装では 21-10=11 ≥ 2 で誤発火）
+    expect(checkFairness('stb', 21, '日勤', { dept, staffs, shifts })).toHaveLength(0);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
 // maxConsecutive
 // ═════════════════════════════════════════════════════════════════════════════
 describe('maxConsecutive', () => {

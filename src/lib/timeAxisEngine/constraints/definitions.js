@@ -72,6 +72,7 @@ export const constraintDefinitions = [
     id: 'fairness',
     hardness: 'soft',
     penalty: 20,
+    fairnessTolerance: 2, // チーム平均を何件超えたら違反（fairness.js が参照する唯一の定義元）
     description: '公平性（シフト種別回数の偏り）',
     // 偏りは翌月で調整できる
   },
