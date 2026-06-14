@@ -235,7 +235,13 @@ function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, mon
           }
           if (rBestStaff) {
             shifts[rBestStaff.id][d] = rBestShift;
-            relaxationLog.push({ date: d, relaxedIds: [...relaxedIds], staffId: rBestStaff.id, shiftKey: rBestShift });
+            relaxationLog.push({
+              date:               d,
+              relaxedIds:         [...relaxedIds],
+              blockingConstraint: relaxedIds[relaxedIds.length - 1],
+              staffId:            rBestStaff.id,
+              shiftKey:           rBestShift,
+            });
             placed = true;
             break;
           }
@@ -316,9 +322,14 @@ export function generateTimeAxisShift(
   // ── Relaxation 統計（採用された best trial の relaxationLog から集計） ────────
   const relaxationCount = best.relaxationLog.length;
   const relaxationBreakdown = {};
+  const blockingConstraintBreakdown = {};
   for (const entry of best.relaxationLog) {
     for (const id of entry.relaxedIds) {
       relaxationBreakdown[id] = (relaxationBreakdown[id] ?? 0) + 1;
+    }
+    if (entry.blockingConstraint) {
+      blockingConstraintBreakdown[entry.blockingConstraint] =
+        (blockingConstraintBreakdown[entry.blockingConstraint] ?? 0) + 1;
     }
   }
 
@@ -329,6 +340,7 @@ export function generateTimeAxisShift(
     allTrialsInvalid,
     relaxationCount,
     relaxationBreakdown,
+    blockingConstraintBreakdown,
   };
 
   return { shifts: best.shifts, relaxationLog: best.relaxationLog, infeasible: best.infeasible, stats };
