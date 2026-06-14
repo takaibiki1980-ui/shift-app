@@ -195,3 +195,54 @@ describe('しふぽん自動生成エンジン：核心ルール絶対死守テ�
     }
   );
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  時間軸エンジン autoGenerateTime Phase3 2-opt スワップ役職チェック
+// ─────────────────────────────────────────────────────────────────────────────
+describe('autoGenerateTime Phase3 2-opt swap: 役職外シフトへのスワップ拒否', () => {
+
+  // Phase3 のスワップ可否判定ロジックと同じ述語
+  // 修正後: eligibleShifts[s1.id].includes(v2) && eligibleShifts[s2.id].includes(v1) を必須条件とする
+  const canSwap = (eligibleShifts, s1id, s2id, v1, v2) =>
+    eligibleShifts[s1id].includes(v2) && eligibleShifts[s2id].includes(v1);
+
+  test('調理補助(日勤のみ) ↔ 管理栄養士(早番・日勤): 日勤↔早番 swap は拒否される', () => {
+    const eligibleShifts = {
+      chorisho: ['日勤'],            // 調理補助: 日勤のみ
+      kanrieyo: ['早番', '日勤'],    // 管理栄養士: 早番・日勤
+    };
+
+    // swap後 調理補助が早番を受け取る → 役職外 → 拒否
+    expect(canSwap(eligibleShifts, 'chorisho', 'kanrieyo', '日勤', '早番')).toBe(false);
+  });
+
+  test('調理補助(日勤のみ) ↔ 管理栄養士(早番・日勤): 日勤↔日勤 swap は許可される', () => {
+    const eligibleShifts = {
+      chorisho: ['日勤'],
+      kanrieyo: ['早番', '日勤'],
+    };
+
+    // どちらも日勤を受け取る → 双方の役職内 → 許可
+    expect(canSwap(eligibleShifts, 'chorisho', 'kanrieyo', '日勤', '日勤')).toBe(true);
+  });
+
+  test('管理栄養士(早番・日勤) ↔ 調理補助(日勤のみ): 早番↔日勤 逆向きも拒否される', () => {
+    const eligibleShifts = {
+      chorisho: ['日勤'],
+      kanrieyo: ['早番', '日勤'],
+    };
+
+    // s1=管理栄養士が日勤を受け取り(OK)、s2=調理補助が早番を受け取る(NG)
+    expect(canSwap(eligibleShifts, 'kanrieyo', 'chorisho', '早番', '日勤')).toBe(false);
+  });
+
+  test('制限なし同士: 早番↔日勤 swap は許可される', () => {
+    const eligibleShifts = {
+      s1: ['早番', '日勤', '遅番'],
+      s2: ['早番', '日勤', '遅番'],
+    };
+
+    expect(canSwap(eligibleShifts, 's1', 's2', '日勤', '早番')).toBe(true);
+    expect(canSwap(eligibleShifts, 's1', 's2', '早番', '遅番')).toBe(true);
+  });
+});

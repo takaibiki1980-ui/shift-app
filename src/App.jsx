@@ -1201,6 +1201,7 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
             }
           }
           if (!coverageOk) continue;
+          if (!eligibleShifts[s1.id].includes(v2) || !eligibleShifts[s2.id].includes(v1)) continue;
           result[s1.id][d] = v2; result[s2.id][d] = v1;
           const newScore = scoreShiftsTime(result, ds, dept, days, year, month, shiftTrend);
           if (newScore < curScore) { curScore = newScore; improved = true; }
