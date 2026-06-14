@@ -414,4 +414,77 @@ describe('generateTimeAxisShift', () => {
     // maxStaff が緩和対象に含まれている
     expect(entry.relaxedIds).toContain('maxStaff');
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 12.5: Relaxation 統計テスト
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ── Test 18: 緩和不要なら relaxationCount=0, breakdown={} ─────────────────
+  test('Step12.5: 緩和不要な場合 stats.relaxationCount===0 かつ breakdown が空', () => {
+    const staffs = [mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 0 })];
+    const dept = {
+      shiftTypes: ['日勤'],
+      coverageRules: [{ start: '09:00', end: '18:00', min: 1 }],
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { stats } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    });
+
+    expect(stats.relaxationCount).toBe(0);
+    expect(stats.relaxationBreakdown).toEqual({});
+  });
+
+  // ── Test 19: maxStaff 緩和 → stats.relaxationCount が非ゼロ ───────────────
+  test('Step12.5: maxStaff 緩和成功ケースで stats.relaxationCount > 0 になる', () => {
+    const staffs = [
+      mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 0 }),
+      mkStaff('stb', 'B', '調理師',     { kyukoDays: 0 }),
+    ];
+    const dept = {
+      shiftTypes: ['日勤'],
+      coverageRules: [{ start: '09:00', end: '18:00', min: 2 }],
+      maxStaff: { 日勤: 1 },
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { stats } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    }, { trials: 1 });
+
+    expect(stats.relaxationCount).toBeGreaterThan(0);
+    expect(typeof stats.relaxationBreakdown).toBe('object');
+    expect(stats.relaxationBreakdown).toHaveProperty('maxStaff');
+  });
+
+  // ── Test 20: breakdown の集計が relaxationLog と完全一致する ─────────────
+  test('Step12.5: relaxationBreakdown が relaxationLog.relaxedIds の集計と一致する', () => {
+    const staffs = [
+      mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 0 }),
+      mkStaff('stb', 'B', '調理師',     { kyukoDays: 0 }),
+    ];
+    const dept = {
+      shiftTypes: ['日勤'],
+      coverageRules: [{ start: '09:00', end: '18:00', min: 2 }],
+      maxStaff: { 日勤: 1 },
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { relaxationLog, stats } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    }, { trials: 1 });
+
+    // breakdown は relaxationLog の relaxedIds を集計したものと一致するはず
+    const expected = {};
+    for (const entry of relaxationLog) {
+      for (const id of entry.relaxedIds) {
+        expected[id] = (expected[id] ?? 0) + 1;
+      }
+    }
+    expect(stats.relaxationBreakdown).toEqual(expected);
+
+    // maxStaff は全 relaxation イベントで必ず含まれる（最後に解除される）
+    expect(stats.relaxationBreakdown.maxStaff).toBe(stats.relaxationCount);
+  });
 });

@@ -276,10 +276,12 @@ function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, mon
  *   relaxationLog: object[],
  *   infeasible:    { date: number, gap: object, reason: string }[],
  *   stats: {
- *     trials:               number,
- *     bestScore:            number,
+ *     trials:                number,
+ *     bestScore:             number,
  *     bestHardViolationCount: number,
- *     allTrialsInvalid:     boolean,
+ *     allTrialsInvalid:      boolean,
+ *     relaxationCount:       number,
+ *     relaxationBreakdown:   { [constraintId: string]: number },
  *   },
  * }}
  */
@@ -311,11 +313,22 @@ export function generateTimeAxisShift(
     return a.validation.score <= b.validation.score ? a : b;
   });
 
+  // ── Relaxation 統計（採用された best trial の relaxationLog から集計） ────────
+  const relaxationCount = best.relaxationLog.length;
+  const relaxationBreakdown = {};
+  for (const entry of best.relaxationLog) {
+    for (const id of entry.relaxedIds) {
+      relaxationBreakdown[id] = (relaxationBreakdown[id] ?? 0) + 1;
+    }
+  }
+
   const stats = {
     trials,
     bestScore:              best.validation.score,
     bestHardViolationCount: best.validation.hardViolations.length,
     allTrialsInvalid,
+    relaxationCount,
+    relaxationBreakdown,
   };
 
   return { shifts: best.shifts, relaxationLog: best.relaxationLog, infeasible: best.infeasible, stats };
