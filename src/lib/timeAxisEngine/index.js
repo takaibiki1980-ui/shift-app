@@ -1,5 +1,5 @@
 /**
- * timeAxisEngine/index.js — 栄養科シフト自動生成エンジン（Step 11b）
+ * timeAxisEngine/index.js — 栄養科シフト自動生成エンジン（Step 11c）
  *
  * 実装済み Phase:
  *   Phase 0: requestLock 先行固定（希望休・有休・希望勤務）
@@ -7,9 +7,10 @@
  *   Phase 2: キーパーソン先配置（MRV — eligible スタッフ数昇順で coverage gap を処理）
  *   Phase 3: Coverage 駆動配置（日順 greedy、infeasible 記録）
  *   Phase 4: 残り公休充足（Phase 3 後の不足公休を空きスロットに補填）
+ *   bestOfN: 複数試行から Hard 違反ゼロ・score 最小の最良解を選択
  *
- * 未実装 Phase（将来実装）:
- *   bestOfN / ランダム探索 / trySwap / 2-opt / 学習再評価
+ * 未実装（将来実装）:
+ *   swap / 2-opt / tryRepair / Relaxation 自動再探索
  */
 
 import { getLockedRequest, getStaffTrend, getDowRestRate } from '../shiftAccessors.js';
@@ -22,7 +23,7 @@ import { validateShift }  from '../validateShift.js';
 const REST_SET = new Set(['休み', '希望休', '有休', '公休', '明け']);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ヘルパー（エクスポート: buildPreferredRestDays はテスト可能にする）
+// ヘルパー
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -78,10 +79,13 @@ function placeMinimumRestDays(staffs, shifts, year, month, preferredRestDaysMap)
  * 月内の全 coverage gap を eligible スタッフ数昇順でソートし、
  * 「最も配置が困難な gap」から順に最優秀候補を配置する。
  * infeasible は記録せず（Phase 3 の責務）、best-effort で配置する。
+ *
+ * @param rankFn  rankCandidates 互換の評価関数。試行ごとの jitter 版を受け取る。
  */
 function placeKeyPersons(
   dept, staffs, shifts, days, learnedTrend,
   requests, prevTail, intervalThreshold, year, month,
+  rankFn = rankCandidates,
 ) {
   // ① 全日の gap を収集し eligible 数を付与
   const gapQueue = [];
@@ -101,7 +105,6 @@ function placeKeyPersons(
 
   // ③ 各 gap に最優秀候補を配置
   for (const { d, gap } of gapQueue) {
-    // Phase 2 内の先行配置で既に充足済みか確認
     const recheck = fillGaps(d, { dept, shifts, days });
     const stillOpen = recheck.some(
       g => g.gapStart === gap.gapStart && g.gapEnd === gap.gapEnd && g.ruleStart === gap.ruleStart,
@@ -115,7 +118,7 @@ function placeKeyPersons(
       const candidates = getCandidates(s.id, d, staffCtx);
       const filtered = candidates.filter(sk => gap.coveringShifts.includes(sk));
       if (filtered.length === 0) continue;
-      const ranked = rankCandidates(s, d, filtered, learnedTrend,
+      const ranked = rankFn(s, d, filtered, learnedTrend,
         { year, month, currentShifts: shifts, prevTail });
       if (ranked.length > 0 && ranked[0].score > bestScore) {
         bestScore = ranked[0].score;
@@ -127,49 +130,23 @@ function placeKeyPersons(
   }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-/**
- * 栄養科シフト自動生成エントリポイント
- *
- * @param {{
- *   dept:         object,
- *   staffs:       object[],
- *   requests:     object,
- *   learnedTrend: object | null,
- *   prevTail:     object,
- *   year:         number,
- *   month:        number,  0-indexed
- * }} input
- *
- * @returns {{
- *   shifts:        { [staffId: string]: { [day: number]: string } },
- *   relaxationLog: object[],
- *   infeasible:    { date: number, gap: object, reason: string }[],
- *   stats:         { score: number, hardViolationCount: number, softViolationCount: number },
- * }}
- */
-export function generateTimeAxisShift({
-  dept,
-  staffs,
-  requests,
-  learnedTrend,
-  prevTail = {},
-  year,
-  month,
-}) {
-  const days = new Date(year, month + 1, 0).getDate();
-  const intervalThreshold = dept.intervalThreshold ?? null;
+// ─────────────────────────────────────────────────────────────────────────────
+// 1試行の生成ロジック
+// ─────────────────────────────────────────────────────────────────────────────
 
-  // shifts テーブル初期化（全スタッフ × 全日 = 未配置）
+/**
+ * 1試行分のシフト生成を実行し、{ shifts, infeasible, validation } を返す。
+ *
+ * 各試行では rankCandidates に微小ランダム jitter (Math.random() × 0.001) を
+ * 重畳し、Learning Engine 本体の重みを変えずに候補順位を多様化する。
+ */
+function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, month, days, intervalThreshold }) {
+  // shifts テーブル初期化
   const shifts = {};
   for (const s of staffs) shifts[s.id] = {};
+  const infeasible = [];
 
-  const relaxationLog = [];
-  const infeasible    = [];
-
-  // ─────────────────────────────────────────────────────────────────────────
   // Phase 0: requestLock — 希望休・有休・希望勤務を先行固定
-  // ─────────────────────────────────────────────────────────────────────────
   for (const s of staffs) {
     for (let d = 1; d <= days; d++) {
       const locked = getLockedRequest(s.id, d, requests);
@@ -177,33 +154,28 @@ export function generateTimeAxisShift({
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Phase 1 前処理: 全スタッフの優先休日リストを一括構築
-  // ─────────────────────────────────────────────────────────────────────────
+  // Phase 1 前処理: 優先休日リストを一括構築
   const preferredRestDaysMap = {};
   for (const s of staffs) {
     preferredRestDaysMap[s.id] = buildPreferredRestDays(s, learnedTrend, year, month);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Phase 1: 公休アンカー — requiredDaysOff に達するまで '休み' を先行配置
-  // ─────────────────────────────────────────────────────────────────────────
+  // Phase 1: 公休アンカー
   placeMinimumRestDays(staffs, shifts, year, month, preferredRestDaysMap);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Phase 2: キーパーソン先配置（MRV ヒューリスティック）
-  // ─────────────────────────────────────────────────────────────────────────
+  // この試行専用の jitter wrapper（Learning Engine 本体の重みは変更しない）
+  const rankFn = (staff, date, candidates, trend, ctx) =>
+    rankCandidates(staff, date, candidates, trend, ctx)
+      .map(r => ({ ...r, score: r.score + Math.random() * 0.001 }))
+      .sort((a, b) => b.score - a.score);
+
+  // Phase 2: キーパーソン先配置（MRV）
   placeKeyPersons(
     dept, staffs, shifts, days, learnedTrend,
-    requests, prevTail, intervalThreshold, year, month,
+    requests, prevTail, intervalThreshold, year, month, rankFn,
   );
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Phase 3: Coverage 駆動配置（日順 greedy）
-  //   Phase 2 で充足済みの gap は fillGaps が返さないため自動的にスキップ。
-  //   Phase 2 が best-effort で埋めきれなかった gap を補完し、
-  //   それでも候補なしなら infeasible に記録する。
-  // ─────────────────────────────────────────────────────────────────────────
   for (let d = 1; d <= days; d++) {
     for (const gap of fillGaps(d, { dept, shifts, days })) {
       const { coveringShifts } = gap;
@@ -215,7 +187,7 @@ export function generateTimeAxisShift({
         const candidates = getCandidates(s.id, d, staffCtx);
         const filtered   = candidates.filter(sk => coveringShifts.includes(sk));
         if (filtered.length === 0) continue;
-        const ranked = rankCandidates(s, d, filtered, learnedTrend,
+        const ranked = rankFn(s, d, filtered, learnedTrend,
           { year, month, currentShifts: shifts, prevTail });
         if (ranked.length > 0 && ranked[0].score > bestScore) {
           bestScore = ranked[0].score;
@@ -232,24 +204,76 @@ export function generateTimeAxisShift({
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Phase 4: 残り公休充足
-  //   Phase 3 後も required に達していないスタッフの空きスロットに '休み' を補填。
-  // ─────────────────────────────────────────────────────────────────────────
   placeMinimumRestDays(staffs, shifts, year, month, preferredRestDaysMap);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // validateShift 接続 — 生成完了後に必ず実行
-  // ─────────────────────────────────────────────────────────────────────────
-  const validation = validateShift({
-    shifts, dept, staffs, requests, prevTail, year, month,
+  const validation = validateShift({ shifts, dept, staffs, requests, prevTail, year, month });
+  return { shifts, infeasible, validation };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * 栄養科シフト自動生成エントリポイント（bestOfN 版）
+ *
+ * @param {{
+ *   dept:         object,
+ *   staffs:       object[],
+ *   requests:     object,
+ *   learnedTrend: object | null,
+ *   prevTail:     object,
+ *   year:         number,
+ *   month:        number,  0-indexed
+ * }} params
+ *
+ * @param {{ trials?: number }} options
+ *   trials: 試行回数（省略時 10、将来 30 へ増やせる構造）
+ *
+ * @returns {{
+ *   shifts:        { [staffId: string]: { [day: number]: string } },
+ *   relaxationLog: object[],
+ *   infeasible:    { date: number, gap: object, reason: string }[],
+ *   stats: {
+ *     trials:               number,
+ *     bestScore:            number,
+ *     bestHardViolationCount: number,
+ *     allTrialsInvalid:     boolean,
+ *   },
+ * }}
+ */
+export function generateTimeAxisShift(
+  { dept, staffs, requests, learnedTrend, prevTail = {}, year, month },
+  { trials = 10 } = {},
+) {
+  const days = new Date(year, month + 1, 0).getDate();
+  const intervalThreshold = dept.intervalThreshold ?? null;
+  const trialParams = { dept, staffs, requests, learnedTrend, prevTail, year, month, days, intervalThreshold };
+
+  // ── 複数試行実行 ──────────────────────────────────────────────────────────
+  const trialResults = [];
+  for (let t = 0; t < trials; t++) {
+    trialResults.push(runOneTrial(trialParams));
+  }
+
+  // ── 最良解選択 ────────────────────────────────────────────────────────────
+  // 有効試行（hardViolations=0）が存在すればその中から score 最小を選ぶ。
+  // 全試行失敗時は hardViolations 件数最小 → score 最小の順で選ぶ。
+  const validTrials = trialResults.filter(r => r.validation.hardViolations.length === 0);
+  const allTrialsInvalid = validTrials.length === 0;
+  const pool = allTrialsInvalid ? trialResults : validTrials;
+
+  const best = pool.reduce((a, b) => {
+    const aHard = a.validation.hardViolations.length;
+    const bHard = b.validation.hardViolations.length;
+    if (aHard !== bHard) return aHard < bHard ? a : b;
+    return a.validation.score <= b.validation.score ? a : b;
   });
 
   const stats = {
-    score:               validation.score,
-    hardViolationCount:  validation.hardViolations.length,
-    softViolationCount:  validation.softViolations.length,
+    trials,
+    bestScore:              best.validation.score,
+    bestHardViolationCount: best.validation.hardViolations.length,
+    allTrialsInvalid,
   };
 
-  return { shifts, relaxationLog, infeasible, stats };
+  return { shifts: best.shifts, relaxationLog: [], infeasible: best.infeasible, stats };
 }
