@@ -947,6 +947,31 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   const result = {};
   ds.forEach(s => { result[s.id] = { ...locked[s.id] }; });
 
+  // ── 役職制約違反スキャナ ──────────────────────────────────────────────────
+  // phase: 'P0_lock' | 'P05_softRest' | 'P1_coverage' | 'P2_kyuko' | 'P3_swap'
+  const _snapRole = () => {
+    const out = {};
+    for (const s of ds) out[s.id] = { ...result[s.id] };
+    return out;
+  };
+  const _diffRoleViols = (snapPrev, snapCurr, phase) => {
+    const viols = [];
+    for (const s of ds) {
+      const ra = dept.roleShiftTypes?.[s.role];
+      if (!ra) continue;
+      for (let d = 1; d <= days; d++) {
+        const cur = snapCurr[s.id]?.[d];
+        if (!cur || !WORK.has(cur) || cur === '明け') continue;
+        if (ra.includes(cur)) continue;
+        const prev = snapPrev[s.id]?.[d];
+        if (prev === cur) continue; // 前フェーズから変化なし
+        viols.push({ staffId: s.id, staffName: s.name, role: s.role, date: d, shift: cur, allowedShifts: [...ra], phase });
+      }
+    }
+    return viols;
+  };
+  let _snapPrev = _snapRole(); // Phase0 直後（locked 反映済み）
+
   // Phase0.5: preferredRestDays — 公休を月内均等分散（ソフトロック）
   const softRest = {};
   for (const s of ds) {
@@ -965,6 +990,8 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       if (!used.has(day)) { used.add(day); softRest[s.id].add(day); result[s.id][day] = '休み'; }
     }
   }
+  // P0_lock スナップ: locked からの違反（shiftRequestsByMonth等）を分離
+  { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P0_lock'); if(v.length) console.error('[TIME-ROLE-VIOL] P0_lock',v); _snapPrev = sn; }
 
   const th = dept.intervalThreshold ?? null;
   const isBadTransition = (prev, curr) => {
@@ -1108,6 +1135,8 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     // 未配置スタッフを休みに（softRest済みは既に'休み'なので変化なし）
     ds.forEach(s => { if (result[s.id][d] === undefined) result[s.id][d] = '休み'; });
   }
+  // P1_coverage スナップ
+  { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1_coverage'); if(v.length) console.error('[TIME-ROLE-VIOL] P1_coverage',v); _snapPrev = sn; }
 
   // Phase 2: 公休調整
   for (const s of ds) {
@@ -1165,6 +1194,8 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       }
     }
   }
+  // P2_kyuko スナップ
+  { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P2_kyuko'); if(v.length) console.error('[TIME-ROLE-VIOL] P2_kyuko',v); _snapPrev = sn; }
 
   // Phase 3: 2-opt swap最適化
   const FIXED = new Set(['希望休','有休']);
@@ -1211,6 +1242,28 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     }
     if (!improved) break;
   }
+  // P3_swap スナップ
+  { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P3_swap'); if(v.length) console.error('[TIME-ROLE-VIOL] P3_swap',v); _snapPrev = sn; }
+
+  // ── 最終 roleShiftTypes 違反スキャン ──────────────────────────────────────
+  const roleViolations = [];
+  for (const s of ds) {
+    const ra = dept.roleShiftTypes?.[s.role];
+    if (!ra) continue;
+    for (let d = 1; d <= days; d++) {
+      const shift = result[s.id]?.[d];
+      if (!shift || !WORK.has(shift) || shift === '明け') continue;
+      if (!ra.includes(shift)) {
+        roleViolations.push({ staffId: s.id, staffName: s.name, role: s.role, date: d, shift, allowedShifts: [...ra] });
+      }
+    }
+  }
+  if (roleViolations.length > 0) {
+    console.error('[TIME-ENGINE] roleShiftTypes違反合計', roleViolations.length, '件\n',
+      roleViolations.map(v => `  ${v.staffName}(${v.role}) ${v.date}日 ${v.shift} [許可:${v.allowedShifts.join(',')}]`).join('\n'));
+  } else {
+    console.log('[TIME-ENGINE] roleShiftTypes違反: 0件 ✓');
+  }
 
   // coverageWarnings生成
   const coverageWarnings = [];
@@ -1224,7 +1277,15 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     }
   }
 
-  return { shifts: result, coverageWarnings, score: curScore };
+  const success = roleViolations.length === 0;
+  return {
+    shifts:          result,
+    coverageWarnings,
+    score:           curScore,
+    roleViolations,
+    success,
+    ...(success ? {} : { fatalError: 'roleShiftTypes violation', violationCount: roleViolations.length }),
+  };
 }
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
@@ -6921,9 +6982,24 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               return;
             }
           }
-          const { shifts: timeResult, coverageWarnings, score: timeScore } = autoGenerateTime(
+          const timeGenResult = autoGenerateTime(
             cs, cd, year, month, allShiftsRef.current[cd.id] || {}, ct
           );
+          // ── roleShiftTypes違反チェック ─────────────────────────────────────
+          if (!timeGenResult.success) {
+            const { violationCount, roleViolations } = timeGenResult;
+            const detail = roleViolations.slice(0, 10)
+              .map(v => `  ${v.staffName}(${v.role}) ${v.date}日: ${v.shift} [許可: ${v.allowedShifts.join(',')}]`)
+              .join('\n');
+            window.alert(
+              `⛔ 自動生成失敗: roleShiftTypes違反 ${violationCount}件\n\n` +
+              detail +
+              (violationCount > 10 ? `\n  ...他${violationCount - 10}件（コンソール参照）` : '') +
+              '\n\nシフト表には反映されません。部署設定・役職設定を確認してください。'
+            );
+            return; // シフト表に適用しない
+          }
+          const { shifts: timeResult, coverageWarnings, score: timeScore } = timeGenResult;
           setAllShifts(prev => ({ ...prev, [cd.id]: timeResult }));
           setSaveStatus('unsaved');
           if (coverageWarnings.length > 0) {
