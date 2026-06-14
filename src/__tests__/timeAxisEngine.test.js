@@ -10,8 +10,8 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { generateTimeAxisShift } from '../lib/timeAxisEngine/index.js';
-import { buildRequests }         from '../lib/shiftAccessors.js';
+import { generateTimeAxisShift, buildPreferredRestDays } from '../lib/timeAxisEngine/index.js';
+import { buildRequests } from '../lib/shiftAccessors.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // フィクスチャヘルパー
@@ -126,7 +126,8 @@ describe('generateTimeAxisShift', () => {
 
   // ── Test 5: Coverage駆動でシフトが生成され infeasible に記録される ────────
   test('coverageRules あり: gap が埋まり infeasible は配列で返る', () => {
-    const staffs = [mkStaff('sta', 'A', '管理栄養士')];
+    // kyukoDays: 0 で Phase1 が休みを置かないようにし、全日カバー可能にする
+    const staffs = [mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 0 })];
     const dept = {
       shiftTypes: ['早番', '日勤'],
       coverageRules: [{ start: '07:00', end: '09:00', min: 1 }],
@@ -137,10 +138,99 @@ describe('generateTimeAxisShift', () => {
       dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
     });
 
-    // sta が早番でカバーされているはず（coveringShifts=['早番']、sta は制限なし）
+    // sta が早番でカバーされているはず（Phase2/3 が配置）
     expect(shifts['sta'][1]).toBe('早番');
-    // infeasible は配列（今回は sta が全日カバーするので 0 件）
+    // infeasible は配列（sta が全日カバーするので 0 件）
     expect(Array.isArray(infeasible)).toBe(true);
     expect(infeasible).toHaveLength(0);
+  });
+
+  // ── Test 6: Phase 1 — 公休アンカー ───────────────────────────────────────
+  test('Phase1: kyukoDays=5 のスタッフに最低5日の公休が配置される', () => {
+    const staffs = [mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 5 })];
+    const dept = { shiftTypes: ['日勤'], coverageRules: [] };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { shifts } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    });
+
+    const REST_SET = new Set(['休み', '希望休', '有休', '公休', '明け']);
+    const restCount = Object.values(shifts['sta']).filter(sk => REST_SET.has(sk)).length;
+    expect(restCount).toBeGreaterThanOrEqual(5);
+  });
+
+  // ── Test 7: buildPreferredRestDays — DOW 傾向で優先順位が決まる ───────────
+  test('buildPreferredRestDays: dowRestRate が高い曜日の日が先頭に並ぶ', () => {
+    const staff = mkStaff('sta', 'スタッフA', '管理栄養士');
+    // idx=0 (月曜) の rate を最高にする（dowRestRate: [月,火,水,木,金,土,日]）
+    const learnedTrend = {
+      'スタッフA': { dowRestRate: [0.9, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1] },
+    };
+
+    const days = buildPreferredRestDays(staff, learnedTrend, 2026, 6); // 2026年7月
+
+    // 2026年7月の月曜日: 6, 13, 20, 27 が先頭4件に来るはず
+    const top4 = days.slice(0, 4);
+    expect(top4).toContain(6);
+    expect(top4).toContain(13);
+    expect(top4).toContain(20);
+    expect(top4).toContain(27);
+    // 全日分の長さ（7月=31日）
+    expect(days).toHaveLength(31);
+  });
+
+  // ── Test 8: Phase 2 — MRV でキーパーソンが先に配置される ────────────────
+  test('Phase2: eligible が少ない gap が先に処理され制約スタッフが正しく配置される', () => {
+    // 07:00-09:00 gap は sta のみが埋められる（eligible=1、MRV で最優先）
+    // 09:00-18:00 gap は両者が埋められる（eligible=2）
+    // kyukoDays=0 で Phase1 の休み干渉なし
+    const staffs = [
+      mkStaff('sta', 'スタッフA', '管理栄養士', { kyukoDays: 0 }),
+      mkStaff('stb', 'スタッフB', '補助',       { kyukoDays: 0 }),
+    ];
+    const dept = {
+      shiftTypes: ['早番', '日勤'],
+      roleShiftTypes: { '補助': ['日勤'] },
+      coverageRules: [
+        { start: '07:00', end: '09:00', min: 1 },
+        { start: '09:00', end: '18:00', min: 1 },
+      ],
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { shifts } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    });
+
+    // sta が早番に配置される（07:00-09:00 gap を sta のみが埋められる）
+    expect(Object.values(shifts['sta']).some(sk => sk === '早番')).toBe(true);
+    // stb に早番が入らない（roleShiftTypes で禁止）
+    expect(Object.values(shifts['stb']).every(sk => sk !== '早番')).toBe(true);
+    // stb が日勤に配置される（09:00-18:00 gap を stb が埋める）
+    expect(Object.values(shifts['stb']).some(sk => sk === '日勤')).toBe(true);
+  });
+
+  // ── Test 9: Phase 4 — Coverage 後に公休が充足される ─────────────────────
+  test('Phase4: 2スタッフ・coverageRules あり・kyukoDays=8 が両者で充足される', () => {
+    const staffs = [
+      mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 8 }),
+      mkStaff('stb', 'B', '調理師',     { kyukoDays: 8 }),
+    ];
+    const dept = {
+      shiftTypes: ['日勤'],
+      coverageRules: [{ start: '09:00', end: '18:00', min: 1 }],
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { shifts } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    });
+
+    const REST_SET = new Set(['休み', '希望休', '有休', '公休', '明け']);
+    const staRest = Object.values(shifts['sta']).filter(sk => REST_SET.has(sk)).length;
+    const stbRest = Object.values(shifts['stb']).filter(sk => REST_SET.has(sk)).length;
+    expect(staRest).toBeGreaterThanOrEqual(8);
+    expect(stbRest).toBeGreaterThanOrEqual(8);
   });
 });
