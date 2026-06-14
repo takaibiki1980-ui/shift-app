@@ -323,4 +323,95 @@ describe('generateTimeAxisShift', () => {
     expect(stats.bestHardViolationCount).toBeGreaterThan(0);
     expect(stats.trials).toBe(3);
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Step 12: Relaxation テスト
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ── Test 14: relaxationLog は配列として返る ───────────────────────────────
+  test('Step12: relaxationLog は配列として返る', () => {
+    const staffs = [mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 0 })];
+    const dept = { shiftTypes: ['日勤'], coverageRules: [] };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { relaxationLog } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    });
+
+    expect(Array.isArray(relaxationLog)).toBe(true);
+  });
+
+  // ── Test 15: Soft制約の緩和不要な場合 relaxationLog は空 ─────────────────
+  test('Step12: Soft制約の緩和なしで配置できる場合 relaxationLog は空', () => {
+    // 1スタッフ・kyukoDays=0・maxStaff/maxConsecutive 等の制約なし
+    // → canPlace(relaxedIds=[]) が常に通過 → relaxation 不要
+    const staffs = [mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 0 })];
+    const dept = {
+      shiftTypes: ['日勤'],
+      coverageRules: [{ start: '09:00', end: '18:00', min: 1 }],
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { relaxationLog, infeasible } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    });
+
+    expect(relaxationLog).toHaveLength(0);
+    expect(infeasible).toHaveLength(0);
+  });
+
+  // ── Test 16: 全スタッフが休みで relaxation も失敗 → infeasible ───────────
+  test('Step12: 全スタッフが休みのため relaxation も失敗し infeasible に記録される', () => {
+    // 7月=31日。kyukoDays=31 で Phase1 が全日を '休み' にする。
+    // Phase3 は全スタッフが既配置（'休み'）のため配置不可 → infeasible
+    const staffs = [mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 31 })];
+    const dept = {
+      shiftTypes: ['日勤'],
+      coverageRules: [{ start: '09:00', end: '18:00', min: 1 }],
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { relaxationLog, infeasible } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    }, { trials: 1 });
+
+    expect(infeasible.length).toBeGreaterThan(0);
+    expect(relaxationLog).toHaveLength(0);
+  });
+
+  // ── Test 17: maxStaff(Soft) が初期探索をブロック → relaxation で配置 ──────
+  test('Step12: maxStaff Soft 制約を Relaxation で緩和して配置し relaxationLog が非空になる', () => {
+    // 2スタッフ・min:2 カバレッジ・maxStaff={日勤:1}(Soft)
+    // Phase2: 1スタッフ配置（getCandidates=Hard-only なので maxStaff は無視）
+    // Phase3 初期探索: 2人目は maxStaff で blocked → relaxation で 'maxStaff' を解除 → 配置成功
+    const staffs = [
+      mkStaff('sta', 'A', '管理栄養士', { kyukoDays: 0 }),
+      mkStaff('stb', 'B', '調理師',     { kyukoDays: 0 }),
+    ];
+    const dept = {
+      shiftTypes: ['日勤'],
+      coverageRules: [{ start: '09:00', end: '18:00', min: 2 }],
+      maxStaff: { 日勤: 1 },
+      // maxStaffRelaxable デフォルト true → Soft 扱い
+    };
+    const requests = buildRequests(staffs, YEAR, MONTH);
+
+    const { relaxationLog, infeasible } = generateTimeAxisShift({
+      dept, staffs, requests, learnedTrend: null, prevTail: {}, year: YEAR, month: MONTH,
+    }, { trials: 1 });
+
+    // relaxation が発動して全日配置できた
+    expect(relaxationLog.length).toBeGreaterThan(0);
+    expect(infeasible).toHaveLength(0);
+
+    // 各エントリに必須フィールドが揃っている
+    const entry = relaxationLog[0];
+    expect(entry).toHaveProperty('date');
+    expect(entry).toHaveProperty('relaxedIds');
+    expect(entry).toHaveProperty('staffId');
+    expect(entry).toHaveProperty('shiftKey');
+
+    // maxStaff が緩和対象に含まれている
+    expect(entry.relaxedIds).toContain('maxStaff');
+  });
 });

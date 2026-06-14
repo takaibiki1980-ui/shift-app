@@ -1,26 +1,35 @@
 /**
- * timeAxisEngine/index.js — 栄養科シフト自動生成エンジン（Step 11c）
+ * timeAxisEngine/index.js — 栄養科シフト自動生成エンジン（Step 12）
  *
  * 実装済み Phase:
  *   Phase 0: requestLock 先行固定（希望休・有休・希望勤務）
  *   Phase 1: 公休アンカー（最低公休数を DOW 傾向順で優先配置）
  *   Phase 2: キーパーソン先配置（MRV — eligible スタッフ数昇順で coverage gap を処理）
- *   Phase 3: Coverage 駆動配置（日順 greedy、infeasible 記録）
+ *   Phase 3: Coverage 駆動配置（日順 greedy、Soft制約 Relaxation 接続、infeasible 記録）
  *   Phase 4: 残り公休充足（Phase 3 後の不足公休を空きスロットに補填）
  *   bestOfN: 複数試行から Hard 違反ゼロ・score 最小の最良解を選択
  *
  * 未実装（将来実装）:
- *   swap / 2-opt / tryRepair / Relaxation 自動再探索
+ *   swap / 2-opt / tryRepair
  */
 
 import { getLockedRequest, getStaffTrend, getDowRestRate } from '../shiftAccessors.js';
 import { fillGaps }       from './coverageEngine.js';
-import { getCandidates }  from './constraintEngine.js';
+import { getCandidates, canPlace } from './constraintEngine.js';
 import { rankCandidates } from './learningEngine.js';
 import { validateShift }  from '../validateShift.js';
+import { resolveConstraints, getSoftConstraintsByPenalty } from './constraints/definitions.js';
 
 // 休み系シフトキーセット（公休カウント・Phase 1/4 に使用）
 const REST_SET = new Set(['休み', '希望休', '有休', '公休', '明け']);
+
+/**
+ * Soft制約を penalty 昇順（緩和優先順）で返す。
+ * Phase 3 の Relaxation ループで使用する。
+ */
+function resolveRelaxationOrder(dept) {
+  return getSoftConstraintsByPenalty(resolveConstraints(dept));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ヘルパー
@@ -145,6 +154,7 @@ function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, mon
   const shifts = {};
   for (const s of staffs) shifts[s.id] = {};
   const infeasible = [];
+  const relaxationLog = [];
 
   // Phase 0: requestLock — 希望休・有休・希望勤務を先行固定
   for (const s of staffs) {
@@ -175,17 +185,21 @@ function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, mon
     requests, prevTail, intervalThreshold, year, month, rankFn,
   );
 
-  // Phase 3: Coverage 駆動配置（日順 greedy）
+  // Phase 3: Coverage 駆動配置（日順 greedy + Soft制約 Relaxation）
+  // relaxCtx は staffs / year / month を含み Soft ルール（shiftRatio 等）に対応する
+  const relaxCtx = { dept, shifts, prevTail, requests, staffs, intervalThreshold, days, year, month };
+
   for (let d = 1; d <= days; d++) {
     for (const gap of fillGaps(d, { dept, shifts, days })) {
       const { coveringShifts } = gap;
       let bestStaff = null, bestShift = null, bestScore = -Infinity;
 
+      // 初期探索: Hard + 全 Soft 制約を適用（relaxedIds=[]）
       for (const s of staffs) {
         if (shifts[s.id][d]) continue;
-        const staffCtx = { dept, shifts, prevTail, requests, role: s.role, intervalThreshold, days };
-        const candidates = getCandidates(s.id, d, staffCtx);
-        const filtered   = candidates.filter(sk => coveringShifts.includes(sk));
+        const filtered = coveringShifts.filter(sk =>
+          canPlace(s.id, d, sk, { ...relaxCtx, role: s.role }, [])
+        );
         if (filtered.length === 0) continue;
         const ranked = rankFn(s, d, filtered, learnedTrend,
           { year, month, currentShifts: shifts, prevTail });
@@ -199,7 +213,36 @@ function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, mon
       if (bestStaff) {
         shifts[bestStaff.id][d] = bestShift;
       } else {
-        infeasible.push({ date: d, gap, reason: 'needs_relaxation' });
+        // Relaxation: Soft制約を penalty 昇順に1段ずつ解除して再探索
+        let placed = false;
+        const relaxedIds = [];
+        for (const constraint of resolveRelaxationOrder(dept)) {
+          relaxedIds.push(constraint.id);
+          let rBestStaff = null, rBestShift = null, rBestScore = -Infinity;
+          for (const s of staffs) {
+            if (shifts[s.id][d]) continue;
+            const filtered = coveringShifts.filter(sk =>
+              canPlace(s.id, d, sk, { ...relaxCtx, role: s.role }, relaxedIds)
+            );
+            if (filtered.length === 0) continue;
+            const ranked = rankFn(s, d, filtered, learnedTrend,
+              { year, month, currentShifts: shifts, prevTail });
+            if (ranked.length > 0 && ranked[0].score > rBestScore) {
+              rBestScore = ranked[0].score;
+              rBestStaff = s;
+              rBestShift = ranked[0].shiftKey;
+            }
+          }
+          if (rBestStaff) {
+            shifts[rBestStaff.id][d] = rBestShift;
+            relaxationLog.push({ date: d, relaxedIds: [...relaxedIds], staffId: rBestStaff.id, shiftKey: rBestShift });
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) {
+          infeasible.push({ date: d, gap, reason: 'needs_relaxation' });
+        }
       }
     }
   }
@@ -208,7 +251,7 @@ function runOneTrial({ dept, staffs, requests, learnedTrend, prevTail, year, mon
   placeMinimumRestDays(staffs, shifts, year, month, preferredRestDaysMap);
 
   const validation = validateShift({ shifts, dept, staffs, requests, prevTail, year, month });
-  return { shifts, infeasible, validation };
+  return { shifts, infeasible, relaxationLog, validation };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -275,5 +318,5 @@ export function generateTimeAxisShift(
     allTrialsInvalid,
   };
 
-  return { shifts: best.shifts, relaxationLog: [], infeasible: best.infeasible, stats };
+  return { shifts: best.shifts, relaxationLog: best.relaxationLog, infeasible: best.infeasible, stats };
 }
