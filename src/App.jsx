@@ -1518,10 +1518,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       res[s.id][Number(d)] = "有休";
     });
     // shiftRequestsByMonthの希望勤務（早番・日勤・遅番・夜勤指定）
-    // roleShiftTypes 外のシフトは配置しない（休み系・明けはそのまま通す）
+    // roleShiftTypes 外の勤務シフトは配置しない（休み系・明けはそのまま通す）
     Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([day, shiftKey]) => {
       const isRest = !deptWork.has(shiftKey) || shiftKey === '明け';
-      if (!isRest && !getAllowedTypes(s).includes(shiftKey)) return;
+      if (!isRest) {
+        const ra = dept.roleShiftTypes?.[s.role];
+        if (ra && !ra.includes(shiftKey)) return;
+      }
       res[s.id][Number(day)] = shiftKey;
     });
   });
