@@ -1518,7 +1518,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       res[s.id][Number(d)] = "有休";
     });
     // shiftRequestsByMonthの希望勤務（早番・日勤・遅番・夜勤指定）
+    // roleShiftTypes 外のシフトは配置しない（休み系・明けはそのまま通す）
     Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([day, shiftKey]) => {
+      const isRest = !deptWork.has(shiftKey) || shiftKey === '明け';
+      if (!isRest && !getAllowedTypes(s).includes(shiftKey)) return;
       res[s.id][Number(day)] = shiftKey;
     });
   });
@@ -2120,9 +2123,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
               // ①遷移OK + maxStaff内
               const best = base.find(k => !isBadTransition(prevSh,k) && !isBadTransition(k,nextShift) && ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
               if (best) return best;
-              // ②遷移妥協でも maxStaff内（日勤を優先）
+              // ②遷移妥協でも maxStaff内（roleAllowed外は絶対に返さない）
               const safe = base.filter(k=>ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
-              return safe.find(k=>k==='日勤') || safe[0] || '日勤';
+              return safe.find(k=>k==='日勤') || safe[0] || roleAllowed[0] || '休み';
             })();
             res[s.id][d] = forceShift; excess--; continue;
           }
@@ -2190,11 +2193,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (isBadTransition(k, n)) return false;
           return cnts[k] < (maxStaff[k] ?? 99);
         });
-        // ★Tier1保護: altが見つからず"休み"にする前に role-slot なら日勤へフォールバック
+        // ★Tier1保護: altが見つからず"休み"にする前に role-slot なら roleAllowed内でフォールバック
         const curSh = res[s.id][target];
         const isSlotProtected = shouldProtectSlot(curSh, ds.filter(sx => res[sx.id][target] === curSh).length);
+        const roleAllowed = getAllowedTypes(s);
         const finalAlt = alt ?? (isSlotProtected
-          ? (dayTypes.find(k => k === '日勤' && cnts[k] < (maxStaff[k] ?? 99)) || '日勤')
+          ? (roleAllowed.find(k => k === '日勤' && cnts[k] < (maxStaff[k] ?? 99))
+             || roleAllowed.find(k => cnts[k] < (maxStaff[k] ?? 99))
+             || '休み')
           : '休み');
         res[s.id][target] = finalAlt;
         return true;
@@ -2219,7 +2225,12 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     });
     const curSh = res[s.id][1];
     const isSlotProtected = shouldProtectSlot(curSh, ds.filter(sx => res[sx.id][1] === curSh).length);
-    res[s.id][1] = alt ?? (isSlotProtected ? (dayTypes.find(k => k === '日勤' && cnts[k] < (maxStaff[k] ?? 99)) || '日勤') : '休み');
+    const roleAllowed1 = getAllowedTypes(s);
+    res[s.id][1] = alt ?? (isSlotProtected
+      ? (roleAllowed1.find(k => k === '日勤' && cnts[k] < (maxStaff[k] ?? 99))
+         || roleAllowed1.find(k => cnts[k] < (maxStaff[k] ?? 99))
+         || '休み')
+      : '休み');
   }
 
   enforceMaxStaff(); // 2回目: 違反修正後の超過を除去
