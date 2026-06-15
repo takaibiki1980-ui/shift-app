@@ -349,13 +349,15 @@ const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]);
 const WORK_TYPES  = new Set(["早番","日勤","遅番","夜勤"]);
 
 // カスタムシフト種別のstyling定義を取得（標準SHIFTSに無い場合はbaseTypeの色を継承）
-function getShiftDef(key, customDefs) {
+function getShiftDef(key, customDefs, dept) {
   if (SHIFTS[key]) return SHIFTS[key];
   const cd = (customDefs || []).find(d => d.key === key);
   if (!cd) return SHIFTS[""];
   const base = SHIFTS[cd.baseType] || SHIFTS["日勤"];
   const short = key.length <= 2 ? key : key.slice(0, 2);
-  return { short, color: base.color, bg: base.bg, border: base.border, time: cd.startTime && cd.endTime ? `${cd.startTime}〜${cd.endTime}` : base.time };
+  const st = dept?.shiftTimes?.[key];
+  const time = st?.start && st?.end ? `${st.start}〜${st.end}` : base.time;
+  return { short, color: base.color, bg: base.bg, border: base.border, time };
 }
 function buildDeptWorkTypes(customDefs) {
   const s = new Set(WORK_TYPES);
@@ -402,15 +404,11 @@ const DEFAULT_SHIFT_TIMES = {
 function getShiftEndTime(key, dept) {
   const st = dept?.shiftTimes?.[key];
   if (st?.end) return st.end;
-  const cd = (dept?.customShiftDefs||[]).find(d=>d.key===key);
-  if (cd?.endTime) return cd.endTime;
   return DEFAULT_SHIFT_TIMES[key]?.end || null;
 }
 function getShiftStartTime(key, dept) {
   const st = dept?.shiftTimes?.[key];
   if (st?.start) return st.start;
-  const cd = (dept?.customShiftDefs||[]).find(d=>d.key===key);
-  if (cd?.startTime) return cd.startTime;
   return DEFAULT_SHIFT_TIMES[key]?.start || null;
 }
 function shiftIntervalHours(prevKey, nextKey, dept) {
@@ -2850,7 +2848,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const cellText=isKibo||v==="希望休"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(getShiftDef(v, dept.customShiftDefs)?.short||"－"); html += TAG('td')+cellText+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const cellText=isKibo||v==="希望休"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG('td')+cellText+CTAG('td'); }
       html += TAG('td')+w+CTAG('td')+TAG('td')+(n||"－")+CTAG('td')+TAG('td')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
@@ -3626,14 +3624,11 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
               <select value={cd.baseType||"日勤"} onChange={e=>{const n=[...customShiftDefs];n[idx]={...n[idx],baseType:e.target.value};setCustomShiftDefs(n);}} style={{...INPUT_STYLE,width:68,padding:"3px 4px",marginBottom:0,fontSize:11}}>
                 {["早番","日勤","遅番","夜勤","休み"].map(k=><option key={k} value={k}>{k}</option>)}
               </select>
-              <div onClick={e=>setKp({mode:"time",value:cd.startTime||"",unit:"",onConfirm:v=>{const n=[...customShiftDefs];n[idx]={...n[idx],startTime:v||""};setCustomShiftDefs(n);},anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:58,padding:"2px 4px",marginBottom:0,fontSize:11,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:cd.startTime?"#18181B":"#A1A1AA"}} title="開始時刻">{cd.startTime||"--:--"}</div>
-              <span style={{fontSize:9,color:"#D4D4D8"}}>〜</span>
-              <div onClick={e=>setKp({mode:"time",value:cd.endTime||"",unit:"",onConfirm:v=>{const n=[...customShiftDefs];n[idx]={...n[idx],endTime:v||""};setCustomShiftDefs(n);},anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:58,padding:"2px 4px",marginBottom:0,fontSize:11,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:cd.endTime?"#18181B":"#A1A1AA"}} title="終了時刻">{cd.endTime||"--:--"}</div>
               <button onClick={()=>{const cd2=customShiftDefs[idx];setCustomShiftDefs(p=>p.filter((_,i)=>i!==idx));if(cd2.key){setShiftTypes(p=>p.filter(k=>k!==cd2.key));setMinStaff(p=>{const q={...p};delete q[cd2.key];return q;});setMaxStaff(p=>{const q={...p};delete q[cd2.key];return q;});}}} style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontSize:11,color:"#dc2626",whiteSpace:"nowrap"}}>削除</button>
               {!shiftTypes.includes(cd.key)&&cd.key.trim()&&<span style={{fontSize:10,color:"#fb923c"}}>※保存前に入力欄外をタップして登録</span>}
             </div>
           ))}
-          <button onClick={()=>setCustomShiftDefs(p=>[...p,{key:"",startTime:"",endTime:"",baseType:"日勤"}])} style={{background:"#f0fdf4",border:"1px dashed #86efac",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,color:"#166534",fontWeight:700}}>＋ カスタムシフト追加</button>
+          <button onClick={()=>setCustomShiftDefs(p=>[...p,{key:"",baseType:"日勤"}])} style={{background:"#f0fdf4",border:"1px dashed #86efac",borderRadius:6,padding:"4px 12px",cursor:"pointer",fontSize:11,color:"#166534",fontWeight:700}}>＋ カスタムシフト追加</button>
         </div>}
         {/* 時間帯別必要人数（time専用） */}
         {generationMode==='time'&&(
@@ -4705,7 +4700,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   else if(col==="明け"){val=cnt||"－";color="#475569";}
                   else if(col==="休"){val=cnt;color="#52525B";}
                   else if(col==="希"){val=cnt||"－";color="#BE123C";}
-                  else{const mx=dept.shiftMaxByType?.[col]||0;const over=mx>0&&cnt>mx;val=cnt||"－";const sd=getShiftDef(col,dept.customShiftDefs);color=over?"#ef4444":(sd.color||"#71717A");}
+                  else{const mx=dept.shiftMaxByType?.[col]||0;const over=mx>0&&cnt>mx;val=cnt||"－";const sd=getShiftDef(col,dept.customShiftDefs,dept);color=over?"#ef4444":(sd.color||"#71717A");}
                   return <td key={col} style={TD}><span style={{color,fontWeight:700,fontSize:11}}>{val}</span></td>;
                 })}
               </tr>

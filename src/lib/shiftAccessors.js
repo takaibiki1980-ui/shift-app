@@ -7,7 +7,6 @@
  *
  * 参照元フィールドまとめ:
  *   getShiftDefinition  : dept.shiftTimes[key]             → { start, end }
- *                         dept.customShiftDefs[].startTime/endTime
  *                         DEFAULT_SHIFT_TIMES[key]          (フォールバック)
  *   getAllowedShiftTypes : dept.roleShiftTypes[role]        → string[]
  *                         dept.shiftTypes                   (制限なし時のフォールバック)
@@ -33,9 +32,8 @@ const DEFAULT_SHIFT_TIMES = {
  * シフト時刻定義を取得する。
  *
  * 解決優先順位:
- *   ① dept.shiftTimes[shiftKey]            — 部署設定モーダルで直接入力された時刻
- *   ② dept.customShiftDefs[].startTime/endTime — カスタムシフト定義（key一致）
- *   ③ DEFAULT_SHIFT_TIMES[shiftKey]        — 早番/日勤/遅番/夜勤のハードコード値
+ *   ① dept.shiftTimes[shiftKey]            — 勤務時間設定モーダルで入力された時刻
+ *   ② DEFAULT_SHIFT_TIMES[shiftKey]        — 早番/日勤/遅番/夜勤のハードコード値
  *
  * @param {object} dept
  * @param {string} shiftKey  例: '早番' '日勤' '夜勤'
@@ -48,11 +46,7 @@ export function getShiftDefinition(dept, shiftKey) {
   const st = dept?.shiftTimes?.[shiftKey];
   if (st?.start && st?.end) return { start: st.start, end: st.end };
 
-  // ② dept.customShiftDefs（key が一致する最初のエントリ）
-  const cd = (dept?.customShiftDefs || []).find(d => d.key === shiftKey);
-  if (cd?.startTime && cd?.endTime) return { start: cd.startTime, end: cd.endTime };
-
-  // ③ DEFAULT_SHIFT_TIMES フォールバック
+  // ② DEFAULT_SHIFT_TIMES フォールバック
   const def = DEFAULT_SHIFT_TIMES[shiftKey];
   if (def) return { ...def };
 

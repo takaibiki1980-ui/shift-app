@@ -90,15 +90,11 @@ export const DEFAULT_SHIFT_TIMES = {
 export function getShiftEndTime(key, dept) {
   const st = dept?.shiftTimes?.[key];
   if (st?.end) return st.end;
-  const cd = (dept?.customShiftDefs||[]).find(d=>d.key===key);
-  if (cd?.endTime) return cd.endTime;
   return DEFAULT_SHIFT_TIMES[key]?.end || null;
 }
 export function getShiftStartTime(key, dept) {
   const st = dept?.shiftTimes?.[key];
   if (st?.start) return st.start;
-  const cd = (dept?.customShiftDefs||[]).find(d=>d.key===key);
-  if (cd?.startTime) return cd.startTime;
   return DEFAULT_SHIFT_TIMES[key]?.start || null;
 }
 export function shiftIntervalHours(prevKey, nextKey, dept) {
