@@ -1132,6 +1132,7 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     return gain;
   };
 
+  const MIN_OVERRIDE_GAIN = 10;
   const assignBest = (candidates, d, currentCovFn) => {
     let bestGain = 0, bestStaff = null, bestShift = null;
     const cov = currentCovFn();
@@ -1165,12 +1166,13 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         if (iv2) for (const rule of rules) { const rS=timeToMins(rule.start),rE=timeToMins(rule.end); if(rS==null||rE==null)continue; for(let m=rS;m<rE;m+=15){if(iv2.start<=m&&m<iv2.end){const b=cov[m]||0;covGain+=Math.max(0,Math.min(b+1,rule.min)-Math.min(b,rule.min));}}}
         const gain = calcMarginalGain(s, sk, d, cov);
         const trendBonus = gain - covGain;
-        if (isSoftRest && covGain <= 0) {
-          softCands.push({ name: s.name, sk, covGain, trendBonus, gain, reason: 'covGain<=0→除外' });
+        if (isSoftRest && covGain < MIN_OVERRIDE_GAIN) {
+          softCands.push({ name: s.name, sk, covGain, trendBonus, gain, reason: `covGain=${covGain}<${MIN_OVERRIDE_GAIN}→除外` });
           continue;
         }
         if (isSoftRest) softCands.push({ name: s.name, sk, covGain, trendBonus, gain, reason: 'coverage不足→候補' });
-        if (gain > bestGain) { bestGain = gain; bestStaff = s; bestShift = sk; }
+        const effectiveGain = covGain + trendBonus * 20;
+        if (effectiveGain > bestGain) { bestGain = effectiveGain; bestStaff = s; bestShift = sk; }
       }
     }
     if (bestStaff) {
