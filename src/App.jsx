@@ -1183,65 +1183,6 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   // P1_coverage スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1_coverage'); if(v.length) console.error('[TIME-ROLE-VIOL] P1_coverage',v); _snapPrev = sn; }
 
-  // Phase1.5: 連続勤務補正・公休不足補正・連続休み補正（介護エンジン式）
-  {
-    // 連続カウントヘルパー（autoGenerateTime ローカル）
-    const _cwC = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (WORK.has(result[id]?.[i])) c++; else break; } return c; };
-    const _crC = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (REST_SET.has(result[id]?.[i])) c++; else break; } return c; };
-    const _crF = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (REST_SET.has(result[id]?.[i])) c++; else break; } return c; };
-
-    // ── Pass C 相当: 連続勤務 > maxConsec の日を「休み」に変換 ──
-    for (const s of ds) {
-      for (let d = 1; d <= days; d++) {
-        if (!WORK.has(result[s.id]?.[d])) continue;
-        if (locked[s.id][d]) continue;
-        let consec = 0;
-        for (let i = d; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) consec++; else break; }
-        if (consec <= maxConsec) continue;
-        result[s.id][d] = '休み';
-      }
-    }
-
-    // ── 公休不足補正: 長連勤優先で休みを追加 ──
-    for (const s of ds) {
-      const actualRest = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
-      let shortage = targetKyuko[s.id] - actualRest;
-      if (shortage <= 0) continue;
-      const workDays = [];
-      for (let d = 1; d <= days; d++) {
-        if (locked[s.id][d]) continue;
-        if (!WORK.has(result[s.id]?.[d])) continue;
-        workDays.push(d);
-      }
-      workDays.sort((a, b) => _cwC(s.id, b - 1) - _cwC(s.id, a - 1));
-      for (const d of workDays) {
-        if (shortage <= 0) break;
-        if (_crC(s.id, d - 1) + 1 + _crF(s.id, d) > 3) continue;
-        result[s.id][d] = '休み';
-        shortage--;
-      }
-    }
-
-    // ── 連続休み補正: 4連休以上を勤務に戻す ──
-    for (const s of ds) {
-      for (let d = 1; d <= days; d++) {
-        if (result[s.id]?.[d] !== '休み') continue; // 希望休・有休は対象外
-        if (locked[s.id][d]) continue;
-        if (_crC(s.id, d) <= 3) continue;
-        if ((_cwC(s.id, d - 1) + 1) > maxConsec) continue;
-        const sh = eligibleShifts[s.id].find(k => {
-          if (isBadTransition(result[s.id]?.[d - 1], k)) return false;
-          if (isBadTransition(k, result[s.id]?.[d + 1])) return false;
-          return countShift(d, k) < (maxStaffMap[k] ?? 99);
-        });
-        if (!sh) continue;
-        result[s.id][d] = sh;
-      }
-    }
-  }
-  // P1.5_rest スナップ
-  { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1.5_rest'); if(v.length) console.error('[TIME-ROLE-VIOL] P1.5_rest',v); _snapPrev = sn; }
-
   // Phase 2: 公休調整
   for (const s of ds) {
     const restDays = [];
@@ -1300,6 +1241,65 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P2_kyuko スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P2_kyuko'); if(v.length) console.error('[TIME-ROLE-VIOL] P2_kyuko',v); _snapPrev = sn; }
+
+  // Phase2.5: 連続勤務補正・公休不足補正・連続休み補正（介護エンジン式）
+  // Phase2 の coverage-based 調整後に実行することで打ち消しを防ぐ
+  {
+    const _cwC = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (WORK.has(result[id]?.[i])) c++; else break; } return c; };
+    const _crC = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (REST_SET.has(result[id]?.[i])) c++; else break; } return c; };
+    const _crF = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (REST_SET.has(result[id]?.[i])) c++; else break; } return c; };
+
+    // ── Pass C 相当: 連続勤務 > maxConsec を「休み」に変換 ──
+    for (const s of ds) {
+      for (let d = 1; d <= days; d++) {
+        if (!WORK.has(result[s.id]?.[d])) continue;
+        if (locked[s.id][d]) continue;
+        let consec = 0;
+        for (let i = d; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) consec++; else break; }
+        if (consec <= maxConsec) continue;
+        result[s.id][d] = '休み';
+      }
+    }
+
+    // ── 公休不足補正: 長連勤優先で休みを追加 ──
+    for (const s of ds) {
+      const actualRest = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+      let shortage = targetKyuko[s.id] - actualRest;
+      if (shortage <= 0) continue;
+      const wDays = [];
+      for (let d = 1; d <= days; d++) {
+        if (locked[s.id][d]) continue;
+        if (!WORK.has(result[s.id]?.[d])) continue;
+        wDays.push(d);
+      }
+      wDays.sort((a, b) => _cwC(s.id, b - 1) - _cwC(s.id, a - 1));
+      for (const d of wDays) {
+        if (shortage <= 0) break;
+        if (_crC(s.id, d - 1) + 1 + _crF(s.id, d) > 3) continue;
+        result[s.id][d] = '休み';
+        shortage--;
+      }
+    }
+
+    // ── 連続休み補正: 4連休以上の「休み」を勤務に戻す ──
+    for (const s of ds) {
+      for (let d = 1; d <= days; d++) {
+        if (result[s.id]?.[d] !== '休み') continue; // 希望休・有休は対象外
+        if (locked[s.id][d]) continue;
+        if (_crC(s.id, d) <= 3) continue;
+        if ((_cwC(s.id, d - 1) + 1) > maxConsec) continue;
+        const sh = eligibleShifts[s.id].find(k => {
+          if (isBadTransition(result[s.id]?.[d - 1], k)) return false;
+          if (isBadTransition(k, result[s.id]?.[d + 1])) return false;
+          return countShift(d, k) < (maxStaffMap[k] ?? 99);
+        });
+        if (!sh) continue;
+        result[s.id][d] = sh;
+      }
+    }
+  }
+  // P2.5_rest スナップ
+  { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P2.5_rest'); if(v.length) console.error('[TIME-ROLE-VIOL] P2.5_rest',v); _snapPrev = sn; }
 
   // Phase 3: 2-opt swap最適化
   const FIXED = new Set(['希望休','有休']);
