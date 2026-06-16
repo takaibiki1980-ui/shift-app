@@ -1185,6 +1185,12 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P1_coverage スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1_coverage'); if(v.length) console.error('[TIME-ROLE-VIOL] P1_coverage',v); _snapPrev = sn; }
+  // [DIAG] Phase1終了時 restDays
+  for (const s of ds) {
+    const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
+    const f = rd.filter(d=>d<=15).length, b = rd.filter(d=>d>15).length;
+    console.log(`[P1-REST] ${s.name}: [${rd.join(',')}] 前${f}/後${b}`);
+  }
 
   // Phase 2: 公休調整
   for (const s of ds) {
@@ -1257,6 +1263,12 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P2_kyuko スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P2_kyuko'); if(v.length) console.error('[TIME-ROLE-VIOL] P2_kyuko',v); _snapPrev = sn; }
+  // [DIAG] Phase2終了時 restDays
+  for (const s of ds) {
+    const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
+    const f = rd.filter(d=>d<=15).length, b = rd.filter(d=>d>15).length;
+    console.log(`[P2-REST] ${s.name}: [${rd.join(',')}] 前${f}/後${b}`);
+  }
 
   // Phase2.5: 連続勤務補正・公休不足補正・連続休み補正（介護エンジン式）
   // Phase2 の coverage-based 調整後に実行することで打ち消しを防ぐ
