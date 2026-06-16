@@ -1041,6 +1041,17 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   // P0_lock スナップ: locked からの違反（shiftRequestsByMonth等）を分離
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P0_lock'); if(v.length) console.error('[TIME-ROLE-VIOL] P0_lock',v); _snapPrev = sn; }
 
+  // [DIAG] Phase0.5終了・Phase1開始前の状態
+  for (const s of ds) {
+    const lkRest = Object.entries(locked[s.id]).filter(([,v]) => REST_SET.has(v)).map(([d]) => Number(d)).sort((a,b)=>a-b);
+    const lkWork = Object.entries(locked[s.id]).filter(([,v]) => WORK.has(v)).map(([d]) => Number(d)).sort((a,b)=>a-b);
+    const sr = [...softRest[s.id]].sort((a,b)=>a-b);
+    const avail = []; for (let d = 1; d <= days; d++) if (!locked[s.id][d]) avail.push(d);
+    const restTarget = Math.max(0, targetKyuko[s.id] - lkRest.length);
+    const fSr = sr.filter(d=>d<=15).length, bSr = sr.filter(d=>d>15).length;
+    console.log(`[P05-STATE] ${s.name}: target=${targetKyuko[s.id]} restTarget=${restTarget} lockedWork=[${lkWork.join(',')}] lockedRest=[${lkRest.join(',')}] softRest=[${sr.join(',')}](前${fSr}/後${bSr}) available=${avail.length}日`);
+  }
+
   const th = dept.intervalThreshold ?? null;
   const isBadTransition = (prev, curr) => {
     if (!prev || !curr) return false;
@@ -1185,11 +1196,14 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P1_coverage スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1_coverage'); if(v.length) console.error('[TIME-ROLE-VIOL] P1_coverage',v); _snapPrev = sn; }
-  // [DIAG] Phase1終了時 restDays
+  // [DIAG] Phase1終了時 restDays（生成源: softRest保持 or undefined→休み）
   for (const s of ds) {
     const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
+    const softKept = rd.filter(d => softRest[s.id].has(d));           // Phase0.5で配置・Phase1で保持
+    const autoRest = rd.filter(d => !softRest[s.id].has(d) && !locked[s.id][d]); // undefined→休み
+    const lockedR  = rd.filter(d => locked[s.id][d]);
     const f = rd.filter(d=>d<=15).length, b = rd.filter(d=>d>15).length;
-    console.log(`[P1-REST] ${s.name}: [${rd.join(',')}] 前${f}/後${b}`);
+    console.log(`[P1-REST] ${s.name}: 前${f}/後${b} | softKept=[${softKept.join(',')}] autoRest=[${autoRest.join(',')}] locked=[${lockedR.join(',')}]`);
   }
 
   // Phase 2: 公休調整
