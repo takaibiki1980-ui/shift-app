@@ -1196,21 +1196,35 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     const target = targetKyuko[s.id];
 
     if (actualRest > target) {
-      // 公休過多 → coverageゲインが最大の日を勤務に変換
+      // 公休過多 → softRest保護（二段階）:
+      //   1st: softRestでない休み日を優先勤務化
+      //   2nd: 1stで不足した分のみ softRest日も解放
       const excess = actualRest - target;
-      const candidates = restDays.map(d => {
+      const toCandidates = (days) => days.map(d => {
         const cov = calcSlotCoverage(d);
         const bestSh = eligibleShifts[s.id].reduce((best, sk) => {
           if (isBadTransition(result[s.id][d-1], sk)) return best;
-          // Fix1: maxStaff上限チェック
           if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) return best;
           const g = calcMarginalGain(s, sk, d, cov);
           return g > (best?.gain ?? -1) ? { sk, gain: g } : best;
         }, null);
         return { d, gain: bestSh?.gain ?? 0, sk: bestSh?.sk };
       }).filter(x => x.sk).sort((a, b) => b.gain - a.gain);
-      for (let i = 0; i < Math.min(excess, candidates.length); i++) {
-        result[s.id][candidates[i].d] = candidates[i].sk;
+      // 1st pass: softRest保護 — Phase0.5で置いた均等配置日は除外
+      const nonSoftRestDays = restDays.filter(d => !softRest[s.id]?.has(d));
+      const primary = toCandidates(nonSoftRestDays);
+      let remaining = excess;
+      for (let i = 0; i < Math.min(remaining, primary.length); i++) {
+        result[s.id][primary[i].d] = primary[i].sk;
+        remaining--;
+      }
+      // 2nd pass: 1stで超過分が残った場合のみ softRest日も解放
+      if (remaining > 0) {
+        const softRestDays = restDays.filter(d => softRest[s.id]?.has(d));
+        const fallback = toCandidates(softRestDays);
+        for (let i = 0; i < Math.min(remaining, fallback.length); i++) {
+          result[s.id][fallback[i].d] = fallback[i].sk;
+        }
       }
     } else if (actualRest < target) {
       // 公休不足 → coverageダメージが最小の日を休みに変換
