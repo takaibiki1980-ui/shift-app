@@ -1365,6 +1365,62 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   // P3_swap スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P3_swap'); if(v.length) console.error('[TIME-ROLE-VIOL] P3_swap',v); _snapPrev = sn; }
 
+  // Phase2.9: 前半/後半バランス強制スワップ
+  // どのフェーズで偏りが生じたかに関わらず、後半休み過多なら前半勤務と交換する
+  {
+    const half = Math.ceil(days / 2);
+    for (const s of ds) {
+      for (let iter = 0; iter < 8; iter++) {
+        const fWork = [], bRest = [];
+        for (let d = 1; d <= days; d++) {
+          if (locked[s.id][d]) continue;
+          const v = result[s.id]?.[d];
+          if (REST_SET.has(v) && d > half) bRest.push(d);
+          else if (WORK.has(v) && d <= half) fWork.push(d);
+        }
+        const fRest = [];
+        for (let d = 1; d <= half; d++) { if (!locked[s.id][d] && REST_SET.has(result[s.id]?.[d])) fRest.push(d); }
+        if (bRest.length <= fRest.length + 1) break; // バランス済み
+        if (fWork.length === 0 || bRest.length === 0) break;
+
+        // 前半の勤務日をcoverageを損なわず休みに変換できるか確認
+        let swapped = false;
+        for (const fd of fWork) {
+          const cov = calcSlotCoverage(fd);
+          const fSh = result[s.id][fd];
+          const iv = fSh ? shiftIntervals[fSh] : null;
+          let covOk = true;
+          if (iv) {
+            for (const rule of rules) {
+              const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+              if (rS == null || rE == null) continue;
+              for (let m = rS; m < rE; m += 15) {
+                if (iv.start <= m && m < iv.end && (cov[m] || 0) <= rule.min) { covOk = false; break; }
+              }
+              if (!covOk) break;
+            }
+          }
+          if (!covOk) continue;
+          // 後半の休みを勤務に変換できる日を探す
+          for (const bd of bRest) {
+            const bSh = eligibleShifts[s.id].find(k => {
+              if (isBadTransition(result[s.id]?.[bd - 1], k)) return false;
+              if (isBadTransition(k, result[s.id]?.[bd + 1])) return false;
+              return countShift(bd, k) < (maxStaffMap[k] ?? 99);
+            });
+            if (!bSh) continue;
+            result[s.id][fd] = '休み';
+            result[s.id][bd] = bSh;
+            swapped = true;
+            break;
+          }
+          if (swapped) break;
+        }
+        if (!swapped) break;
+      }
+    }
+  }
+
   // [DIAG] 最終休み分布（[TIME-ENGINE]の直前に出力）
   for (const s of ds) {
     const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
