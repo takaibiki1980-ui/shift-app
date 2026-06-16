@@ -1219,13 +1219,16 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         remaining--;
       }
       // 2nd pass: 1stで超過分が残った場合のみ softRest日も解放
+      const softUsed2nd = [];
       if (remaining > 0) {
         const softRestDays = restDays.filter(d => softRest[s.id]?.has(d));
         const fallback = toCandidates(softRestDays);
         for (let i = 0; i < Math.min(remaining, fallback.length); i++) {
           result[s.id][fallback[i].d] = fallback[i].sk;
+          softUsed2nd.push(fallback[i].d);
         }
       }
+      console.log(`[TIME-P2-DIAG] ${s.name}: excess=${excess} softRestSize=${softRest[s.id]?.size??0} nonSoftRest=${nonSoftRestDays.length} 1st変換=${excess-remaining} 2nd解放=${softUsed2nd.length} 2nd日=[${softUsed2nd.join(',')}]`);
     } else if (actualRest < target) {
       // 公休不足 → coverageダメージが最小の日を休みに変換
       const shortage = target - actualRest;
