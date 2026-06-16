@@ -1037,14 +1037,6 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P0_lock スナップ: locked からの違反（shiftRequestsByMonth等）を分離
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P0_lock'); if(v.length) console.error('[TIME-ROLE-VIOL] P0_lock',v); _snapPrev = sn; }
-  // [DIAG] Phase0.5直後: softRest配置日と locked休み日を出力
-  for (const s of ds) {
-    const lockedR = Object.entries(locked[s.id]).filter(([,v])=>REST_SET.has(v)).map(([d])=>Number(d)).sort((a,b)=>a-b);
-    const srDays  = [...(softRest[s.id]||[])].sort((a,b)=>a-b);
-    const srF = srDays.filter(d=>d<=15).length, srB = srDays.filter(d=>d>15).length;
-    const lkF = lockedR.filter(d=>d<=15).length,  lkB = lockedR.filter(d=>d>15).length;
-    console.log(`[TIME-P05-DIAG] ${s.name}: target=${targetKyuko[s.id]} locked休み=${lockedR.length}(前${lkF}/後${lkB})[${lockedR.join(',')}] softRest=${srDays.length}(前${srF}/後${srB})[${srDays.join(',')}]`);
-  }
 
   const th = dept.intervalThreshold ?? null;
   const isBadTransition = (prev, curr) => {
@@ -1190,12 +1182,6 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P1_coverage スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1_coverage'); if(v.length) console.error('[TIME-ROLE-VIOL] P1_coverage',v); _snapPrev = sn; }
-  // [DIAG] Phase1直後: 全スタッフの休み分布を出力
-  for (const s of ds) {
-    const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
-    const f = rd.filter(d=>d<=15).length, b = rd.filter(d=>d>15).length;
-    console.log(`[TIME-P1-DIAG] ${s.name}: 休み計=${rd.length}(前${f}/後${b}) target=${targetKyuko[s.id]} [${rd.join(',')}]`);
-  }
 
   // Phase 2: 公休調整
   for (const s of ds) {
@@ -1210,11 +1196,10 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     const target = targetKyuko[s.id];
 
     if (actualRest > target) {
-      // 公休過多 → softRest保護（二段階）:
-      //   1st: softRestでない休み日を優先勤務化
-      //   2nd: 1stで不足した分のみ softRest日も解放
+      // 公休過多 → 前半・後半バランスを保ちながら削除（greedy balanced）
       const excess = actualRest - target;
-      const toCandidates = (days) => days.map(d => {
+      const half = Math.ceil(days / 2);
+      const computeCand = (d) => {
         const cov = calcSlotCoverage(d);
         const bestSh = eligibleShifts[s.id].reduce((best, sk) => {
           if (isBadTransition(result[s.id][d-1], sk)) return best;
@@ -1222,23 +1207,23 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
           const g = calcMarginalGain(s, sk, d, cov);
           return g > (best?.gain ?? -1) ? { sk, gain: g } : best;
         }, null);
-        return { d, gain: bestSh?.gain ?? 0, sk: bestSh?.sk };
-      }).filter(x => x.sk).sort((a, b) => b.gain - a.gain);
-      // 1st pass: softRest保護 — Phase0.5で置いた均等配置日は除外
-      const nonSoftRestDays = restDays.filter(d => !softRest[s.id]?.has(d));
-      const primary = toCandidates(nonSoftRestDays);
+        return bestSh || null;
+      };
+      // 全休み日をbalanced greedy で削除（前半・後半の多い方から優先削除）
+      const candMap = {};
+      for (const d of restDays) { const c = computeCand(d); if (c) candMap[d] = c; }
+      let fPool = restDays.filter(d => d <= half && candMap[d]);
+      let bPool = restDays.filter(d => d > half && candMap[d]);
       let remaining = excess;
-      for (let i = 0; i < Math.min(remaining, primary.length); i++) {
-        result[s.id][primary[i].d] = primary[i].sk;
+      while (remaining > 0 && (fPool.length + bPool.length) > 0) {
+        const preferBack = bPool.length >= fPool.length;
+        const src = preferBack ? (bPool.length > 0 ? bPool : fPool) : (fPool.length > 0 ? fPool : bPool);
+        src.sort((a, b) => candMap[b].gain - candMap[a].gain || b - a);
+        const pick = src[0];
+        result[s.id][pick] = candMap[pick].sk;
+        if (pick <= half) fPool = fPool.filter(d => d !== pick);
+        else bPool = bPool.filter(d => d !== pick);
         remaining--;
-      }
-      // 2nd pass: 1stで超過分が残った場合のみ softRest日も解放
-      if (remaining > 0) {
-        const softRestDays = restDays.filter(d => softRest[s.id]?.has(d));
-        const fallback = toCandidates(softRestDays);
-        for (let i = 0; i < Math.min(remaining, fallback.length); i++) {
-          result[s.id][fallback[i].d] = fallback[i].sk;
-        }
       }
     } else if (actualRest < target) {
       // 公休不足 → coverageダメージが最小の日を休みに変換
@@ -1376,6 +1361,13 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P3_swap スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P3_swap'); if(v.length) console.error('[TIME-ROLE-VIOL] P3_swap',v); _snapPrev = sn; }
+
+  // [DIAG] 最終休み分布（[TIME-ENGINE]の直前に出力）
+  for (const s of ds) {
+    const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
+    const f = rd.filter(d=>d<=15).length, b = rd.filter(d=>d>15).length;
+    console.log(`[TIME-FINAL] ${s.name}: 休み計=${rd.length}(前${f}/後${b}) target=${targetKyuko[s.id]} [${rd.join(',')}]`);
+  }
 
   // ── 最終 roleShiftTypes 違反スキャン ──────────────────────────────────────
   const roleViolations = [];
