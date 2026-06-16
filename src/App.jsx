@@ -975,22 +975,64 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   };
   let _snapPrev = _snapRole(); // Phase0 直後（locked 反映済み）
 
-  // Phase0.5: preferredRestDays — 公休を月内均等分散（ソフトロック）
+  // Phase0.5: 公休先行配置（介護エンジン式 Pass A）
+  // ─ dowRestRate 確率サンプリング or 均等間隔+揺らぎ（maxConsec制約・月末保護）
+  // ─ softRest: Phase1 coverage不足時に上書き可能なソフトロック
+  const _wsN = (items, weights, n) => {
+    const pool = items.map((item, i) => ({ item, w: Math.max(0, weights[i] ?? 1) }));
+    const out = [];
+    while (out.length < n && pool.length) {
+      const tot = pool.reduce((s, x) => s + x.w, 0);
+      if (tot <= 0) { out.push(...pool.slice(0, n - out.length).map(x => x.item)); break; }
+      let r = Math.random() * tot;
+      const idx = pool.findIndex(x => { r -= x.w; return r <= 0; });
+      const p = idx >= 0 ? idx : pool.length - 1;
+      out.push(pool[p].item); pool.splice(p, 1);
+    }
+    return out;
+  };
   const softRest = {};
   for (const s of ds) {
     softRest[s.id] = new Set();
     const lockedRestCount = Object.values(locked[s.id]).filter(v => REST_SET.has(v)).length;
-    const needed = Math.max(0, targetKyuko[s.id] - lockedRestCount);
-    if (needed <= 0) continue;
+    const restTarget = Math.max(0, targetKyuko[s.id] - lockedRestCount);
+    if (restTarget <= 0) continue;
     const available = [];
     for (let d = 1; d <= days; d++) { if (!locked[s.id][d]) available.push(d); }
     if (available.length === 0) continue;
-    const step = available.length / (needed + 1);
-    const used = new Set();
-    for (let i = 1; i <= needed; i++) {
-      const idx = Math.min(Math.round(i * step) - 1, available.length - 1);
-      const day = available[idx];
-      if (!used.has(day)) { used.add(day); softRest[s.id].add(day); result[s.id][day] = '休み'; }
+    const tKey = Object.keys(shiftTrend || {}).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, s.name));
+    const trend = tKey ? shiftTrend[tKey] : null;
+    if (trend?.dowRestRate) {
+      // ★確率サンプリング: dowRestRate を重みにして非復元サンプリング
+      const weights = available.map(d => {
+        const dow6 = (new Date(year, month, d).getDay() + 6) % 7;
+        return Math.max(0.01, trend.dowRestRate[dow6] ?? 0.01);
+      });
+      _wsN(available, weights, restTarget).forEach(d => { result[s.id][d] = '休み'; softRest[s.id].add(d); });
+    } else {
+      // trendなし → 均等間隔+揺らぎ（maxConsec制約保証・月末保護）
+      const N = available.length;
+      const step = N / (restTarget + 1);
+      const usedSet = new Set();
+      let prevDay = 0;
+      for (let i = 1; i <= restTarget; i++) {
+        const isLast = (i === restTarget);
+        const minDay = prevDay + 1;
+        const maxDay = Math.min(days, prevDay + maxConsec + 1);
+        const minDayAdj = isLast ? Math.max(minDay, days - maxConsec) : minDay;
+        const idealIdx = Math.min(Math.max(0, Math.round(i * step) - 1), N - 1);
+        const jitter = Math.round((Math.random() - 0.5) * 4);
+        const targetDay = available[idealIdx] + jitter;
+        let cands = available.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
+        if (!cands.length && isLast) cands = available.filter(d => d >= minDay && d <= maxDay && !usedSet.has(d));
+        if (!cands.length) cands = available.filter(d => d >= minDay && !usedSet.has(d));
+        if (!cands.length) break;
+        const best = cands.reduce((a, b) => Math.abs(a - targetDay) < Math.abs(b - targetDay) ? a : b);
+        usedSet.add(best);
+        result[s.id][best] = '休み';
+        softRest[s.id].add(best);
+        prevDay = best;
+      }
     }
   }
   // P0_lock スナップ: locked からの違反（shiftRequestsByMonth等）を分離
@@ -1140,6 +1182,65 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P1_coverage スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1_coverage'); if(v.length) console.error('[TIME-ROLE-VIOL] P1_coverage',v); _snapPrev = sn; }
+
+  // Phase1.5: 連続勤務補正・公休不足補正・連続休み補正（介護エンジン式）
+  {
+    // 連続カウントヘルパー（autoGenerateTime ローカル）
+    const _cwC = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (WORK.has(result[id]?.[i])) c++; else break; } return c; };
+    const _crC = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (REST_SET.has(result[id]?.[i])) c++; else break; } return c; };
+    const _crF = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (REST_SET.has(result[id]?.[i])) c++; else break; } return c; };
+
+    // ── Pass C 相当: 連続勤務 > maxConsec の日を「休み」に変換 ──
+    for (const s of ds) {
+      for (let d = 1; d <= days; d++) {
+        if (!WORK.has(result[s.id]?.[d])) continue;
+        if (locked[s.id][d]) continue;
+        let consec = 0;
+        for (let i = d; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) consec++; else break; }
+        if (consec <= maxConsec) continue;
+        result[s.id][d] = '休み';
+      }
+    }
+
+    // ── 公休不足補正: 長連勤優先で休みを追加 ──
+    for (const s of ds) {
+      const actualRest = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+      let shortage = targetKyuko[s.id] - actualRest;
+      if (shortage <= 0) continue;
+      const workDays = [];
+      for (let d = 1; d <= days; d++) {
+        if (locked[s.id][d]) continue;
+        if (!WORK.has(result[s.id]?.[d])) continue;
+        workDays.push(d);
+      }
+      workDays.sort((a, b) => _cwC(s.id, b - 1) - _cwC(s.id, a - 1));
+      for (const d of workDays) {
+        if (shortage <= 0) break;
+        if (_crC(s.id, d - 1) + 1 + _crF(s.id, d) > 3) continue;
+        result[s.id][d] = '休み';
+        shortage--;
+      }
+    }
+
+    // ── 連続休み補正: 4連休以上を勤務に戻す ──
+    for (const s of ds) {
+      for (let d = 1; d <= days; d++) {
+        if (result[s.id]?.[d] !== '休み') continue; // 希望休・有休は対象外
+        if (locked[s.id][d]) continue;
+        if (_crC(s.id, d) <= 3) continue;
+        if ((_cwC(s.id, d - 1) + 1) > maxConsec) continue;
+        const sh = eligibleShifts[s.id].find(k => {
+          if (isBadTransition(result[s.id]?.[d - 1], k)) return false;
+          if (isBadTransition(k, result[s.id]?.[d + 1])) return false;
+          return countShift(d, k) < (maxStaffMap[k] ?? 99);
+        });
+        if (!sh) continue;
+        result[s.id][d] = sh;
+      }
+    }
+  }
+  // P1.5_rest スナップ
+  { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1.5_rest'); if(v.length) console.error('[TIME-ROLE-VIOL] P1.5_rest',v); _snapPrev = sn; }
 
   // Phase 2: 公休調整
   for (const s of ds) {
