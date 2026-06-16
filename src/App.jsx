@@ -1265,7 +1265,16 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     const _crC = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (REST_SET.has(result[id]?.[i])) c++; else break; } return c; };
     const _crF = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (REST_SET.has(result[id]?.[i])) c++; else break; } return c; };
 
+    // [DIAG] Phase2終了時・PassC実行前の状態
+    for (const s of ds) {
+      const restDays = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) restDays.push(d);
+      const maxC = (() => { let m = 0, c = 0; for (let d = 1; d <= days; d++) { if (WORK.has(result[s.id]?.[d])) { c++; m = Math.max(m, c); } else c = 0; } return m; })();
+      console.log(`[PRE-PASSC] ${s.name}: restDays=[${restDays.join(',')}] target=${targetKyuko[s.id]} maxConsecWork=${maxC}`);
+    }
+
     // ── Pass C 相当: 連続勤務 > maxConsec を「休み」に変換 ──
+    const _snapBeforeC = {};
+    for (const s of ds) _snapBeforeC[s.id] = { ...result[s.id] };
     for (const s of ds) {
       for (let d = 1; d <= days; d++) {
         if (!WORK.has(result[s.id]?.[d])) continue;
@@ -1275,6 +1284,14 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         if (consec <= maxConsec) continue;
         result[s.id][d] = '休み';
       }
+    }
+    // [DIAG] PassCで追加された休み日
+    for (const s of ds) {
+      const added = [];
+      for (let d = 1; d <= days; d++) {
+        if (REST_SET.has(result[s.id]?.[d]) && WORK.has(_snapBeforeC[s.id]?.[d])) added.push(d);
+      }
+      if (added.length > 0) console.log(`[PASSC-ADDED] ${s.name}: +休み=[${added.join(',')}]`);
     }
 
     // ── 公休不足補正: 長連勤優先で休みを追加 ──
