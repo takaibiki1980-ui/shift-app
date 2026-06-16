@@ -902,7 +902,7 @@ function validateCoverageRules(coverageRules, staffList, dept) {
 
 // 時間軸エンジン本体
 function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTrend = {}) {
-  console.log('%c[TIME-v5] Phase0.5カレンダー基準+Phase2バランス修正版', 'color:red;font-weight:bold;font-size:14px');
+  console.log('%c[TIME-v6] Phase0.5カスケード除去+Phase2バランス修正版', 'color:red;font-weight:bold;font-size:14px');
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const rules = dept.coverageRules || [];
@@ -1011,29 +1011,21 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       });
       _wsN(available, weights, restTarget).forEach(d => { result[s.id][d] = '休み'; softRest[s.id].add(d); });
     } else {
-      // trendなし → カレンダー基準均等分配+揺らぎ
-      // ※ available配列基準ではなく月日(1-days)を基準にすることで
-      //   前半がロック済みで available が後半に偏っていても
-      //   できるだけ均等に近い理想位置を目指す
+      // trendなし → prevDayカスケードなし・各休みを独立してidealDayに割り当て
+      // ※ prevDay+maxConsec制約があると「前半の空きなし→後半に飛ぶ→以降全部後半」
+      //   というカスケードが発生するため、完全に独立した割り当てに変更
       const usedSet = new Set();
-      let prevDay = 0;
       for (let i = 1; i <= restTarget; i++) {
-        const isLast = (i === restTarget);
-        const minDay = prevDay + 1;
-        const maxDay = Math.min(days, prevDay + maxConsec + 1);
-        const minDayAdj = isLast ? Math.max(minDay, days - maxConsec) : minDay;
-        // カレンダー上の理想日（available配列インデックスではなく日付ベース）
         const jitter = Math.round((Math.random() - 0.5) * 4);
         const idealDay = Math.round(i * days / (restTarget + 1)) + jitter;
-        let cands = available.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
-        if (!cands.length && isLast) cands = available.filter(d => d >= minDay && d <= maxDay && !usedSet.has(d));
-        if (!cands.length) cands = available.filter(d => d >= minDay && !usedSet.has(d));
+        // 最終休みは月末maxConsec以内に（月末の連続勤務防止）
+        const minCand = (i === restTarget) ? Math.max(1, days - maxConsec) : 1;
+        const cands = available.filter(d => d >= minCand && !usedSet.has(d));
         if (!cands.length) break;
         const best = cands.reduce((a, b) => Math.abs(a - idealDay) < Math.abs(b - idealDay) ? a : b);
         usedSet.add(best);
         result[s.id][best] = '休み';
         softRest[s.id].add(best);
-        prevDay = best;
       }
     }
   }
