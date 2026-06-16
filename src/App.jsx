@@ -1144,18 +1144,28 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     });
     // Fix2: シャッフルでタイブレーカー（同スコア時に毎回同じスタッフが選ばれるのを防ぐ）
     const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+    const softCands = []; // softRest候補ログ収集
     for (const s of shuffled) {
       const isSoftRest = softRest[s.id]?.has(d);
       if (result[s.id][d] !== undefined && !isSoftRest) continue;
       // Phase0.5: softRestはcoverage不足時のみ上書き可
-      if (isSoftRest && !hasCoverageDeficit) continue;
-      if (exceedsConsec(s.id, d)) continue;
-      if (needsRest(s.id, d)) continue;
+      if (isSoftRest && !hasCoverageDeficit) {
+        softCands.push({ name: s.name, reason: 'coverage充足→保護', gain: null, sk: null });
+        continue;
+      }
+      if (exceedsConsec(s.id, d)) { if(isSoftRest) softCands.push({ name: s.name, reason: '連続勤務超過', gain: null, sk: null }); continue; }
+      if (needsRest(s.id, d)) { if(isSoftRest) softCands.push({ name: s.name, reason: 'needsRest制約', gain: null, sk: null }); continue; }
       for (const sk of eligibleShifts[s.id]) {
         if (isBadTransition(result[s.id][d-1], sk)) continue;
         // Fix1: maxStaff上限チェック
         if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) continue;
+        // coverage gain内訳計算
+        let covGain = 0;
+        const iv2 = shiftIntervals[sk];
+        if (iv2) for (const rule of rules) { const rS=timeToMins(rule.start),rE=timeToMins(rule.end); if(rS==null||rE==null)continue; for(let m=rS;m<rE;m+=15){if(iv2.start<=m&&m<iv2.end){const b=cov[m]||0;covGain+=Math.max(0,Math.min(b+1,rule.min)-Math.min(b,rule.min));}}}
         const gain = calcMarginalGain(s, sk, d, cov);
+        const trendBonus = gain - covGain;
+        if (isSoftRest) softCands.push({ name: s.name, sk, covGain, trendBonus, gain, reason: 'coverage不足→候補' });
         if (gain > bestGain) { bestGain = gain; bestStaff = s; bestShift = sk; }
       }
     }
@@ -1172,6 +1182,15 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       }
       result[bestStaff.id][d] = bestShift;
       softRest[bestStaff.id]?.delete(d); // Phase0.5: coverage上書き時にsoftRest解除
+    }
+    // [DIAG] softRest候補スコア内訳出力
+    for (const c of softCands) {
+      const adopted = bestStaff?.name === c.name && bestShift === c.sk;
+      if (c.gain !== null) {
+        console.log(`[P1-CANDIDATE] day=${d} ${c.name} shift=${c.sk}: covGain=${c.covGain} trendBonus=${c.trendBonus.toFixed(4)} total=${c.gain.toFixed(4)} 採用=${adopted}`);
+      } else {
+        console.log(`[P1-CANDIDATE] day=${d} ${c.name}: 除外理由=${c.reason}`);
+      }
     }
     return !!bestStaff;
   };
