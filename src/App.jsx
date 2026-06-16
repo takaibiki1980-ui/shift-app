@@ -902,7 +902,7 @@ function validateCoverageRules(coverageRules, staffList, dept) {
 
 // 時間軸エンジン本体
 function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTrend = {}) {
-  console.log('%c[TIME-v7] dowRestRate前後バランス+カスケード除去版', 'color:red;font-weight:bold;font-size:14px');
+  console.error('[TIME-v7] ★新コード動作中★ dowRestRate前後バランス版');
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const rules = dept.coverageRules || [];
