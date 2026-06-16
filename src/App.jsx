@@ -902,7 +902,7 @@ function validateCoverageRules(coverageRules, staffList, dept) {
 
 // 時間軸エンジン本体
 function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTrend = {}) {
-  console.log('%c[TIME-v6] Phase0.5カスケード除去+Phase2バランス修正版', 'color:red;font-weight:bold;font-size:14px');
+  console.log('%c[TIME-v7] dowRestRate前後バランス+カスケード除去版', 'color:red;font-weight:bold;font-size:14px');
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const rules = dept.coverageRules || [];
@@ -1004,12 +1004,21 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     const tKey = Object.keys(shiftTrend || {}).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, s.name));
     const trend = tKey ? shiftTrend[tKey] : null;
     if (trend?.dowRestRate) {
-      // ★確率サンプリング: dowRestRate を重みにして非復元サンプリング
-      const weights = available.map(d => {
-        const dow6 = (new Date(year, month, d).getDay() + 6) % 7;
-        return Math.max(0.01, trend.dowRestRate[dow6] ?? 0.01);
-      });
-      _wsN(available, weights, restTarget).forEach(d => { result[s.id][d] = '休み'; softRest[s.id].add(d); });
+      // ★確率サンプリング: dowRestRate を重みにして前半/後半バランス分配
+      const half = Math.ceil(days / 2);
+      const mkW = arr => arr.map(d => Math.max(0.01, trend.dowRestRate[(new Date(year, month, d).getDay() + 6) % 7] ?? 0.01));
+      const frontAvail = available.filter(d => d <= half);
+      const backAvail  = available.filter(d => d > half);
+      const fTarget = Math.min(Math.floor(restTarget / 2), frontAvail.length);
+      const bTarget = Math.min(restTarget - fTarget, backAvail.length);
+      const allPicked = [..._wsN(frontAvail, mkW(frontAvail), fTarget), ..._wsN(backAvail, mkW(backAvail), bTarget)];
+      const surplus = restTarget - allPicked.length;
+      if (surplus > 0) {
+        const used = new Set(allPicked);
+        const leftover = available.filter(d => !used.has(d));
+        _wsN(leftover, mkW(leftover), surplus).forEach(d => allPicked.push(d));
+      }
+      allPicked.forEach(d => { result[s.id][d] = '休み'; softRest[s.id].add(d); });
     } else {
       // trendなし → prevDayカスケードなし・各休みを独立してidealDayに割り当て
       // ※ prevDay+maxConsec制約があると「前半の空きなし→後半に飛ぶ→以降全部後半」
