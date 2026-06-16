@@ -1234,6 +1234,7 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         const sh = result[s.id][d];
         const iv = shiftIntervals[sh];
         let damage = 0;
+        let deficitCount = 0;
         if (iv) {
           for (const rule of rules) {
             const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
@@ -1241,13 +1242,22 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
             for (let m = rS; m < rE; m += 15) {
               if (iv.start <= m && m < iv.end) {
                 const before = cov[m] || 0;
-                damage += Math.max(0, Math.min(before, rule.min) - Math.min(before - 1, rule.min));
+                const dmg = Math.max(0, Math.min(before, rule.min) - Math.min(before - 1, rule.min));
+                damage += dmg;
+                if (dmg > 0) deficitCount++;
               }
             }
           }
         }
-        return { d, damage };
+        return { d, damage, deficitCount, sh };
       }).sort((a, b) => a.damage - b.damage);
+      // [DIAG] SHORTAGE候補の全評価を出力
+      const front = candidates.filter(c => c.d <= 15);
+      const back  = candidates.filter(c => c.d > 15);
+      const selectedDays = candidates.slice(0, Math.min(shortage, candidates.length));
+      console.log(`[TIME-SHORT-DIAG] ${s.name}: target=${target} actual=${actualRest} shortage=${shortage} 候補前半${front.length}日/後半${back.length}日`);
+      console.log(`[TIME-SHORT-DIAG] ${s.name} 全候補(day/damage/def): ${candidates.map(c=>`${c.d}(${c.damage},${c.deficitCount})`).join(' ')}`);
+      console.log(`[TIME-SHORT-DIAG] ${s.name} 選択: ${selectedDays.map(c=>`day=${c.d} dmg=${c.damage}`).join(' / ')}`);
       for (let i = 0; i < Math.min(shortage, candidates.length); i++) {
         result[s.id][candidates[i].d] = '休み';
       }
