@@ -902,6 +902,7 @@ function validateCoverageRules(coverageRules, staffList, dept) {
 
 // 時間軸エンジン本体
 function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTrend = {}) {
+  console.log('%c[TIME-v5] Phase0.5カレンダー基準+Phase2バランス修正版', 'color:red;font-weight:bold;font-size:14px');
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const rules = dept.coverageRules || [];
