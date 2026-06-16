@@ -1037,6 +1037,14 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P0_lock スナップ: locked からの違反（shiftRequestsByMonth等）を分離
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P0_lock'); if(v.length) console.error('[TIME-ROLE-VIOL] P0_lock',v); _snapPrev = sn; }
+  // [DIAG] Phase0.5直後: softRest配置日と locked休み日を出力
+  for (const s of ds) {
+    const lockedR = Object.entries(locked[s.id]).filter(([,v])=>REST_SET.has(v)).map(([d])=>Number(d)).sort((a,b)=>a-b);
+    const srDays  = [...(softRest[s.id]||[])].sort((a,b)=>a-b);
+    const srF = srDays.filter(d=>d<=15).length, srB = srDays.filter(d=>d>15).length;
+    const lkF = lockedR.filter(d=>d<=15).length,  lkB = lockedR.filter(d=>d>15).length;
+    console.log(`[TIME-P05-DIAG] ${s.name}: target=${targetKyuko[s.id]} locked休み=${lockedR.length}(前${lkF}/後${lkB})[${lockedR.join(',')}] softRest=${srDays.length}(前${srF}/後${srB})[${srDays.join(',')}]`);
+  }
 
   const th = dept.intervalThreshold ?? null;
   const isBadTransition = (prev, curr) => {
@@ -1182,6 +1190,12 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   }
   // P1_coverage スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P1_coverage'); if(v.length) console.error('[TIME-ROLE-VIOL] P1_coverage',v); _snapPrev = sn; }
+  // [DIAG] Phase1直後: 全スタッフの休み分布を出力
+  for (const s of ds) {
+    const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
+    const f = rd.filter(d=>d<=15).length, b = rd.filter(d=>d>15).length;
+    console.log(`[TIME-P1-DIAG] ${s.name}: 休み計=${rd.length}(前${f}/後${b}) target=${targetKyuko[s.id]} [${rd.join(',')}]`);
+  }
 
   // Phase 2: 公休調整
   for (const s of ds) {
@@ -1234,7 +1248,6 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         const sh = result[s.id][d];
         const iv = shiftIntervals[sh];
         let damage = 0;
-        let deficitCount = 0;
         if (iv) {
           for (const rule of rules) {
             const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
@@ -1242,22 +1255,13 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
             for (let m = rS; m < rE; m += 15) {
               if (iv.start <= m && m < iv.end) {
                 const before = cov[m] || 0;
-                const dmg = Math.max(0, Math.min(before, rule.min) - Math.min(before - 1, rule.min));
-                damage += dmg;
-                if (dmg > 0) deficitCount++;
+                damage += Math.max(0, Math.min(before, rule.min) - Math.min(before - 1, rule.min));
               }
             }
           }
         }
-        return { d, damage, deficitCount, sh };
+        return { d, damage };
       }).sort((a, b) => a.damage - b.damage);
-      // [DIAG] SHORTAGE候補の全評価を出力
-      const front = candidates.filter(c => c.d <= 15);
-      const back  = candidates.filter(c => c.d > 15);
-      const selectedDays = candidates.slice(0, Math.min(shortage, candidates.length));
-      console.log(`[TIME-SHORT-DIAG] ${s.name}: target=${target} actual=${actualRest} shortage=${shortage} 候補前半${front.length}日/後半${back.length}日`);
-      console.log(`[TIME-SHORT-DIAG] ${s.name} 全候補(day/damage/def): ${candidates.map(c=>`${c.d}(${c.damage},${c.deficitCount})`).join(' ')}`);
-      console.log(`[TIME-SHORT-DIAG] ${s.name} 選択: ${selectedDays.map(c=>`day=${c.d} dmg=${c.damage}`).join(' / ')}`);
       for (let i = 0; i < Math.min(shortage, candidates.length); i++) {
         result[s.id][candidates[i].d] = '休み';
       }
