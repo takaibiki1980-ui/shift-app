@@ -1160,6 +1160,16 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       }
     }
     if (bestStaff) {
+      if (softRest[bestStaff.id]?.has(d)) {
+        // [DIAG] softRest上書き理由ログ
+        const defRules = rules.filter(rule => {
+          const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+          if (rS == null || rE == null) return false;
+          for (let m = rS; m < rE; m += 15) if ((cov[m] || 0) < rule.min) return true;
+          return false;
+        }).map(r => `${r.start}-${r.end}:need${r.min}got${Math.min(...Array.from({length:Math.ceil((timeToMins(r.end)-timeToMins(r.start))/15)},(_,i)=>cov[timeToMins(r.start)+i*15]||0))}`);
+        console.log(`[P1-OVERRIDE] day=${d} ${bestStaff.name}: softRest→${bestShift} gain=${bestGain.toFixed(1)} deficit=[${defRules.join('|')}]`);
+      }
       result[bestStaff.id][d] = bestShift;
       softRest[bestStaff.id]?.delete(d); // Phase0.5: coverage上書き時にsoftRest解除
     }
@@ -1199,11 +1209,22 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   // [DIAG] Phase1終了時 restDays（生成源: softRest保持 or undefined→休み）
   for (const s of ds) {
     const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
-    const softKept = rd.filter(d => softRest[s.id].has(d));           // Phase0.5で配置・Phase1で保持
-    const autoRest = rd.filter(d => !softRest[s.id].has(d) && !locked[s.id][d]); // undefined→休み
+    const softKept = rd.filter(d => softRest[s.id].has(d));
+    const autoRest = rd.filter(d => !softRest[s.id].has(d) && !locked[s.id][d]);
     const lockedR  = rd.filter(d => locked[s.id][d]);
     const f = rd.filter(d=>d<=15).length, b = rd.filter(d=>d>15).length;
     console.log(`[P1-REST] ${s.name}: 前${f}/後${b} | softKept=[${softKept.join(',')}] autoRest=[${autoRest.join(',')}] locked=[${lockedR.join(',')}]`);
+    // softKept各日のcoverage充足確認（なぜ上書きされなかったか）
+    for (const d of softKept) {
+      const cov = calcSlotCoverage(d);
+      const deficit = rules.some(rule => {
+        const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+        if (rS == null || rE == null) return false;
+        for (let m = rS; m < rE; m += 15) if ((cov[m] || 0) < rule.min) return true;
+        return false;
+      });
+      console.log(`[P1-KEPT] ${s.name} day=${d}: softRest保持 coverageDeficit=${deficit}(${deficit?'上書き条件満たすが選ばれなかった':'充足→保護'})`);
+    }
   }
 
   // Phase 2: 公休調整
