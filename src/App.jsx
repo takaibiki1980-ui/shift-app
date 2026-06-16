@@ -1010,9 +1010,10 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       });
       _wsN(available, weights, restTarget).forEach(d => { result[s.id][d] = '休み'; softRest[s.id].add(d); });
     } else {
-      // trendなし → 均等間隔+揺らぎ（maxConsec制約保証・月末保護）
-      const N = available.length;
-      const step = N / (restTarget + 1);
+      // trendなし → カレンダー基準均等分配+揺らぎ
+      // ※ available配列基準ではなく月日(1-days)を基準にすることで
+      //   前半がロック済みで available が後半に偏っていても
+      //   できるだけ均等に近い理想位置を目指す
       const usedSet = new Set();
       let prevDay = 0;
       for (let i = 1; i <= restTarget; i++) {
@@ -1020,14 +1021,14 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         const minDay = prevDay + 1;
         const maxDay = Math.min(days, prevDay + maxConsec + 1);
         const minDayAdj = isLast ? Math.max(minDay, days - maxConsec) : minDay;
-        const idealIdx = Math.min(Math.max(0, Math.round(i * step) - 1), N - 1);
+        // カレンダー上の理想日（available配列インデックスではなく日付ベース）
         const jitter = Math.round((Math.random() - 0.5) * 4);
-        const targetDay = available[idealIdx] + jitter;
+        const idealDay = Math.round(i * days / (restTarget + 1)) + jitter;
         let cands = available.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
         if (!cands.length && isLast) cands = available.filter(d => d >= minDay && d <= maxDay && !usedSet.has(d));
         if (!cands.length) cands = available.filter(d => d >= minDay && !usedSet.has(d));
         if (!cands.length) break;
-        const best = cands.reduce((a, b) => Math.abs(a - targetDay) < Math.abs(b - targetDay) ? a : b);
+        const best = cands.reduce((a, b) => Math.abs(a - idealDay) < Math.abs(b - idealDay) ? a : b);
         usedSet.add(best);
         result[s.id][best] = '休み';
         softRest[s.id].add(best);
