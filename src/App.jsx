@@ -1283,6 +1283,10 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       const excess = actualRest - target;
       const half = Math.ceil(days / 2);
       const computeCand = (d) => {
+        // 修正①: rest→work変換でmaxConsec超過になる日は候補除外
+        let _fwd = 0; for (let i = d + 1; i <= days; i++) { if (WORK.has(result[s.id]?.[i])) _fwd++; else break; }
+        let _bwd = 0; for (let i = d - 1; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) _bwd++; else break; }
+        if (_bwd + 1 + _fwd > maxConsec) return null;
         const cov = calcSlotCoverage(d);
         const bestSh = eligibleShifts[s.id].reduce((best, sk) => {
           if (isBadTransition(result[s.id][d-1], sk)) {
@@ -1441,7 +1445,44 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
             const actualSwapped = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
             console.log(`[PASSC-SWAP] ${s.name}: addRest=${d} removeRest=${best.bd} before=${actualAfter} after=${actualSwapped} restTarget=${targetKyuko[s.id]}`);
           } else {
-            console.log(`[PASSC-SWAP-FAIL] ${s.name}: reason=no_candidate actual=${actualAfter} target=${targetKyuko[s.id]}`);
+            // 修正②: softRestを含むフォールバック探索
+            const fbCands = [];
+            for (let bd = 1; bd <= days; bd++) {
+              if (bd === d) continue;
+              if (!REST_SET.has(result[s.id]?.[bd])) continue;
+              if (locked[s.id][bd]) continue;
+              if (_PASSC_PROT.has(result[s.id][bd])) continue;
+              // softRest除外なし（フォールバック）
+              const orig = _snapBeforeC[s.id]?.[bd];
+              const origOk = WORK.has(orig) &&
+                !isBadTransition(result[s.id][bd-1], orig) &&
+                !isBadTransition(orig, result[s.id][bd+1]) &&
+                countShift(bd, orig) < (maxStaffMap[orig] ?? 99);
+              let fbSk = origOk ? orig : null;
+              if (!fbSk) {
+                const freq = {};
+                for (let dd = 1; dd <= days; dd++) { const v = result[s.id][dd]; if (WORK.has(v)) freq[v] = (freq[v] || 0) + 1; }
+                fbSk = (eligibleShifts[s.id] || [])
+                  .filter(sk => !isBadTransition(result[s.id][bd-1], sk) &&
+                                !isBadTransition(sk, result[s.id][bd+1]) &&
+                                countShift(bd, sk) < (maxStaffMap[sk] ?? 99))
+                  .sort((a, b) => (freq[b] || 0) - (freq[a] || 0))[0] || null;
+              }
+              if (!fbSk) continue;
+              let fbFwd = 0; for (let i = bd+1; i <= days; i++) { if (WORK.has(result[s.id]?.[i])) fbFwd++; else break; }
+              let fbBwd = 0; for (let i = bd-1; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) fbBwd++; else break; }
+              if (fbBwd + 1 + fbFwd > maxConsec) continue;
+              fbCands.push({ bd, fbSk });
+            }
+            if (fbCands.length > 0) {
+              const best = fbCands[0];
+              result[s.id][best.bd] = best.fbSk;
+              softRest[s.id]?.delete(best.bd);
+              const actualSwapped = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+              console.log(`[PASSC-SWAP-FB] ${s.name}: addRest=${d} removeRest=${best.bd} before=${actualAfter} after=${actualSwapped} restTarget=${targetKyuko[s.id]}`);
+            } else {
+              console.log(`[PASSC-SWAP-FAIL] ${s.name}: reason=no_candidate actual=${actualAfter} target=${targetKyuko[s.id]}`);
+            }
           }
         }
       }
