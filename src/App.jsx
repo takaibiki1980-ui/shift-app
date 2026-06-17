@@ -1493,6 +1493,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     //              無限 repair ループにはならない
     {
       let _fixedNonSlot = 0, _absorbedByTier2 = 0;
+      const _diagTypeMap = {}; // [DIAG] 元シフト種別カウント
       const _cds = dept.customShiftDefs || [];
       // base が 日勤 かどうかを判定（isSlotManaged は除外済みだが、優先度付けのため明示チェック）
       const _isNikkinBase = (k) => (_cds.find(c => c.key === k)?.baseType || k) === '日勤';
@@ -1520,20 +1521,21 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             }
             const target = nikkinTarget ?? nonSlotTarget; // 日勤優先、なければ非 slot
             if (target !== null) {
-              { let _bef=consecWork(s.id,target-1),_aft=0;for(let _i=target+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${target} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (Tier2)`); }
+              { const _origT=res[s.id][target]??'?'; _diagTypeMap[_origT]=(_diagTypeMap[_origT]||0)+1; let _bef=consecWork(s.id,target-1),_aft=0;for(let _i=target+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${target} origShift=${_origT} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (Tier2)`); }
               console.log(`[PassC-Tier2休み追加] ${s.name} day=${target} before=${res[s.id][target]} (streak切断のため)`);
               res[s.id][target] = '休み'; // ← Tier2（日勤層）を削除して streak を断ち切る
               _absorbedByTier2++;
             }
             continue; // d 自体（role-slot）は変更しない
           }
-          { let _bef=consecWork(s.id,d-1),_aft=0;for(let _i=d+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${d} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (非slot)`); }
+          { const _origD=res[s.id][d]??'?'; _diagTypeMap[_origD]=(_diagTypeMap[_origD]||0)+1; let _bef=consecWork(s.id,d-1),_aft=0;for(let _i=d+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${d} origShift=${_origD} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (非slot)`); }
           console.log(`[PassC-非slot休み追加] ${s.name} day=${d} before=${res[s.id][d]} consecWork=${consecWork(s.id,d)}`);
           res[s.id][d] = '休み';
           _fixedNonSlot++;
         }
       });
       console.error(`[AG-Phase1] PassC: 非slot修復=${_fixedNonSlot} Tier2吸収(日勤層)=${_absorbedByTier2} 合計追加休み=${_fixedNonSlot+_absorbedByTier2}`);
+      { const _total=_fixedNonSlot+_absorbedByTier2; const _ab=(_diagTypeMap['A']||0)+(_diagTypeMap['B']||0); const _rows=Object.entries(_diagTypeMap).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({元シフト:k,件数:v,割合:(_total>0?(v/_total*100).toFixed(1)+'%':'0%')})); console.error(`[PassC-TYPE-DIAG] dept=${dept.id} 元シフト別集計(合計=${_total}件 A+B=${_ab}件 A+B率=${_total>0?(_ab/_total*100).toFixed(1)+'%':'0%'})`); if(_rows.length)console.table(_rows); }
     }
     // ★Phase1 diagnostic: Pass C 後の連続勤務違反残存チェック（読み取り専用・ロジック変更なし）
     // [AG-Phase1] log: total=残存違反数 slotProtected=shouldProtectSlot が守った件数（Tier1衝突）
