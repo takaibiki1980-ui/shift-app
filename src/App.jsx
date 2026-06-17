@@ -1427,6 +1427,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           const targetCount = targetShiftCounts[s.id][shiftType] || 0;
           if (!targetCount) return;
           const pool = [...remaining].filter(d => {
+            if (dept.id === 'eiyo' && consecWork(s.id, d - 1) >= maxConsec) return false;
             const cnt = ds.filter(sx => res[sx.id][d] === shiftType).length;
             return cnt < (maxStaff[shiftType] ?? 99);
           });
@@ -1441,12 +1442,20 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         });
         const nikkin = allowed.includes('日勤') ? '日勤' : (allowed.find(k => k !== '夜勤' && k !== '明け') || allowed[0]);
         remaining.forEach(d => {
+          if (dept.id === 'eiyo' && consecWork(s.id, d - 1) >= maxConsec) {
+            res[s.id][d] = '休み';
+            return;
+          }
           res[s.id][d] = nikkin;
           assignedShiftCounts[s.id][nikkin] = (assignedShiftCounts[s.id][nikkin] || 0) + 1;
         });
       } else {
         // ★ratio指定なし / trendのみ / trendなし: 各日を確率サンプリングで決定
         workDays.forEach(d => {
+          if (dept.id === 'eiyo' && consecWork(s.id, d - 1) >= maxConsec) {
+            res[s.id][d] = '休み';
+            return;
+          }
           const probs = {};
           allowed.forEach(k => { probs[k] = getShiftWeight(d, k); });
           // minStaff 不足シフトにブースト（minStaff充足優先）
