@@ -1382,6 +1382,8 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         let consec = 0;
         for (let i = d; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) consec++; else break; }
         if (consec <= maxConsec) continue;
+        // [PASSC-TRACE] 発火前後の勤務列を可視化
+        { const win = []; const start = Math.max(1, d - consec - 1); for (let i = start; i <= Math.min(days, d + 2); i++) { win.push(`${i}:${result[s.id]?.[i] ?? '-'}`); } console.log(`[PASSC-TRACE] ${s.name} day=${d} consec=${consec} maxConsec=${maxConsec} [${win.join(' ')}]`); }
         const actualBefore = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
         console.log(`[PASSC-CONSEC] ${s.name} day=${d}: consec=${consec} maxConsec=${maxConsec} addRest=true actual=${actualBefore} target=${targetKyuko[s.id]}`);
         result[s.id][d] = '休み';
