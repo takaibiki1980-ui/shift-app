@@ -1502,6 +1502,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
           if (consecWork(s.id, d) <= maxConsec) continue;
           if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
+          // ★ PassC 公休超過ガード: actualRest >= targetRest なら休み追加を行わない
+          { const _gAct=Object.values(res[s.id]).filter(v=>deptRest.has(v)&&v!=='明け').length, _gTgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8; if(_gAct>=_gTgt){console.log('[PassC-GUARD]',s.name,'actualRest=',_gAct,'targetRest=',_gTgt,'reason=rest-limit');continue;} }
           const sh = res[s.id][d];
           if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) {
             // ★Tier1保護: d 日は role-slot → 削除不可
