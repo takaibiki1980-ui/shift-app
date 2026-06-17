@@ -1296,6 +1296,22 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         }
       }
     });
+    // [DIAG-PassA] eiyo専用スナップショット
+    if (dept.id === 'eiyo') {
+      const _RA = new Set(['休み','希望休','有休']);
+      const _diagA = ds.map(s => {
+        const actK = Object.values(res[s.id]).filter(v => _RA.has(v)).length;
+        const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+        let st = 0, ms = 0;
+        for (let d = 1; d <= days; d++) {
+          const v = res[s.id][d];
+          if (v && !_RA.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
+        }
+        return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
+      });
+      console.error('[DIAG-PassA] dept=eiyo');
+      console.table(_diagA);
+    }
     // ── ステップ2.5: 早番・遅番 slot-first 配置（PassA公休確定後に実行）─────
     // PassA で休み日を先確定してから早番・遅番を配置することで、
     // 夜勤5回スタッフの残り空き日数が不足してPassAのbreakが発火する問題を防ぐ。
@@ -1482,8 +1498,22 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     { const _R=new Set(['休み','希望休','有休']); ['高野','伊藤','郡司','柳','川村'].forEach(nm=>{const _s=ds.find(s=>s.name&&s.name.includes(nm));if(_s){const _t=_s.kyukoDaysByMonth?.[mk]??_s.kyukoDays??8;const _d=Object.entries(res[_s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[公休追跡] PassB終了 ${_s.name} target=${_t} actual=${_d.length} 休み日=[${_d.join(',')}]`);}}); }
     // [DEBUG PassB-連続チェック] PassB後の実際の連続勤務違反（勤務シフト配置済み）
     { let _vs=0,_vc=0,_mx=0; const _rows=ds.map(s=>{let st=0,vc=0,ms=0; for(let d=1;d<=days;d++){const v=res[s.id][d]; const isW=deptWork.has(v)&&v!=='明け'; if(!isW){st=0;}else{st++;if(st>maxConsec)vc++;} ms=Math.max(ms,st);} if(vc>0)_vs++; _vc+=vc; _mx=Math.max(_mx,ms); return{name:s.name,最大連続:ms,超過日数:vc};}); console.error(`[PassB-連続チェック] maxConsec=${maxConsec} 超過職員数=${_vs}/${ds.length} 超過日数合計=${_vc} 最大連続=${_mx}`); if(_vs>0)console.table(_rows.filter(r=>r.超過日数>0)); }
-    // [DIAG] PassB終了スナップショット（全スタッフ）
-    { const _R2=new Set(['休み','希望休','有休']); const _diag=ds.map(s=>{let st=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];if(deptWork.has(v)&&v!=='明け'){st++;ms=Math.max(ms,st);}else{st=0;}}const actK=Object.values(res[s.id]).filter(v=>_R2.has(v)).length;const tgtK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return{staff:s.name,targetKyuko:tgtK,actualKyuko:actK,maxConsecObserved:ms,longestStreak:ms};}); console.error('[DIAG-PassB] dept='+dept.id); console.table(_diag); }
+    // [DIAG-PassB] eiyo専用スナップショット（PassA→PassB 差分確認用）
+    if (dept.id === 'eiyo') {
+      const _RB = new Set(['休み','希望休','有休']);
+      const _diagB = ds.map(s => {
+        const actK = Object.values(res[s.id]).filter(v => _RB.has(v)).length;
+        const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+        let st = 0, ms = 0;
+        for (let d = 1; d <= days; d++) {
+          const v = res[s.id][d];
+          if (v && !_RB.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
+        }
+        return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
+      });
+      console.error('[DIAG-PassB] dept=eiyo');
+      console.table(_diagB);
+    }
 
     // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair] ────────────────────────────
     // 修復方針（介護型 Tier 構造に準拠）:
@@ -6880,6 +6910,24 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
         // ── 最終修復フェーズ（Hard Constraint 自動修正）──
         repairHardConstraints(cd, result, _p1_ds, year, month);
+        // [DIAG-FINAL] eiyo修復後スナップショット
+        if (cd.id === 'eiyo') {
+          const _RF = new Set(['休み','希望休','有休']);
+          const _mk = `${year}-${String(month).padStart(2,'0')}`;
+          const _daysF = new Date(year, month, 0).getDate();
+          const _diagF = _p1_ds.map(s => {
+            const actK = Object.values(result[s.id] || {}).filter(v => _RF.has(v)).length;
+            const tgtK = s.kyukoDaysByMonth?.[_mk] ?? s.kyukoDays ?? 8;
+            let st = 0, ms = 0;
+            for (let d = 1; d <= _daysF; d++) {
+              const v = result[s.id]?.[d];
+              if (v && !_RF.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
+            }
+            return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
+          });
+          console.error('[DIAG-FINAL] dept=eiyo 修復後（保存直前）');
+          console.table(_diagF);
+        }
         // ── 修復後検証（直せなかった違反が残っていれば保存中止）──
         const _hardErrs = validateHardConstraints(cd, result, _p1_ds, year, month);
         if (_hardErrs.length > 0) {
