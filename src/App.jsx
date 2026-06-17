@@ -1285,8 +1285,14 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       const computeCand = (d) => {
         const cov = calcSlotCoverage(d);
         const bestSh = eligibleShifts[s.id].reduce((best, sk) => {
-          if (isBadTransition(result[s.id][d-1], sk)) return best;
-          if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) return best;
+          if (isBadTransition(result[s.id][d-1], sk)) {
+            console.log(`[P2-BLOCK] ${s.name} day=${d} shift=${sk} reason=transition prev=${result[s.id][d-1]}`);
+            return best;
+          }
+          if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) {
+            console.log(`[P2-BLOCK] ${s.name} day=${d} shift=${sk} reason=maxStaff count=${countShift(d, sk)} max=${maxStaffMap[sk] ?? 99}`);
+            return best;
+          }
           const g = calcMarginalGain(s, sk, d, cov);
           return g > (best?.gain ?? -1) ? { sk, gain: g } : best;
         }, null);
@@ -1294,9 +1300,10 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       };
       // 全休み日をbalanced greedy で削除（前半・後半の多い方から優先削除）
       const candMap = {};
-      for (const d of restDays) { const c = computeCand(d); if (c) candMap[d] = c; }
+      for (const d of restDays) { const c = computeCand(d); if (!c) console.log(`[P2-CAND-NULL] ${s.name} day=${d}`); if (c) candMap[d] = c; }
       let fPool = restDays.filter(d => d <= half && candMap[d]);
       let bPool = restDays.filter(d => d > half && candMap[d]);
+      console.log(`[P2-POOL] ${s.name}: target=${target} actual=${actualRest} excess=${excess} fPool=${fPool.length} bPool=${bPool.length} total=${fPool.length + bPool.length}`);
       let remaining = excess;
       while (remaining > 0 && (fPool.length + bPool.length) > 0) {
         const preferBack = bPool.length >= fPool.length;
@@ -1308,6 +1315,7 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         else bPool = bPool.filter(d => d !== pick);
         remaining--;
       }
+      if (remaining > 0) console.log(`[P2-UNRESOLVED] ${s.name}: remaining=${remaining} target=${target} actual=${actualRest}`);
     } else if (actualRest < target) {
       // 公休不足 → coverageダメージが最小の日を休みに変換
       const shortage = target - actualRest;
