@@ -1373,6 +1373,8 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         let consec = 0;
         for (let i = d; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) consec++; else break; }
         if (consec <= maxConsec) continue;
+        const actualNow = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+        console.log(`[PASSC-CONSEC] ${s.name} day=${d}: consec=${consec}>maxConsec=${maxConsec} → 休み追加 actual=${actualNow} target=${targetKyuko[s.id]}`);
         result[s.id][d] = '休み';
       }
     }
