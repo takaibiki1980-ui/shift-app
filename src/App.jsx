@@ -1252,6 +1252,20 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     }
   }
 
+  // [DIAG] P1終了時サマリ（target/actual/softKept数/autoRest数）
+  for (const s of ds) {
+    const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
+    const softKept = rd.filter(d => softRest[s.id].has(d)).length;
+    const autoRest = rd.filter(d => !softRest[s.id].has(d) && !locked[s.id][d]).length;
+    console.log(`[P1-TOTAL] ${s.name}: target=${targetKyuko[s.id]} actual=${rd.length} softKept=${softKept} autoRest=${autoRest}`);
+  }
+
+  // [DIAG] Phase2開始前（P1終了時と同時点）
+  for (const s of ds) {
+    const actual = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+    console.log(`[P2-BEFORE] ${s.name}: target=${targetKyuko[s.id]} actual=${actual}`);
+  }
+
   // Phase 2: 公休調整
   for (const s of ds) {
     const restDays = [];
@@ -1329,6 +1343,11 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
     const f = rd.filter(d=>d<=15).length, b = rd.filter(d=>d>15).length;
     console.log(`[P2-REST] ${s.name}: [${rd.join(',')}] 前${f}/後${b}`);
   }
+  // [DIAG] Phase2終了時サマリ
+  for (const s of ds) {
+    const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
+    console.log(`[P2-AFTER] ${s.name}: target=${targetKyuko[s.id]} actual=${rd.length} restDays=[${rd.join(',')}]`);
+  }
 
   // Phase2.5: 連続勤務補正・公休不足補正・連続休み補正（介護エンジン式）
   // Phase2 の coverage-based 調整後に実行することで打ち消しを防ぐ
@@ -1402,6 +1421,11 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         result[s.id][d] = sh;
       }
     }
+  }
+  // [DIAG] PassC（Phase2.5）終了時サマリ
+  for (const s of ds) {
+    const rd = []; for (let d = 1; d <= days; d++) if (REST_SET.has(result[s.id]?.[d])) rd.push(d);
+    console.log(`[PASSC-AFTER] ${s.name}: target=${targetKyuko[s.id]} actual=${rd.length} restDays=[${rd.join(',')}]`);
   }
   // P2.5_rest スナップ
   { const sn = _snapRole(); const v = _diffRoleViols(_snapPrev, sn, 'P2.5_rest'); if(v.length) console.error('[TIME-ROLE-VIOL] P2.5_rest',v); _snapPrev = sn; }
