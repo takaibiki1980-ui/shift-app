@@ -1302,22 +1302,28 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         }, null);
         return bestSh || null;
       };
-      // 全休み日をbalanced greedy で削除（前半・後半の多い方から優先削除）
-      const candMap = {};
-      for (const d of restDays) { const c = computeCand(d); if (!c) console.log(`[P2-CAND-NULL] ${s.name} day=${d}`); if (c) candMap[d] = c; }
-      let fPool = restDays.filter(d => d <= half && candMap[d]);
-      let bPool = restDays.filter(d => d > half && candMap[d]);
+      // ★修正③: 動的再計算 - 変換後にcomputeCandを再評価してmaxConsec連鎖違反を防ぐ
+      let fPool = restDays.filter(d => d <= half);
+      let bPool = restDays.filter(d => d > half);
       console.log(`[P2-POOL] ${s.name}: target=${target} actual=${actualRest} excess=${excess} fPool=${fPool.length} bPool=${bPool.length} total=${fPool.length + bPool.length}`);
       let remaining = excess;
+      const tryPickFrom = (pool) => {
+        const valid = pool.map(d => ({ d, c: computeCand(d) })).filter(x => x.c);
+        if (!valid.length) return false;
+        valid.sort((a, b) => b.c.gain - a.c.gain || b.d - a.d);
+        const { d: pick, c } = valid[0];
+        result[s.id][pick] = c.sk;
+        if (pick <= half) fPool = fPool.filter(x => x !== pick);
+        else bPool = bPool.filter(x => x !== pick);
+        remaining--;
+        return true;
+      };
       while (remaining > 0 && (fPool.length + bPool.length) > 0) {
         const preferBack = bPool.length >= fPool.length;
-        const src = preferBack ? (bPool.length > 0 ? bPool : fPool) : (fPool.length > 0 ? fPool : bPool);
-        src.sort((a, b) => candMap[b].gain - candMap[a].gain || b - a);
-        const pick = src[0];
-        result[s.id][pick] = candMap[pick].sk;
-        if (pick <= half) fPool = fPool.filter(d => d !== pick);
-        else bPool = bPool.filter(d => d !== pick);
-        remaining--;
+        const ok = preferBack
+          ? (tryPickFrom(bPool) || tryPickFrom(fPool))
+          : (tryPickFrom(fPool) || tryPickFrom(bPool));
+        if (!ok) break;
       }
       if (remaining > 0) console.log(`[P2-UNRESOLVED] ${s.name}: remaining=${remaining} target=${target} actual=${actualRest}`);
     } else if (actualRest < target) {
