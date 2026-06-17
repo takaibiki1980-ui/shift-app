@@ -6424,6 +6424,67 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot };
   }, [year, month]);
 
+  const validateHardConstraints = (dept, res, ds, year, month) => {
+    if (dept.id !== 'eiyo') return [];
+    const errs = [];
+    const mk = `${year}-${String(month).padStart(2,'0')}`;
+    const days = new Date(year, month, 0).getDate();
+    const REST = new Set(['休み','希望休','有休']);
+    const maxConsec = dept.maxConsec ?? 5;
+    const maxStaff = dept.maxStaff || {};
+
+    ds.forEach(s => {
+      const shifts = res[s.id] || {};
+      // ① 公休数（超過のみNG・不足は許容）個人設定を優先
+      const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const actK = Object.values(shifts).filter(v => REST.has(v)).length;
+      if (actK > tgtK)
+        errs.push(`${s.name}\n  公休数  設定${tgtK} 実績${actK}`);
+
+      // ② 最大連勤（設定超過のみNG）
+      let streak = 0, maxS = 0;
+      for (let d = 1; d <= days; d++) {
+        const v = shifts[d];
+        if (v && !REST.has(v) && v !== '明け') { streak++; maxS = Math.max(maxS, streak); }
+        else streak = 0;
+      }
+      if (maxS > maxConsec)
+        errs.push(`${s.name}\n  最大連勤  設定${maxConsec} 実績${maxS}連勤`);
+
+      // ③ 希望休（勤務になっていたらNG）
+      (s.kiboByMonth?.[mk] || []).forEach(d => {
+        const v = shifts[Number(d)];
+        if (v && !REST.has(v))
+          errs.push(`${s.name}\n  希望休(${d}日)  実績${v}`);
+      });
+
+      // ④ 有給（有給になっていなかったらNG）
+      (s.yukyuByMonth?.[mk] || []).forEach(d => {
+        if (shifts[Number(d)] !== '有休')
+          errs.push(`${s.name}\n  有給(${d}日)  実績${shifts[Number(d)] ?? '未設定'}`);
+      });
+
+      // ⑤ 希望勤務（勤務シフト指定が守られているかNG）
+      Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([d, req]) => {
+        if (REST.has(req) || req === '明け') return;
+        if (shifts[Number(d)] !== req)
+          errs.push(`${s.name}\n  希望勤務(${d}日)  設定${req} 実績${shifts[Number(d)] ?? '未設定'}`);
+      });
+    });
+
+    // ⑥ 最大職種数（日別・maxStaff < 99のみ対象）
+    for (let d = 1; d <= days; d++) {
+      Object.entries(maxStaff).forEach(([sh, max]) => {
+        if (max >= 99) return;
+        const cnt = ds.filter(s => res[s.id]?.[d] === sh).length;
+        if (cnt > max)
+          errs.push(`${d}日 ${sh}\n  最大職種数  設定${max}人 実績${cnt}人`);
+      });
+    }
+
+    return errs;
+  };
+
   const handleGenerate = useCallback(() => {
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
@@ -6749,6 +6810,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           });
         }
         // ══ [Temporal-Console-UI] ここまで ══
+
+        // ── 最終検証フェーズ（Hard Constraint）──
+        const _hardErrs = validateHardConstraints(cd, result, _p1_ds, year, month);
+        if (_hardErrs.length > 0) {
+          alert('[VALIDATION ERROR]\n\n' + _hardErrs.join('\n\n') + '\n\n保存中止');
+          return;
+        }
 
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
