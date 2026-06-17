@@ -1474,7 +1474,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     // [DEBUG PassB-連続チェック] PassB後の実際の連続勤務違反（勤務シフト配置済み）
     { let _vs=0,_vc=0,_mx=0; const _rows=ds.map(s=>{let st=0,vc=0,ms=0; for(let d=1;d<=days;d++){const v=res[s.id][d]; const isW=deptWork.has(v)&&v!=='明け'; if(!isW){st=0;}else{st++;if(st>maxConsec)vc++;} ms=Math.max(ms,st);} if(vc>0)_vs++; _vc+=vc; _mx=Math.max(_mx,ms); return{name:s.name,最大連続:ms,超過日数:vc};}); console.error(`[PassB-連続チェック] maxConsec=${maxConsec} 超過職員数=${_vs}/${ds.length} 超過日数合計=${_vc} 最大連続=${_mx}`); if(_vs>0)console.table(_rows.filter(r=>r.超過日数>0)); }
     // [DIAG] PassB終了スナップショット（全スタッフ）
-    { const _R2=new Set(['休み','希望休','有休']); const _diag=ds.map(s=>{let st=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];if(deptWork.has(v)&&v!=='明け'){st++;ms=Math.max(ms,st);}else{st=0;}}const actK=Object.values(res[s.id]).filter(v=>_R2.has(v)).length;return{staff:s.name,targetKyuko:targetKyuko[s.id],actualKyuko:actK,maxConsecObserved:ms,longestStreak:ms};}); console.error('[DIAG-PassB] dept='+dept.id); console.table(_diag); }
+    { const _R2=new Set(['休み','希望休','有休']); const _diag=ds.map(s=>{let st=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];if(deptWork.has(v)&&v!=='明け'){st++;ms=Math.max(ms,st);}else{st=0;}}const actK=Object.values(res[s.id]).filter(v=>_R2.has(v)).length;const tgtK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return{staff:s.name,targetKyuko:tgtK,actualKyuko:actK,maxConsecObserved:ms,longestStreak:ms};}); console.error('[DIAG-PassB] dept='+dept.id); console.table(_diag); }
 
     // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair] ────────────────────────────
     // 修復方針（介護型 Tier 構造に準拠）:
