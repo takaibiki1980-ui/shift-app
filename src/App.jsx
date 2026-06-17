@@ -1882,7 +1882,7 @@ function autoGenerateTimeV8(staffList, dept, year, month, prevShifts = {}, shift
       for (let i = d; i <= days; i++) { if (result[s.id][i] === undefined) unassignedLeft++; }
       if (unassignedLeft - 1 < restNeeded) continue;
       const cov = calcSlotCoverage(d);
-      let bestSk = null, bestGain = -1;
+      let bestSk = null, bestGain = -Infinity;
       for (const sk of eligibleShifts[s.id]) {
         if (isBadTransition(result[s.id][d - 1], sk)) continue;
         if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) continue;
@@ -1987,7 +1987,7 @@ function autoGenerateTimeV8(staffList, dept, year, month, prevShifts = {}, shift
         let bBwd = 0; for (let i = bd - 1; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) bBwd++; else break; }
         if (bBwd + 1 + bFwd > maxConsec) continue;
         const cov = calcSlotCoverage(bd);
-        let bestSk = null, bestGain = -1;
+        let bestSk = null, bestGain = -Infinity;
         for (const sk of eligibleShifts[s.id]) {
           if (isBadTransition(result[s.id][bd - 1], sk)) continue;
           const nv = result[s.id][bd + 1];
