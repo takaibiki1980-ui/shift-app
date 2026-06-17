@@ -6431,81 +6431,62 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const REST = new Set(['休み','希望休','有休']);
     const maxConsec = dept.maxConsec ?? 5;
 
-    // 希望休・有給・希望勤務の日はロック（触れない）
-    const locked = {};
-    ds.forEach(s => {
-      locked[s.id] = new Set();
-      (s.kiboByMonth?.[mk] || []).forEach(d => locked[s.id].add(Number(d)));
-      (s.yukyuByMonth?.[mk] || []).forEach(d => locked[s.id].add(Number(d)));
-      Object.keys(s.shiftRequestsByMonth?.[mk] || {}).forEach(d => locked[s.id].add(Number(d)));
-    });
-
-    // スタッフが入れる勤務シフト（公休超過修正の変換先）
     const getDefaultWork = (s) => {
       const ra = dept.roleShiftTypes?.[s.role];
-      if (ra && ra.length > 0) {
-        const w = ra.find(k => !REST.has(k) && k !== '明け');
-        if (w) return w;
-      }
+      if (ra?.length > 0) { const w = ra.find(k => !REST.has(k) && k !== '明け'); if (w) return w; }
       const ms = Object.keys(dept.minStaff || {}).filter(k => !REST.has(k) && k !== '明け');
       return ms[0] || '日勤';
     };
 
-    // ① 最大連勤修正: 連勤がmaxConsecを超えたらその日を休みに
     ds.forEach(s => {
+      const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const work = getDefaultWork(s);
+
+      // ロック日: 希望休・有給・希望勤務（絶対に変更しない）
+      const lockedSet = new Set();
+      (s.kiboByMonth?.[mk] || []).forEach(d => lockedSet.add(Number(d)));
+      (s.yukyuByMonth?.[mk] || []).forEach(d => lockedSet.add(Number(d)));
+      Object.keys(s.shiftRequestsByMonth?.[mk] || {}).forEach(d => lockedSet.add(Number(d)));
+
+      // ロック済みの公休数
+      const lockedRest = [...lockedSet].filter(d => REST.has(res[s.id][d])).length;
+      // 自由日に配置できる公休枠
+      const restBudget = Math.max(0, tgtK - lockedRest);
+
+      // 自由日（ロック外）一覧
+      const freeDays = [];
+      for (let d = 1; d <= days; d++) { if (!lockedSet.has(d)) freeDays.push(d); }
+
+      // ── Step1: 自由日を全て勤務にリセット ──
+      freeDays.forEach(d => { res[s.id][d] = work; });
+
+      // ── Step2: maxConsecを守るために必須な休みを配置（左→右グリーディ）──
+      // ロック日を含めた連勤を追跡し、maxConsec+1日目の自由日を強制休みにする
+      const forcedRestDays = [];
       let streak = 0;
       for (let d = 1; d <= days; d++) {
         const v = res[s.id][d];
         const isWork = v && !REST.has(v) && v !== '明け';
         if (!isWork) { streak = 0; continue; }
         streak++;
-        if (streak <= maxConsec) continue;
-        // この日（d）が違反 → ロックされていなければ休みに
-        if (!locked[s.id].has(d)) {
+        if (streak > maxConsec && !lockedSet.has(d)) {
           res[s.id][d] = '休み';
+          forcedRestDays.push(d);
           streak = 0;
-        } else {
-          // ロック済 → 直前のロックされていない勤務日を休みに変換
-          for (let back = d - 1; back >= d - maxConsec; back--) {
-            const bv = res[s.id][back];
-            if (!locked[s.id].has(back) && bv && !REST.has(bv) && bv !== '明け') {
-              res[s.id][back] = '休み';
-              // d日のstreakを再計算
-              streak = 0;
-              for (let dd = back + 1; dd <= d; dd++) {
-                const vv = res[s.id][dd];
-                if (vv && !REST.has(vv) && vv !== '明け') streak++;
-                else streak = 0;
-              }
-              break;
-            }
-          }
         }
       }
-    });
 
-    // ② 公休数超過修正: 余分な '休み' を勤務に変換（maxConsec違反を起こさない日を選ぶ）
-    ds.forEach(s => {
-      const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-      const work = getDefaultWork(s);
-      const countRest = () => Object.values(res[s.id]).filter(v => REST.has(v)).length;
-
-      while (countRest() > tgtK) {
-        let converted = false;
-        for (let d = 1; d <= days; d++) {
-          if (res[s.id][d] !== '休み' || locked[s.id].has(d)) continue;
-          // 仮に勤務に変換して連勤チェック
-          res[s.id][d] = work;
-          let streak = 0, ok = true;
-          for (let dd = 1; dd <= days; dd++) {
-            const v = res[s.id][dd];
-            if (v && !REST.has(v) && v !== '明け') { streak++; if (streak > maxConsec) { ok = false; break; } }
-            else streak = 0;
-          }
-          if (ok) { converted = true; break; }
-          res[s.id][d] = '休み'; // maxConsec違反になるので元に戻す
+      // ── Step3: 残り公休枠を自由勤務日に等間隔で追加 ──
+      const optionalBudget = restBudget - forcedRestDays.length;
+      if (optionalBudget > 0) {
+        const freeWorkDays = freeDays.filter(d => !REST.has(res[s.id][d]));
+        const step = freeWorkDays.length / (optionalBudget + 1);
+        const used = new Set();
+        for (let i = 0; i < optionalBudget; i++) {
+          const idx = Math.round((i + 1) * step) - 1;
+          const d = freeWorkDays[Math.max(0, Math.min(idx, freeWorkDays.length - 1))];
+          if (d && !used.has(d)) { res[s.id][d] = '休み'; used.add(d); }
         }
-        if (!converted) break; // 変換できる日がない → 諦める
       }
     });
   };
