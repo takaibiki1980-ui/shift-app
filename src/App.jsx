@@ -1804,7 +1804,7 @@ function autoGenerateTimeV8(staffList, dept, year, month, prevShifts = {}, shift
   // assignBestV8: softRest・needsRest除去版
   // targetShifts: 対象シフト種別リスト（undefined なら eligibleShifts 全体）
   const assignBestV8 = (candidates, d, currentCovFn, targetShifts) => {
-    let bestGain = 0, bestStaff = null, bestShift = null;
+    let bestGain = -Infinity, bestStaff = null, bestShift = null;
     const cov = currentCovFn();
     for (const s of [...candidates].sort(() => Math.random() - 0.5)) {
       if (result[s.id][d] !== undefined) continue;
@@ -1835,9 +1835,21 @@ function autoGenerateTimeV8(staffList, dept, year, month, prevShifts = {}, shift
   ];
   for (let d = 1; d <= days; d++) {
     for (const sk of orderedCore) {
+      // 各シフト種別ごとに独立してcoverage不足を判定・配置
+      // hasCoverageDeficit はシフト種別ループの外に出さない（早番充足でも遅番不足あり得る）
       for (let iter = 0; iter < ds.length; iter++) {
         const cov = calcSlotCoverage(d);
-        if (!hasCoverageDeficit(cov)) break;
+        // このシフト種別(sk)がcoverageに寄与できるスロットが不足しているか個別判定
+        const skIv = shiftIntervals[sk];
+        const skDeficit = skIv && rules.length > 0 && rules.some(rule => {
+          const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+          if (rS == null || rE == null) return false;
+          for (let m = rS; m < rE; m += 15) {
+            if (skIv.start <= m && m < skIv.end && (cov[m] || 0) < rule.min) return true;
+          }
+          return false;
+        });
+        if (!skDeficit) break;
         if (!assignBestV8(ds, d, () => cov, [sk])) break;
       }
     }
