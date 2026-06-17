@@ -1701,6 +1701,377 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 時間軸エンジン v8: 勤務先行設計
+// Phase0 固定配置 → Phase1a/b/c 基幹勤務 → Phase2 カスタム → Phase2.5 残勤務
+// → Phase3 公休 → Phase4 公休数調整 → Phase5 連勤補正 → Phase6 最適化
+// ─────────────────────────────────────────────────────────────────────────────
+function autoGenerateTimeV8(staffList, dept, year, month, prevShifts = {}, shiftTrend = {}) {
+  console.error('[TIME-V8] ★勤務先行エンジン v8★');
+  const days = getDays(year, month);
+  const mk = monthKey(year, month);
+  const rules = dept.coverageRules || [];
+  const maxConsec = dept.maxConsecutive || 5;
+  const shiftIntervals = buildShiftIntervals(dept);
+  const WORK = buildDeptWorkTypes(dept.customShiftDefs);
+  const REST_SET = new Set(['休み', '希望休', '有休']);
+  const maxStaffMap = {};
+  (dept.shiftTypes || []).forEach(k => { maxStaffMap[k] = dept.maxStaff?.[k] ?? 99; });
+
+  const ds = staffList.filter(s => s.dept === dept.id);
+
+  // ── Phase0: 固定配置 ──────────────────────────────────────────────────────
+  const locked = {};
+  for (const s of ds) {
+    locked[s.id] = {};
+    Object.entries(prevShifts[s.id] || {}).forEach(([d, v]) => { if (v === '有休') locked[s.id][Number(d)] = '有休'; });
+    (s.kiboByMonth?.[mk] || []).forEach(d => { locked[s.id][Number(d)] = '希望休'; });
+    (s.yukyuByMonth?.[mk] || []).forEach(d => { locked[s.id][Number(d)] = '有休'; });
+    Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([d, sh]) => {
+      const ra = dept.roleShiftTypes?.[s.role];
+      if (ra && WORK.has(sh) && sh !== '明け' && !ra.includes(sh)) return;
+      locked[s.id][Number(d)] = sh;
+    });
+  }
+  const targetKyuko = {};
+  ds.forEach(s => { targetKyuko[s.id] = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8; });
+  const eligibleShifts = {};
+  ds.forEach(s => {
+    const allowed = dept.roleShiftTypes?.[s.role] ?? dept.shiftTypes;
+    eligibleShifts[s.id] = (allowed || []).filter(k => k !== '明け' && k !== '夜勤' && shiftIntervals[k]);
+  });
+  const result = {};
+  ds.forEach(s => { result[s.id] = { ...locked[s.id] }; });
+
+  // ── ヘルパー ──────────────────────────────────────────────────────────────
+  const th = dept.intervalThreshold ?? null;
+  const isBadTransition = (prev, curr) => {
+    if (!prev || !curr) return false;
+    if (th != null) return shiftIntervalHours(prev, curr, dept) < th;
+    return (prev === '遅番' && (curr === '早番' || curr === '日勤')) || (prev === '日勤' && curr === '早番');
+  };
+  const exceedsConsec = (staffId, d) => {
+    let c = 0;
+    for (let i = d - 1; i >= 1; i--) { if (WORK.has(result[staffId]?.[i])) c++; else return c >= maxConsec; if (c >= maxConsec) return true; }
+    const pm = prevShifts[staffId] || {};
+    const pmKeys = Object.keys(pm).map(Number).filter(n => n > 0);
+    if (pmKeys.length > 0) { const pmMax = Math.max(...pmKeys); for (let i = pmMax; i >= Math.max(1, pmMax - maxConsec); i--) { if (WORK.has(pm[i])) c++; else break; if (c >= maxConsec) return true; } }
+    return c >= maxConsec;
+  };
+  const countShift = (d, sk) => ds.filter(s => result[s.id]?.[d] === sk).length;
+  const calcSlotCoverage = (d) => {
+    const cov = {};
+    ds.forEach(s => { const sh = result[s.id]?.[d]; if (!sh || !shiftIntervals[sh]) return; const iv = shiftIntervals[sh]; for (let m = iv.start; m < iv.end; m += 15) cov[m] = (cov[m] || 0) + 1; });
+    return cov;
+  };
+  const hasCoverageDeficit = (cov) => rules.length > 0 && rules.some(rule => {
+    const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+    if (rS == null || rE == null) return false;
+    for (let m = rS; m < rE; m += 15) { if ((cov[m] || 0) < rule.min) return true; }
+    return false;
+  });
+  const calcMarginalGain = (s, shiftKey, d, currentCov) => {
+    const iv = shiftIntervals[shiftKey];
+    if (!iv) return 0;
+    let gain = 0;
+    for (const rule of rules) {
+      const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+      if (rS == null || rE == null) continue;
+      for (let m = rS; m < rE; m += 15) { if (iv.start <= m && m < iv.end) { const b = currentCov[m] || 0; gain += Math.max(0, Math.min(b + 1, rule.min) - Math.min(b, rule.min)); } }
+    }
+    if (shiftTrend && Object.keys(shiftTrend).length > 0) {
+      const tKey = Object.keys(shiftTrend).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, s.name));
+      const trend = tKey ? shiftTrend[tKey] : null;
+      if (trend) {
+        const dow = new Date(year, month, d).getDay();
+        const prob = trend.dowShiftRate?.[dow]?.[shiftKey] ?? (typeof trend[shiftKey] === 'number' ? trend[shiftKey] : 0);
+        gain += prob * 0.001;
+        const pv = result[s.id]?.[d - 1];
+        if (pv && trend.transitionRate) { const tp = trend.transitionRate[pv]?.[shiftKey]; if (tp !== undefined) gain += tp * 0.001; }
+      }
+    }
+    return gain;
+  };
+  const getTrendScore = (s, sk, d) => {
+    if (!shiftTrend || Object.keys(shiftTrend).length === 0) return 0;
+    const tKey = Object.keys(shiftTrend).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, s.name));
+    const trend = tKey ? shiftTrend[tKey] : null;
+    if (!trend) return 0;
+    const dow = new Date(year, month, d).getDay();
+    return trend.dowShiftRate?.[dow]?.[sk] ?? (typeof trend[sk] === 'number' ? trend[sk] : 0);
+  };
+
+  // assignBestV8: softRest・needsRest除去版
+  // targetShifts: 対象シフト種別リスト（undefined なら eligibleShifts 全体）
+  const assignBestV8 = (candidates, d, currentCovFn, targetShifts) => {
+    let bestGain = 0, bestStaff = null, bestShift = null;
+    const cov = currentCovFn();
+    for (const s of [...candidates].sort(() => Math.random() - 0.5)) {
+      if (result[s.id][d] !== undefined) continue;
+      if (exceedsConsec(s.id, d)) continue;
+      const tryShifts = targetShifts
+        ? targetShifts.filter(sk => eligibleShifts[s.id].includes(sk))
+        : eligibleShifts[s.id];
+      for (const sk of tryShifts) {
+        if (isBadTransition(result[s.id][d - 1], sk)) continue;
+        if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) continue;
+        const nv = result[s.id][d + 1];
+        if (nv !== undefined && WORK.has(nv) && isBadTransition(sk, nv)) continue;
+        const gain = calcMarginalGain(s, sk, d, cov);
+        if (gain > bestGain) { bestGain = gain; bestStaff = s; bestShift = sk; }
+      }
+    }
+    if (bestStaff) result[bestStaff.id][d] = bestShift;
+    return !!bestStaff;
+  };
+
+  // ── Phase1a/1b/1c: 基幹勤務配置（早番→遅番→日勤の優先順）───────────────
+  const customKeys = new Set((dept.customShiftDefs || []).map(cd => cd.key));
+  const coreShiftsAll = (dept.shiftTypes || []).filter(k => k !== '明け' && k !== '夜勤' && shiftIntervals[k] && !customKeys.has(k));
+  const CORE_PRIORITY = ['早番', '遅番', '日勤'];
+  const orderedCore = [
+    ...CORE_PRIORITY.filter(k => coreShiftsAll.includes(k)),
+    ...coreShiftsAll.filter(k => !CORE_PRIORITY.includes(k)),
+  ];
+  for (let d = 1; d <= days; d++) {
+    for (const sk of orderedCore) {
+      for (let iter = 0; iter < ds.length; iter++) {
+        const cov = calcSlotCoverage(d);
+        if (!hasCoverageDeficit(cov)) break;
+        if (!assignBestV8(ds, d, () => cov, [sk])) break;
+      }
+    }
+  }
+
+  // ── Phase2: カスタム勤務配置 ─────────────────────────────────────────────
+  const customShifts = [...customKeys].filter(k => shiftIntervals[k]);
+  if (customShifts.length > 0) {
+    for (let d = 1; d <= days; d++) {
+      for (let iter = 0; iter < ds.length * 2; iter++) {
+        const cov = calcSlotCoverage(d);
+        if (!hasCoverageDeficit(cov)) break;
+        if (!assignBestV8(ds, d, () => cov, customShifts)) break;
+      }
+    }
+  }
+
+  // ── Phase2.5: 残勤務埋め（workRatio順、公休枠を侵食しない）─────────────
+  for (let d = 1; d <= days; d++) {
+    const unassignedStaff = ds.filter(s => result[s.id][d] === undefined);
+    if (unassignedStaff.length === 0) continue;
+    unassignedStaff.sort((a, b) => ((b.workRatio ?? 1.0) - (a.workRatio ?? 1.0)) + (Math.random() - 0.5) * 0.01);
+    for (const s of unassignedStaff) {
+      if (result[s.id][d] !== undefined) continue;
+      if (exceedsConsec(s.id, d)) continue;
+      // 残り公休必要数 vs 残り未配置日数チェック: 未配置日 - 1（今日） >= 残必要公休 でなければスキップ
+      const lockedRestCount = Object.values(locked[s.id]).filter(v => REST_SET.has(v)).length;
+      const restNeeded = Math.max(0, targetKyuko[s.id] - lockedRestCount);
+      let unassignedLeft = 0;
+      for (let i = d; i <= days; i++) { if (result[s.id][i] === undefined) unassignedLeft++; }
+      if (unassignedLeft - 1 < restNeeded) continue;
+      const cov = calcSlotCoverage(d);
+      let bestSk = null, bestGain = -1;
+      for (const sk of eligibleShifts[s.id]) {
+        if (isBadTransition(result[s.id][d - 1], sk)) continue;
+        if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) continue;
+        const nv = result[s.id][d + 1];
+        if (nv !== undefined && WORK.has(nv) && isBadTransition(sk, nv)) continue;
+        const g = calcMarginalGain(s, sk, d, cov);
+        if (g > bestGain) { bestGain = g; bestSk = sk; }
+      }
+      if (bestSk) result[s.id][d] = bestSk;
+    }
+  }
+
+  // ── Phase3: 公休配置（残り未配置日を全て休みに）─────────────────────────
+  for (const s of ds) {
+    for (let d = 1; d <= days; d++) { if (result[s.id][d] === undefined) result[s.id][d] = '休み'; }
+  }
+
+  // ── Phase4: 公休数調整 ───────────────────────────────────────────────────
+  for (const s of ds) {
+    const getActualRest = () => Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+    const target = targetKyuko[s.id];
+    const baseWorkDays = days - target;
+    const expectedWork = baseWorkDays * (s.workRatio ?? 1.0);
+
+    if (getActualRest() > target) {
+      // 超過: 休み→勤務（動的再計算・workRatioスコア）
+      const computeWorkCand = (d) => {
+        if (locked[s.id][d]) return null;
+        if (!REST_SET.has(result[s.id][d])) return null;
+        let _fwd = 0; for (let i = d + 1; i <= days; i++) { if (WORK.has(result[s.id]?.[i])) _fwd++; else break; }
+        let _bwd = 0; for (let i = d - 1; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) _bwd++; else break; }
+        if (_bwd + 1 + _fwd > maxConsec) return null;
+        const cov = calcSlotCoverage(d);
+        const currentWork = Object.values(result[s.id]).filter(v => WORK.has(v)).length;
+        const workRatioDeficit = Math.max(0, expectedWork - currentWork);
+        let bestSk = null, bestScore = -Infinity;
+        for (const sk of eligibleShifts[s.id]) {
+          if (isBadTransition(result[s.id][d - 1], sk)) continue;
+          const nv = result[s.id][d + 1];
+          if (nv !== undefined && WORK.has(nv) && isBadTransition(sk, nv)) continue;
+          if (countShift(d, sk) >= (maxStaffMap[sk] ?? 99)) continue;
+          const covGain = calcMarginalGain(s, sk, d, cov);
+          const trendScore = getTrendScore(s, sk, d);
+          const score = covGain * 1000 + workRatioDeficit * 100 + trendScore;
+          if (score > bestScore) { bestScore = score; bestSk = sk; }
+        }
+        return bestSk ? { sk: bestSk, score: bestScore } : null;
+      };
+      const half = Math.ceil(days / 2);
+      let fPool = [], bPool = [];
+      for (let d = 1; d <= days; d++) {
+        if (!locked[s.id][d] && REST_SET.has(result[s.id][d])) { if (d <= half) fPool.push(d); else bPool.push(d); }
+      }
+      const tryPickFrom = (pool) => {
+        const valid = pool.map(d => ({ d, c: computeWorkCand(d) })).filter(x => x.c);
+        if (!valid.length) return false;
+        valid.sort((a, b) => b.c.score - a.c.score);
+        const { d: pick, c } = valid[0];
+        result[s.id][pick] = c.sk;
+        if (pick <= half) fPool = fPool.filter(x => x !== pick); else bPool = bPool.filter(x => x !== pick);
+        return true;
+      };
+      while (getActualRest() > target && (fPool.length + bPool.length) > 0) {
+        const preferBack = bPool.length >= fPool.length;
+        const ok = preferBack ? (tryPickFrom(bPool) || tryPickFrom(fPool)) : (tryPickFrom(fPool) || tryPickFrom(bPool));
+        if (!ok) break;
+      }
+      if (getActualRest() > target) console.log(`[TIME-V8-P4] EXCESS 到達不能 ${s.name}: actual=${getActualRest()} target=${target} remaining=${getActualRest() - target}`);
+    } else if (getActualRest() < target) {
+      // 不足: 勤務→休み（coverageダメージ最小）
+      const workDays = [];
+      for (let d = 1; d <= days; d++) { if (!locked[s.id][d] && WORK.has(result[s.id][d])) workDays.push(d); }
+      const damages = workDays.map(d => {
+        const cov = calcSlotCoverage(d);
+        const iv = shiftIntervals[result[s.id][d]];
+        let damage = 0;
+        if (iv) { for (const rule of rules) { const rS = timeToMins(rule.start), rE = timeToMins(rule.end); if (rS == null || rE == null) continue; for (let m = rS; m < rE; m += 15) { if (iv.start <= m && m < iv.end) { const b = cov[m] || 0; damage += Math.max(0, Math.min(b, rule.min) - Math.min(b - 1, rule.min)); } } } }
+        return { d, damage };
+      }).sort((a, b) => a.damage - b.damage);
+      const shortage = target - getActualRest();
+      for (let i = 0; i < Math.min(shortage, damages.length); i++) result[s.id][damages[i].d] = '休み';
+      if (getActualRest() < target) console.log(`[TIME-V8-P4] SHORTAGE 到達不能 ${s.name}: actual=${getActualRest()} target=${target}`);
+    }
+  }
+
+  // ── Phase5: 連勤補正（休み挿入 + 別日スワップ）──────────────────────────
+  for (const s of ds) {
+    for (let d = 1; d <= days; d++) {
+      if (!WORK.has(result[s.id]?.[d]) || locked[s.id][d]) continue;
+      let consec = 0;
+      for (let i = d; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) consec++; else break; }
+      if (consec <= maxConsec) continue;
+      result[s.id][d] = '休み';
+      const actualAfter = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+      if (actualAfter <= targetKyuko[s.id]) continue;
+      // target超過 → 別日の休み→勤務スワップ
+      const swapCands = [];
+      for (let bd = 1; bd <= days; bd++) {
+        if (bd === d || locked[s.id][bd] || !REST_SET.has(result[s.id]?.[bd])) continue;
+        if (result[s.id][bd] === '希望休' || result[s.id][bd] === '有休') continue;
+        let bFwd = 0; for (let i = bd + 1; i <= days; i++) { if (WORK.has(result[s.id]?.[i])) bFwd++; else break; }
+        let bBwd = 0; for (let i = bd - 1; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) bBwd++; else break; }
+        if (bBwd + 1 + bFwd > maxConsec) continue;
+        const cov = calcSlotCoverage(bd);
+        let bestSk = null, bestGain = -1;
+        for (const sk of eligibleShifts[s.id]) {
+          if (isBadTransition(result[s.id][bd - 1], sk)) continue;
+          const nv = result[s.id][bd + 1];
+          if (nv !== undefined && WORK.has(nv) && isBadTransition(sk, nv)) continue;
+          if (countShift(bd, sk) >= (maxStaffMap[sk] ?? 99)) continue;
+          const g = calcMarginalGain(s, sk, bd, cov);
+          if (g > bestGain) { bestGain = g; bestSk = sk; }
+        }
+        if (bestSk) swapCands.push({ bd, sk: bestSk, gain: bestGain });
+      }
+      swapCands.sort((a, b) => b.gain - a.gain);
+      if (swapCands.length > 0) result[s.id][swapCands[0].bd] = swapCands[0].sk;
+      else console.log(`[TIME-V8-P5] swap失敗 ${s.name} day=${d}: actual=${actualAfter} target=${targetKyuko[s.id]}`);
+    }
+  }
+
+  // ── Phase6: 2-opt最適化 ──────────────────────────────────────────────────
+  const FIXED = new Set(['希望休', '有休']);
+  let curScore = scoreShiftsTime(result, ds, dept, days, year, month, shiftTrend);
+  for (let pass = 0; pass < 3 && curScore > 0; pass++) {
+    let improved = false;
+    for (let i = 0; i < ds.length - 1; i++) {
+      for (let j = i + 1; j < ds.length; j++) {
+        const s1 = ds[i], s2 = ds[j];
+        for (let d = 1; d <= days; d++) {
+          const v1 = result[s1.id][d], v2 = result[s2.id][d];
+          if (v1 === v2 || FIXED.has(v1) || FIXED.has(v2)) continue;
+          if (locked[s1.id][d] || locked[s2.id][d]) continue;
+          if (isBadTransition(result[s1.id][d - 1], v2) || isBadTransition(v2, result[s1.id][d + 1])) continue;
+          if (isBadTransition(result[s2.id][d - 1], v1) || isBadTransition(v1, result[s2.id][d + 1])) continue;
+          const covBefore = calcSlotCoverage(d);
+          const iv1 = shiftIntervals[v1], iv2 = shiftIntervals[v2];
+          let coverageOk = true;
+          if (iv1 && iv2) {
+            for (const rule of rules) {
+              const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+              if (rS == null || rE == null) continue;
+              for (let m = rS; m < rE; m += 15) {
+                const had1 = iv1.start <= m && m < iv1.end, had2 = iv2.start <= m && m < iv2.end;
+                if (had1 !== had2) { const cnt = covBefore[m] || 0; if ((had1 && !had2 && cnt <= rule.min) || (had2 && !had1 && cnt <= rule.min)) { coverageOk = false; break; } }
+              }
+              if (!coverageOk) break;
+            }
+          }
+          if (!coverageOk) continue;
+          if (!eligibleShifts[s1.id].includes(v2) || !eligibleShifts[s2.id].includes(v1)) continue;
+          result[s1.id][d] = v2; result[s2.id][d] = v1;
+          const newScore = scoreShiftsTime(result, ds, dept, days, year, month, shiftTrend);
+          if (newScore < curScore) { curScore = newScore; improved = true; }
+          else { result[s1.id][d] = v1; result[s2.id][d] = v2; }
+        }
+      }
+    }
+    if (!improved) break;
+  }
+
+  // ── 最終検証ログ ─────────────────────────────────────────────────────────
+  const roleViolations = [];
+  for (const s of ds) {
+    const ra = dept.roleShiftTypes?.[s.role];
+    if (!ra) continue;
+    for (let d = 1; d <= days; d++) {
+      const shift = result[s.id]?.[d];
+      if (!shift || !WORK.has(shift) || shift === '明け') continue;
+      if (!ra.includes(shift)) roleViolations.push({ staffId: s.id, staffName: s.name, role: s.role, date: d, shift, allowedShifts: [...ra] });
+    }
+  }
+  const coverageWarnings = [];
+  let coverageViolCount = 0;
+  for (let d = 1; d <= days; d++) {
+    const dayShifts = ds.map(s => result[s.id]?.[d] || '');
+    const cdr = calcDayCoverageResult(dayShifts, rules, shiftIntervals);
+    for (const r of cdr) { for (const g of r.gaps) { coverageWarnings.push({ day: d, ruleStart: r.rule.start, ruleEnd: r.rule.end, gapStart: g.start, gapEnd: g.end, maxShortage: g.maxShortage }); coverageViolCount++; } }
+  }
+  let success = true;
+  for (const s of ds) {
+    const actualRest = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+    let maxConsecObs = 0, con = 0;
+    for (let d = 1; d <= days; d++) { if (WORK.has(result[s.id]?.[d])) { con++; maxConsecObs = Math.max(maxConsecObs, con); } else con = 0; }
+    let ivViol = 0;
+    for (let d = 2; d <= days; d++) { const pv = result[s.id]?.[d - 1], cv = result[s.id]?.[d]; if (pv && cv && WORK.has(pv) && WORK.has(cv) && isBadTransition(pv, cv)) ivViol++; }
+    const rviol = roleViolations.filter(v => v.staffId === s.id).length;
+    const ok = actualRest === targetKyuko[s.id] && maxConsecObs <= maxConsec && ivViol === 0 && rviol === 0;
+    if (!ok) success = false;
+    console.log(`[TIME-V8-CHECK] ${s.name}: targetRest=${targetKyuko[s.id]} actualRest=${actualRest} maxConsecObserved=${maxConsecObs} intervalViolations=${ivViol} roleViolations=${rviol} coverageViolations=${coverageViolCount} ok=${ok}`);
+  }
+  return {
+    shifts: result,
+    coverageWarnings,
+    score: curScore,
+    roleViolations,
+    success,
+    ...(success ? {} : { fatalError: 'V8 constraint violation', violationCount: roleViolations.length }),
+  };
+}
+
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
   console.error('[AG-v7d] start dept=', dept.id, 'maxStaff=', JSON.stringify(dept.maxStaff), 'minStaff=', JSON.stringify(dept.minStaff));
   const days = getDays(year, month);
@@ -7406,7 +7777,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               return;
             }
           }
-          const timeGenResult = autoGenerateTime(
+          const timeGenResult = autoGenerateTimeV8(
             cs, cd, year, month, allShiftsRef.current[cd.id] || {}, ct
           );
           // ── roleShiftTypes違反チェック ─────────────────────────────────────
