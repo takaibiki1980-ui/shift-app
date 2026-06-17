@@ -1363,9 +1363,10 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
       console.log(`[PRE-PASSC] ${s.name}: restDays=[${restDays.join(',')}] target=${targetKyuko[s.id]} maxConsecWork=${maxC}`);
     }
 
-    // ── Pass C 相当: 連続勤務 > maxConsec を「休み」に変換 ──
+    // ── Pass C 相当: 連続勤務 > maxConsec を「休み」に変換 + target維持スワップ ──
     const _snapBeforeC = {};
     for (const s of ds) _snapBeforeC[s.id] = { ...result[s.id] };
+    const _PASSC_PROT = new Set(['希望休', '有休']);
     for (const s of ds) {
       for (let d = 1; d <= days; d++) {
         if (!WORK.has(result[s.id]?.[d])) continue;
@@ -1373,9 +1374,66 @@ function autoGenerateTime(staffList, dept, year, month, prevShifts = {}, shiftTr
         let consec = 0;
         for (let i = d; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) consec++; else break; }
         if (consec <= maxConsec) continue;
-        const actualNow = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
-        console.log(`[PASSC-CONSEC] ${s.name} day=${d}: consec=${consec}>maxConsec=${maxConsec} → 休み追加 actual=${actualNow} target=${targetKyuko[s.id]}`);
+        const actualBefore = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+        console.log(`[PASSC-CONSEC] ${s.name} day=${d}: consec=${consec} maxConsec=${maxConsec} addRest=true actual=${actualBefore} target=${targetKyuko[s.id]}`);
         result[s.id][d] = '休み';
+        // ── target超過補正: target超過になった場合のみスワップで帳尻合わせ ──
+        const actualAfter = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+        if (actualAfter > targetKyuko[s.id]) {
+          const swapCands = [];
+          for (let bd = 1; bd <= days; bd++) {
+            if (bd === d) continue;
+            if (!REST_SET.has(result[s.id]?.[bd])) continue;
+            if (locked[s.id][bd]) continue;
+            if (_PASSC_PROT.has(result[s.id][bd])) continue;
+            if (softRest[s.id]?.has(bd)) continue;
+            // 元シフト優先、次点は最頻出eligible
+            const orig = _snapBeforeC[s.id]?.[bd];
+            const origOk = WORK.has(orig) &&
+              !isBadTransition(result[s.id][bd-1], orig) &&
+              !isBadTransition(orig, result[s.id][bd+1]) &&
+              countShift(bd, orig) < (maxStaffMap[orig] ?? 99);
+            let restoreSk = origOk ? orig : null;
+            if (!restoreSk) {
+              const freq = {};
+              for (let dd = 1; dd <= days; dd++) { const v = result[s.id][dd]; if (WORK.has(v)) freq[v] = (freq[v] || 0) + 1; }
+              restoreSk = (eligibleShifts[s.id] || [])
+                .filter(sk => !isBadTransition(result[s.id][bd-1], sk) &&
+                              !isBadTransition(sk, result[s.id][bd+1]) &&
+                              countShift(bd, sk) < (maxStaffMap[sk] ?? 99))
+                .sort((a, b) => (freq[b] || 0) - (freq[a] || 0))[0] || null;
+            }
+            if (!restoreSk) continue;
+            // 連続勤務再発チェック
+            let fwd = 0; for (let i = bd + 1; i <= days; i++) { if (WORK.has(result[s.id]?.[i])) fwd++; else break; }
+            let bwd = 0; for (let i = bd - 1; i >= 1; i--) { if (WORK.has(result[s.id]?.[i])) bwd++; else break; }
+            if (bwd + 1 + fwd > maxConsec) continue;
+            // 優先度スコア: coverage改善量 > 学習休みからの距離 > 月中優先 > 連続勤務増加最小
+            const cov = calcSlotCoverage(bd);
+            let covGain = 0;
+            const iv2 = shiftIntervals[restoreSk];
+            if (iv2) for (const rule of rules) {
+              const rS = timeToMins(rule.start), rE = timeToMins(rule.end);
+              if (rS == null || rE == null) continue;
+              for (let m = rS; m < rE; m += 15) { if (iv2.start <= m && m < iv2.end) { const b = cov[m] || 0; covGain += Math.max(0, Math.min(b+1, rule.min) - Math.min(b, rule.min)); } }
+            }
+            const srDays = [...(softRest[s.id] || [])];
+            const srDist = srDays.length ? Math.min(...srDays.map(sd => Math.abs(bd - sd))) : days;
+            const midDist = Math.abs(bd - Math.ceil(days / 2));
+            swapCands.push({ bd, restoreSk, covGain, srDist, midDist, newConsec: bwd + 1 + fwd });
+          }
+          swapCands.sort((a, b) =>
+            b.covGain - a.covGain || b.srDist - a.srDist || a.midDist - b.midDist || a.newConsec - b.newConsec
+          );
+          if (swapCands.length > 0) {
+            const best = swapCands[0];
+            result[s.id][best.bd] = best.restoreSk;
+            const actualSwapped = Object.values(result[s.id]).filter(v => REST_SET.has(v)).length;
+            console.log(`[PASSC-SWAP] ${s.name}: addRest=${d} removeRest=${best.bd} before=${actualAfter} after=${actualSwapped} restTarget=${targetKyuko[s.id]}`);
+          } else {
+            console.log(`[PASSC-SWAP-FAIL] ${s.name}: reason=no_candidate actual=${actualAfter} target=${targetKyuko[s.id]}`);
+          }
+        }
       }
     }
     // [DIAG] PassCで追加された休み日
