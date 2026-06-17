@@ -6424,6 +6424,92 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot };
   }, [year, month]);
 
+  const repairHardConstraints = (dept, res, ds, year, month) => {
+    if (dept.id !== 'eiyo') return;
+    const mk = `${year}-${String(month).padStart(2,'0')}`;
+    const days = new Date(year, month, 0).getDate();
+    const REST = new Set(['休み','希望休','有休']);
+    const maxConsec = dept.maxConsec ?? 5;
+
+    // 希望休・有給・希望勤務の日はロック（触れない）
+    const locked = {};
+    ds.forEach(s => {
+      locked[s.id] = new Set();
+      (s.kiboByMonth?.[mk] || []).forEach(d => locked[s.id].add(Number(d)));
+      (s.yukyuByMonth?.[mk] || []).forEach(d => locked[s.id].add(Number(d)));
+      Object.keys(s.shiftRequestsByMonth?.[mk] || {}).forEach(d => locked[s.id].add(Number(d)));
+    });
+
+    // スタッフが入れる勤務シフト（公休超過修正の変換先）
+    const getDefaultWork = (s) => {
+      const ra = dept.roleShiftTypes?.[s.role];
+      if (ra && ra.length > 0) {
+        const w = ra.find(k => !REST.has(k) && k !== '明け');
+        if (w) return w;
+      }
+      const ms = Object.keys(dept.minStaff || {}).filter(k => !REST.has(k) && k !== '明け');
+      return ms[0] || '日勤';
+    };
+
+    // ① 最大連勤修正: 連勤がmaxConsecを超えたらその日を休みに
+    ds.forEach(s => {
+      let streak = 0;
+      for (let d = 1; d <= days; d++) {
+        const v = res[s.id][d];
+        const isWork = v && !REST.has(v) && v !== '明け';
+        if (!isWork) { streak = 0; continue; }
+        streak++;
+        if (streak <= maxConsec) continue;
+        // この日（d）が違反 → ロックされていなければ休みに
+        if (!locked[s.id].has(d)) {
+          res[s.id][d] = '休み';
+          streak = 0;
+        } else {
+          // ロック済 → 直前のロックされていない勤務日を休みに変換
+          for (let back = d - 1; back >= d - maxConsec; back--) {
+            const bv = res[s.id][back];
+            if (!locked[s.id].has(back) && bv && !REST.has(bv) && bv !== '明け') {
+              res[s.id][back] = '休み';
+              // d日のstreakを再計算
+              streak = 0;
+              for (let dd = back + 1; dd <= d; dd++) {
+                const vv = res[s.id][dd];
+                if (vv && !REST.has(vv) && vv !== '明け') streak++;
+                else streak = 0;
+              }
+              break;
+            }
+          }
+        }
+      }
+    });
+
+    // ② 公休数超過修正: 余分な '休み' を勤務に変換（maxConsec違反を起こさない日を選ぶ）
+    ds.forEach(s => {
+      const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const work = getDefaultWork(s);
+      const countRest = () => Object.values(res[s.id]).filter(v => REST.has(v)).length;
+
+      while (countRest() > tgtK) {
+        let converted = false;
+        for (let d = 1; d <= days; d++) {
+          if (res[s.id][d] !== '休み' || locked[s.id].has(d)) continue;
+          // 仮に勤務に変換して連勤チェック
+          res[s.id][d] = work;
+          let streak = 0, ok = true;
+          for (let dd = 1; dd <= days; dd++) {
+            const v = res[s.id][dd];
+            if (v && !REST.has(v) && v !== '明け') { streak++; if (streak > maxConsec) { ok = false; break; } }
+            else streak = 0;
+          }
+          if (ok) { converted = true; break; }
+          res[s.id][d] = '休み'; // maxConsec違反になるので元に戻す
+        }
+        if (!converted) break; // 変換できる日がない → 諦める
+      }
+    });
+  };
+
   const validateHardConstraints = (dept, res, ds, year, month) => {
     if (dept.id !== 'eiyo') return [];
     const errs = [];
@@ -6811,10 +6897,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Console-UI] ここまで ══
 
-        // ── 最終検証フェーズ（Hard Constraint）──
+        // ── 最終修復フェーズ（Hard Constraint 自動修正）──
+        repairHardConstraints(cd, result, _p1_ds, year, month);
+        // ── 修復後検証（直せなかった違反が残っていれば保存中止）──
         const _hardErrs = validateHardConstraints(cd, result, _p1_ds, year, month);
         if (_hardErrs.length > 0) {
-          alert('[VALIDATION ERROR]\n\n' + _hardErrs.join('\n\n') + '\n\n保存中止');
+          alert('[VALIDATION ERROR]\n修復できなかった制約違反があります\n\n' + _hardErrs.join('\n\n') + '\n\n保存中止');
           return;
         }
 
