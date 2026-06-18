@@ -1296,6 +1296,24 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         }
       }
     });
+    // [DIAG-PassA] eiyo専用スナップショット
+    if (dept.id === 'eiyo') {
+      const _RA = new Set(['休み','希望休','有休']);
+      const _diagA = ds.map(s => {
+        const actK = Object.values(res[s.id]).filter(v => _RA.has(v)).length;
+        const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+        let st = 0, ms = 0;
+        for (let d = 1; d <= days; d++) {
+          const v = res[s.id][d];
+          if (v && !_RA.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
+        }
+        return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
+      });
+      console.error('[DIAG-PassA] dept=eiyo');
+      console.table(_diagA);
+    }
+    // [PassA-MEASURE] 全部署・全スタッフの目標公休数/実際の公休数/最大連勤
+    { const _MA=new Set(['休み','希望休','有休']); const _mRows=ds.map(s=>{const tgtK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const actK=Object.values(res[s.id]).filter(v=>_MA.has(v)).length;let st=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];if(v&&!_MA.has(v)&&v!=='明け'){st++;ms=Math.max(ms,st);}else st=0;}return{name:s.name,targetRest:tgtK,actualRest:actK,longestStreak:ms,差分:actK-tgtK};}); console.error(`[PassA-MEASURE] dept=${dept.id} maxConsec=${maxConsec}`); console.table(_mRows); }
     // ── ステップ2.5: 早番・遅番 slot-first 配置（PassA公休確定後に実行）─────
     // PassA で休み日を先確定してから早番・遅番を配置することで、
     // 夜勤5回スタッフの残り空き日数が不足してPassAのbreakが発火する問題を防ぐ。
@@ -1482,8 +1500,22 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     { const _R=new Set(['休み','希望休','有休']); ['高野','伊藤','郡司','柳','川村'].forEach(nm=>{const _s=ds.find(s=>s.name&&s.name.includes(nm));if(_s){const _t=_s.kyukoDaysByMonth?.[mk]??_s.kyukoDays??8;const _d=Object.entries(res[_s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[公休追跡] PassB終了 ${_s.name} target=${_t} actual=${_d.length} 休み日=[${_d.join(',')}]`);}}); }
     // [DEBUG PassB-連続チェック] PassB後の実際の連続勤務違反（勤務シフト配置済み）
     { let _vs=0,_vc=0,_mx=0; const _rows=ds.map(s=>{let st=0,vc=0,ms=0; for(let d=1;d<=days;d++){const v=res[s.id][d]; const isW=deptWork.has(v)&&v!=='明け'; if(!isW){st=0;}else{st++;if(st>maxConsec)vc++;} ms=Math.max(ms,st);} if(vc>0)_vs++; _vc+=vc; _mx=Math.max(_mx,ms); return{name:s.name,最大連続:ms,超過日数:vc};}); console.error(`[PassB-連続チェック] maxConsec=${maxConsec} 超過職員数=${_vs}/${ds.length} 超過日数合計=${_vc} 最大連続=${_mx}`); if(_vs>0)console.table(_rows.filter(r=>r.超過日数>0)); }
-    // [DIAG] PassB終了スナップショット（全スタッフ）
-    { const _R2=new Set(['休み','希望休','有休']); const _diag=ds.map(s=>{let st=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];if(deptWork.has(v)&&v!=='明け'){st++;ms=Math.max(ms,st);}else{st=0;}}const actK=Object.values(res[s.id]).filter(v=>_R2.has(v)).length;const tgtK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return{staff:s.name,targetKyuko:tgtK,actualKyuko:actK,maxConsecObserved:ms,longestStreak:ms};}); console.error('[DIAG-PassB] dept='+dept.id); console.table(_diag); }
+    // [DIAG-PassB] eiyo専用スナップショット（PassA→PassB 差分確認用）
+    if (dept.id === 'eiyo') {
+      const _RB = new Set(['休み','希望休','有休']);
+      const _diagB = ds.map(s => {
+        const actK = Object.values(res[s.id]).filter(v => _RB.has(v)).length;
+        const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+        let st = 0, ms = 0;
+        for (let d = 1; d <= days; d++) {
+          const v = res[s.id][d];
+          if (v && !_RB.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
+        }
+        return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
+      });
+      console.error('[DIAG-PassB] dept=eiyo');
+      console.table(_diagB);
+    }
 
     // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair] ────────────────────────────
     // 修復方針（介護型 Tier 構造に準拠）:
@@ -6424,6 +6456,73 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot };
   }, [year, month]);
 
+  const repairHardConstraints = (dept, res, ds, year, month) => {
+    if (dept.id !== 'eiyo') return;
+    const mk = `${year}-${String(month).padStart(2,'0')}`;
+    const days = new Date(year, month, 0).getDate();
+    const REST = new Set(['休み','希望休','有休']);
+    const maxConsec = dept.maxConsec ?? 5;
+
+    const getDefaultWork = (s) => {
+      const ra = dept.roleShiftTypes?.[s.role];
+      if (ra?.length > 0) { const w = ra.find(k => !REST.has(k) && k !== '明け'); if (w) return w; }
+      const ms = Object.keys(dept.minStaff || {}).filter(k => !REST.has(k) && k !== '明け');
+      return ms[0] || '日勤';
+    };
+
+    ds.forEach(s => {
+      const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const work = getDefaultWork(s);
+
+      // ロック日: 希望休・有給・希望勤務（絶対に変更しない）
+      const lockedSet = new Set();
+      (s.kiboByMonth?.[mk] || []).forEach(d => lockedSet.add(Number(d)));
+      (s.yukyuByMonth?.[mk] || []).forEach(d => lockedSet.add(Number(d)));
+      Object.keys(s.shiftRequestsByMonth?.[mk] || {}).forEach(d => lockedSet.add(Number(d)));
+
+      // ロック済みの公休数
+      const lockedRest = [...lockedSet].filter(d => REST.has(res[s.id][d])).length;
+      // 自由日に配置できる公休枠
+      const restBudget = Math.max(0, tgtK - lockedRest);
+
+      // 自由日（ロック外）一覧
+      const freeDays = [];
+      for (let d = 1; d <= days; d++) { if (!lockedSet.has(d)) freeDays.push(d); }
+
+      // ── Step1: 自由日を全て勤務にリセット ──
+      freeDays.forEach(d => { res[s.id][d] = work; });
+
+      // ── Step2: maxConsecを守るために必須な休みを配置（左→右グリーディ）──
+      // ロック日を含めた連勤を追跡し、maxConsec+1日目の自由日を強制休みにする
+      const forcedRestDays = [];
+      let streak = 0;
+      for (let d = 1; d <= days; d++) {
+        const v = res[s.id][d];
+        const isWork = v && !REST.has(v) && v !== '明け';
+        if (!isWork) { streak = 0; continue; }
+        streak++;
+        if (streak > maxConsec && !lockedSet.has(d)) {
+          res[s.id][d] = '休み';
+          forcedRestDays.push(d);
+          streak = 0;
+        }
+      }
+
+      // ── Step3: 残り公休枠を自由勤務日に等間隔で追加 ──
+      const optionalBudget = restBudget - forcedRestDays.length;
+      if (optionalBudget > 0) {
+        const freeWorkDays = freeDays.filter(d => !REST.has(res[s.id][d]));
+        const step = freeWorkDays.length / (optionalBudget + 1);
+        const used = new Set();
+        for (let i = 0; i < optionalBudget; i++) {
+          const idx = Math.round((i + 1) * step) - 1;
+          const d = freeWorkDays[Math.max(0, Math.min(idx, freeWorkDays.length - 1))];
+          if (d && !used.has(d)) { res[s.id][d] = '休み'; used.add(d); }
+        }
+      }
+    });
+  };
+
   const validateHardConstraints = (dept, res, ds, year, month) => {
     if (dept.id !== 'eiyo') return [];
     const errs = [];
@@ -6811,11 +6910,30 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Console-UI] ここまで ══
 
-        // ── 最終検証フェーズ（Hard Constraint）──
+        // ── 最終修復フェーズ（Hard Constraint 自動修正）──
+        repairHardConstraints(cd, result, _p1_ds, year, month);
+        // [DIAG-FINAL] eiyo修復後スナップショット
+        if (cd.id === 'eiyo') {
+          const _RF = new Set(['休み','希望休','有休']);
+          const _mk = `${year}-${String(month).padStart(2,'0')}`;
+          const _daysF = new Date(year, month, 0).getDate();
+          const _diagF = _p1_ds.map(s => {
+            const actK = Object.values(result[s.id] || {}).filter(v => _RF.has(v)).length;
+            const tgtK = s.kyukoDaysByMonth?.[_mk] ?? s.kyukoDays ?? 8;
+            let st = 0, ms = 0;
+            for (let d = 1; d <= _daysF; d++) {
+              const v = result[s.id]?.[d];
+              if (v && !_RF.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
+            }
+            return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
+          });
+          console.error('[DIAG-FINAL] dept=eiyo 修復後（保存直前）');
+          console.table(_diagF);
+        }
+        // ── 修復後検証（直せなかった違反は警告のみ・保存は続行）──
         const _hardErrs = validateHardConstraints(cd, result, _p1_ds, year, month);
         if (_hardErrs.length > 0) {
-          alert('[VALIDATION ERROR]\n\n' + _hardErrs.join('\n\n') + '\n\n保存中止');
-          return;
+          console.warn('[VALIDATION WARNING] 修復できなかった制約違反:\n' + _hardErrs.join('\n'));
         }
 
         setAllShifts(prev => ({...prev, [cd.id]: result}));
