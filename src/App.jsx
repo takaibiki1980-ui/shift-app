@@ -1312,6 +1312,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       console.error('[DIAG-PassA] dept=eiyo');
       console.table(_diagA);
     }
+    // [PassA-MEASURE] 全部署・全スタッフの目標公休数/実際の公休数/最大連勤
+    { const _MA=new Set(['休み','希望休','有休']); const _mRows=ds.map(s=>{const tgtK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const actK=Object.values(res[s.id]).filter(v=>_MA.has(v)).length;let st=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];if(v&&!_MA.has(v)&&v!=='明け'){st++;ms=Math.max(ms,st);}else st=0;}return{name:s.name,targetRest:tgtK,actualRest:actK,longestStreak:ms,差分:actK-tgtK};}); console.error(`[PassA-MEASURE] dept=${dept.id} maxConsec=${maxConsec}`); console.table(_mRows); }
     // ── ステップ2.5: 早番・遅番 slot-first 配置（PassA公休確定後に実行）─────
     // PassA で休み日を先確定してから早番・遅番を配置することで、
     // 夜勤5回スタッフの残り空き日数が不足してPassAのbreakが発火する問題を防ぐ。
