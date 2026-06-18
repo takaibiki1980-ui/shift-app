@@ -6910,30 +6910,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Console-UI] ここまで ══
 
-        // ── 最終修復フェーズ（Hard Constraint 自動修正）──
-        repairHardConstraints(cd, result, _p1_ds, year, month);
-        // [DIAG-FINAL] eiyo修復後スナップショット
-        if (cd.id === 'eiyo') {
-          const _RF = new Set(['休み','希望休','有休']);
-          const _mk = `${year}-${String(month).padStart(2,'0')}`;
-          const _daysF = new Date(year, month, 0).getDate();
-          const _diagF = _p1_ds.map(s => {
-            const actK = Object.values(result[s.id] || {}).filter(v => _RF.has(v)).length;
-            const tgtK = s.kyukoDaysByMonth?.[_mk] ?? s.kyukoDays ?? 8;
-            let st = 0, ms = 0;
-            for (let d = 1; d <= _daysF; d++) {
-              const v = result[s.id]?.[d];
-              if (v && !_RF.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
-            }
-            return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
-          });
-          console.error('[DIAG-FINAL] dept=eiyo 修復後（保存直前）');
-          console.table(_diagF);
-        }
-        // ── 修復後検証（直せなかった違反は警告のみ・保存は続行）──
+        // ── 検証（警告のみ・保存は続行）──
         const _hardErrs = validateHardConstraints(cd, result, _p1_ds, year, month);
         if (_hardErrs.length > 0) {
-          console.warn('[VALIDATION WARNING] 修復できなかった制約違反:\n' + _hardErrs.join('\n'));
+          console.warn('[VALIDATION WARNING] 制約違反:\n' + _hardErrs.join('\n'));
         }
 
         setAllShifts(prev => ({...prev, [cd.id]: result}));
