@@ -2329,6 +2329,19 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
   return best;
 }
 
+// ── 時間軸エンジン（スタブ）──────────────────────────────────────────────────
+// engineType === 'time' の部署はこちらが呼ばれる。中身は次のタスクで実装。
+function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
+  const days = getDays(year, month);
+  const ds = staffList.filter(s => s.dept === dept.id);
+  const shifts = {};
+  ds.forEach(s => {
+    shifts[s.id] = {};
+    for (let d = 1; d <= days; d++) shifts[s.id][d] = '休み';
+  });
+  return { shifts, warnings: {}, timelineWarnings: [] };
+}
+
 function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
   const days = getDays(year, month);
   const mk = monthKey(year, month);
@@ -3106,8 +3119,9 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [requiredStart, setRequiredStart] = useState(dept?.requiredStart || "");
   const [requiredEnd, setRequiredEnd] = useState(dept?.requiredEnd || "");
   const [maxStaffRelaxable, setMaxStaffRelaxable] = useState(dept?.maxStaffRelaxable !== false);
+  const [engineType, setEngineType] = useState(dept?.engineType || 'kaigo');
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -3211,6 +3225,20 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
             </div>
           );
         })()}
+        <div style={{background:"#f5f3ff",border:"1px solid #a78bfa",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:11,color:"#5b21b6",fontWeight:700,marginBottom:8}}>自動生成エンジン</div>
+          <div style={{display:"flex",gap:8}}>
+            {[{val:'kaigo',label:'介護エンジン（夜勤対応）'},{val:'time',label:'時間軸エンジン（夜勤なし）'}].map(opt=>(
+              <button key={opt.val} onClick={()=>setEngineType(opt.val)}
+                style={{flex:1,padding:"7px 0",borderRadius:7,fontSize:12,fontWeight:engineType===opt.val?700:400,cursor:"pointer",
+                  background:engineType===opt.val?"#7c3aed":"#ede9fe",
+                  color:engineType===opt.val?"#fff":"#5b21b6",
+                  border:`1px solid ${engineType===opt.val?"#6d28d9":"#c4b5fd"}`}}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <label style={LS}>🔒 編集PINコード（4桁・任意）</label>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
           <input type="text" inputMode="numeric" maxLength={4} value={pinCode} onChange={e=>setPinCode(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="例：1234（空欄でPINなし）" style={{...INPUT_STYLE,width:180,letterSpacing:6,textAlign:"center",marginBottom:0}}/>
@@ -6451,7 +6479,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
     const genStack = undoStackRef.current[targetDept.id] || [];
     undoStackRef.current[targetDept.id] = [...genStack, genSnapshot].slice(-30);
-    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
+    let _genResult;
+    if (targetDept.engineType === 'time') {
+      const { shifts, warnings, timelineWarnings } = generateTimeAxis(cs, targetDept, year, month, genSnapshot, ct, builtPrevTail);
+      _genResult = { shifts, warnings, timelineWarnings, score: 0, ratioFeedback: {} };
+    } else {
+      _genResult = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
+    }
+    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = _genResult;
     lastAutoGenRef.current[targetDept.id] = result;
     return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot };
   }, [year, month]);
