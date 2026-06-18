@@ -6928,11 +6928,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           console.error('[DIAG-FINAL] dept=eiyo 修復後（保存直前）');
           console.table(_diagF);
         }
-        // ── 修復後検証（直せなかった違反が残っていれば保存中止）──
+        // ── 修復後検証（直せなかった違反は警告のみ・保存は続行）──
         const _hardErrs = validateHardConstraints(cd, result, _p1_ds, year, month);
         if (_hardErrs.length > 0) {
-          alert('[VALIDATION ERROR]\n修復できなかった制約違反があります\n\n' + _hardErrs.join('\n\n') + '\n\n保存中止');
-          return;
+          console.warn('[VALIDATION WARNING] 修復できなかった制約違反:\n' + _hardErrs.join('\n'));
         }
 
         setAllShifts(prev => ({...prev, [cd.id]: result}));
