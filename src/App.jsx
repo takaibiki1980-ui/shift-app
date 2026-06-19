@@ -1052,6 +1052,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue; // 夜勤の前日が夜勤/明けは不可
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue; // 夜勤上限超過
+        const dayNightCount = ds.filter(sx => res[sx.id][nightDay] === "夜勤").length;
+        if (dayNightCount >= (maxStaff["夜勤"] ?? 1)) continue; // 日別maxStaff超過ならアンカーしない
         // アンカー成立: 夜勤→明け を仮置き（D の希望休は既にセット済み）
         res[s.id][nightDay] = "夜勤";
         res[s.id][meakeDay] = "明け";
