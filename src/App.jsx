@@ -330,6 +330,7 @@ function PrivacyModal({ onClose }) {
 const SHIFTS = {
   早番:  { short:"早", color:"#D97706", bg:"#FFFFFF", border:"#FED7AA", time:"7:00〜16:00" },
   日勤:  { short:"日", color:"#374151", bg:"#FFFFFF", border:"#E5E7EB", time:"9:00〜18:00" },
+  研修:  { short:"研", color:"#166534", bg:"#DCFCE7", border:"#86EFAC", time:"研修（日勤扱い）" },
   遅番:  { short:"遅", color:"#2563EB", bg:"#FFFFFF", border:"#DBEAFE", time:"11:30〜20:30" },
   夜勤:  { short:"夜", color:"#FFFFFF", bg:"#06B6D4", border:"transparent", time:"16:30〜翌9:30" },
   明け:  { short:"明", color:"#0369A1", bg:"#E0F2FE", border:"transparent", time:"夜勤明け" },
@@ -343,10 +344,10 @@ const SHIFTS = {
   "": { short:"－", color:"#9CA3AF", bg:"transparent", border:"transparent", time:"" },
 };
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
-const SHIFT_KEYS_MANUAL = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅",""];
+const SHIFT_KEYS_MANUAL = ["早番","日勤","研修","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅",""];
 const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]);
-const WORK_TYPES  = new Set(["早番","日勤","遅番","夜勤"]);
+const WORK_TYPES  = new Set(["早番","日勤","研修","遅番","夜勤"]);
 
 // カスタムシフト種別のstyling定義を取得（標準SHIFTSに無い場合はbaseTypeの色を継承）
 function getShiftDef(key, customDefs, dept) {
@@ -1051,6 +1052,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue; // 夜勤の前日が夜勤/明けは不可
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue; // 夜勤上限超過
+        const dayNightCount = ds.filter(sx => res[sx.id][nightDay] === "夜勤").length;
+        if (dayNightCount >= (maxStaff["夜勤"] ?? 1)) continue; // 日別maxStaff超過ならアンカーしない
         // アンカー成立: 夜勤→明け を仮置き（D の希望休は既にセット済み）
         res[s.id][nightDay] = "夜勤";
         res[s.id][meakeDay] = "明け";
@@ -2464,26 +2467,63 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   });
 
   // ────────────────────────────────────────────────────────────────────────
-  // ステップ4: 残り空き日に勤務種別を割り当て（L2481〜）
+  // ステップ4: 残り空き日に勤務種別を割り当て（maxStaff上限チェック付き）
   // ────────────────────────────────────────────────────────────────────────
+  // 日別・種別の現在配置人数（ステップ1ロック日の勤務シフトを初期値に）
+  const dayCounts = {};
+  for (let d = 1; d <= days; d++) {
+    dayCounts[d] = {};
+    dayTypes.forEach(k => { dayCounts[d][k] = ds.filter(sx => res[sx.id][d] === k).length; });
+  }
+
   ds.forEach(s => {
     const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
     if (!allowed.length) return;
-    // 勤務日（まだ未設定の日）
-    const workDays = Array.from({length: days}, (_, i) => i + 1)
-      .filter(d => !res[s.id][d]);
+    const workDays = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]);
     if (!workDays.length) return;
-    if (allowed.length === 1) {
-      workDays.forEach(d => { res[s.id][d] = allowed[0]; });
-    } else {
-      // 均等振り分け：allowed をサイクルして割り当て
-      const counts = {};
-      allowed.forEach(k => { counts[k] = 0; });
-      workDays.forEach(d => {
-        const pick = allowed.reduce((a, b) => counts[a] <= counts[b] ? a : b);
+
+    const forcedRestDays = []; // maxStaff 全種別上限で置けなかった日
+    const counts = {};
+    allowed.forEach(k => { counts[k] = 0; });
+
+    workDays.forEach(d => {
+      // maxStaff に空きがある種別を抽出し、その中で使用回数が最少のものを選ぶ
+      const available = allowed.filter(k => (dayCounts[d][k] ?? 0) < (maxStaff[k] ?? 99));
+      if (available.length > 0) {
+        const pick = available.reduce((a, b) => counts[a] <= counts[b] ? a : b);
         res[s.id][d] = pick;
         counts[pick]++;
-      });
+        dayCounts[d][pick] = (dayCounts[d][pick] ?? 0) + 1;
+      } else {
+        // 全許可種別が上限 → 強制休み（後で補償）
+        res[s.id][d] = '休み';
+        forcedRestDays.push(d);
+      }
+    });
+
+    // 強制休みの補償: 公休数を維持するため別の休み予定日を勤務に振り替える
+    if (forcedRestDays.length > 0) {
+      const convertibleRests = Array.from({length: days}, (_, i) => i + 1).filter(d =>
+        res[s.id][d] === '休み' && !lockedDays[s.id].has(d) && !forcedRestDays.includes(d)
+      );
+      let toRecover = forcedRestDays.length;
+      for (const rd of convertibleRests) {
+        if (toRecover <= 0) break;
+        // 連勤超過チェック
+        let sb = 0, sa = 0;
+        for (let i = rd - 1; i >= 1; i--) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sb++; else break; }
+        for (let i = rd + 1; i <= days; i++) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sa++; else break; }
+        if (sb + 1 + sa > maxConsec) continue;
+        // maxStaff 空きがある種別チェック
+        const avail2 = allowed.filter(k => (dayCounts[rd][k] ?? 0) < (maxStaff[k] ?? 99));
+        if (!avail2.length) continue;
+        const pick2 = avail2.reduce((a, b) => counts[a] <= counts[b] ? a : b);
+        res[s.id][rd] = pick2;
+        counts[pick2]++;
+        dayCounts[rd][pick2] = (dayCounts[rd][pick2] ?? 0) + 1;
+        toRecover--;
+      }
+      // 補償できなかった分は ⑥minStaff側に残す（⑤maxStaff超過は必ず0）
     }
   });
 
@@ -2638,7 +2678,7 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, sele
   );
 }
 
-const SHIFT_REQ_TYPES = ["早番","日勤","遅番","夜勤","明け","休み","有休"];
+const SHIFT_REQ_TYPES = ["早番","日勤","研修","遅番","夜勤","明け","休み","有休"];
 function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftRequests, deptId, depts, kiboCountByDay, kiboLimit }) {
   const days = getDays(year, month);
   const firstDow = new Date(year, month, 1).getDay();
