@@ -2332,8 +2332,9 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
   return best;
 }
 
-// ── 時間軸エンジン（決定的配置 / 1パターン + 6条件検査）────────────────────
+// ── 時間軸エンジン（N試行 bestOf / 5絶対条件合格候補から最良スコア選択）────────────────────
 function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
+  const N_TRIALS = 200;
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
@@ -2351,9 +2352,6 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   });
 
   const ds = staffList.filter(s => s.dept === dept.id);
-  const res = {};
-  ds.forEach(s => { res[s.id] = {}; });
-
   // 夜勤・明けを除いた勤務種別
   const dayTypes = [...new Set(dept.shiftTypes.filter(k => k !== '夜勤' && k !== '明け'))];
   const getAllowed = (s) => {
@@ -2362,218 +2360,341 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   };
 
   // ────────────────────────────────────────────────────────────────────────
-  // ステップ1: ロック日確定（L2360〜）
+  // ステップ1: ロック日確定（全試行共通）
   // ────────────────────────────────────────────────────────────────────────
+  const baseRes = {};
   const lockedDays = {};
   ds.forEach(s => {
-    res[s.id] = {};
-    // 有休の引き継ぎ
+    baseRes[s.id] = {};
     Object.entries(prevShifts[s.id] || {}).forEach(([d, v]) => {
-      if (v === '有休') res[s.id][Number(d)] = v;
+      if (v === '有休') baseRes[s.id][Number(d)] = v;
     });
-    // 希望休
-    (s.kiboByMonth?.[mk] || []).forEach(d => { res[s.id][Number(d)] = '希望休'; });
-    // 有休
-    (s.yukyuByMonth?.[mk] || []).forEach(d => { res[s.id][Number(d)] = '有休'; });
-    // 希望勤務（許可種別のみ）
+    (s.kiboByMonth?.[mk] || []).forEach(d => { baseRes[s.id][Number(d)] = '希望休'; });
+    (s.yukyuByMonth?.[mk] || []).forEach(d => { baseRes[s.id][Number(d)] = '有休'; });
     Object.entries(s.shiftRequestsByMonth?.[mk] || {}).forEach(([day, shiftKey]) => {
       const isRest = !deptWork.has(shiftKey) || shiftKey === '明け';
       if (!isRest) {
         const ra = dept.roleShiftTypes?.[s.role];
         if (ra && !ra.includes(shiftKey)) return;
       }
-      res[s.id][Number(day)] = shiftKey;
+      baseRes[s.id][Number(day)] = shiftKey;
     });
-    lockedDays[s.id] = new Set(Object.keys(res[s.id]).map(Number));
+    lockedDays[s.id] = new Set(Object.keys(baseRes[s.id]).map(Number));
   });
 
   // ────────────────────────────────────────────────────────────────────────
-  // ステップ2: 休み数確定（L2398〜）
+  // ステップ2: 休み数確定（全試行共通）
   // ────────────────────────────────────────────────────────────────────────
-  const warnings = {};
-  const restShortageWarnings = {};
   ds.forEach(s => {
     const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-    const lockedRest = Object.values(res[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
-    const raw = totalTarget - lockedRest;
-    if (raw < 0) {
-      restShortageWarnings[s.id] = `${s.name}: ロック休み${lockedRest}日が目標${totalTarget}日を超過`;
-    }
-    s._ta_restToPlace = Math.max(0, raw);
+    const lockedRest = Object.values(baseRes[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
+    s._ta_restToPlace = Math.max(0, totalTarget - lockedRest);
     s._ta_totalTarget = totalTarget;
   });
 
   // ────────────────────────────────────────────────────────────────────────
-  // ステップ3: 空き日に休みを均等配置 + maxConsec 調整（L2416〜）
+  // 内部関数: 1試行分の配置（乱数性あり）
   // ────────────────────────────────────────────────────────────────────────
-  ds.forEach(s => {
-    const restToPlace = s._ta_restToPlace;
-    const freeDays = Array.from({length: days}, (_, i) => i + 1)
-      .filter(d => !lockedDays[s.id].has(d));
+  const runOneTrial = () => {
+    // baseRes をスタッフごとにシャローコピー
+    const res = {};
+    ds.forEach(s => { res[s.id] = { ...baseRes[s.id] }; });
 
-    if (restToPlace === 0 || freeDays.length === 0) return;
+    // ── ステップ3: 休みを均等配置（乱数ジッタ付き）+ maxConsec 調整 ──
+    ds.forEach(s => {
+      const restToPlace = s._ta_restToPlace;
+      const freeDays = Array.from({length: days}, (_, i) => i + 1)
+        .filter(d => !lockedDays[s.id].has(d));
+      if (restToPlace === 0 || freeDays.length === 0) return;
 
-    // 等間隔インデックス計算（0-based、重複なし）
-    const step = freeDays.length / (restToPlace + 1);
-    const chosen = new Set();
-    for (let i = 1; i <= restToPlace; i++) {
-      const idx = Math.min(Math.round(i * step) - 1, freeDays.length - 1);
-      chosen.add(freeDays[Math.max(0, idx)]);
-    }
-
-    // maxConsec 超過チェック → 違反日があれば最も長い連勤の中央付近に休みを移動
-    // 「数を超えない」制約のため追加はせず、既存の休みを移動して調整
-    const restSet = new Set(chosen);
-    let changed = true;
-    let guard = 0;
-    while (changed && guard++ < days) {
-      changed = false;
-      // 連勤区間をスキャン
-      let streak = 0, streakStart = 1;
-      for (let d = 1; d <= days + 1; d++) {
-        const isWork = d <= days && !lockedDays[s.id].has(d) && !restSet.has(d)
-          ? true
-          : d <= days && lockedDays[s.id].has(d) && deptWork.has(res[s.id][d]) && res[s.id][d] !== '明け'
-          ? true : false;
-        if (isWork) {
-          if (streak === 0) streakStart = d;
-          streak++;
-        } else {
-          if (streak > maxConsec) {
-            // 違反区間の中央付近で休みを移動（移動元は restSet の中で最もこの区間から遠いもの）
-            const mid = streakStart + Math.floor(streak / 2);
-            const candidate = Array.from({length: streak}, (_, i) => streakStart + i)
-              .filter(d => !lockedDays[s.id].has(d) && !restSet.has(d))[Math.floor(streak / 2)] ?? mid;
-            // 移動元: restSet の中でこの区間と最も離れた日（なければ追加を諦める）
-            let farthest = null, maxDist = -1;
-            for (const rd of restSet) {
-              if (lockedDays[s.id].has(rd)) continue; // lockedは動かさない
-              const dist = Math.min(Math.abs(rd - streakStart), Math.abs(rd - (streakStart + streak - 1)));
-              if (dist > maxDist) { maxDist = dist; farthest = rd; }
-            }
-            if (farthest !== null && !lockedDays[s.id].has(candidate)) {
-              restSet.delete(farthest);
-              restSet.add(candidate);
-              changed = true;
-            }
+      const step = freeDays.length / (restToPlace + 1);
+      // 乱数性①: 全体を一様にずらすオフセット
+      const startOff = Math.floor(Math.random() * Math.max(1, Math.ceil(step / 2)));
+      const chosen = new Set();
+      for (let i = 1; i <= restToPlace; i++) {
+        // 乱数性②: 各休みに ±2 日のジッタ
+        const jitter = Math.round((Math.random() - 0.5) * 4);
+        let idx = Math.min(Math.max(0, Math.round(i * step) - 1 + startOff + jitter), freeDays.length - 1);
+        // 重複回避: 前後を探索
+        if (chosen.has(freeDays[idx])) {
+          for (let delta = 1; delta < freeDays.length; delta++) {
+            const a = Math.min(idx + delta, freeDays.length - 1);
+            if (!chosen.has(freeDays[a])) { idx = a; break; }
+            const b = Math.max(idx - delta, 0);
+            if (!chosen.has(freeDays[b])) { idx = b; break; }
           }
-          streak = 0;
+        }
+        chosen.add(freeDays[idx]);
+      }
+
+      // maxConsec 超過チェック → 最長連勤の中央付近に休みを移動
+      const restSet = new Set(chosen);
+      let changed = true, guard = 0;
+      while (changed && guard++ < days) {
+        changed = false;
+        let streak = 0, streakStart = 1;
+        for (let d = 1; d <= days + 1; d++) {
+          const isWork = d <= days && (
+            (!lockedDays[s.id].has(d) && !restSet.has(d)) ||
+            (lockedDays[s.id].has(d) && deptWork.has(res[s.id][d]) && res[s.id][d] !== '明け')
+          );
+          if (isWork) {
+            if (streak === 0) streakStart = d;
+            streak++;
+          } else {
+            if (streak > maxConsec) {
+              const candidate = Array.from({length: streak}, (_, i) => streakStart + i)
+                .filter(d => !lockedDays[s.id].has(d) && !restSet.has(d))[Math.floor(streak / 2)]
+                ?? (streakStart + Math.floor(streak / 2));
+              let farthest = null, maxDist = -1;
+              for (const rd of restSet) {
+                if (lockedDays[s.id].has(rd)) continue;
+                const dist = Math.min(Math.abs(rd - streakStart), Math.abs(rd - (streakStart + streak - 1)));
+                if (dist > maxDist) { maxDist = dist; farthest = rd; }
+              }
+              if (farthest !== null && !lockedDays[s.id].has(candidate)) {
+                restSet.delete(farthest); restSet.add(candidate); changed = true;
+              }
+            }
+            streak = 0;
+          }
         }
       }
+      restSet.forEach(d => { res[s.id][d] = '休み'; });
+    });
+
+    // ── ステップ4: 残り空き日に勤務種別を割り当て（スタッフ順シャッフル + タイ時乱数）──
+    const dayCounts = {};
+    for (let d = 1; d <= days; d++) {
+      dayCounts[d] = {};
+      dayTypes.forEach(k => { dayCounts[d][k] = ds.filter(sx => res[sx.id][d] === k).length; });
     }
+    // 乱数性③: スタッフ処理順をシャッフル
+    const shuffledDs = [...ds].sort(() => Math.random() - 0.5);
+    shuffledDs.forEach(s => {
+      const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+      if (!allowed.length) return;
+      const workDays = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]);
+      if (!workDays.length) return;
 
-    // res に書き込み
-    restSet.forEach(d => { res[s.id][d] = '休み'; });
-  });
+      const forcedRestDays = [];
+      const counts = {};
+      allowed.forEach(k => { counts[k] = 0; });
+
+      workDays.forEach(d => {
+        const available = allowed.filter(k => (dayCounts[d][k] ?? 0) < (maxStaff[k] ?? 99));
+        if (available.length > 0) {
+          // 乱数性④: 使用回数最少の中から乱数で選択
+          const minCnt = Math.min(...available.map(k => counts[k]));
+          const ties = available.filter(k => counts[k] === minCnt);
+          const pick = ties[Math.floor(Math.random() * ties.length)];
+          res[s.id][d] = pick;
+          counts[pick]++;
+          dayCounts[d][pick] = (dayCounts[d][pick] ?? 0) + 1;
+        } else {
+          res[s.id][d] = '休み';
+          forcedRestDays.push(d);
+        }
+      });
+
+      // 強制休みの補償: 別の休み予定日を勤務に振り替えて公休数を維持
+      if (forcedRestDays.length > 0) {
+        const convertible = Array.from({length: days}, (_, i) => i + 1).filter(d =>
+          res[s.id][d] === '休み' && !lockedDays[s.id].has(d) && !forcedRestDays.includes(d)
+        );
+        let toRecover = forcedRestDays.length;
+        for (const rd of convertible) {
+          if (toRecover <= 0) break;
+          let sb = 0, sa = 0;
+          for (let i = rd - 1; i >= 1; i--) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sb++; else break; }
+          for (let i = rd + 1; i <= days; i++) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sa++; else break; }
+          if (sb + 1 + sa > maxConsec) continue;
+          const avail2 = allowed.filter(k => (dayCounts[rd][k] ?? 0) < (maxStaff[k] ?? 99));
+          if (!avail2.length) continue;
+          const minCnt2 = Math.min(...avail2.map(k => counts[k]));
+          const ties2 = avail2.filter(k => counts[k] === minCnt2);
+          const pick2 = ties2[Math.floor(Math.random() * ties2.length)];
+          res[s.id][rd] = pick2;
+          counts[pick2]++;
+          dayCounts[rd][pick2] = (dayCounts[rd][pick2] ?? 0) + 1;
+          toRecover--;
+        }
+      }
+    });
+
+    return res;
+  };
 
   // ────────────────────────────────────────────────────────────────────────
-  // ステップ4: 残り空き日に勤務種別を割り当て（maxStaff上限チェック付き）
+  // 5絶対条件の検査（①公休数 ②有休固定 ③許可種別 ④連勤≤maxConsec ⑤maxStaff以下）
   // ────────────────────────────────────────────────────────────────────────
-  // 日別・種別の現在配置人数（ステップ1ロック日の勤務シフトを初期値に）
-  const dayCounts = {};
-  for (let d = 1; d <= days; d++) {
-    dayCounts[d] = {};
-    dayTypes.forEach(k => { dayCounts[d][k] = ds.filter(sx => res[sx.id][d] === k).length; });
+  const checkAbsolute = (res) => {
+    let violations = 0;
+    const detail = { v1: 0, v2: 0, v3: 0, v4: 0, v5: 0 };
+    ds.forEach(s => {
+      // ①公休数ちょうど
+      const actualRest = Object.values(res[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
+      if (actualRest !== s._ta_totalTarget) { detail.v1++; violations++; }
+      // ②有休固定
+      (s.yukyuByMonth?.[mk] || []).forEach(d => {
+        if (res[s.id][Number(d)] !== '有休') { detail.v2++; violations++; }
+      });
+      // ③許可種別
+      const allowed = new Set(getAllowed(s));
+      for (let d = 1; d <= days; d++) {
+        const v = res[s.id][d];
+        if (v && deptWork.has(v) && v !== '明け' && !allowed.has(v)) { detail.v3++; violations++; }
+      }
+      // ④最大連勤
+      let streak = 0;
+      for (let d = 1; d <= days; d++) {
+        const v = res[s.id][d];
+        if (v && deptWork.has(v) && v !== '明け') { streak++; if (streak > maxConsec) { detail.v4++; violations++; } }
+        else streak = 0;
+      }
+    });
+    // ⑤maxStaff超過
+    for (let d = 1; d <= days; d++) {
+      for (const [k, limit] of Object.entries(maxStaff)) {
+        if (limit >= 99) continue;
+        if (ds.filter(s => res[s.id][d] === k).length > limit) { detail.v5++; violations++; }
+      }
+    }
+    return { violations, detail };
+  };
+
+  // ────────────────────────────────────────────────────────────────────────
+  // スコア計算（小さいほど良い）
+  //   minStaff不足日数×100 + 連勤ブロック長の分散 + 公休間隔の分散
+  // ────────────────────────────────────────────────────────────────────────
+  const calcScore = (res) => {
+    let minStaffShortDays = 0;
+    for (let d = 1; d <= days; d++) {
+      for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+        if (ds.filter(s => res[s.id][d] === k).length < minC) minStaffShortDays++;
+      }
+    }
+    let workBlockVar = 0;
+    ds.forEach(s => {
+      const blocks = [];
+      let streak = 0;
+      for (let d = 1; d <= days; d++) {
+        const v = res[s.id][d];
+        if (v && deptWork.has(v) && v !== '明け') { streak++; }
+        else { if (streak > 0) { blocks.push(streak); streak = 0; } }
+      }
+      if (streak > 0) blocks.push(streak);
+      if (blocks.length > 1) {
+        const mean = blocks.reduce((a, b) => a + b, 0) / blocks.length;
+        workBlockVar += blocks.reduce((a, b) => a + (b - mean) ** 2, 0) / blocks.length;
+      }
+    });
+    let restIntervalVar = 0;
+    ds.forEach(s => {
+      const restDays = [];
+      for (let d = 1; d <= days; d++) {
+        if (deptRest.has(res[s.id][d]) && res[s.id][d] !== '明け') restDays.push(d);
+      }
+      if (restDays.length > 1) {
+        const intervals = [];
+        for (let i = 1; i < restDays.length; i++) intervals.push(restDays[i] - restDays[i - 1]);
+        const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+        restIntervalVar += intervals.reduce((a, b) => a + (b - mean) ** 2, 0) / intervals.length;
+      }
+    });
+    return minStaffShortDays * 100 + workBlockVar + restIntervalVar;
+  };
+
+  // ────────────────────────────────────────────────────────────────────────
+  // N=200 試行ループ
+  // ────────────────────────────────────────────────────────────────────────
+  let bestPassing = null, bestPassingScore = Infinity, passCount = 0;
+  let bestFailing = null, bestFailingViolations = Infinity;
+
+  for (let i = 0; i < N_TRIALS; i++) {
+    const trialRes = runOneTrial();
+    const { violations, detail } = checkAbsolute(trialRes);
+    if (violations === 0) {
+      passCount++;
+      const score = calcScore(trialRes);
+      if (score < bestPassingScore) { bestPassingScore = score; bestPassing = { res: trialRes, score }; }
+      if (bestPassingScore === 0) break; // 完全スコアなら即採用
+    } else {
+      if (violations < bestFailingViolations) {
+        bestFailingViolations = violations;
+        bestFailing = { res: trialRes, detail };
+      }
+    }
   }
 
-  ds.forEach(s => {
-    const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
-    if (!allowed.length) return;
-    const workDays = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]);
-    if (!workDays.length) return;
-
-    const forcedRestDays = []; // maxStaff 全種別上限で置けなかった日
-    const counts = {};
-    allowed.forEach(k => { counts[k] = 0; });
-
-    workDays.forEach(d => {
-      // maxStaff に空きがある種別を抽出し、その中で使用回数が最少のものを選ぶ
-      const available = allowed.filter(k => (dayCounts[d][k] ?? 0) < (maxStaff[k] ?? 99));
-      if (available.length > 0) {
-        const pick = available.reduce((a, b) => counts[a] <= counts[b] ? a : b);
-        res[s.id][d] = pick;
-        counts[pick]++;
-        dayCounts[d][pick] = (dayCounts[d][pick] ?? 0) + 1;
-      } else {
-        // 全許可種別が上限 → 強制休み（後で補償）
-        res[s.id][d] = '休み';
-        forcedRestDays.push(d);
-      }
-    });
-
-    // 強制休みの補償: 公休数を維持するため別の休み予定日を勤務に振り替える
-    if (forcedRestDays.length > 0) {
-      const convertibleRests = Array.from({length: days}, (_, i) => i + 1).filter(d =>
-        res[s.id][d] === '休み' && !lockedDays[s.id].has(d) && !forcedRestDays.includes(d)
-      );
-      let toRecover = forcedRestDays.length;
-      for (const rd of convertibleRests) {
-        if (toRecover <= 0) break;
-        // 連勤超過チェック
-        let sb = 0, sa = 0;
-        for (let i = rd - 1; i >= 1; i--) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sb++; else break; }
-        for (let i = rd + 1; i <= days; i++) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sa++; else break; }
-        if (sb + 1 + sa > maxConsec) continue;
-        // maxStaff 空きがある種別チェック
-        const avail2 = allowed.filter(k => (dayCounts[rd][k] ?? 0) < (maxStaff[k] ?? 99));
-        if (!avail2.length) continue;
-        const pick2 = avail2.reduce((a, b) => counts[a] <= counts[b] ? a : b);
-        res[s.id][rd] = pick2;
-        counts[pick2]++;
-        dayCounts[rd][pick2] = (dayCounts[rd][pick2] ?? 0) + 1;
-        toRecover--;
-      }
-      // 補償できなかった分は ⑥minStaff側に残す（⑤maxStaff超過は必ず0）
-    }
-  });
+  // ────────────────────────────────────────────────────────────────────────
+  // 採用候補の選択
+  // ────────────────────────────────────────────────────────────────────────
+  const selectedRes = bestPassing?.res ?? bestFailing?.res ?? (() => {
+    const r = {}; ds.forEach(s => { r[s.id] = { ...baseRes[s.id] }; }); return r;
+  })();
 
   // ────────────────────────────────────────────────────────────────────────
-  // 6条件検査（L2501〜）
+  // warnings 構築（採用候補の minStaff不足 + 合格0時の説明）
   // ────────────────────────────────────────────────────────────────────────
-  let v1 = 0, v2 = 0, v3 = 0, v4 = 0, v5 = 0, v6 = 0;
-  ds.forEach(s => {
-    const totalTarget = s._ta_totalTarget;
-    // ①公休数
-    const actualRest = Object.values(res[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
-    if (actualRest !== totalTarget) v1++;
-    // ②有休固定
-    (s.yukyuByMonth?.[mk] || []).forEach(d => {
-      if (res[s.id][Number(d)] !== '有休') v2++;
-    });
-    // ③許可種別
-    const allowed = new Set(getAllowed(s));
-    for (let d = 1; d <= days; d++) {
-      const v = res[s.id][d];
-      if (v && deptWork.has(v) && v !== '明け' && !allowed.has(v)) v3++;
-    }
-    // ④最大連勤
-    let streak = 0;
-    for (let d = 1; d <= days; d++) {
-      const v = res[s.id][d];
-      if (v && deptWork.has(v) && v !== '明け') { streak++; if (streak > maxConsec) v4++; }
-      else streak = 0;
-    }
-  });
-  // ⑤maxStaff超過 / ⑥minStaff不足
+  const warnings = {};
+  if (!bestPassing && bestFailing) {
+    const d = bestFailing.detail;
+    const parts = [];
+    if (d.v1) parts.push(`①公休数違反=${d.v1}人`);
+    if (d.v2) parts.push(`②有休固定違反=${d.v2}`);
+    if (d.v3) parts.push(`③許可種別違反=${d.v3}`);
+    if (d.v4) parts.push(`④連勤超過日=${d.v4}`);
+    if (d.v5) parts.push(`⑤maxStaff超過=${d.v5}`);
+    warnings['_system'] = `設定を満たすシフトを生成できませんでした（${N_TRIALS}回試行）: ${parts.join(', ')}`;
+  }
+  let adoptedMinStaffShortDays = 0;
   for (let d = 1; d <= days; d++) {
-    for (const [k, limit] of Object.entries(maxStaff)) {
-      if (limit >= 99) continue;
-      const cnt = ds.filter(s => res[s.id][d] === k).length;
-      if (cnt > limit) v5++;
-    }
     for (const [k, minC] of Object.entries(dept.minStaff || {})) {
-      const cnt = ds.filter(s => res[s.id][d] === k).length;
+      const cnt = ds.filter(s => selectedRes[s.id][d] === k).length;
       if (cnt < minC) {
-        v6++;
+        adoptedMinStaffShortDays++;
         if (!warnings[k]) warnings[k] = { days: 0, maxShort: 0 };
         warnings[k].days++;
         warnings[k].maxShort = Math.max(warnings[k].maxShort, minC - cnt);
       }
     }
   }
-  console.error(`[TimeAxis-CHECK] dept=${dept.id} ①公休数違反=${v1} ②有休固定違反=${v2} ③許可種別違反=${v3} ④連勤超過日=${v4} ⑤maxStaff超過=${v5} ⑥minStaff不足日=${v6}`);
 
-  return { shifts: res, warnings, timelineWarnings: [] };
+  // ────────────────────────────────────────────────────────────────────────
+  // ログ
+  // ────────────────────────────────────────────────────────────────────────
+  console.error(`[TimeAxis-BESTOF] dept=${dept.id} 試行=${N_TRIALS} 合格候補数=${passCount} 採用スコア=${bestPassing ? bestPassingScore.toFixed(1) : '(合格なし)'}`);
+  console.error(`  採用候補の minStaff不足日=${adoptedMinStaffShortDays}`);
+  if (!bestPassing) console.error(`  [TimeAxis-BESTOF] 合格候補0: 全${N_TRIALS}試行で5絶対条件を満たす候補なし`);
+
+  // 6条件検査ログ（後方互換）
+  let v1=0,v2=0,v3=0,v4=0,v5=0;
+  ds.forEach(s => {
+    const actualRest = Object.values(selectedRes[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
+    if (actualRest !== s._ta_totalTarget) v1++;
+    (s.yukyuByMonth?.[mk] || []).forEach(d => { if (selectedRes[s.id][Number(d)] !== '有休') v2++; });
+    const allowed = new Set(getAllowed(s));
+    for (let d = 1; d <= days; d++) {
+      const v = selectedRes[s.id][d];
+      if (v && deptWork.has(v) && v !== '明け' && !allowed.has(v)) v3++;
+    }
+    let streak = 0;
+    for (let d = 1; d <= days; d++) {
+      const v = selectedRes[s.id][d];
+      if (v && deptWork.has(v) && v !== '明け') { streak++; if (streak > maxConsec) v4++; }
+      else streak = 0;
+    }
+  });
+  for (let d = 1; d <= days; d++) {
+    for (const [k, limit] of Object.entries(maxStaff)) {
+      if (limit >= 99) continue;
+      if (ds.filter(s => selectedRes[s.id][d] === k).length > limit) v5++;
+    }
+  }
+  console.error(`[TimeAxis-CHECK] dept=${dept.id} ①公休数違反=${v1} ②有休固定違反=${v2} ③許可種別違反=${v3} ④連勤超過日=${v4} ⑤maxStaff超過=${v5} ⑥minStaff不足日=${adoptedMinStaffShortDays}`);
+
+  return { shifts: selectedRes, warnings, timelineWarnings: [] };
 }
 
 function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
