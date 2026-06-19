@@ -2522,6 +2522,88 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       }
     });
 
+    // ── ステップ5: 最終連勤調整（ステップ4後の実際の res で ④=0 を保証）──
+    // ステップ4の補償処理で休みが勤務に戻り連勤が崩れる場合がある。
+    // 最終 res を見て超過ブロックを修復する（公休数は維持する）。
+    ds.forEach(s => {
+      const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+
+      let fixed = true, guard5 = 0;
+      while (fixed && guard5++ < days * 2) {
+        fixed = false;
+        let streak = 0, streakStart = 1;
+        for (let d = 1; d <= days + 1; d++) {
+          const v = d <= days ? res[s.id][d] : null;
+          const isWork = v && deptWork.has(v) && v !== '明け';
+          if (isWork) {
+            if (streak === 0) streakStart = d;
+            streak++;
+          } else {
+            if (streak > maxConsec) {
+              // 違反区間の中央付近の非ロック日を candidate（勤務 → 休み）
+              const candidate = Array.from({length: streak}, (_, i) => streakStart + i)
+                .filter(d => !lockedDays[s.id].has(d))[Math.floor(streak / 2)];
+
+              if (candidate != null) {
+                // 違反区間から最も遠い非ロック休み日を farthest（休み → 勤務）
+                // farthest を勤務に変えても maxConsec 違反しない & maxStaff 空きある日を選ぶ
+                let farthest = null, maxDist = -1;
+                const restCandidates = [];
+                for (let fd = 1; fd <= days; fd++) {
+                  if (res[s.id][fd] !== '休み') continue;
+                  if (lockedDays[s.id].has(fd)) continue;
+                  const dist = Math.min(
+                    Math.abs(fd - streakStart),
+                    Math.abs(fd - (streakStart + streak - 1))
+                  );
+                  restCandidates.push({ fd, dist });
+                }
+                // 遠い順に試して条件を満たす最初の日を採用
+                restCandidates.sort((a, b) => b.dist - a.dist);
+                for (const { fd } of restCandidates) {
+                  // fd を勤務に戻した場合の前後連勤チェック
+                  let sb = 0, sa = 0;
+                  for (let i = fd - 1; i >= 1; i--) {
+                    const vv = res[s.id][i];
+                    if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break;
+                  }
+                  for (let i = fd + 1; i <= days; i++) {
+                    const vv = res[s.id][i];
+                    if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break;
+                  }
+                  if (sb + 1 + sa > maxConsec) continue;
+                  // maxStaff に空きがある種別が存在するか確認
+                  const avail5 = allowed.filter(k => (dayCounts[fd]?.[k] ?? 0) < (maxStaff[k] ?? 99));
+                  if (!avail5.length) continue;
+                  farthest = { fd, avail: avail5 };
+                  break;
+                }
+
+                if (farthest !== null) {
+                  // candidate: 勤務 → 休み
+                  const oldShift = res[s.id][candidate];
+                  res[s.id][candidate] = '休み';
+                  if (oldShift && dayCounts[candidate]?.[oldShift] != null) {
+                    dayCounts[candidate][oldShift] = Math.max(0, dayCounts[candidate][oldShift] - 1);
+                  }
+                  // farthest: 休み → 勤務
+                  const pick5 = farthest.avail.reduce((a, b) =>
+                    (dayCounts[farthest.fd]?.[a] ?? 0) <= (dayCounts[farthest.fd]?.[b] ?? 0) ? a : b
+                  );
+                  res[s.id][farthest.fd] = pick5;
+                  if (dayCounts[farthest.fd]) {
+                    dayCounts[farthest.fd][pick5] = (dayCounts[farthest.fd][pick5] ?? 0) + 1;
+                  }
+                  fixed = true;
+                }
+              }
+            }
+            streak = 0;
+          }
+        }
+      }
+    });
+
     return res;
   };
 
