@@ -2464,26 +2464,63 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   });
 
   // ────────────────────────────────────────────────────────────────────────
-  // ステップ4: 残り空き日に勤務種別を割り当て（L2481〜）
+  // ステップ4: 残り空き日に勤務種別を割り当て（maxStaff上限チェック付き）
   // ────────────────────────────────────────────────────────────────────────
+  // 日別・種別の現在配置人数（ステップ1ロック日の勤務シフトを初期値に）
+  const dayCounts = {};
+  for (let d = 1; d <= days; d++) {
+    dayCounts[d] = {};
+    dayTypes.forEach(k => { dayCounts[d][k] = ds.filter(sx => res[sx.id][d] === k).length; });
+  }
+
   ds.forEach(s => {
     const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
     if (!allowed.length) return;
-    // 勤務日（まだ未設定の日）
-    const workDays = Array.from({length: days}, (_, i) => i + 1)
-      .filter(d => !res[s.id][d]);
+    const workDays = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]);
     if (!workDays.length) return;
-    if (allowed.length === 1) {
-      workDays.forEach(d => { res[s.id][d] = allowed[0]; });
-    } else {
-      // 均等振り分け：allowed をサイクルして割り当て
-      const counts = {};
-      allowed.forEach(k => { counts[k] = 0; });
-      workDays.forEach(d => {
-        const pick = allowed.reduce((a, b) => counts[a] <= counts[b] ? a : b);
+
+    const forcedRestDays = []; // maxStaff 全種別上限で置けなかった日
+    const counts = {};
+    allowed.forEach(k => { counts[k] = 0; });
+
+    workDays.forEach(d => {
+      // maxStaff に空きがある種別を抽出し、その中で使用回数が最少のものを選ぶ
+      const available = allowed.filter(k => (dayCounts[d][k] ?? 0) < (maxStaff[k] ?? 99));
+      if (available.length > 0) {
+        const pick = available.reduce((a, b) => counts[a] <= counts[b] ? a : b);
         res[s.id][d] = pick;
         counts[pick]++;
-      });
+        dayCounts[d][pick] = (dayCounts[d][pick] ?? 0) + 1;
+      } else {
+        // 全許可種別が上限 → 強制休み（後で補償）
+        res[s.id][d] = '休み';
+        forcedRestDays.push(d);
+      }
+    });
+
+    // 強制休みの補償: 公休数を維持するため別の休み予定日を勤務に振り替える
+    if (forcedRestDays.length > 0) {
+      const convertibleRests = Array.from({length: days}, (_, i) => i + 1).filter(d =>
+        res[s.id][d] === '休み' && !lockedDays[s.id].has(d) && !forcedRestDays.includes(d)
+      );
+      let toRecover = forcedRestDays.length;
+      for (const rd of convertibleRests) {
+        if (toRecover <= 0) break;
+        // 連勤超過チェック
+        let sb = 0, sa = 0;
+        for (let i = rd - 1; i >= 1; i--) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sb++; else break; }
+        for (let i = rd + 1; i <= days; i++) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sa++; else break; }
+        if (sb + 1 + sa > maxConsec) continue;
+        // maxStaff 空きがある種別チェック
+        const avail2 = allowed.filter(k => (dayCounts[rd][k] ?? 0) < (maxStaff[k] ?? 99));
+        if (!avail2.length) continue;
+        const pick2 = avail2.reduce((a, b) => counts[a] <= counts[b] ? a : b);
+        res[s.id][rd] = pick2;
+        counts[pick2]++;
+        dayCounts[rd][pick2] = (dayCounts[rd][pick2] ?? 0) + 1;
+        toRecover--;
+      }
+      // 補償できなかった分は ⑥minStaff側に残す（⑤maxStaff超過は必ず0）
     }
   });
 
