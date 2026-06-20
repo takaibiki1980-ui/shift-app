@@ -2691,6 +2691,68 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   })();
 
   // ────────────────────────────────────────────────────────────────────────
+  // 山登り局所探索: 空白（未割り当て）→ 勤務 で minStaff不足を削減
+  // ① 公休数は不変（空白→勤務 のみ。休み→勤務 は絶対にしない）
+  // ②有休固定・③許可種別・④連勤・⑤maxStaff のいずれも悪化させない
+  // ────────────────────────────────────────────────────────────────────────
+  {
+    const countShort = (res) => {
+      let n = 0;
+      for (let d = 1; d <= days; d++)
+        for (const [k, minC] of Object.entries(dept.minStaff || {}))
+          if (ds.filter(s => res[s.id][d] === k).length < minC) n++;
+      return n;
+    };
+
+    const hlBefore = countShort(selectedRes);
+    let hlScore = calcScore(selectedRes);
+
+    // 日別・種別カウント（採用判定後の更新に使用）
+    const hlDC = {};
+    for (let d = 1; d <= days; d++) {
+      hlDC[d] = {};
+      for (const k of Object.keys(dept.minStaff || {}))
+        hlDC[d][k] = ds.filter(s => selectedRes[s.id][d] === k).length;
+    }
+
+    let anyImproved = true;
+    while (anyImproved) {
+      anyImproved = false;
+      for (let d = 1; d <= days; d++) {
+        for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+          if ((hlDC[d][k] ?? 0) >= minC) continue;            // すでに充足
+          if ((hlDC[d][k] ?? 0) >= (maxStaff[k] ?? 99)) continue; // maxStaff満杯
+          for (const s of ds) {
+            if (selectedRes[s.id][d]) continue;          // 割り当て済み or 休み → スキップ
+            if (lockedDays[s.id].has(d)) continue;       // ②有休・希望休ロック → スキップ
+            // ③ 許可シフト種別チェック
+            if (!getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k)) continue;
+            // ④ 連勤チェック: d を勤務にしたとき前後の連続が maxConsec を超えないか
+            let sb = 0, sa = 0;
+            for (let i = d - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+            for (let i = d + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+            if (sb + 1 + sa > maxConsec) continue;
+            // 試行: 空白 → k
+            selectedRes[s.id][d] = k;
+            hlDC[d][k] = (hlDC[d][k] ?? 0) + 1;
+            const newScore = calcScore(selectedRes);
+            if (newScore < hlScore) {
+              hlScore = newScore;    // 採用
+              anyImproved = true;
+            } else {
+              delete selectedRes[s.id][d]; // 元に戻す
+              hlDC[d][k] = Math.max(0, hlDC[d][k] - 1);
+            }
+          }
+        }
+      }
+    }
+
+    const hlAfter = countShort(selectedRes);
+    console.error(`[山登り] dept=${dept.id} 局所探索 minStaff不足 ${hlBefore} → ${hlAfter}（${hlBefore - hlAfter}日分改善）`);
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
   // warnings 構築（採用候補の minStaff不足 + 合格0時の説明）
   // ────────────────────────────────────────────────────────────────────────
   const warnings = {};
