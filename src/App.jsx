@@ -2797,13 +2797,14 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
             // ③ YがシフトkでX日に入れるか
             if (!getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k)) continue;
 
-            // 候補Z: Yの非ロック勤務日をすべて試してスコア最良のZを選ぶ
+            // 候補Z: Yの非ロック「勤務日または空白日」をすべて試してスコア最良のZを選ぶ
             let bestZ = null, bestZScore = Infinity;
             for (let Z = 1; Z <= days; Z++) {
               if (Z === X) continue;
               const vZ = selectedRes[s.id][Z];
-              if (!vZ || !deptWork.has(vZ) || vZ === '明け') continue; // Zは勤務日のみ
-              if (lockedDays[s.id].has(Z)) continue;                    // ②ロック勤務は移動不可
+              // Zは「空白」または「勤務日」のみ。休み系（'休み'/'希望休'/'有休'）・明けはスキップ
+              if (vZ && (!deptWork.has(vZ) || vZ === '明け')) continue;
+              if (lockedDays[s.id].has(Z)) continue;                    // ②ロック日は移動不可
 
               // 試行: X→k, Z→休み
               selectedRes[s.id][X] = k;
@@ -2820,7 +2821,8 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
 
               // 常に元に戻す（ベストZ確定後に改めて適用）
               selectedRes[s.id][X] = '休み';
-              selectedRes[s.id][Z] = vZ;
+              // 空白日だったZはキーごと削除して完全に元の状態に戻す
+              if (vZ != null) selectedRes[s.id][Z] = vZ; else delete selectedRes[s.id][Z];
             }
 
             // ベストZでスコアが改善すれば採用
