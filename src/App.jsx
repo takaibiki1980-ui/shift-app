@@ -2477,7 +2477,6 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       const workDays = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]);
       if (!workDays.length) return;
 
-      const forcedRestDays = [];
       const counts = {};
       allowed.forEach(k => { counts[k] = 0; });
 
@@ -2491,35 +2490,10 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
           res[s.id][d] = pick;
           counts[pick]++;
           dayCounts[d][pick] = (dayCounts[d][pick] ?? 0) + 1;
-        } else {
-          res[s.id][d] = '休み';
-          forcedRestDays.push(d);
         }
+        // available 空き枠なし → 何も代入しない（空き日として残す）
+        // 公休数には含まれず、⑥minStaff不足としてカウントされる
       });
-
-      // 強制休みの補償: 別の休み予定日を勤務に振り替えて公休数を維持
-      if (forcedRestDays.length > 0) {
-        const convertible = Array.from({length: days}, (_, i) => i + 1).filter(d =>
-          res[s.id][d] === '休み' && !lockedDays[s.id].has(d) && !forcedRestDays.includes(d)
-        );
-        let toRecover = forcedRestDays.length;
-        for (const rd of convertible) {
-          if (toRecover <= 0) break;
-          let sb = 0, sa = 0;
-          for (let i = rd - 1; i >= 1; i--) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sb++; else break; }
-          for (let i = rd + 1; i <= days; i++) { if (deptWork.has(res[s.id][i]) && res[s.id][i] !== '明け') sa++; else break; }
-          if (sb + 1 + sa > maxConsec) continue;
-          const avail2 = allowed.filter(k => (dayCounts[rd][k] ?? 0) < (maxStaff[k] ?? 99));
-          if (!avail2.length) continue;
-          const minCnt2 = Math.min(...avail2.map(k => counts[k]));
-          const ties2 = avail2.filter(k => counts[k] === minCnt2);
-          const pick2 = ties2[Math.floor(Math.random() * ties2.length)];
-          res[s.id][rd] = pick2;
-          counts[pick2]++;
-          dayCounts[rd][pick2] = (dayCounts[rd][pick2] ?? 0) + 1;
-          toRecover--;
-        }
-      }
     });
 
     // ── ステップ5: 最終連勤調整（ステップ4後の実際の res で ④=0 を保証）──
