@@ -2753,6 +2753,113 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   }
 
   // ────────────────────────────────────────────────────────────────────────
+  // 山登り局所探索②: 休み移動swap
+  // スタッフYの「休みX」を勤務Zと交換し、minStaff不足のあるXをY出勤に変える。
+  // ①公休数は移動のみで変わらない（安全装置で最終確認・崩れたら全破棄）
+  // ②有休・希望休はlockedDaysでガード ③許可種別 ④連勤 ⑤maxStaff を悪化させない
+  // ────────────────────────────────────────────────────────────────────────
+  {
+    // swap前スナップショット（安全装置: 公休数が崩れたら全体を元に戻す）
+    const preSwapRes = {};
+    ds.forEach(s => { preSwapRes[s.id] = { ...selectedRes[s.id] }; });
+
+    const countShort = (res) => {
+      let n = 0;
+      for (let d = 1; d <= days; d++)
+        for (const [k, minC] of Object.entries(dept.minStaff || {}))
+          if (ds.filter(s => res[s.id][d] === k).length < minC) n++;
+      return n;
+    };
+
+    const swBefore = countShort(selectedRes);
+    let swScore = calcScore(selectedRes);
+
+    // 日別・種別カウント（minStaff/maxStaff チェック用。swap採用後に更新）
+    const swDC = {};
+    for (let d = 1; d <= days; d++) {
+      swDC[d] = {};
+      for (const k of [...new Set([...Object.keys(dept.minStaff || {}), ...(dept.shiftTypes || [])])])
+        swDC[d][k] = ds.filter(s => selectedRes[s.id][d] === k).length;
+    }
+
+    let anySwapImproved = true;
+    while (anySwapImproved) {
+      anySwapImproved = false;
+      for (let X = 1; X <= days; X++) {
+        for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+          if ((swDC[X][k] ?? 0) >= minC) continue;             // X日のk枠は充足済み
+          if ((swDC[X][k] ?? 0) >= (maxStaff[k] ?? 99)) continue; // ⑤maxStaff満杯
+
+          for (const s of ds) {
+            // YのX日が「公休（'休み'）」であること（有休・希望休・勤務はスキップ）
+            if (selectedRes[s.id][X] !== '休み') continue;
+            if (lockedDays[s.id].has(X)) continue;             // ②ロック日は移動不可
+            // ③ YがシフトkでX日に入れるか
+            if (!getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k)) continue;
+
+            // 候補Z: Yの非ロック勤務日をすべて試してスコア最良のZを選ぶ
+            let bestZ = null, bestZScore = Infinity;
+            for (let Z = 1; Z <= days; Z++) {
+              if (Z === X) continue;
+              const vZ = selectedRes[s.id][Z];
+              if (!vZ || !deptWork.has(vZ) || vZ === '明け') continue; // Zは勤務日のみ
+              if (lockedDays[s.id].has(Z)) continue;                    // ②ロック勤務は移動不可
+
+              // 試行: X→k, Z→休み
+              selectedRes[s.id][X] = k;
+              selectedRes[s.id][Z] = '休み';
+
+              // ④ swap後の状態でXの連勤チェック（Z隣接時も正確に評価）
+              let sb = 0, sa = 0;
+              for (let i = X - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+              for (let i = X + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+              if (sb + 1 + sa <= maxConsec) {
+                const sc = calcScore(selectedRes);
+                if (sc < bestZScore) { bestZScore = sc; bestZ = Z; }
+              }
+
+              // 常に元に戻す（ベストZ確定後に改めて適用）
+              selectedRes[s.id][X] = '休み';
+              selectedRes[s.id][Z] = vZ;
+            }
+
+            // ベストZでスコアが改善すれば採用
+            if (bestZ !== null && bestZScore < swScore) {
+              const oldBestZShift = selectedRes[s.id][bestZ];
+              selectedRes[s.id][X] = k;
+              selectedRes[s.id][bestZ] = '休み';
+              swDC[X][k] = (swDC[X][k] ?? 0) + 1;
+              if (swDC[bestZ]?.[oldBestZShift] != null)
+                swDC[bestZ][oldBestZShift] = Math.max(0, swDC[bestZ][oldBestZShift] - 1);
+              swScore = bestZScore;
+              anySwapImproved = true;
+            }
+          }
+        }
+      }
+    }
+
+    // 安全装置: 全スタッフの公休数が目標と一致しているか確認
+    let restCountsOk = true;
+    ds.forEach(s => {
+      const actualRest = Object.values(selectedRes[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
+      if (actualRest !== s._ta_totalTarget) restCountsOk = false;
+    });
+
+    if (!restCountsOk) {
+      ds.forEach(s => { selectedRes[s.id] = preSwapRes[s.id]; });
+      console.error(`[山登り] dept=${dept.id} 休み移動で公休数が崩れたため破棄`);
+    } else {
+      const swAfter = countShort(selectedRes);
+      console.error(`[山登り] dept=${dept.id} 休み移動 minStaff不足 ${swBefore} → ${swAfter}（${swBefore - swAfter}日分改善）`);
+      ds.forEach(s => {
+        const rest = Object.values(selectedRes[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
+        console.error(`  ${s.name} 公休${rest}/目標${s._ta_totalTarget}${rest === s._ta_totalTarget ? ' ✓' : ' ✗'}`);
+      });
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
   // warnings 構築（採用候補の minStaff不足 + 合格0時の説明）
   // ────────────────────────────────────────────────────────────────────────
   const warnings = {};
