@@ -3046,6 +3046,40 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     console.error(_diagLines.join('\n'));
   }
 
+  // [BLANK-CHECK] 杉本の空白日が構造的に埋め不可か埋め忘れかを判定（eiyo のみ、readonly）
+  if (dept.id === 'eiyo') {
+    const _bcDowN = ['日','月','火','水','木','金','土'];
+    ds.forEach(s => {
+      if (!s.name.includes('杉本')) return;
+      const _bcBlanks = [];
+      for (let d = 1; d <= days; d++) { if (!selectedRes[s.id][d]) _bcBlanks.push(d); }
+      if (_bcBlanks.length === 0) { console.log(`[BLANK-CHECK] ${s.name}: 空白日なし`); return; }
+      const _bcAllowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+      _bcBlanks.forEach(d => {
+        const _bcDow = new Date(year, month, d).getDay();
+        const _bcResults = [];
+        for (const shiftKey of _bcAllowed) {
+          const _bcViols = [];
+          // ④ 最大連勤チェック
+          let _bcStreak = 0, _bcMax = 0;
+          for (let dd = Math.max(1, d - maxConsec - 1); dd <= Math.min(days, d + maxConsec + 1); dd++) {
+            const v = dd === d ? shiftKey : (selectedRes[s.id][dd] ?? '');
+            if (v && deptWork.has(v) && v !== '明け') { _bcStreak++; _bcMax = Math.max(_bcMax, _bcStreak); }
+            else _bcStreak = 0;
+          }
+          if (_bcMax > maxConsec) _bcViols.push(`④連勤超過(${_bcMax}連)`);
+          // ⑤ maxStaff 超過チェック
+          const _bcCur = ds.filter(sx => selectedRes[sx.id][d] === shiftKey).length;
+          if (_bcCur + 1 > (cleanMaxStaff[shiftKey] ?? 99)) _bcViols.push(`⑤maxStaff超過(${_bcCur+1}>${cleanMaxStaff[shiftKey]})`);
+          _bcResults.push(_bcViols.length > 0 ? `${shiftKey}=[${_bcViols.join(',')}]` : `${shiftKey}=配置可`);
+        }
+        const _bcCanPlace = _bcResults.some(r => r.includes('配置可'));
+        const _bcConclusion = _bcCanPlace ? '⚠️埋め忘れの疑い' : '✅構造的に埋め不可';
+        console.log(`[BLANK-CHECK] ${s.name} ${d}日(${_bcDowN[_bcDow]}): ${_bcResults.join(' / ')} → ${_bcConclusion}`);
+      });
+    });
+  }
+
   return { shifts: selectedRes, warnings, timelineWarnings: [] };
 }
 
