@@ -7218,8 +7218,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const validateHardConstraints = (dept, res, ds, year, month) => {
     if (dept.id !== 'eiyo') return [];
     const errs = [];
-    const mk = `${year}-${String(month).padStart(2,'0')}`;
-    const days = new Date(year, month, 0).getDate();
+    const mk = monthKey(year, month);
+    const days = getDays(year, month);
     const REST = new Set(['休み','希望休','有休']);
     const maxConsec = dept.maxConsec ?? 5;
     const maxStaff = dept.maxStaff || {};
