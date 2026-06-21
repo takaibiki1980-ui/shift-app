@@ -2341,6 +2341,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
   const cleanMinStaff = Object.fromEntries(Object.entries(dept.minStaff || {}).filter(([k]) => k.trim() !== ''));
+  { const emptyKeys = Object.keys(dept.minStaff || {}).filter(k => !k.trim()); console.log('[MINSTAFF-CHECK]', `dept=${dept.id}`, 'raw=', dept.minStaff, emptyKeys.length ? `⚠️空文字キー${emptyKeys.length}件` : '空文字キーなし'); }
 
   // maxStaff マップ（autoGenerate と同じ計算）
   const maxStaff = {};
