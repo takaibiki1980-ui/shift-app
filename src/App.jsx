@@ -426,7 +426,7 @@ const DEFAULT_DEPTS = [
   { id:"kaigo2", label:"介護部 2階", icon:"🏢", shiftTypes:["早番","日勤","遅番","夜勤"], minStaff:{ 早番:1, 日勤:1, 遅番:1, 夜勤:1 }, maxStaff:{ 早番:1, 日勤:99, 遅番:1, 夜勤:1 }, defaultKyukoDays:8, maxConsecutive:5, roles:["介護福祉士","介護職員","介護補助","介護助手","特定技能"], roleShiftTypes:{ "介護補助":["日勤"], "介護助手":["日勤"] } },
   { id:"jimu",   label:"事務所",     icon:"📋", shiftTypes:["日勤"], minStaff:{ 日勤:1 }, maxStaff:{ 日勤:99 }, defaultKyukoDays:8, maxConsecutive:5, roles:["事務員","主任"] },
   { id:"kango",  label:"看護部",     icon:"💉", shiftTypes:["日勤"], minStaff:{ 日勤:1 }, maxStaff:{ 日勤:99 }, defaultKyukoDays:8, maxConsecutive:5, roles:["看護師","准看護師"] },
-  { id:"eiyo",   label:"栄養科",     icon:"🍱", shiftTypes:["早番","日勤"], minStaff:{ 早番:1, 日勤:1 }, maxStaff:{ 早番:1, 日勤:99 }, defaultKyukoDays:8, maxConsecutive:5, roles:["管理栄養士","栄養士","調理師"] },
+  { id:"eiyo",   label:"栄養科",     icon:"🍱", shiftTypes:["早番","日勤"], minStaff:{ 早番:1, 日勤:1 }, maxStaff:{ 早番:1, 日勤:99 }, defaultKyukoDays:9, maxConsecutive:5, roles:["管理栄養士","栄養士","調理師"] },
 ];
 
 const getDeptRoles = (depts, deptId) => { const d = depts.find(x => x.id === deptId); return d?.roles || ["職員"]; };
@@ -443,8 +443,8 @@ const buildStaff = () => {
     {id:"kango_0",dept:"kango",name:"高橋 直美",role:"看護師"},
     {id:"kango_1",dept:"kango",name:"岡田 美里",role:"准看護師"},
     {id:"kango_2",dept:"kango",name:"森 香織",  role:"看護師"},
-    {id:"eiyo_0",dept:"eiyo",name:"清水 優子",role:"管理栄養士"},
-    {id:"eiyo_1",dept:"eiyo",name:"池田 恵",  role:"調理師"},
+    {id:"eiyo_0",dept:"eiyo",name:"清水 優子",role:"管理栄養士",kyukoDays:9},
+    {id:"eiyo_1",dept:"eiyo",name:"池田 恵",  role:"調理師",  kyukoDays:9},
   ].forEach(s => out.push({ nightOk:false, nightMax:0, targetWork:20, kyukoDays:8, kiboByMonth:{}, shiftRequestsByMonth:{}, kyukoDaysByMonth:{}, ...s }));
   return out;
 };
@@ -7150,8 +7150,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const repairHardConstraints = (dept, res, ds, year, month) => {
     if (dept.id !== 'eiyo') return;
-    const mk = `${year}-${String(month).padStart(2,'0')}`;
-    const days = new Date(year, month, 0).getDate();
+    const mk = monthKey(year, month);
+    const days = getDays(year, month);
     const REST = new Set(['休み','希望休','有休']);
     const maxConsec = dept.maxConsec ?? 5;
 
