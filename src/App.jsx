@@ -2354,6 +2354,18 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   });
   const cleanMaxStaff = Object.fromEntries(Object.entries(maxStaff).filter(([k]) => k.trim() !== ''));
 
+  // ── 学習接続 (false で純ランダムに戻る) ─────────────────────────────────
+  const USE_LEARN_PICK = true;
+  const getTrendTA = (s) => {
+    if (!USE_LEARN_PICK || !shiftTrend || Object.keys(shiftTrend).length === 0) return null;
+    const key = Object.keys(shiftTrend)
+      .filter(k => k !== '_months' && k !== '_monthCounts')
+      .find(k => nameMatch(k, s.name));
+    return key ? shiftTrend[key] : null;
+  };
+  let _ta_learnStats = { learned: 0, fallback: 0, noData: 0 };
+  let _ta_selectedLearnStats = { learned: 0, fallback: 0, noData: 0 };
+
   const ds = staffList.filter(s => s.dept === dept.id);
   // 夜勤・明けを除いた勤務種別
   const dayTypes = [...new Set(dept.shiftTypes.filter(k => k !== '夜勤' && k !== '明け'))];
@@ -2486,10 +2498,24 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       workDays.forEach(d => {
         const available = allowed.filter(k => (dayCounts[d][k] ?? 0) < (cleanMaxStaff[k] ?? 99));
         if (available.length > 0) {
-          // 乱数性④: 使用回数最少の中から乱数で選択
+          // 乱数性④: 使用回数最少の中から（学習あり：重み付き確率選択、なし：純ランダム）
           const minCnt = Math.min(...available.map(k => counts[k]));
           const ties = available.filter(k => counts[k] === minCnt);
-          const pick = ties[Math.floor(Math.random() * ties.length)];
+          let pick;
+          const _trend = getTrendTA(s);
+          const _dow = new Date(year, month, d).getDay(); // 0=日,1=月…6=土 (JS getDay, dowShiftRate と同基準)
+          const _dowRate = _trend?.dowShiftRate?.[_dow];
+          const MIN_W = 0.05; // da飽和による 0/1 極端値への下駄
+          if (USE_LEARN_PICK && _dowRate && Object.keys(_dowRate).length > 0) {
+            const _ws = ties.map(k => Math.max(MIN_W, _dowRate[k] ?? MIN_W));
+            let _r = Math.random() * _ws.reduce((a, w) => a + w, 0);
+            pick = ties[ties.length - 1];
+            for (let _ti = 0; _ti < ties.length; _ti++) { _r -= _ws[_ti]; if (_r <= 0) { pick = ties[_ti]; break; } }
+            _ta_learnStats.learned++;
+          } else {
+            pick = ties[Math.floor(Math.random() * ties.length)];
+            if (USE_LEARN_PICK) (_trend ? _ta_learnStats.fallback++ : _ta_learnStats.noData++);
+          }
           res[s.id][d] = pick;
           counts[pick]++;
           dayCounts[d][pick] = (dayCounts[d][pick] ?? 0) + 1;
@@ -2671,17 +2697,19 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   let bestFailing = null, bestFailingViolations = Infinity;
 
   for (let i = 0; i < N_TRIALS; i++) {
+    _ta_learnStats = { learned: 0, fallback: 0, noData: 0 };
     const trialRes = runOneTrial();
     const { violations, detail } = checkAbsolute(trialRes);
     if (violations === 0) {
       passCount++;
       const score = calcScore(trialRes);
-      if (score < bestPassingScore) { bestPassingScore = score; bestPassing = { res: trialRes, score }; }
+      if (score < bestPassingScore) { bestPassingScore = score; bestPassing = { res: trialRes, score }; _ta_selectedLearnStats = { ..._ta_learnStats }; }
       if (bestPassingScore === 0) break; // 完全スコアなら即採用
     } else {
       if (violations < bestFailingViolations) {
         bestFailingViolations = violations;
         bestFailing = { res: trialRes, detail };
+        if (!bestPassing) _ta_selectedLearnStats = { ..._ta_learnStats };
       }
     }
   }
@@ -2692,6 +2720,29 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   const selectedRes = bestPassing?.res ?? bestFailing?.res ?? (() => {
     const r = {}; ds.forEach(s => { r[s.id] = { ...baseRes[s.id] }; }); return r;
   })();
+
+  // [LEARN-PICK] ログ（採用試行の学習統計 + eiyo の場合は日別サンプル）
+  { const DOW_N = ['日','月','火','水','木','金','土'];
+    const _lp = _ta_selectedLearnStats;
+    const _lpLines = [`[LEARN-PICK] dept=${dept.id} 採用試行: 学習選択=${_lp.learned}件 フォールバック(dowRate無)=${_lp.fallback}件 データ無=${_lp.noData}件 (USE_LEARN_PICK=${USE_LEARN_PICK})`];
+    if (dept.id === 'eiyo' && USE_LEARN_PICK) {
+      ds.forEach(s => {
+        const _t = getTrendTA(s); let _n = 0;
+        for (let d = 1; d <= days && _n < 5; d++) {
+          const _sh = selectedRes[s.id][d];
+          if (!_sh || deptRest.has(_sh) || _sh === '明け') continue;
+          const _dow = new Date(year, month, d).getDay();
+          const _dr = _t?.dowShiftRate?.[_dow];
+          if (_dr) {
+            const _allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+            const _wStr = _allowed.map(k => `${k}:${Math.max(0.05,_dr[k]??0.05).toFixed(2)}`).join(' ');
+            _lpLines.push(`[LEARN-PICK]   ${s.name} d=${d}(${DOW_N[_dow]}) → ${_sh} [${_wStr}]`);
+            _n++;
+          }
+        }
+      });
+    }
+    console.log(_lpLines.join('\n')); }
 
   // ────────────────────────────────────────────────────────────────────────
   // 山登り局所探索: 空白（未割り当て）→ 勤務 で minStaff不足を削減
