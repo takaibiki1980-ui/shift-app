@@ -2340,6 +2340,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   const maxConsec = dept.maxConsecutive || 5;
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
+  const cleanMinStaff = Object.fromEntries(Object.entries(dept.minStaff || {}).filter(([k]) => k.trim() !== ''));
 
   // maxStaff マップ（autoGenerate と同じ計算）
   const maxStaff = {};
@@ -2350,6 +2351,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     const saved = dept.maxStaff?.[k];
     maxStaff[k] = (saved != null && !(cd && base === '日勤' && saved === 1)) ? saved : def;
   });
+  const cleanMaxStaff = Object.fromEntries(Object.entries(maxStaff).filter(([k]) => k.trim() !== ''));
 
   const ds = staffList.filter(s => s.dept === dept.id);
   // 夜勤・明けを除いた勤務種別
@@ -2481,7 +2483,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       allowed.forEach(k => { counts[k] = 0; });
 
       workDays.forEach(d => {
-        const available = allowed.filter(k => (dayCounts[d][k] ?? 0) < (maxStaff[k] ?? 99));
+        const available = allowed.filter(k => (dayCounts[d][k] ?? 0) < (cleanMaxStaff[k] ?? 99));
         if (available.length > 0) {
           // 乱数性④: 使用回数最少の中から乱数で選択
           const minCnt = Math.min(...available.map(k => counts[k]));
@@ -2547,7 +2549,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
                   }
                   if (sb + 1 + sa > maxConsec) continue;
                   // maxStaff に空きがある種別が存在するか確認
-                  const avail5 = allowed.filter(k => (dayCounts[fd]?.[k] ?? 0) < (maxStaff[k] ?? 99));
+                  const avail5 = allowed.filter(k => (dayCounts[fd]?.[k] ?? 0) < (cleanMaxStaff[k] ?? 99));
                   if (!avail5.length) continue;
                   farthest = { fd, avail: avail5 };
                   break;
@@ -2611,7 +2613,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     });
     // ⑤maxStaff超過
     for (let d = 1; d <= days; d++) {
-      for (const [k, limit] of Object.entries(maxStaff)) {
+      for (const [k, limit] of Object.entries(cleanMaxStaff)) {
         if (limit >= 99) continue;
         if (ds.filter(s => res[s.id][d] === k).length > limit) { detail.v5++; violations++; }
       }
@@ -2626,7 +2628,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   const calcScore = (res) => {
     let minStaffShortDays = 0;
     for (let d = 1; d <= days; d++) {
-      for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+      for (const [k, minC] of Object.entries(cleanMinStaff)) {
         if (ds.filter(s => res[s.id][d] === k).length < minC) minStaffShortDays++;
       }
     }
@@ -2699,7 +2701,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     const countShort = (res) => {
       let n = 0;
       for (let d = 1; d <= days; d++)
-        for (const [k, minC] of Object.entries(dept.minStaff || {}))
+        for (const [k, minC] of Object.entries(cleanMinStaff))
           if (ds.filter(s => res[s.id][d] === k).length < minC) n++;
       return n;
     };
@@ -2711,7 +2713,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     const hlDC = {};
     for (let d = 1; d <= days; d++) {
       hlDC[d] = {};
-      for (const k of Object.keys(dept.minStaff || {}))
+      for (const k of Object.keys(cleanMinStaff))
         hlDC[d][k] = ds.filter(s => selectedRes[s.id][d] === k).length;
     }
 
@@ -2719,9 +2721,9 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     while (anyImproved) {
       anyImproved = false;
       for (let d = 1; d <= days; d++) {
-        for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+        for (const [k, minC] of Object.entries(cleanMinStaff)) {
           if ((hlDC[d][k] ?? 0) >= minC) continue;            // すでに充足
-          if ((hlDC[d][k] ?? 0) >= (maxStaff[k] ?? 99)) continue; // maxStaff満杯
+          if ((hlDC[d][k] ?? 0) >= (cleanMaxStaff[k] ?? 99)) continue; // maxStaff満杯
           for (const s of ds) {
             if (selectedRes[s.id][d]) continue;          // 割り当て済み or 休み → スキップ
             if (lockedDays[s.id].has(d)) continue;       // ②有休・希望休ロック → スキップ
@@ -2766,7 +2768,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     const countShort = (res) => {
       let n = 0;
       for (let d = 1; d <= days; d++)
-        for (const [k, minC] of Object.entries(dept.minStaff || {}))
+        for (const [k, minC] of Object.entries(cleanMinStaff))
           if (ds.filter(s => res[s.id][d] === k).length < minC) n++;
       return n;
     };
@@ -2778,7 +2780,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     const swDC = {};
     for (let d = 1; d <= days; d++) {
       swDC[d] = {};
-      for (const k of [...new Set([...Object.keys(dept.minStaff || {}), ...(dept.shiftTypes || [])])])
+      for (const k of [...new Set([...Object.keys(cleanMinStaff), ...(dept.shiftTypes || [])])])
         swDC[d][k] = ds.filter(s => selectedRes[s.id][d] === k).length;
     }
 
@@ -2786,9 +2788,9 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     while (anySwapImproved) {
       anySwapImproved = false;
       for (let X = 1; X <= days; X++) {
-        for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+        for (const [k, minC] of Object.entries(cleanMinStaff)) {
           if ((swDC[X][k] ?? 0) >= minC) continue;             // X日のk枠は充足済み
-          if ((swDC[X][k] ?? 0) >= (maxStaff[k] ?? 99)) continue; // ⑤maxStaff満杯
+          if ((swDC[X][k] ?? 0) >= (cleanMaxStaff[k] ?? 99)) continue; // ⑤maxStaff満杯
 
           for (const s of ds) {
             // YのX日が「公休（'休み'）」であること（有休・希望休・勤務はスキップ）
@@ -2877,7 +2879,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   }
   let adoptedMinStaffShortDays = 0;
   for (let d = 1; d <= days; d++) {
-    for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+    for (const [k, minC] of Object.entries(cleanMinStaff)) {
       const cnt = ds.filter(s => selectedRes[s.id][d] === k).length;
       if (cnt < minC) {
         adoptedMinStaffShortDays++;
@@ -2914,7 +2916,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     }
   });
   for (let d = 1; d <= days; d++) {
-    for (const [k, limit] of Object.entries(maxStaff)) {
+    for (const [k, limit] of Object.entries(cleanMaxStaff)) {
       if (limit >= 99) continue;
       if (ds.filter(s => selectedRes[s.id][d] === k).length > limit) v5++;
     }
@@ -2944,7 +2946,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     });
 
     _diagLines.push(`[TimeAxis-DIAG] ▼シフト別不足`);
-    for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+    for (const [k, minC] of Object.entries(cleanMinStaff)) {
       const shortDays = [];
       for (let d = 1; d <= days; d++) {
         if (ds.filter(s => selectedRes[s.id][d] === k).length < minC) shortDays.push(d);
@@ -2954,7 +2956,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
 
     _diagLines.push(`[TimeAxis-DIAG] ▼日別詳細（不足日のみ）`);
     for (let d = 1; d <= days; d++) {
-      for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+      for (const [k, minC] of Object.entries(cleanMinStaff)) {
         const actual = ds.filter(s => selectedRes[s.id][d] === k).length;
         if (actual >= minC) continue;
 
@@ -3774,7 +3776,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [maxStaffRelaxable, setMaxStaffRelaxable] = useState(dept?.maxStaffRelaxable !== false);
   const [engineType, setEngineType] = useState(dept?.engineType || 'kaigo');
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff,maxStaff,shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
