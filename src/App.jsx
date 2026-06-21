@@ -2921,6 +2921,85 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   }
   console.error(`[TimeAxis-CHECK] dept=${dept.id} ①公休数違反=${v1} ②有休固定違反=${v2} ③許可種別違反=${v3} ④連勤超過日=${v4} ⑤maxStaff超過=${v5} ⑥minStaff不足日=${adoptedMinStaffShortDays}`);
 
+  // ────────────────────────────────────────────────────────────────────────
+  // [TimeAxis-DIAG] minStaff不足原因分析（修正なし・調査専用）
+  // 不足枠ごとに「①空白セル / ②シフト偏り / ③割当候補除外」を分類して出力する
+  // ────────────────────────────────────────────────────────────────────────
+  if (adoptedMinStaffShortDays > 0) {
+    console.error(`[TimeAxis-DIAG] dept=${dept.id} ══ minStaff不足原因分析 ══`);
+
+    // ── 職員別集計: 空白日数・シフト種別勤務数・休み日数・許可シフト ──
+    console.error(`[TimeAxis-DIAG] ▼職員別`);
+    ds.forEach(s => {
+      let blank = 0, rest = 0;
+      const wk = {};
+      for (let d = 1; d <= days; d++) {
+        const v = selectedRes[s.id][d];
+        if (!v) blank++;
+        else if (deptWork.has(v) && v !== '明け') wk[v] = (wk[v] ?? 0) + 1;
+        else if (deptRest.has(v) && v !== '明け') rest++;
+      }
+      const allowed = getAllowed(s).filter(t => t !== '夜勤' && t !== '明け');
+      const wkStr = Object.entries(wk).map(([k, c]) => `${k}:${c}`).join(' ') || '(勤務なし)';
+      console.error(`  ${s.name}(${s.role}): 空白=${blank}日 [${wkStr}] 休み=${rest}日 許可=${allowed.join('/')}`);
+    });
+
+    // ── シフト別不足集計: 不足日リスト ──
+    console.error(`[TimeAxis-DIAG] ▼シフト別不足`);
+    for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+      const shortDays = [];
+      for (let d = 1; d <= days; d++) {
+        if (ds.filter(s => selectedRes[s.id][d] === k).length < minC) shortDays.push(d);
+      }
+      if (shortDays.length) console.error(`  ${k}(min=${minC}): ${shortDays.length}日不足 [${shortDays.join(',')}]`);
+    }
+
+    // ── 日別詳細: 不足枠ごとに各スタッフの非配置理由を分類 ──
+    // ①空白(配置可): 空白セルで④連勤も問題なし → blank-fillかswapで埋まるはずだが未配置
+    // ①空白(④NG):  空白セルだが連勤制約で配置不可
+    // ②他シフト:    その日に別シフト勤務中（シフト偏り）
+    // ③休み移動可:  非ロックの公休 → swap対象になりうる
+    // ③休みロック:  有休・希望休で固定 → 移動不可
+    // ③役職NG:     許可シフトにkが含まれない
+    console.error(`[TimeAxis-DIAG] ▼日別詳細（不足日のみ）`);
+    for (let d = 1; d <= days; d++) {
+      for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+        const actual = ds.filter(s => selectedRes[s.id][d] === k).length;
+        if (actual >= minC) continue;
+
+        const c1ok = [], c1v4 = [], c2 = [], c3move = [], c3lock = [], c3role = [];
+        ds.forEach(s => {
+          if (selectedRes[s.id][d] === k) return; // 既に配置済みはスキップ
+          const sAllowed = getAllowed(s).filter(t => t !== '夜勤' && t !== '明け');
+          if (!sAllowed.includes(k)) { c3role.push(s.name); return; } // ③役職制限
+          const v = selectedRes[s.id][d];
+          if (!v) {
+            // ① 空白セル: ④連勤チェック（現時点の selectedRes で計算）
+            let sb = 0, sa = 0;
+            for (let i = d - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+            for (let i = d + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+            if (sb + 1 + sa > maxConsec) c1v4.push(`${s.name}(${sb}+1+${sa}>${maxConsec})`);
+            else c1ok.push(`${s.name}(${sb}+1+${sa})`);
+          } else if (deptWork.has(v) && v !== '明け') {
+            c2.push(`${s.name}=${v}`); // ② 他シフト勤務中
+          } else if (deptRest.has(v) && v !== '明け') {
+            if (lockedDays[s.id].has(d)) c3lock.push(s.name); // ③ ロック休み
+            else c3move.push(s.name);                           // ③ swap移動候補
+          }
+        });
+
+        const parts = [];
+        if (c1ok.length)   parts.push(`①空白(配置可)[${c1ok.join(',')}]`);
+        if (c1v4.length)   parts.push(`①空白(④NG)[${c1v4.join(',')}]`);
+        if (c2.length)     parts.push(`②他シフト[${c2.join(',')}]`);
+        if (c3move.length) parts.push(`③休み移動可[${c3move.join(',')}]`);
+        if (c3lock.length) parts.push(`③休みロック[${c3lock.join(',')}]`);
+        if (c3role.length) parts.push(`③役職NG[${c3role.join(',')}]`);
+        console.error(`  ${d}日 ${k} ${actual}/${minC}: ${parts.join(' | ')}`);
+      }
+    }
+  }
+
   return { shifts: selectedRes, warnings, timelineWarnings: [] };
 }
 
