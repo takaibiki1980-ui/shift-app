@@ -3044,6 +3044,43 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     }
 
     console.error(_diagLines.join('\n'));
+
+    // [SHORTAGE-CLASSIFY] ABCD分類集計（不足日を優先度順に1カテゴリへ分類）
+    if (dept.id === 'eiyo') {
+      let _scA = 0, _scB = 0, _scC = 0, _scD = 0;
+      const _scDetail = [];
+      for (let d = 1; d <= days; d++) {
+        for (const [k, minC] of Object.entries(cleanMinStaff)) {
+          const actual = ds.filter(s => selectedRes[s.id][d] === k).length;
+          if (actual >= minC) continue;
+          let _hasB = false, _hasC = false, _hasD = false, _hasA = false;
+          ds.forEach(s => {
+            if (selectedRes[s.id][d] === k) return;
+            const sAll = getAllowed(s).filter(t => t !== '夜勤' && t !== '明け');
+            if (!sAll.includes(k)) { _hasA = true; return; }
+            const v = selectedRes[s.id][d];
+            if (!v) {
+              let sb = 0, sa = 0;
+              for (let i = d - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+              for (let i = d + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+              if (sb + 1 + sa > maxConsec) _hasD = true; else _hasB = true;
+            } else if (deptWork.has(v) && v !== '明け') { _hasC = true; }
+            else if (deptRest.has(v) && v !== '明け') { if (lockedDays[s.id].has(d)) _hasA = true; else _hasD = true; }
+          });
+          let cat;
+          if (_hasB) { cat = 'B空白由来'; _scB++; }
+          else if (_hasC) { cat = 'C配置ミス'; _scC++; }
+          else if (_hasD) { cat = 'D制約由来'; _scD++; }
+          else { cat = 'A構造不足'; _scA++; }
+          _scDetail.push(`  ${d}日 ${k}(実${actual}/必${minC}): ${cat}`);
+        }
+      }
+      console.error([
+        `[SHORTAGE-CLASSIFY] dept=${dept.id} 不足${adoptedMinStaffShortDays}日の内訳:`,
+        `  A構造不足=${_scA}日  B空白由来=${_scB}日  C配置ミス=${_scC}日  D制約由来=${_scD}日`,
+        ..._scDetail
+      ].join('\n'));
+    }
   }
 
   // [BLANK-CHECK] 杉本の空白日が構造的に埋め不可か埋め忘れかを判定（eiyo のみ、readonly）
@@ -3077,6 +3114,48 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
         const _bcConclusion = _bcCanPlace ? '⚠️埋め忘れの疑い' : '✅構造的に埋め不可';
         console.log(`[BLANK-CHECK] ${s.name} ${d}日(${_bcDowN[_bcDow]}): ${_bcResults.join(' / ')} → ${_bcConclusion}`);
       });
+    });
+  }
+
+  // [BLANK-CHECK-FUKUDA] 福田の空白日ごとに原因と不足解消可能性を出力（eiyo のみ、readonly）
+  if (dept.id === 'eiyo') {
+    const _bfDowN = ['日','月','火','水','木','金','土'];
+    ds.forEach(s => {
+      if (!s.name.includes('福田')) return;
+      const _bfBlanks = [];
+      for (let d = 1; d <= days; d++) { if (!selectedRes[s.id][d]) _bfBlanks.push(d); }
+      const _bfAllowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+      if (_bfBlanks.length === 0) { console.log(`[BLANK-CHECK-FUKUDA] ${s.name}(${s.role}): 空白日なし 許可=${_bfAllowed.join('/')}`); return; }
+      const _bfLines = [`[BLANK-CHECK-FUKUDA] ${s.name}(${s.role}): 空白${_bfBlanks.length}日 許可=${_bfAllowed.join('/')}`];
+      let _bfImproveable = 0;
+      _bfBlanks.forEach(d => {
+        const _bfDow = new Date(year, month, d).getDay();
+        const _bfPrev = d > 1 ? (selectedRes[s.id][d - 1] || '空白') : '(月初)';
+        const _bfNext = d < days ? (selectedRes[s.id][d + 1] || '空白') : '(月末)';
+        let _bfSb = 0, _bfSa = 0;
+        for (let i = d - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') _bfSb++; else break; }
+        for (let i = d + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') _bfSa++; else break; }
+        const _bfResults = [];
+        for (const shiftKey of _bfAllowed) {
+          const _bfViols = [];
+          if (_bfSb + 1 + _bfSa > maxConsec) _bfViols.push(`④連勤超過(${_bfSb}+1+${_bfSa}>${maxConsec})`);
+          const _bfCur = ds.filter(sx => selectedRes[sx.id][d] === shiftKey).length;
+          if (_bfCur + 1 > (cleanMaxStaff[shiftKey] ?? 99)) _bfViols.push(`⑤maxStaff超過(${_bfCur+1}>${cleanMaxStaff[shiftKey]})`);
+          _bfResults.push(_bfViols.length > 0 ? `${shiftKey}=[${_bfViols.join(',')}]` : `${shiftKey}=○`);
+        }
+        const _bfCanPlace = _bfResults.some(r => r.includes('○'));
+        // この日の不足を解消できるか
+        const _bfHelps = [];
+        for (const [sk, minC] of Object.entries(cleanMinStaff)) {
+          if (!_bfAllowed.includes(sk)) continue;
+          const cur = ds.filter(sx => selectedRes[sx.id][d] === sk).length;
+          if (cur < minC && _bfResults.find(r => r.startsWith(sk + '=○'))) _bfHelps.push(`${sk}不足解消`);
+        }
+        if (_bfHelps.length > 0) _bfImproveable++;
+        _bfLines.push(`  ${d}日(${_bfDowN[_bfDow]}) 前日=${_bfPrev} 翌日=${_bfNext} 連勤前${_bfSb}後${_bfSa} | ${_bfResults.join(' / ')} → ${_bfCanPlace ? '⚠️埋め忘れ' : '✅構造的不可'} | ${_bfHelps.join(',') || '不足解消なし'}`);
+      });
+      _bfLines.push(`  → 埋めれば不足解消できる日数: ${_bfImproveable}日 (不足${adoptedMinStaffShortDays}→${adoptedMinStaffShortDays - _bfImproveable}日が理論値)`);
+      console.log(_bfLines.join('\n'));
     });
   }
 
