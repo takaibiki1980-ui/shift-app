@@ -2407,6 +2407,16 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     s._ta_totalTarget = totalTarget;
   });
 
+  // ── eiyo 専用 Step2補完: 勤務先配置方式の事前計算 ──────────────────────
+  if (dept.id === 'eiyo') {
+    ds.forEach(s => {
+      const lockedWorkCount = Object.values(baseRes[s.id]).filter(v => deptWork.has(v) && v !== '明け').length;
+      s._ta_workRequired  = Math.max(0, days - s._ta_totalTarget);
+      s._ta_workRemaining = Math.max(0, s._ta_workRequired - lockedWorkCount);
+      s._ta_workPlaced    = lockedWorkCount;
+    });
+  }
+
   // ────────────────────────────────────────────────────────────────────────
   // 内部関数: 1試行分の配置（乱数性あり）
   // ────────────────────────────────────────────────────────────────────────
@@ -2611,6 +2621,155 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   };
 
   // ────────────────────────────────────────────────────────────────────────
+  // eiyo 専用トライアル関数（勤務先配置方式）
+  //   Step4-5: 日ごとに変則シフト（早番→日勤）から優先配置
+  //   Step6:   残勤務数未達職員の空き日に勤務を追加配置（出勤率順）
+  //   Step7:   残セル → 勤務達成済み=公休 / 未達=空白維持
+  // ────────────────────────────────────────────────────────────────────────
+  const runOneTrialEiyo = () => {
+    const res = {};
+    ds.forEach(s => { res[s.id] = { ...baseRes[s.id] }; });
+
+    // 各職員の残勤務カウンター（試行ごとにリセット）
+    const workRem = {};
+    ds.forEach(s => { workRem[s.id] = s._ta_workRemaining; });
+
+    // 日別シフト数カウンター（baseRes から初期化）
+    const dayCounts = {};
+    for (let d = 1; d <= days; d++) {
+      dayCounts[d] = {};
+      dayTypes.forEach(k => { dayCounts[d][k] = ds.filter(s => res[s.id][d] === k).length; });
+    }
+
+    // シフト処理優先順: maxStaff 小さい順（早番=1 が最優先、日勤=99 が後）
+    const shiftOrder = [...dayTypes].sort((a, b) => (cleanMaxStaff[a] ?? 99) - (cleanMaxStaff[b] ?? 99));
+
+    // ── Step4-5: 日ごとに minStaff を充足するまで配置 ────────────────────
+    for (let d = 1; d <= days; d++) {
+      for (const shiftKey of shiftOrder) {
+        const minNeeded = cleanMinStaff[shiftKey] ?? 0;
+        if (!minNeeded) continue;
+
+        let placed = dayCounts[d][shiftKey] ?? 0;
+        const maxAllowed = cleanMaxStaff[shiftKey] ?? 99;
+
+        while (placed < minNeeded && placed < maxAllowed) {
+          const candidates = [];
+          for (const s of ds) {
+            if (res[s.id][d]) continue;                          // ① 既割り当て除外
+            const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+            if (!allowed.includes(shiftKey)) continue;           // ③ 職種制限
+            if (workRem[s.id] <= 0) continue;                   // ④ 勤務必要数未達のみ対象
+            // ② 連勤チェック
+            let sb = 0, sa = 0;
+            for (let i = d - 1; i >= 1; i--) { const vv = res[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+            for (let i = d + 1; i <= days; i++) { const vv = res[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+            if (sb + 1 + sa > maxConsec) continue;
+
+            // ⑤ 出勤率スコア（学習①）・⑥ 勤務比率スコア（学習②）
+            let score = 0;
+            const _trend = getTrendTA(s);
+            const _dow = new Date(year, month, d).getDay();
+            const _dowRate = _trend?.dowShiftRate?.[_dow];
+            if (USE_LEARN_PICK && _dowRate && _dowRate[shiftKey] != null) {
+              score += Math.max(0.05, _dowRate[shiftKey]) * 100;
+            } else {
+              score += 50;
+            }
+            score += workRem[s.id] * 3; // 残勤務多い→緊急度高い
+            score += Math.random() * 2;  // タイブレーク
+
+            candidates.push({ s, score });
+          }
+
+          if (candidates.length === 0) break; // 配置不能
+
+          candidates.sort((a, b) => b.score - a.score);
+          const best = candidates[0].s;
+
+          // 学習統計（採用時のみ計上）
+          const _bTrend = getTrendTA(best);
+          const _bDow = new Date(year, month, d).getDay();
+          const _bRate = _bTrend?.dowShiftRate?.[_bDow];
+          if (USE_LEARN_PICK && _bRate && _bRate[shiftKey] != null) { _ta_learnStats.learned++; }
+          else if (USE_LEARN_PICK) { _bTrend ? _ta_learnStats.fallback++ : _ta_learnStats.noData++; }
+
+          res[best.id][d] = shiftKey;
+          workRem[best.id]--;
+          dayCounts[d][shiftKey] = (dayCounts[d][shiftKey] ?? 0) + 1;
+          placed++;
+        }
+      }
+    }
+
+    // ── Step6: 残勤務数未達の職員に空き日を割り当て（出勤率順）────────────
+    const shuffledDs6 = [...ds].sort(() => Math.random() - 0.5);
+    shuffledDs6.forEach(s => {
+      if (workRem[s.id] <= 0) return;
+      const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+      if (!allowed.length) return;
+
+      const freeDays = [];
+      for (let d = 1; d <= days; d++) { if (!res[s.id][d]) freeDays.push(d); }
+
+      const _trend = getTrendTA(s);
+      // 出勤率（dowShiftRate の合計）が高い日を優先
+      freeDays.sort((da, db) => {
+        const rA = _trend?.dowShiftRate?.[new Date(year, month, da).getDay()];
+        const rB = _trend?.dowShiftRate?.[new Date(year, month, db).getDay()];
+        const sA = rA ? Object.values(rA).reduce((x, y) => x + y, 0) : 0.5;
+        const sB = rB ? Object.values(rB).reduce((x, y) => x + y, 0) : 0.5;
+        return sB - sA + (Math.random() - 0.5) * 0.2;
+      });
+
+      for (const d of freeDays) {
+        if (workRem[s.id] <= 0) break;
+        // ② 連勤チェック
+        let sb = 0, sa = 0;
+        for (let i = d - 1; i >= 1; i--) { const vv = res[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+        for (let i = d + 1; i <= days; i++) { const vv = res[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+        if (sb + 1 + sa > maxConsec) continue;
+
+        // シフト種別選択（学習② 勤務比率）
+        const _dow = new Date(year, month, d).getDay();
+        const _dowRate = _trend?.dowShiftRate?.[_dow];
+        const avail = allowed.filter(k => (dayCounts[d]?.[k] ?? 0) < (cleanMaxStaff[k] ?? 99));
+        if (!avail.length) continue;
+
+        let pick;
+        if (USE_LEARN_PICK && _dowRate && Object.keys(_dowRate).length > 0) {
+          const ws = avail.map(k => Math.max(0.05, _dowRate[k] ?? 0.05));
+          let r = Math.random() * ws.reduce((a, b) => a + b, 0);
+          pick = avail[avail.length - 1];
+          for (let i = 0; i < avail.length; i++) { r -= ws[i]; if (r <= 0) { pick = avail[i]; break; } }
+          _ta_learnStats.learned++;
+        } else {
+          pick = avail[Math.floor(Math.random() * avail.length)];
+          if (USE_LEARN_PICK) (_trend ? _ta_learnStats.fallback++ : _ta_learnStats.noData++);
+        }
+
+        res[s.id][d] = pick;
+        workRem[s.id]--;
+        dayCounts[d][pick] = (dayCounts[d][pick] ?? 0) + 1;
+      }
+    });
+
+    // ── Step7: 残セル処理 ─────────────────────────────────────────────────
+    // 勤務必要数達成済み → 公休  |  未達 → 空白維持（配置不能）
+    ds.forEach(s => {
+      for (let d = 1; d <= days; d++) {
+        if (res[s.id][d]) continue;
+        if (workRem[s.id] <= 0) {
+          res[s.id][d] = '休み';
+        }
+        // workRem[s.id] > 0 → 空白維持（診断ログで出力される）
+      }
+    });
+
+    return res;
+  };
+
+  // ────────────────────────────────────────────────────────────────────────
   // 5絶対条件の検査（①公休数 ②有休固定 ③許可種別 ④連勤≤maxConsec ⑤maxStaff以下）
   // ────────────────────────────────────────────────────────────────────────
   const checkAbsolute = (res) => {
@@ -2693,12 +2852,15 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   // ────────────────────────────────────────────────────────────────────────
   // N=200 試行ループ
   // ────────────────────────────────────────────────────────────────────────
+  // eiyo は勤務先配置方式（runOneTrialEiyo）、それ以外は既存エンジン
+  const _runTrial = dept.id === 'eiyo' ? runOneTrialEiyo : runOneTrial;
+
   let bestPassing = null, bestPassingScore = Infinity, passCount = 0;
   let bestFailing = null, bestFailingViolations = Infinity;
 
   for (let i = 0; i < N_TRIALS; i++) {
     _ta_learnStats = { learned: 0, fallback: 0, noData: 0 };
-    const trialRes = runOneTrial();
+    const trialRes = _runTrial();
     const { violations, detail } = checkAbsolute(trialRes);
     if (violations === 0) {
       passCount++;
@@ -3157,6 +3319,120 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       _bfLines.push(`  → 埋めれば不足解消できる日数: ${_bfImproveable}日 (不足${adoptedMinStaffShortDays}→${adoptedMinStaffShortDays - _bfImproveable}日が理論値)`);
       console.log(_bfLines.join('\n'));
     });
+  }
+
+  // [SHORTAGE-ABC] ABC分類 + 日勤B理論検証（eiyo のみ、readonly）
+  if (dept.id === 'eiyo' && adoptedMinStaffShortDays > 0) {
+    const _abcDowN = ['日','月','火','水','木','金','土'];
+    const _abcLines = [`[SHORTAGE-ABC] dept=${dept.id} 不足${adoptedMinStaffShortDays}日 ══ ABC分類 ══`];
+
+    // ── 1. スタッフ別 許可シフト・公休数 ──────────────────────────────────────
+    _abcLines.push('▼ スタッフ別:');
+    ds.forEach(s => {
+      const _al = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+      _abcLines.push(`  ${s.name}(${s.role}): 許可=${_al.join('/')} 公休=${s._ta_totalTarget}日 勤務=${days - s._ta_totalTarget}日`);
+    });
+
+    // ── 2. シフト別 担当者・理論容量 ─────────────────────────────────────────
+    _abcLines.push('▼ シフト別理論容量:');
+    for (const [k, minC] of Object.entries(cleanMinStaff)) {
+      const _el = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k));
+      const _totalW = _el.reduce((sum, s) => sum + (days - s._ta_totalTarget), 0);
+      const _req = minC * days;
+      _abcLines.push(`  ${k}: minStaff=${minC}/日×${days}日=必要${_req}人日 | 担当可: ${_el.map(s=>s.name).join(', ')}(${_el.length}人) 最大投入=${_totalW}人日 → ${_totalW >= _req ? `✅充足可能(余裕${_totalW-_req}人日)` : `❌理論不足(欠如${_req-_totalW}人日)`}`);
+    }
+
+    // ── 3. 早番/日勤 競合を考慮した理論最大値計算 ────────────────────────────
+    const _EK = '早番', _DK = '日勤';
+    if (cleanMinStaff[_EK] != null && cleanMinStaff[_DK] != null) {
+      const _eEl = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(_EK));
+      const _dEl = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(_DK));
+      const _eOnly = _eEl.filter(s => !getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(_DK));
+      const _dOnly = _dEl.filter(s => !getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(_EK));
+      const _both  = ds.filter(s => { const al = getAllowed(s).filter(t => t !== '夜勤' && t !== '明け'); return al.includes(_EK) && al.includes(_DK); });
+      const _eOnlyW = _eOnly.reduce((s, x) => s + (days - x._ta_totalTarget), 0);
+      const _dOnlyW = _dOnly.reduce((s, x) => s + (days - x._ta_totalTarget), 0);
+      const _bothW  = _both.reduce((s, x)  => s + (days - x._ta_totalTarget), 0);
+      const _eReq = (cleanMinStaff[_EK] ?? 0) * days;
+      const _dReq = (cleanMinStaff[_DK] ?? 0) * days;
+      const _eFromOnly = Math.min(_eOnlyW, _eReq);
+      const _eFromBoth = Math.max(0, _eReq - _eFromOnly);
+      const _dFromBoth = Math.max(0, _bothW - _eFromBoth);
+      const _dMaxAvail = _dOnlyW + _dFromBoth;
+      _abcLines.push('▼ 早番/日勤 競合計算:');
+      _abcLines.push(`  早番専任: ${_eOnly.map(s=>s.name).join(', ') || 'なし'}  日勤専任: ${_dOnly.map(s=>s.name).join(', ') || 'なし'}  両方可: ${_both.map(s=>s.name).join(', ') || 'なし'}`);
+      _abcLines.push(`  早番必要${_eReq}人日: 専任から${_eFromOnly} + 両方可から${_eFromBoth}`);
+      _abcLines.push(`  日勤に回せる最大: 日勤専任${_dOnlyW} + 両方可残り${_dFromBoth} = ${_dMaxAvail}人日 | 日勤必要=${_dReq}人日`);
+      if (_dMaxAvail >= _dReq) {
+        _abcLines.push(`  → ✅日勤: 理論上達成可能 (余裕${_dMaxAvail - _dReq}人日)`);
+      } else {
+        const _minShort = _dReq - _dMaxAvail;
+        _abcLines.push(`  → ❌日勤: 理論上不可能 (不足最小値=${_minShort}日)`);
+      }
+    }
+
+    // ── 4. 不足日 ABC分類 ─────────────────────────────────────────────────────
+    // A: 同日配置変更（別シフト勤務→変更、または空白→配置）で解消可能
+    // B: 公休移動（移動可能な休み日を当日に出勤）で解消可能
+    // C: 充足不能（ロック公休/役職NG/連勤NGのみ）
+    _abcLines.push('▼ 不足日ABC分類:');
+    let _cntA = 0, _cntB = 0, _cntC = 0;
+    const _bDetailByShift = {};
+    for (let d = 1; d <= days; d++) {
+      for (const [k, minC] of Object.entries(cleanMinStaff)) {
+        const actual = ds.filter(s => selectedRes[s.id][d] === k).length;
+        if (actual >= minC) continue;
+        const _elig = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k));
+        // A判定: 同日内で解消可能な人がいるか
+        const _canA = _elig.some(s => {
+          const v = selectedRes[s.id][d];
+          if (!v) { // 空白 → 連勤チェック通れば配置可
+            if (lockedDays[s.id].has(d)) return false;
+            let sb = 0, sa = 0;
+            for (let i = d-1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+            for (let i = d+1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+            return sb + 1 + sa <= maxConsec;
+          }
+          return deptWork.has(v) && v !== '明け' && v !== k; // 別シフト勤務
+        });
+        // B判定: 移動可能公休がいるか（A不可の場合のみ）
+        const _canB = !_canA && _elig.some(s => {
+          const v = selectedRes[s.id][d];
+          return v && deptRest.has(v) && v !== '明け' && !lockedDays[s.id].has(d);
+        });
+        let _cat;
+        if (_canA) { _cat = 'A同日配置可'; _cntA++; }
+        else if (_canB) {
+          _cat = 'B公休移動'; _cntB++;
+          if (!_bDetailByShift[k]) _bDetailByShift[k] = [];
+          _bDetailByShift[k].push(d);
+        }
+        else { _cat = 'C充足不能'; _cntC++; }
+        _abcLines.push(`  ${d}日(${_abcDowN[new Date(year,month,d).getDay()]}) ${k}(実${actual}/必${minC}): ${_cat}`);
+      }
+    }
+    _abcLines.push(`集計: A同日配置可=${_cntA}日  B公休移動=${_cntB}日  C充足不能=${_cntC}日`);
+
+    // ── 5. 日勤B 詳細出力（ユーザー要求） ────────────────────────────────────
+    for (const [k, _bDays] of Object.entries(_bDetailByShift)) {
+      const _dEl = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k));
+      _abcLines.push(`\n▼ ${k}-B詳細(${_bDays.length}日):`);
+      _abcLines.push(`  requiredStaff : ${cleanMinStaff[k]}/日`);
+      _abcLines.push(`  担当可能職員数 : ${_dEl.length}人`);
+      _abcLines.push(`  担当者         : ${_dEl.map(s => `${s.name}(公休${s._ta_totalTarget}日 勤務${days-s._ta_totalTarget}日)`).join(' / ')}`);
+      _abcLines.push(`  B日一覧:`);
+      _bDays.forEach(d => {
+        const _onRest = _dEl.filter(s => { const v = selectedRes[s.id][d]; return v && deptRest.has(v) && v !== '明け'; });
+        const _onWork = _dEl.filter(s => { const v = selectedRes[s.id][d]; return v && deptWork.has(v) && v !== '明け'; });
+        const _blank  = _dEl.filter(s => !selectedRes[s.id][d]);
+        _abcLines.push(`    ${d}日(${_abcDowN[new Date(year,month,d).getDay()]}): ` +
+          (_onRest.length ? `公休中[${_onRest.map(s=>`${s.name}${lockedDays[s.id].has(d)?'(ロック)':'(移動可)'}`).join(',')}] ` : '') +
+          (_onWork.length ? `他シフト[${_onWork.map(s=>`${s.name}=${selectedRes[s.id][d]}`).join(',')}] ` : '') +
+          (_blank.length  ? `空白[${_blank.map(s=>s.name).join(',')}]` : ''));
+      });
+    }
+
+    console.error(_abcLines.join('\n'));
   }
 
   return { shifts: selectedRes, warnings, timelineWarnings: [] };
