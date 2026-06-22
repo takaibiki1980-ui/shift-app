@@ -3159,6 +3159,120 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     });
   }
 
+  // [SHORTAGE-ABC] ABC分類 + 日勤B理論検証（eiyo のみ、readonly）
+  if (dept.id === 'eiyo' && adoptedMinStaffShortDays > 0) {
+    const _abcDowN = ['日','月','火','水','木','金','土'];
+    const _abcLines = [`[SHORTAGE-ABC] dept=${dept.id} 不足${adoptedMinStaffShortDays}日 ══ ABC分類 ══`];
+
+    // ── 1. スタッフ別 許可シフト・公休数 ──────────────────────────────────────
+    _abcLines.push('▼ スタッフ別:');
+    ds.forEach(s => {
+      const _al = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+      _abcLines.push(`  ${s.name}(${s.role}): 許可=${_al.join('/')} 公休=${s._ta_totalTarget}日 勤務=${days - s._ta_totalTarget}日`);
+    });
+
+    // ── 2. シフト別 担当者・理論容量 ─────────────────────────────────────────
+    _abcLines.push('▼ シフト別理論容量:');
+    for (const [k, minC] of Object.entries(cleanMinStaff)) {
+      const _el = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k));
+      const _totalW = _el.reduce((sum, s) => sum + (days - s._ta_totalTarget), 0);
+      const _req = minC * days;
+      _abcLines.push(`  ${k}: minStaff=${minC}/日×${days}日=必要${_req}人日 | 担当可: ${_el.map(s=>s.name).join(', ')}(${_el.length}人) 最大投入=${_totalW}人日 → ${_totalW >= _req ? `✅充足可能(余裕${_totalW-_req}人日)` : `❌理論不足(欠如${_req-_totalW}人日)`}`);
+    }
+
+    // ── 3. 早番/日勤 競合を考慮した理論最大値計算 ────────────────────────────
+    const _EK = '早番', _DK = '日勤';
+    if (cleanMinStaff[_EK] != null && cleanMinStaff[_DK] != null) {
+      const _eEl = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(_EK));
+      const _dEl = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(_DK));
+      const _eOnly = _eEl.filter(s => !getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(_DK));
+      const _dOnly = _dEl.filter(s => !getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(_EK));
+      const _both  = ds.filter(s => { const al = getAllowed(s).filter(t => t !== '夜勤' && t !== '明け'); return al.includes(_EK) && al.includes(_DK); });
+      const _eOnlyW = _eOnly.reduce((s, x) => s + (days - x._ta_totalTarget), 0);
+      const _dOnlyW = _dOnly.reduce((s, x) => s + (days - x._ta_totalTarget), 0);
+      const _bothW  = _both.reduce((s, x)  => s + (days - x._ta_totalTarget), 0);
+      const _eReq = (cleanMinStaff[_EK] ?? 0) * days;
+      const _dReq = (cleanMinStaff[_DK] ?? 0) * days;
+      const _eFromOnly = Math.min(_eOnlyW, _eReq);
+      const _eFromBoth = Math.max(0, _eReq - _eFromOnly);
+      const _dFromBoth = Math.max(0, _bothW - _eFromBoth);
+      const _dMaxAvail = _dOnlyW + _dFromBoth;
+      _abcLines.push('▼ 早番/日勤 競合計算:');
+      _abcLines.push(`  早番専任: ${_eOnly.map(s=>s.name).join(', ') || 'なし'}  日勤専任: ${_dOnly.map(s=>s.name).join(', ') || 'なし'}  両方可: ${_both.map(s=>s.name).join(', ') || 'なし'}`);
+      _abcLines.push(`  早番必要${_eReq}人日: 専任から${_eFromOnly} + 両方可から${_eFromBoth}`);
+      _abcLines.push(`  日勤に回せる最大: 日勤専任${_dOnlyW} + 両方可残り${_dFromBoth} = ${_dMaxAvail}人日 | 日勤必要=${_dReq}人日`);
+      if (_dMaxAvail >= _dReq) {
+        _abcLines.push(`  → ✅日勤: 理論上達成可能 (余裕${_dMaxAvail - _dReq}人日)`);
+      } else {
+        const _minShort = _dReq - _dMaxAvail;
+        _abcLines.push(`  → ❌日勤: 理論上不可能 (不足最小値=${_minShort}日)`);
+      }
+    }
+
+    // ── 4. 不足日 ABC分類 ─────────────────────────────────────────────────────
+    // A: 同日配置変更（別シフト勤務→変更、または空白→配置）で解消可能
+    // B: 公休移動（移動可能な休み日を当日に出勤）で解消可能
+    // C: 充足不能（ロック公休/役職NG/連勤NGのみ）
+    _abcLines.push('▼ 不足日ABC分類:');
+    let _cntA = 0, _cntB = 0, _cntC = 0;
+    const _bDetailByShift = {};
+    for (let d = 1; d <= days; d++) {
+      for (const [k, minC] of Object.entries(cleanMinStaff)) {
+        const actual = ds.filter(s => selectedRes[s.id][d] === k).length;
+        if (actual >= minC) continue;
+        const _elig = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k));
+        // A判定: 同日内で解消可能な人がいるか
+        const _canA = _elig.some(s => {
+          const v = selectedRes[s.id][d];
+          if (!v) { // 空白 → 連勤チェック通れば配置可
+            if (lockedDays[s.id].has(d)) return false;
+            let sb = 0, sa = 0;
+            for (let i = d-1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+            for (let i = d+1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+            return sb + 1 + sa <= maxConsec;
+          }
+          return deptWork.has(v) && v !== '明け' && v !== k; // 別シフト勤務
+        });
+        // B判定: 移動可能公休がいるか（A不可の場合のみ）
+        const _canB = !_canA && _elig.some(s => {
+          const v = selectedRes[s.id][d];
+          return v && deptRest.has(v) && v !== '明け' && !lockedDays[s.id].has(d);
+        });
+        let _cat;
+        if (_canA) { _cat = 'A同日配置可'; _cntA++; }
+        else if (_canB) {
+          _cat = 'B公休移動'; _cntB++;
+          if (!_bDetailByShift[k]) _bDetailByShift[k] = [];
+          _bDetailByShift[k].push(d);
+        }
+        else { _cat = 'C充足不能'; _cntC++; }
+        _abcLines.push(`  ${d}日(${_abcDowN[new Date(year,month,d).getDay()]}) ${k}(実${actual}/必${minC}): ${_cat}`);
+      }
+    }
+    _abcLines.push(`集計: A同日配置可=${_cntA}日  B公休移動=${_cntB}日  C充足不能=${_cntC}日`);
+
+    // ── 5. 日勤B 詳細出力（ユーザー要求） ────────────────────────────────────
+    for (const [k, _bDays] of Object.entries(_bDetailByShift)) {
+      const _dEl = ds.filter(s => getAllowed(s).filter(t => t !== '夜勤' && t !== '明け').includes(k));
+      _abcLines.push(`\n▼ ${k}-B詳細(${_bDays.length}日):`);
+      _abcLines.push(`  requiredStaff : ${cleanMinStaff[k]}/日`);
+      _abcLines.push(`  担当可能職員数 : ${_dEl.length}人`);
+      _abcLines.push(`  担当者         : ${_dEl.map(s => `${s.name}(公休${s._ta_totalTarget}日 勤務${days-s._ta_totalTarget}日)`).join(' / ')}`);
+      _abcLines.push(`  B日一覧:`);
+      _bDays.forEach(d => {
+        const _onRest = _dEl.filter(s => { const v = selectedRes[s.id][d]; return v && deptRest.has(v) && v !== '明け'; });
+        const _onWork = _dEl.filter(s => { const v = selectedRes[s.id][d]; return v && deptWork.has(v) && v !== '明け'; });
+        const _blank  = _dEl.filter(s => !selectedRes[s.id][d]);
+        _abcLines.push(`    ${d}日(${_abcDowN[new Date(year,month,d).getDay()]}): ` +
+          (_onRest.length ? `公休中[${_onRest.map(s=>`${s.name}${lockedDays[s.id].has(d)?'(ロック)':'(移動可)'}`).join(',')}] ` : '') +
+          (_onWork.length ? `他シフト[${_onWork.map(s=>`${s.name}=${selectedRes[s.id][d]}`).join(',')}] ` : '') +
+          (_blank.length  ? `空白[${_blank.map(s=>s.name).join(',')}]` : ''));
+      });
+    }
+
+    console.error(_abcLines.join('\n'));
+  }
+
   return { shifts: selectedRes, warnings, timelineWarnings: [] };
 }
 
