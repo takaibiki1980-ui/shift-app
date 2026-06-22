@@ -2883,6 +2883,26 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     const r = {}; ds.forEach(s => { r[s.id] = { ...baseRes[s.id] }; }); return r;
   })();
 
+  // [STAFF-SNAP] 川田・杉本 の work/rest/blank をスナップショット出力（eiyo のみ）
+  const _staffSnap = (label) => {
+    if (dept.id !== 'eiyo') return;
+    const targets = ds.filter(s => s.name.includes('川田') || s.name.includes('杉本'));
+    if (!targets.length) return;
+    const lines = [`[STAFF-SNAP] ── ${label} ──`];
+    targets.forEach(s => {
+      let _w = 0, _r = 0, _b = 0;
+      for (let d = 1; d <= days; d++) {
+        const v = selectedRes[s.id][d];
+        if (!v) _b++;
+        else if (deptWork.has(v) && v !== '明け') _w++;
+        else if (deptRest.has(v) && v !== '明け') _r++;
+      }
+      lines.push(`  ${s.name}(${s.role}): 勤務=${_w} 公休=${_r} 空白=${_b} 合計${_w+_r+_b}/${days}日 目標公休=${s._ta_totalTarget} workRequired=${s._ta_workRequired ?? '?'}`);
+    });
+    console.error(lines.join('\n'));
+  };
+  _staffSnap('①生成直後 selectedRes確定');
+
   // [LEARN-PICK] ログ（採用試行の学習統計 + eiyo の場合は日別サンプル）
   { const DOW_N = ['日','月','火','水','木','金','土'];
     const _lp = _ta_selectedLearnStats;
@@ -2967,6 +2987,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     const hlAfter = countShort(selectedRes);
     console.error(`[山登り] dept=${dept.id} 局所探索 minStaff不足 ${hlBefore} → ${hlAfter}（${hlBefore - hlAfter}日分改善）`);
   }
+  _staffSnap('②山登り①後 空白→勤務補完後');
 
   // ────────────────────────────────────────────────────────────────────────
   // 山登り局所探索②: 休み移動swap
@@ -3076,6 +3097,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       });
     }
   }
+  _staffSnap('③山登り②後 return直前 最終状態');
 
   // ────────────────────────────────────────────────────────────────────────
   // warnings 構築（採用候補の minStaff不足 + 合格0時の説明）
@@ -3325,6 +3347,26 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   if (dept.id === 'eiyo' && adoptedMinStaffShortDays > 0) {
     const _abcDowN = ['日','月','火','水','木','金','土'];
     const _abcLines = [`[SHORTAGE-ABC] dept=${dept.id} 不足${adoptedMinStaffShortDays}日 ══ ABC分類 ══`];
+
+    // ── 0. 参照元確認: 川田・杉本 の数値がどの配列から来ているか ─────────────
+    // [SHORTAGE-ABC] は selectedRes を直接読んでいる（return の直前）
+    // 画面表示は return { shifts: selectedRes } → allShifts[dept.id] → React render
+    // → 両者は同一オブジェクトを指すため、値が一致するはず
+    _abcLines.push('▼ [SHORTAGE-ABC]参照元: selectedRes（return直前、山登り②完了後）');
+    ds.filter(s => s.name.includes('川田') || s.name.includes('杉本')).forEach(s => {
+      let _aw = 0, _ar = 0, _ab = 0;
+      const _dayDetail = [];
+      for (let d = 1; d <= days; d++) {
+        const v = selectedRes[s.id][d];
+        if (!v) { _ab++; _dayDetail.push(`${d}:空白`); }
+        else if (deptWork.has(v) && v !== '明け') { _aw++; }
+        else if (deptRest.has(v) && v !== '明け') { _ar++; }
+      }
+      _abcLines.push(`  ${s.name}(${s.role}): 勤務=${_aw} 公休=${_ar} 空白=${_ab} 合計${_aw+_ar+_ab}/${days}日 目標公休=${s._ta_totalTarget}`);
+      if (_ab > 0) _abcLines.push(`    空白日: ${_dayDetail.join(' ')}`);
+      const _screen_match = (_aw + _ar + _ab === days) ? '✅画面値と一致するはず' : `⚠️合計${_aw+_ar+_ab}≠${days}日（不整合）`;
+      _abcLines.push(`    → ${_screen_match}`);
+    });
 
     // ── 1. スタッフ別 許可シフト・公休数 ──────────────────────────────────────
     _abcLines.push('▼ スタッフ別:');
