@@ -2407,6 +2407,16 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     s._ta_totalTarget = totalTarget;
   });
 
+  // ── eiyo 専用 Step2補完: 勤務先配置方式の事前計算 ──────────────────────
+  if (dept.id === 'eiyo') {
+    ds.forEach(s => {
+      const lockedWorkCount = Object.values(baseRes[s.id]).filter(v => deptWork.has(v) && v !== '明け').length;
+      s._ta_workRequired  = Math.max(0, days - s._ta_totalTarget);
+      s._ta_workRemaining = Math.max(0, s._ta_workRequired - lockedWorkCount);
+      s._ta_workPlaced    = lockedWorkCount;
+    });
+  }
+
   // ────────────────────────────────────────────────────────────────────────
   // 内部関数: 1試行分の配置（乱数性あり）
   // ────────────────────────────────────────────────────────────────────────
@@ -2611,6 +2621,155 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   };
 
   // ────────────────────────────────────────────────────────────────────────
+  // eiyo 専用トライアル関数（勤務先配置方式）
+  //   Step4-5: 日ごとに変則シフト（早番→日勤）から優先配置
+  //   Step6:   残勤務数未達職員の空き日に勤務を追加配置（出勤率順）
+  //   Step7:   残セル → 勤務達成済み=公休 / 未達=空白維持
+  // ────────────────────────────────────────────────────────────────────────
+  const runOneTrialEiyo = () => {
+    const res = {};
+    ds.forEach(s => { res[s.id] = { ...baseRes[s.id] }; });
+
+    // 各職員の残勤務カウンター（試行ごとにリセット）
+    const workRem = {};
+    ds.forEach(s => { workRem[s.id] = s._ta_workRemaining; });
+
+    // 日別シフト数カウンター（baseRes から初期化）
+    const dayCounts = {};
+    for (let d = 1; d <= days; d++) {
+      dayCounts[d] = {};
+      dayTypes.forEach(k => { dayCounts[d][k] = ds.filter(s => res[s.id][d] === k).length; });
+    }
+
+    // シフト処理優先順: maxStaff 小さい順（早番=1 が最優先、日勤=99 が後）
+    const shiftOrder = [...dayTypes].sort((a, b) => (cleanMaxStaff[a] ?? 99) - (cleanMaxStaff[b] ?? 99));
+
+    // ── Step4-5: 日ごとに minStaff を充足するまで配置 ────────────────────
+    for (let d = 1; d <= days; d++) {
+      for (const shiftKey of shiftOrder) {
+        const minNeeded = cleanMinStaff[shiftKey] ?? 0;
+        if (!minNeeded) continue;
+
+        let placed = dayCounts[d][shiftKey] ?? 0;
+        const maxAllowed = cleanMaxStaff[shiftKey] ?? 99;
+
+        while (placed < minNeeded && placed < maxAllowed) {
+          const candidates = [];
+          for (const s of ds) {
+            if (res[s.id][d]) continue;                          // ① 既割り当て除外
+            const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+            if (!allowed.includes(shiftKey)) continue;           // ③ 職種制限
+            if (workRem[s.id] <= 0) continue;                   // ④ 勤務必要数未達のみ対象
+            // ② 連勤チェック
+            let sb = 0, sa = 0;
+            for (let i = d - 1; i >= 1; i--) { const vv = res[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+            for (let i = d + 1; i <= days; i++) { const vv = res[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+            if (sb + 1 + sa > maxConsec) continue;
+
+            // ⑤ 出勤率スコア（学習①）・⑥ 勤務比率スコア（学習②）
+            let score = 0;
+            const _trend = getTrendTA(s);
+            const _dow = new Date(year, month, d).getDay();
+            const _dowRate = _trend?.dowShiftRate?.[_dow];
+            if (USE_LEARN_PICK && _dowRate && _dowRate[shiftKey] != null) {
+              score += Math.max(0.05, _dowRate[shiftKey]) * 100;
+            } else {
+              score += 50;
+            }
+            score += workRem[s.id] * 3; // 残勤務多い→緊急度高い
+            score += Math.random() * 2;  // タイブレーク
+
+            candidates.push({ s, score });
+          }
+
+          if (candidates.length === 0) break; // 配置不能
+
+          candidates.sort((a, b) => b.score - a.score);
+          const best = candidates[0].s;
+
+          // 学習統計（採用時のみ計上）
+          const _bTrend = getTrendTA(best);
+          const _bDow = new Date(year, month, d).getDay();
+          const _bRate = _bTrend?.dowShiftRate?.[_bDow];
+          if (USE_LEARN_PICK && _bRate && _bRate[shiftKey] != null) { _ta_learnStats.learned++; }
+          else if (USE_LEARN_PICK) { _bTrend ? _ta_learnStats.fallback++ : _ta_learnStats.noData++; }
+
+          res[best.id][d] = shiftKey;
+          workRem[best.id]--;
+          dayCounts[d][shiftKey] = (dayCounts[d][shiftKey] ?? 0) + 1;
+          placed++;
+        }
+      }
+    }
+
+    // ── Step6: 残勤務数未達の職員に空き日を割り当て（出勤率順）────────────
+    const shuffledDs6 = [...ds].sort(() => Math.random() - 0.5);
+    shuffledDs6.forEach(s => {
+      if (workRem[s.id] <= 0) return;
+      const allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+      if (!allowed.length) return;
+
+      const freeDays = [];
+      for (let d = 1; d <= days; d++) { if (!res[s.id][d]) freeDays.push(d); }
+
+      const _trend = getTrendTA(s);
+      // 出勤率（dowShiftRate の合計）が高い日を優先
+      freeDays.sort((da, db) => {
+        const rA = _trend?.dowShiftRate?.[new Date(year, month, da).getDay()];
+        const rB = _trend?.dowShiftRate?.[new Date(year, month, db).getDay()];
+        const sA = rA ? Object.values(rA).reduce((x, y) => x + y, 0) : 0.5;
+        const sB = rB ? Object.values(rB).reduce((x, y) => x + y, 0) : 0.5;
+        return sB - sA + (Math.random() - 0.5) * 0.2;
+      });
+
+      for (const d of freeDays) {
+        if (workRem[s.id] <= 0) break;
+        // ② 連勤チェック
+        let sb = 0, sa = 0;
+        for (let i = d - 1; i >= 1; i--) { const vv = res[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+        for (let i = d + 1; i <= days; i++) { const vv = res[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+        if (sb + 1 + sa > maxConsec) continue;
+
+        // シフト種別選択（学習② 勤務比率）
+        const _dow = new Date(year, month, d).getDay();
+        const _dowRate = _trend?.dowShiftRate?.[_dow];
+        const avail = allowed.filter(k => (dayCounts[d]?.[k] ?? 0) < (cleanMaxStaff[k] ?? 99));
+        if (!avail.length) continue;
+
+        let pick;
+        if (USE_LEARN_PICK && _dowRate && Object.keys(_dowRate).length > 0) {
+          const ws = avail.map(k => Math.max(0.05, _dowRate[k] ?? 0.05));
+          let r = Math.random() * ws.reduce((a, b) => a + b, 0);
+          pick = avail[avail.length - 1];
+          for (let i = 0; i < avail.length; i++) { r -= ws[i]; if (r <= 0) { pick = avail[i]; break; } }
+          _ta_learnStats.learned++;
+        } else {
+          pick = avail[Math.floor(Math.random() * avail.length)];
+          if (USE_LEARN_PICK) (_trend ? _ta_learnStats.fallback++ : _ta_learnStats.noData++);
+        }
+
+        res[s.id][d] = pick;
+        workRem[s.id]--;
+        dayCounts[d][pick] = (dayCounts[d][pick] ?? 0) + 1;
+      }
+    });
+
+    // ── Step7: 残セル処理 ─────────────────────────────────────────────────
+    // 勤務必要数達成済み → 公休  |  未達 → 空白維持（配置不能）
+    ds.forEach(s => {
+      for (let d = 1; d <= days; d++) {
+        if (res[s.id][d]) continue;
+        if (workRem[s.id] <= 0) {
+          res[s.id][d] = '休み';
+        }
+        // workRem[s.id] > 0 → 空白維持（診断ログで出力される）
+      }
+    });
+
+    return res;
+  };
+
+  // ────────────────────────────────────────────────────────────────────────
   // 5絶対条件の検査（①公休数 ②有休固定 ③許可種別 ④連勤≤maxConsec ⑤maxStaff以下）
   // ────────────────────────────────────────────────────────────────────────
   const checkAbsolute = (res) => {
@@ -2693,12 +2852,15 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
   // ────────────────────────────────────────────────────────────────────────
   // N=200 試行ループ
   // ────────────────────────────────────────────────────────────────────────
+  // eiyo は勤務先配置方式（runOneTrialEiyo）、それ以外は既存エンジン
+  const _runTrial = dept.id === 'eiyo' ? runOneTrialEiyo : runOneTrial;
+
   let bestPassing = null, bestPassingScore = Infinity, passCount = 0;
   let bestFailing = null, bestFailingViolations = Infinity;
 
   for (let i = 0; i < N_TRIALS; i++) {
     _ta_learnStats = { learned: 0, fallback: 0, noData: 0 };
-    const trialRes = runOneTrial();
+    const trialRes = _runTrial();
     const { violations, detail } = checkAbsolute(trialRes);
     if (violations === 0) {
       passCount++;
