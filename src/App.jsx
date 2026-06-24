@@ -815,6 +815,53 @@ function shouldProtectSlot(shiftKey, count, slotManagedTypes, maxStaff) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Step8: consecWork - 当日以前の連続勤務日数を返す（前月末 prevTail まで遡る）
+// 元コード: autoGenerate 内 consecWork（L968〜982）と同一ロジック
+function consecWork(id, d, res, deptWork, prevTail, prevDays) {
+  let c = 0;
+  for (let i = d; i >= 1; i--) {
+    if (deptWork.has(res[id][i])) c++;
+    else return c;
+  }
+  if (prevTail[id]) {
+    for (let i = prevDays; i >= Math.max(1, prevDays - 4); i--) {
+      if (deptWork.has(prevTail[id][i])) c++;
+      else break;
+    }
+  }
+  return c;
+}
+
+// Step8: consecRest - d日以前の連続休み日数を返す（明けは除外）
+// 元コード: autoGenerate 内 consecRest（L983）と同一ロジック
+function consecRest(id, d, res, deptRest) {
+  let c = 0;
+  for (let i = d; i >= 1; i--) {
+    if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++;
+    else break;
+  }
+  return c;
+}
+
+// Step8: consecRestFwd - d日以降の連続休み日数を返す（明けは除外）
+// 元コード: autoGenerate 内 consecRestFwd（L984）と同一ロジック
+function consecRestFwd(id, d, res, deptRest, days) {
+  let c = 0;
+  for (let i = d + 1; i <= days; i++) {
+    if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++;
+    else break;
+  }
+  return c;
+}
+
+// Step9: canRest - 指定日に休みを配置してよいか判定（明け翌日禁止 + 連続休み上限2日）
+// 元コード: autoGenerate 内 canRest（L1014〜1017）と同一ロジック
+function canRest(id, d, res, deptRest, days) {
+  if (res[id][d - 1] === "明け") return false;
+  return (consecRest(id, d - 1, res, deptRest) + 1 + consecRestFwd(id, d, res, deptRest, days)) <= 2;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
   console.error('[AG-v7d] start dept=', dept.id, 'maxStaff=', JSON.stringify(dept.maxStaff), 'minStaff=', JSON.stringify(dept.minStaff));
   const days = getDays(year, month);
@@ -965,30 +1012,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   const prevShift = (id) => prevTail[id]?.[prevDays] ?? null;
   console.log('[prevTail-autoGenerate]', '宇賀神', prevShift('kaigo1_6'));
 
-  const consecWork = (id, d) => {
-    let c = 0;
-    for (let i = d; i >= 1; i--) {
-      if (deptWork.has(res[id][i])) c++;
-      else return c;
-    }
-    // 月初まで全て勤務日だった場合のみ前月末へ遡る
-    if (prevTail[id]) {
-      for (let i = prevDays; i >= Math.max(1, prevDays - 4); i--) {
-        if (deptWork.has(prevTail[id][i])) c++;
-        else break;
-      }
-    }
-    return c;
-  };
-  const consecRest = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
-  const consecRestFwd = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
+  const _consecWork = (id, d) => consecWork(id, d, res, deptWork, prevTail, prevDays); // Step8: グローバル昇格
+  const _consecRest = (id, d) => consecRest(id, d, res, deptRest); // Step8: グローバル昇格
+  const _consecRestFwd = (id, d) => consecRestFwd(id, d, res, deptRest, days); // Step8: グローバル昇格
   // ★[Fix-NightSeq] 夜勤系 shift set: baseType=夜勤 の全 shift key（明け前日バリデーション用）
   const _agNightSet = buildNightSet(dept); // Step2: グローバル昇格
   const _isBadTransition = (prev, curr) => isBadTransition(prev, curr, dept, _agNightSet); // Step5: グローバル昇格
-  const canRest = (id, d) => {
-    if (res[id][d - 1] === "明け") return false;
-    return (consecRest(id, d - 1) + 1 + consecRestFwd(id, d)) <= 2;
-  };
+  const _canRest = (id, d) => canRest(id, d, res, deptRest, days); // Step9: グローバル昇格
 
   // ★ステップ1: 希望休・希望勤務を最初にセット（最優先・絶対変更しない）
   ds.forEach(s => {
@@ -1370,7 +1400,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (prev === '明け') return false;
             if (_isBadTransition(prev, shiftType)) return false;
             if (_isBadTransition(shiftType, next)) return false;
-            const prevConsec = consecWork(s.id, d - 1);
+            const prevConsec = _consecWork(s.id, d - 1);
             let fwdConsec = 0;
             for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) fwdConsec++; else break; }
             if (prevConsec + 1 + fwdConsec > maxConsec) { _slotMaxConsecExcluded++; return false; }
@@ -1474,7 +1504,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           const targetCount = targetShiftCounts[s.id][shiftType] || 0;
           if (!targetCount) return;
           const pool = [...remaining].filter(d => {
-            if (dept.id === 'eiyo' && consecWork(s.id, d - 1) >= maxConsec) return false;
+            if (dept.id === 'eiyo' && _consecWork(s.id, d - 1) >= maxConsec) return false;
             const cnt = ds.filter(sx => res[sx.id][d] === shiftType).length;
             return cnt < (maxStaff[shiftType] ?? 99);
           });
@@ -1489,7 +1519,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         });
         const nikkin = allowed.includes('日勤') ? '日勤' : (allowed.find(k => k !== '夜勤' && k !== '明け') || allowed[0]);
         remaining.forEach(d => {
-          if (dept.id === 'eiyo' && consecWork(s.id, d - 1) >= maxConsec) {
+          if (dept.id === 'eiyo' && _consecWork(s.id, d - 1) >= maxConsec) {
             res[s.id][d] = '休み';
             return;
           }
@@ -1499,7 +1529,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       } else {
         // ★ratio指定なし / trendのみ / trendなし: 各日を確率サンプリングで決定
         workDays.forEach(d => {
-          if (dept.id === 'eiyo' && consecWork(s.id, d - 1) >= maxConsec) {
+          if (dept.id === 'eiyo' && _consecWork(s.id, d - 1) >= maxConsec) {
             res[s.id][d] = '休み';
             return;
           }
@@ -1559,7 +1589,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     //        禁止  : role-slot / lockedDays / 明け
     //
     //      Tier1 保証: _shouldProtectSlot(tSh, count) が true の日は除外
-    //      副作用: 追加された休みは後続の 公休数調整 で consecWork チェック済みなため
+    //      副作用: 追加された休みは後続の 公休数調整 で _consecWork チェック済みなため
     //              無限 repair ループにはならない
     {
       let _fixedNonSlot = 0, _absorbedByTier2 = 0;
@@ -1570,7 +1600,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       ds.forEach(s => {
         for (let d = 1; d <= days; d++) {
           if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
-          if (consecWork(s.id, d) <= maxConsec) continue;
+          if (_consecWork(s.id, d) <= maxConsec) continue;
           if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
           // ★ PassC 公休超過ガード: actualRest >= targetRest なら休み追加を行わない
           { const _gAct=Object.values(res[s.id]).filter(v=>deptRest.has(v)&&v!=='明け').length, _gTgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8; if(_gAct>=_gTgt){console.log('[PassC-GUARD]',s.name,'actualRest=',_gAct,'targetRest=',_gTgt,'reason=rest-limit');continue;} }
@@ -1593,15 +1623,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             }
             const target = nikkinTarget ?? nonSlotTarget; // 日勤優先、なければ非 slot
             if (target !== null) {
-              { const _origT=res[s.id][target]??'?'; _diagTypeMap[_origT]=(_diagTypeMap[_origT]||0)+1; let _bef=consecWork(s.id,target-1),_aft=0;for(let _i=target+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${target} origShift=${_origT} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (Tier2)`); }
+              { const _origT=res[s.id][target]??'?'; _diagTypeMap[_origT]=(_diagTypeMap[_origT]||0)+1; let _bef=_consecWork(s.id,target-1),_aft=0;for(let _i=target+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${target} origShift=${_origT} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (Tier2)`); }
               console.log(`[PassC-Tier2休み追加] ${s.name} day=${target} before=${res[s.id][target]} (streak切断のため)`);
               res[s.id][target] = '休み'; // ← Tier2（日勤層）を削除して streak を断ち切る
               _absorbedByTier2++;
             }
             continue; // d 自体（role-slot）は変更しない
           }
-          { const _origD=res[s.id][d]??'?'; _diagTypeMap[_origD]=(_diagTypeMap[_origD]||0)+1; let _bef=consecWork(s.id,d-1),_aft=0;for(let _i=d+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${d} origShift=${_origD} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (非slot)`); }
-          console.log(`[PassC-非slot休み追加] ${s.name} day=${d} before=${res[s.id][d]} consecWork=${consecWork(s.id,d)}`);
+          { const _origD=res[s.id][d]??'?'; _diagTypeMap[_origD]=(_diagTypeMap[_origD]||0)+1; let _bef=_consecWork(s.id,d-1),_aft=0;for(let _i=d+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${d} origShift=${_origD} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (非slot)`); }
+          console.log(`[PassC-非slot休み追加] ${s.name} day=${d} before=${res[s.id][d]} _consecWork=${_consecWork(s.id,d)}`);
           res[s.id][d] = '休み';
           _fixedNonSlot++;
         }
@@ -1616,7 +1646,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       ds.forEach(s => {
         for (let d = 1; d <= days; d++) {
           if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
-          if (consecWork(s.id, d) <= maxConsec) continue;
+          if (_consecWork(s.id, d) <= maxConsec) continue;
           _passCViolations++;
           const sh = res[s.id][d];
           if (_shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) _passCSlotProtected++;
@@ -1646,7 +1676,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (lockedDays[s.id].has(d)) continue;
           if (res[s.id][d - 1] === "明け") continue;
           if (res[s.id][d - 1] === "夜勤") continue;
-          const actualBefore = consecWork(s.id, d - 1);
+          const actualBefore = _consecWork(s.id, d - 1);
           let actualAfter = 0;
           for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) actualAfter++; else break; }
           if (actualBefore + 1 + actualAfter > maxConsec) continue;
@@ -1681,14 +1711,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           const workDays2 = Object.entries(res[s.id]).filter(([, v]) => deptWork.has(v)).map(([d]) => +d)
             .filter(d => {
               if (res[s.id][d - 1] === "明け" || res[s.id][d + 1] === "明け") return false;
-              if (!canRest(s.id, d)) return false;
+              if (!_canRest(s.id, d)) return false;
               // ★Tier1保護: role-slot が上限以内なら公休shortage補正（Tier2）の対象外
               const sh = res[s.id][d];
               if (_shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) return false;
               return true;
             })
-            .sort((a, b) => consecWork(s.id, b - 1) - consecWork(s.id, a - 1));
-          for (const d of workDays2) { if (shortage <= 0) break; if (!canRest(s.id, d)) continue; res[s.id][d] = "休み"; shortage--; }
+            .sort((a, b) => _consecWork(s.id, b - 1) - _consecWork(s.id, a - 1));
+          for (const d of workDays2) { if (shortage <= 0) break; if (!_canRest(s.id, d)) continue; res[s.id][d] = "休み"; shortage--; }
         }
       }
       for (let d = 1; d <= days; d++) {
@@ -1696,8 +1726,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (lockedDays[s.id].has(d)) continue;
         if (res[s.id][d - 1] === "明け") continue;
         if (res[s.id][d + 1] === "明け") continue;
-        if (consecRest(s.id, d) <= 3) continue;
-        if ((consecWork(s.id, d - 1) + 1) > maxConsec) continue;
+        if (_consecRest(s.id, d) <= 3) continue;
+        if ((_consecWork(s.id, d - 1) + 1) > maxConsec) continue;
         const fixCnts = {};
         dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
         let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
@@ -1837,7 +1867,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (prev === "夜勤" || prev === "明け") return false;
           if (_isBadTransition(prev, shiftKey)) return false;
           if (_isBadTransition(shiftKey, next)) return false;
-          if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
+          if ((_consecWork(s.id, d - 1) + 1) > maxConsec) return false;
           const curCount = ds.filter(sx => res[sx.id][d] === shiftKey).length;
           if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
           const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
@@ -1886,8 +1916,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (cur - 1 < minN) return false;
           // 連続休み上限（3日まで許容）
           if (res[s.id][d - 1] === "明け") return false;
-          const pr = consecRest(s.id, d - 1);
-          const nx = consecRestFwd(s.id, d);
+          const pr = _consecRest(s.id, d - 1);
+          const nx = _consecRestFwd(s.id, d);
           return pr + 1 + nx <= 3;
         })
         .sort((a, b) => {
@@ -1926,7 +1956,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           // 優先1: 夜勤・明け翌日は絶対NG
           if (prev === "明け" || prev === "夜勤") return false;
           // 連続勤務上限チェック（前後合計）
-          const backW = consecWork(s.id, d - 1);
+          const backW = _consecWork(s.id, d - 1);
           let fwdW = 0; for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) fwdW++; else break; }
           if ((backW + 1 + fwdW) > maxConsec) return false;
           // シフト連続性チェック（日勤を仮ターゲットとして違反確認）
