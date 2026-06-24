@@ -800,6 +800,19 @@ function isBadTransition(prev, curr, dept, nightSet) {
   if (curr === '明け' && !nightSet.has(prev)) return true;
   return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
 }
+// Step6: isSlotManaged - シフトキーが role-slot（Tier1絶対制約）対象かを判定
+// 元コード: autoGenerate 内 isSlotManaged（L833）と同一ロジック
+function isSlotManaged(shiftKey, slotManagedTypes) {
+  return slotManagedTypes.has(shiftKey);
+}
+
+// Step6: shouldProtectSlot - Tier2 repair がシフトを削減してよいか判定する共通ガード
+// 元コード: autoGenerate 内 shouldProtectSlot（L844〜847）と同一ロジック
+// 返値 true → 削減禁止（protect）、false → 削減可
+function shouldProtectSlot(shiftKey, count, slotManagedTypes, maxStaff) {
+  if (!isSlotManaged(shiftKey, slotManagedTypes)) return false;
+  return count <= (maxStaff[shiftKey] ?? 99);
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
@@ -829,22 +842,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   //      ※ 将来「日勤 max=2」に設定しても ① で除外されるため誤判定しない
   // ══════════════════════════════════════════════════════════════════════════════
   const slotManagedTypes = buildSlotManagedTypes(dept, maxStaff); // Step3: グローバル昇格
-  // isSlotManaged: あるシフトキーが role-slot（Tier1絶対制約）か判定する共通関数
-  const isSlotManaged = (shiftKey) => slotManagedTypes.has(shiftKey);
-
-  // shouldProtectSlot: Tier2 repair がそのシフトを削減してよいか判定する共通ガード
-  // 「role-slot かつ 現在の配置数が上限以内」= 削減禁止（Tier1絶対制約）
-  //   shiftKey: 削減しようとしているシフト種別
-  //   count   : 当該日の現在の配置人数
-  // 返値 true  → 削減してはいけない（protect）
-  // 返値 false → 削減してよい（proceed）
-  //
-  // 使用例:
-  //   if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) continue;
-  const shouldProtectSlot = (shiftKey, count) => {
-    if (!isSlotManaged(shiftKey)) return false;       // 日勤など非slot → 保護不要
-    return count <= (maxStaff[shiftKey] ?? 99);       // slot が上限以内 → 削減禁止
-  };
+  const _isSlotManaged = (shiftKey) => isSlotManaged(shiftKey, slotManagedTypes); // Step6: グローバル昇格
+  const _shouldProtectSlot = (shiftKey, count) => shouldProtectSlot(shiftKey, count, slotManagedTypes, maxStaff); // Step6: グローバル昇格
 
   // ══════════════════════════════════════════════════════════════════════════════
   // ★介護型エンジン 制約階層（Constraint Priority）正式定義
@@ -857,7 +856,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   // │     late  shift（遅番）= 「閉め担当」席                                   │
   // │     night shift（夜勤）= 「夜間担当」席（+ 明け連鎖）                      │
   // │     → coverage 人数ではなく「役割席」。0人は施設崩壊。                     │
-  // │     → shouldProtectSlot() が全 repair 経路の単一ガード。                  │
+  // │     → _shouldProtectSlot() が全 repair 経路の単一ガード。                  │
   // │                                                                         │
   // │  B. 希望休（希望ロック）                                                  │
   // │     スタッフが申請した公休希望日。生成エンジンは絶対尊重。                   │
@@ -918,11 +917,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   //
   // enforceMaxStaff の例外ルール:
   //   count > maxStaff[slot] → 超過（違反状態）→ 削減許可（Tier1 修正方向への削減）
-  //   count ≤ maxStaff[slot] → 正常状態       → shouldProtectSlot が削減を禁止
+  //   count ≤ maxStaff[slot] → 正常状態       → _shouldProtectSlot が削減を禁止
   //
   // 新 repair フェーズを追加するときのルール:
   //   res[s.id][d] を「休み」や別シフトへ変換する前に必ず:
-  //     if (shouldProtectSlot(res[s.id][d], <その日のcount>)) continue;
+  //     if (_shouldProtectSlot(res[s.id][d], <その日のcount>)) continue;
   //   を挿入すること。
   // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1156,7 +1155,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   };
 
   // enforceMaxStaff ─ [Tier1例外: count>maxStaff の超過状態のみ削減許可]
-  // 正常状態（count≤maxStaff）では発動しない → shouldProtectSlot と逆条件で安全
+  // 正常状態（count≤maxStaff）では発動しない → _shouldProtectSlot と逆条件で安全
   // ★enforceMaxStaff: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
   const enforceMaxStaff = () => {
     for (let d = 1; d <= days; d++) {
@@ -1349,7 +1348,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     // 夜勤5回スタッフの残り空き日数が不足してPassAのbreakが発火する問題を防ぐ。
     {
       const slotFirstTypes = [...new Set(dept.shiftTypes)].filter(k =>
-        k !== '夜勤' && isSlotManaged(k)
+        k !== '夜勤' && _isSlotManaged(k)
       );
       console.log('[AG-v7] slotFirstTypes=', slotFirstTypes, 'maxStaff=', JSON.stringify(maxStaff));
       let _slotMaxConsecExcluded = 0;
@@ -1471,7 +1470,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         const remaining = new Set(workDays);
         allowed.filter(k => k !== '日勤').forEach(shiftType => {
           // slot-first 済み（role-slot）のシフトは Pass B では扱わない
-          if (isSlotManaged(shiftType)) return;
+          if (_isSlotManaged(shiftType)) return;
           const targetCount = targetShiftCounts[s.id][shiftType] || 0;
           if (!targetCount) return;
           const pool = [...remaining].filter(d => {
@@ -1556,17 +1555,17 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     //
     //      削除優先順位:
     //        最優先: 日勤（base=日勤 のシフト）  ← 介護バッファ層、最も削除に適切
-    //        次点  : 非 slot 勤務               ← shouldProtectSlot が false のもの
+    //        次点  : 非 slot 勤務               ← _shouldProtectSlot が false のもの
     //        禁止  : role-slot / lockedDays / 明け
     //
-    //      Tier1 保証: shouldProtectSlot(tSh, count) が true の日は除外
+    //      Tier1 保証: _shouldProtectSlot(tSh, count) が true の日は除外
     //      副作用: 追加された休みは後続の 公休数調整 で consecWork チェック済みなため
     //              無限 repair ループにはならない
     {
       let _fixedNonSlot = 0, _absorbedByTier2 = 0;
       const _diagTypeMap = {}; // [DIAG] 元シフト種別カウント
       const _cds = dept.customShiftDefs || [];
-      // base が 日勤 かどうかを判定（isSlotManaged は除外済みだが、優先度付けのため明示チェック）
+      // base が 日勤 かどうかを判定（_isSlotManaged は除外済みだが、優先度付けのため明示チェック）
       const _isNikkinBase = (k) => isNikkinBase(k, _cds); // Step4: グローバル昇格
       ds.forEach(s => {
         for (let d = 1; d <= days; d++) {
@@ -1576,7 +1575,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           // ★ PassC 公休超過ガード: actualRest >= targetRest なら休み追加を行わない
           { const _gAct=Object.values(res[s.id]).filter(v=>deptRest.has(v)&&v!=='明け').length, _gTgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8; if(_gAct>=_gTgt){console.log('[PassC-GUARD]',s.name,'actualRest=',_gAct,'targetRest=',_gTgt,'reason=rest-limit');continue;} }
           const sh = res[s.id][d];
-          if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) {
+          if (_shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) {
             // ★Tier1保護: d 日は role-slot → 削除不可
             // Tier2 吸収: [d-maxConsec, d-1] を走査して削除候補を優先度順で選択
             const searchStart = Math.max(1, d - maxConsec);
@@ -1586,7 +1585,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
               if (lockedDays[s.id].has(t)) continue;
               const tSh = res[s.id][t];
               if (!deptWork.has(tSh) || tSh === '明け') continue;
-              if (shouldProtectSlot(tSh, ds.filter(sx => res[sx.id][t] === tSh).length)) continue;
+              if (_shouldProtectSlot(tSh, ds.filter(sx => res[sx.id][t] === tSh).length)) continue;
               // 日勤が見つかれば即確定（最優先）
               if (_isNikkinBase(tSh)) { nikkinTarget = t; break; }
               // 非 slot 勤務は候補として保存して走査続行（日勤を探す）
@@ -1611,7 +1610,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       { const _total=_fixedNonSlot+_absorbedByTier2; const _ab=(_diagTypeMap['A']||0)+(_diagTypeMap['B']||0); const _rows=Object.entries(_diagTypeMap).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({元シフト:k,件数:v,割合:(_total>0?(v/_total*100).toFixed(1)+'%':'0%')})); console.error(`[PassC-TYPE-DIAG] dept=${dept.id} 元シフト別集計(合計=${_total}件 A+B=${_ab}件 A+B率=${_total>0?(_ab/_total*100).toFixed(1)+'%':'0%'})`); if(_rows.length)console.table(_rows); }
     }
     // ★Phase1 diagnostic: Pass C 後の連続勤務違反残存チェック（読み取り専用・ロジック変更なし）
-    // [AG-Phase1] log: total=残存違反数 slotProtected=shouldProtectSlot が守った件数（Tier1衝突）
+    // [AG-Phase1] log: total=残存違反数 slotProtected=_shouldProtectSlot が守った件数（Tier1衝突）
     {
       let _passCViolations = 0, _passCSlotProtected = 0;
       ds.forEach(s => {
@@ -1620,7 +1619,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (consecWork(s.id, d) <= maxConsec) continue;
           _passCViolations++;
           const sh = res[s.id][d];
-          if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) _passCSlotProtected++;
+          if (_shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) _passCSlotProtected++;
         }
       });
       if (_passCViolations > 0)
@@ -1634,7 +1633,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     { const _R=new Set(['休み','希望休','有休']); ['高野','伊藤','郡司','柳','川村'].forEach(nm=>{const _s=ds.find(s=>s.name&&s.name.includes(nm));if(_s){const _t=_s.kyukoDaysByMonth?.[mk]??_s.kyukoDays??8;const _d=Object.entries(res[_s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[公休追跡] PassC終了 ${_s.name} target=${_t} actual=${_d.length} 休み日=[${_d.join(',')}]`);}}); }
     console.log('[day1-track]', 'PassC後', res['kaigo1_6']?.[1]);
 
-    // ── 公休数調整 ─ [Tier2 repair / shortage補正は shouldProtectSlot 保護済み] ──
+    // ── 公休数調整 ─ [Tier2 repair / shortage補正は _shouldProtectSlot 保護済み] ──
     ds.forEach(s => {
       const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
       const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休").length;
@@ -1685,7 +1684,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
               if (!canRest(s.id, d)) return false;
               // ★Tier1保護: role-slot が上限以内なら公休shortage補正（Tier2）の対象外
               const sh = res[s.id][d];
-              if (shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) return false;
+              if (_shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) return false;
               return true;
             })
             .sort((a, b) => consecWork(s.id, b - 1) - consecWork(s.id, a - 1));
@@ -1717,7 +1716,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
 
   enforceMaxStaff(); // 1回目: Pass B/C 後の超過を除去
 
-  // 遷移違反 repair ─ [Tier2 repair / shouldProtectSlot 保護済み（休み→日勤代替）]
+  // 遷移違反 repair ─ [Tier2 repair / _shouldProtectSlot 保護済み（休み→日勤代替）]
   // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
   const isViolation = (prev, curr) => _isBadTransition(prev, curr);
   for (const s of ds) {
@@ -1737,7 +1736,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         });
         // ★Tier1保護: altが見つからず"休み"にする前に role-slot なら roleAllowed内でフォールバック
         const curSh = res[s.id][target];
-        const isSlotProtected = shouldProtectSlot(curSh, ds.filter(sx => res[sx.id][target] === curSh).length);
+        const isSlotProtected = _shouldProtectSlot(curSh, ds.filter(sx => res[sx.id][target] === curSh).length);
         const roleAllowed = getAllowedTypes(s);
         const finalAlt = alt ?? (isSlotProtected
           ? (roleAllowed.find(k => k === '日勤' && cnts[k] < (maxStaff[k] ?? 99))
@@ -1766,7 +1765,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       return cnts[k] < (maxStaff[k] ?? 99);
     });
     const curSh = res[s.id][1];
-    const isSlotProtected = shouldProtectSlot(curSh, ds.filter(sx => res[sx.id][1] === curSh).length);
+    const isSlotProtected = _shouldProtectSlot(curSh, ds.filter(sx => res[sx.id][1] === curSh).length);
     const roleAllowed1 = getAllowedTypes(s);
     res[s.id][1] = alt ?? (isSlotProtected
       ? (roleAllowed1.find(k => k === '日勤' && cnts[k] < (maxStaff[k] ?? 99))
@@ -1778,7 +1777,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   enforceMaxStaff(); // 2回目: 違反修正後の超過を除去
   console.log('[day1-track]', 'transitionFix後', res['kaigo1_6']?.[1]);
 
-  // minStaff 保証 ─ [Tier2 repair / slide元は shouldProtectSlot 保護済み]
+  // minStaff 保証 ─ [Tier2 repair / slide元は _shouldProtectSlot 保護済み]
   // 最低配置保証フェーズ: minStaff未満の日にスタッフを補充
   // 優先①: 他シフト勤務中のスタッフをスライド（振替）→ 休み数は変わらない
   // 優先②: 休み→勤務は公休数が目標より多い余剰スタッフのみ対象（kyukoDays死守）
@@ -1804,7 +1803,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           const fromActual = ds.filter(sx => res[sx.id][d] === cur).length;
           if (fromActual - 1 < fromMin) return false;
           // ★Tier1保護: role-slot が上限以内ならスライド元（Tier2）にしない
-          if (shouldProtectSlot(cur, fromActual)) return false;
+          if (_shouldProtectSlot(cur, fromActual)) return false;
           return true;
         }).sort((a, b) => {
           // ★最小変更原則: 比率ターゲットのシフト中スタッフはスライドを最後に選ぶ
@@ -1961,7 +1960,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   { const _R=new Set(['休み','希望休','有休']); console.error('── 超過バリデーション後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
   { const _L=ds.find(s=>s.name&&s.name.includes('ララ')); if(_L){const _R=new Set(['休み','希望休','有休']);const _tgt=_L.kyukoDaysByMonth?.[mk]??_L.kyukoDays??8;const _ds=Object.entries(res[_L.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);console.error(`[ララ] 超過バリデーション後 target=${_tgt} actual=${_ds.length} diff=${_ds.length-_tgt} 休み日=[${_ds.join(',')}]`);} }
 
-  // ratio 修復 ─ [Tier2 repair / fromShift削減は shouldProtectSlot 保護済み]
+  // ratio 修復 ─ [Tier2 repair / fromShift削減は _shouldProtectSlot 保護済み]
   // ★比率修復パス: minStaff保証後の比率乖離を実際のシフト変換で修正する
   // minStaff slide 等で A1→A に崩れたスタッフのシフトを制約内で書き戻す
   {
@@ -2001,7 +2000,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
             // ★Tier1保護: role-slot が上限以内なら ratio修復（Tier2）で削減しない
-            if (shouldProtectSlot(fromShift, fromCnt)) continue;
+            if (_shouldProtectSlot(fromShift, fromCnt)) continue;
             const toCnt = ds.filter(sx => res[sx.id][d] === toShift).length;
             if (toCnt >= (maxStaff[toShift] ?? 99)) continue;
             res[s.id][d] = toShift;
