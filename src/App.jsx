@@ -755,6 +755,41 @@ function buildNightExclusion(allCs, targetDept, allShifts, allDepts, year, month
   });
 }
 
+// ── ConstraintEngine Phase1: グローバル昇格（Step2〜4） ─────────────────────
+// ロジック変更なし。autoGenerate 内クロージャから引数付きグローバル関数へ昇格。
+
+// Step2: buildNightSet - baseType=夜勤 の全シフトキー Set を構築（明け前日バリデーション用）
+// 元コード: autoGenerate 内 _agNightSet（L948〜953）と同一ロジック
+function buildNightSet(dept) {
+  return new Set(
+    [...new Set(dept.shiftTypes || [])].filter(k => {
+      const _cd = (dept.customShiftDefs || []).find(d => d.key === k);
+      return (_cd?.baseType || k) === '夜勤';
+    })
+  );
+}
+
+// Step3: buildSlotManagedTypes - role-slot 対象シフト Set を構築（Tier1絶対制約の対象一覧）
+// 元コード: autoGenerate 内 slotManagedTypes（L784〜792）と同一ロジック
+function buildSlotManagedTypes(dept, maxStaff) {
+  return new Set(
+    [...new Set(dept.shiftTypes)].filter(k => {
+      if (k === '明け') return false;
+      const cd = (dept.customShiftDefs || []).find(d => d.key === k);
+      const base = cd?.baseType || k;
+      if (base === '日勤') return false;
+      return (maxStaff[k] ?? 99) < 99;
+    })
+  );
+}
+
+// Step4: isNikkinBase - シフトキーの baseType が日勤かどうかを判定
+// 元コード: autoGenerate 内 _isNikkinBase（L1543）と同一ロジック
+function isNikkinBase(k, customDefs) {
+  return ((customDefs || []).find(c => c.key === k)?.baseType || k) === '日勤';
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
   console.error('[AG-v7d] start dept=', dept.id, 'maxStaff=', JSON.stringify(dept.maxStaff), 'minStaff=', JSON.stringify(dept.minStaff));
   const days = getDays(year, month);
@@ -781,15 +816,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   //   ③ 上記以外で maxStaff<99（人数制限あり）のシフト = role-slot
   //      ※ 将来「日勤 max=2」に設定しても ① で除外されるため誤判定しない
   // ══════════════════════════════════════════════════════════════════════════════
-  const slotManagedTypes = new Set(
-    [...new Set(dept.shiftTypes)].filter(k => {
-      if (k === '明け') return false;                                    // ② 明けは除外
-      const cd = (dept.customShiftDefs||[]).find(d => d.key === k);
-      const base = cd?.baseType || k;
-      if (base === '日勤') return false;                                 // ① 日勤baseは除外
-      return (maxStaff[k] ?? 99) < 99;                                  // ③ 人数制限ありのみ
-    })
-  );
+  const slotManagedTypes = buildSlotManagedTypes(dept, maxStaff); // Step3: グローバル昇格
   // isSlotManaged: あるシフトキーが role-slot（Tier1絶対制約）か判定する共通関数
   const isSlotManaged = (shiftKey) => slotManagedTypes.has(shiftKey);
 
@@ -945,12 +972,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   const consecRest = (id, d) => { let c = 0; for (let i = d; i >= 1; i--) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   const consecRestFwd = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   // ★[Fix-NightSeq] 夜勤系 shift set: baseType=夜勤 の全 shift key（明け前日バリデーション用）
-  const _agNightSet = new Set(
-    [...new Set(dept.shiftTypes || [])].filter(k => {
-      const _cd = (dept.customShiftDefs || []).find(d => d.key === k);
-      return (_cd?.baseType || k) === '夜勤';
-    })
-  );
+  const _agNightSet = buildNightSet(dept); // Step2: グローバル昇格
   const isBadTransition = (prev, curr) => {
     if (!prev || !curr) return false;
     if (dept.intervalEnabled && dept.intervalTargetShifts?.includes(curr)) {
@@ -1540,7 +1562,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       const _diagTypeMap = {}; // [DIAG] 元シフト種別カウント
       const _cds = dept.customShiftDefs || [];
       // base が 日勤 かどうかを判定（isSlotManaged は除外済みだが、優先度付けのため明示チェック）
-      const _isNikkinBase = (k) => (_cds.find(c => c.key === k)?.baseType || k) === '日勤';
+      const _isNikkinBase = (k) => isNikkinBase(k, _cds); // Step4: グローバル昇格
       ds.forEach(s => {
         for (let d = 1; d <= days; d++) {
           if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
