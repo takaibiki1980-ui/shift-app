@@ -788,6 +788,18 @@ function buildSlotManagedTypes(dept, maxStaff) {
 function isNikkinBase(k, customDefs) {
   return ((customDefs || []).find(c => c.key === k)?.baseType || k) === '日勤';
 }
+
+// Step5: isBadTransition - シフト遷移が違反かどうかを判定（純粋関数）
+// 元コード: autoGenerate 内 isBadTransition（L976〜983）と同一ロジック
+// nightSet = buildNightSet(dept) の結果を渡すこと（明け前日バリデーション用）
+function isBadTransition(prev, curr, dept, nightSet) {
+  if (!prev || !curr) return false;
+  if (dept.intervalEnabled && dept.intervalTargetShifts?.includes(curr)) {
+    return shiftIntervalHours(prev, curr, dept) < (dept.intervalHours ?? 11);
+  }
+  if (curr === '明け' && !nightSet.has(prev)) return true;
+  return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
@@ -973,14 +985,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   const consecRestFwd = (id, d) => { let c = 0; for (let i = d + 1; i <= days; i++) { if (deptRest.has(res[id][i]) && res[id][i] !== "明け") c++; else break; } return c; };
   // ★[Fix-NightSeq] 夜勤系 shift set: baseType=夜勤 の全 shift key（明け前日バリデーション用）
   const _agNightSet = buildNightSet(dept); // Step2: グローバル昇格
-  const isBadTransition = (prev, curr) => {
-    if (!prev || !curr) return false;
-    if (dept.intervalEnabled && dept.intervalTargetShifts?.includes(curr)) {
-      return shiftIntervalHours(prev, curr, dept) < (dept.intervalHours ?? 11);
-    }
-    if (curr === '明け' && !_agNightSet.has(prev)) return true;
-    return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
-  };
+  const _isBadTransition = (prev, curr) => isBadTransition(prev, curr, dept, _agNightSet); // Step5: グローバル昇格
   const canRest = (id, d) => {
     if (res[id][d - 1] === "明け") return false;
     return (consecRest(id, d - 1) + 1 + consecRestFwd(id, d)) <= 2;
@@ -1181,8 +1186,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           const altShift = dayTypes.find(k => {
             if (k === shiftKey) return false;
             if (!getAllowedTypes(s).includes(k)) return false;
-            if (isBadTransition(prev, k)) return false;
-            if (isBadTransition(k, next)) return false;
+            if (_isBadTransition(prev, k)) return false;
+            if (_isBadTransition(k, next)) return false;
             const cnt = ds.filter(sx => res[sx.id][d] === k).length;
             return cnt < (maxStaff[k] ?? 99);
           });
@@ -1361,11 +1366,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (res[s.id][d]) return false;
             const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1], next = res[s.id][d + 1];
             if (s.id === 'kaigo1_6' && d === 1) {
-              console.log('[day1-check]', s.name, 'prev=', prev, 'candidate=', shiftType, 'blocked=', isBadTransition(prev, shiftType));
+              console.log('[day1-check]', s.name, 'prev=', prev, 'candidate=', shiftType, 'blocked=', _isBadTransition(prev, shiftType));
             }
             if (prev === '明け') return false;
-            if (isBadTransition(prev, shiftType)) return false;
-            if (isBadTransition(shiftType, next)) return false;
+            if (_isBadTransition(prev, shiftType)) return false;
+            if (_isBadTransition(shiftType, next)) return false;
             const prevConsec = consecWork(s.id, d - 1);
             let fwdConsec = 0;
             for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) fwdConsec++; else break; }
@@ -1509,9 +1514,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
             if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) probs[k] = 0;
           });
-          if (d === 1) { const ps = prevShift(s.id); if (ps) allowed.forEach(k => { if (isBadTransition(ps, k)) probs[k] = 0; }); }
+          if (d === 1) { const ps = prevShift(s.id); if (ps) allowed.forEach(k => { if (_isBadTransition(ps, k)) probs[k] = 0; }); }
           const pick = sampleFromProbs(probs)
-            || allowed.find(k => !isBadTransition(d === 1 ? prevShift(s.id) : null, k) && (dayCnts[k]||0) < (maxStaff[k]??99))
+            || allowed.find(k => !_isBadTransition(d === 1 ? prevShift(s.id) : null, k) && (dayCnts[k]||0) < (maxStaff[k]??99))
             || allowed.find(k => k === '日勤')
             || allowed[0];
           res[s.id][d] = pick;
@@ -1650,7 +1655,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
           av = av.filter(k => getAllowedTypes(s).includes(k));
-          { const p=d===1?prevShift(s.id):res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
+          { const p=d===1?prevShift(s.id):res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!_isBadTransition(p,k)); if(nx) av=av.filter(k=>!_isBadTransition(k,nx)); }
           if (!av.length) {
             const prevSh = d === 1 ? prevShift(s.id) : res[s.id][d - 1]; const nextShift = res[s.id][d + 1];
             const roleAllowed = getAllowedTypes(s);
@@ -1658,7 +1663,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             const forceShift = (() => {
               const base = roleAllowed.length < dayTypes.length ? roleAllowed : dayTypes;
               // ①遷移OK + maxStaff内
-              const best = base.find(k => !isBadTransition(prevSh,k) && !isBadTransition(k,nextShift) && ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
+              const best = base.find(k => !_isBadTransition(prevSh,k) && !_isBadTransition(k,nextShift) && ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
               if (best) return best;
               // ②遷移妥協でも maxStaff内（roleAllowed外は絶対に返さない）
               const safe = base.filter(k=>ds.filter(sx=>res[sx.id][d]===k).length<(maxStaff[k]??99));
@@ -1698,7 +1703,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
         let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
         av = av.filter(k => getAllowedTypes(s).includes(k));
-        { const p=d===1?prevShift(s.id):res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
+        { const p=d===1?prevShift(s.id):res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!_isBadTransition(p,k)); if(nx) av=av.filter(k=>!_isBadTransition(k,nx)); }
         if (!av.length) continue;
         res[s.id][d] = [...av].sort((a, b) => fixCnts[a] - fixCnts[b])[0];
       }
@@ -1714,7 +1719,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
 
   // 遷移違反 repair ─ [Tier2 repair / shouldProtectSlot 保護済み（休み→日勤代替）]
   // 遅番翌日早番/日勤、日勤翌日早番 の残存違反を修正
-  const isViolation = (prev, curr) => isBadTransition(prev, curr);
+  const isViolation = (prev, curr) => _isBadTransition(prev, curr);
   for (const s of ds) {
     for (let d = 2; d <= days; d++) {
       if (!isViolation(res[s.id][d - 1], res[s.id][d])) continue;
@@ -1726,8 +1731,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         dayTypes.forEach(k => { cnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][target] === k).length; });
         const alt = dayTypes.find(k => {
           if (!getAllowedTypes(s).includes(k)) return false;
-          if (isBadTransition(p, k)) return false;
-          if (isBadTransition(k, n)) return false;
+          if (_isBadTransition(p, k)) return false;
+          if (_isBadTransition(k, n)) return false;
           return cnts[k] < (maxStaff[k] ?? 99);
         });
         // ★Tier1保護: altが見つからず"休み"にする前に role-slot なら roleAllowed内でフォールバック
@@ -1756,8 +1761,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     dayTypes.forEach(k => { cnts[k] = ds.filter(sx => sx.id !== s.id && res[sx.id][1] === k).length; });
     const alt = dayTypes.find(k => {
       if (!getAllowedTypes(s).includes(k)) return false;
-      if (isBadTransition(ps, k)) return false;
-      if (isBadTransition(k, nx)) return false;
+      if (_isBadTransition(ps, k)) return false;
+      if (_isBadTransition(k, nx)) return false;
       return cnts[k] < (maxStaff[k] ?? 99);
     });
     const curSh = res[s.id][1];
@@ -1792,8 +1797,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (lockedDays[s.id].has(d)) return false;
           if (!getAllowedTypes(s).includes(shiftKey)) return false;
           const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1], next = res[s.id][d + 1];
-          if (isBadTransition(prev, shiftKey)) return false;
-          if (isBadTransition(shiftKey, next)) return false;
+          if (_isBadTransition(prev, shiftKey)) return false;
+          if (_isBadTransition(shiftKey, next)) return false;
           // スライド元シフトのminStaffを割らないか確認
           const fromMin = dept.minStaff?.[cur] ?? 0;
           const fromActual = ds.filter(sx => res[sx.id][d] === cur).length;
@@ -1831,8 +1836,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (!getAllowedTypes(s).includes(shiftKey)) return false;
           const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1], next = res[s.id][d + 1];
           if (prev === "夜勤" || prev === "明け") return false;
-          if (isBadTransition(prev, shiftKey)) return false;
-          if (isBadTransition(shiftKey, next)) return false;
+          if (_isBadTransition(prev, shiftKey)) return false;
+          if (_isBadTransition(shiftKey, next)) return false;
           if ((consecWork(s.id, d - 1) + 1) > maxConsec) return false;
           const curCount = ds.filter(sx => res[sx.id][d] === shiftKey).length;
           if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
@@ -1927,8 +1932,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if ((backW + 1 + fwdW) > maxConsec) return false;
           // シフト連続性チェック（日勤を仮ターゲットとして違反確認）
           const tgt = allowedForS.includes("日勤") ? "日勤" : (allowedForS[0] || "日勤");
-          if (isBadTransition(prev, tgt)) return false;
-          if (isBadTransition(tgt, next)) return false;
+          if (_isBadTransition(prev, tgt)) return false;
+          if (_isBadTransition(tgt, next)) return false;
           // 優先3: maxStaff チェック（日勤上限を守る）
           const curCount = ds.filter(sx => res[sx.id][d] === tgt).length;
           if (curCount >= (maxStaff[tgt] ?? 99)) return false;
@@ -1991,8 +1996,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (converted >= canConvert) break;
             if (res[s.id][d] !== fromShift) continue;
             const prev = res[s.id][d-1], next = res[s.id][d+1];
-            if (isBadTransition(prev, toShift)) continue;
-            if (isBadTransition(toShift, next)) continue;
+            if (_isBadTransition(prev, toShift)) continue;
+            if (_isBadTransition(toShift, next)) continue;
             const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
             if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
             // ★Tier1保護: role-slot が上限以内なら ratio修復（Tier2）で削減しない
