@@ -853,6 +853,13 @@ function consecRestFwd(id, d, res, deptRest, days) {
   }
   return c;
 }
+
+// Step9: canRest - 指定日に休みを配置してよいか判定（明け翌日禁止 + 連続休み上限2日）
+// 元コード: autoGenerate 内 canRest（L1014〜1017）と同一ロジック
+function canRest(id, d, res, deptRest, days) {
+  if (res[id][d - 1] === "明け") return false;
+  return (consecRest(id, d - 1, res, deptRest) + 1 + consecRestFwd(id, d, res, deptRest, days)) <= 2;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
@@ -1011,10 +1018,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   // ★[Fix-NightSeq] 夜勤系 shift set: baseType=夜勤 の全 shift key（明け前日バリデーション用）
   const _agNightSet = buildNightSet(dept); // Step2: グローバル昇格
   const _isBadTransition = (prev, curr) => isBadTransition(prev, curr, dept, _agNightSet); // Step5: グローバル昇格
-  const canRest = (id, d) => {
-    if (res[id][d - 1] === "明け") return false;
-    return (_consecRest(id, d - 1) + 1 + _consecRestFwd(id, d)) <= 2;
-  };
+  const _canRest = (id, d) => canRest(id, d, res, deptRest, days); // Step9: グローバル昇格
 
   // ★ステップ1: 希望休・希望勤務を最初にセット（最優先・絶対変更しない）
   ds.forEach(s => {
@@ -1707,14 +1711,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           const workDays2 = Object.entries(res[s.id]).filter(([, v]) => deptWork.has(v)).map(([d]) => +d)
             .filter(d => {
               if (res[s.id][d - 1] === "明け" || res[s.id][d + 1] === "明け") return false;
-              if (!canRest(s.id, d)) return false;
+              if (!_canRest(s.id, d)) return false;
               // ★Tier1保護: role-slot が上限以内なら公休shortage補正（Tier2）の対象外
               const sh = res[s.id][d];
               if (_shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) return false;
               return true;
             })
             .sort((a, b) => _consecWork(s.id, b - 1) - _consecWork(s.id, a - 1));
-          for (const d of workDays2) { if (shortage <= 0) break; if (!canRest(s.id, d)) continue; res[s.id][d] = "休み"; shortage--; }
+          for (const d of workDays2) { if (shortage <= 0) break; if (!_canRest(s.id, d)) continue; res[s.id][d] = "休み"; shortage--; }
         }
       }
       for (let d = 1; d <= days; d++) {
