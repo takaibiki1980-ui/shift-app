@@ -6525,12 +6525,116 @@ function recomputeGenerateWarnings(result, ds, cd, year, month, warnings, score,
   }
 }
 
+function ShiftViewPortal({ adminUserId, deptId, ym }) {
+  const year = ym ? Math.floor(Number(ym) / 100) : new Date().getFullYear();
+  const month = ym ? (Number(ym) % 100) - 1 : new Date().getMonth();
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [info, setInfo] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const shiftKey = `shifts_${year}_${month+1}_${deptId}`;
+      const [cfgRes, shiftsRes, evRes] = await Promise.all([
+        supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', 'facilityConfig').maybeSingle(),
+        supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', shiftKey).maybeSingle(),
+        supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', 'events_data').maybeSingle(),
+      ]);
+      if (!cfgRes.data?.data_value) { setLoadError(true); setLoading(false); return; }
+      const cfg = cfgRes.data.data_value;
+      const dept = cfg.depts?.find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
+      const staffList = (cfg.staffList || []).filter(s => s.dept === deptId);
+      const mk = monthKey(year, month);
+      const events = evRes.data?.data_value?.[deptId]?.[mk] || {};
+      setInfo({ dept, staffList, shifts: shiftsRes.data?.data_value || {}, events });
+      setLoading(false);
+    })();
+  }, []); // eslint-disable-line
+
+  if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
+  if (loadError || !info) return <div style={{padding:48,textAlign:'center',color:'#c44b4b',fontSize:14}}>シフト表を読み込めませんでした。URLを確認してください。</div>;
+
+  const { dept, staffList, shifts, events } = info;
+  const days = getDays(year, month);
+  const WD = ['日','月','火','水','木','金','土'];
+  const REST_SET = new Set(['休み','希望休','有休']);
+  const cellText = (v) => {
+    if (!v) return '－';
+    if (v === '希望休' || v === '休み') return '休';
+    if (v === '有休') return '有';
+    if (v === '明け') return '明';
+    if (v === '夜勤') return '夜';
+    return v.slice(0, 2);
+  };
+  const th = { border:'1px solid #ccc', padding:'3px 4px', textAlign:'center', fontSize:11, background:'#e8f0fe', fontWeight:'bold' };
+  const td = { border:'1px solid #ccc', padding:'3px 4px', textAlign:'center', fontSize:11 };
+
+  return (
+    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:16,color:'#111',maxWidth:900}}>
+      <h2 style={{fontSize:16,margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8,color:'#18181B'}}>
+        {dept.icon} {dept.label}　{year}年{month+1}月 シフト表
+      </h2>
+      <div style={{overflowX:'auto'}}>
+        <table style={{borderCollapse:'collapse',width:'100%'}}>
+          <thead>
+            <tr>
+              <th style={{...th,textAlign:'left',minWidth:72}}>氏名</th>
+              {Array.from({length:days},(_,i)=>i+1).map(d=>{
+                const wd=WD[new Date(year,month,d).getDay()];
+                const isWe=wd==='日'||wd==='土';
+                return <th key={d} style={{...th,background:isWe?'#fff0f6':'#e8f0fe',minWidth:24}}>{d}<br/>{wd}</th>;
+              })}
+              <th style={th}>勤務</th><th style={th}>夜勤</th><th style={th}>休</th>
+            </tr>
+            {Object.keys(events).length>0&&(
+              <tr>
+                <th style={{...th,textAlign:'left',background:'#fffbea'}}>行事</th>
+                {Array.from({length:days},(_,i)=>i+1).map(d=>(
+                  <th key={d} style={{...th,background:events[d]?'#fef3c7':'#fffdf0',writingMode:events[d]?'vertical-rl':undefined,fontSize:9,color:'#92400e',padding:'2px 1px'}}>{events[d]||''}</th>
+                ))}
+                <th style={th}/><th style={th}/><th style={th}/>
+              </tr>
+            )}
+          </thead>
+          <tbody>
+            {staffList.map(s=>{
+              let w=0,n=0,r=0;
+              const ss=shifts[s.id]||{};
+              return(
+                <tr key={s.id}>
+                  <td style={{...td,textAlign:'left'}}>{s.name}</td>
+                  {Array.from({length:days},(_,i)=>i+1).map(d=>{
+                    const v=ss[d]||'';
+                    if(v&&!REST_SET.has(v)&&v!=='明け'){w++;}
+                    if(v==='夜勤')n++;
+                    if(REST_SET.has(v)&&v!=='有休')r++;
+                    const isWe=['日','土'].includes(WD[new Date(year,month,d).getDay()]);
+                    return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{cellText(v)}</td>;
+                  })}
+                  <td style={td}>{w}</td>
+                  <td style={td}>{n||'－'}</td>
+                  <td style={td}>{r}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{marginTop:12,fontSize:10,color:'#9CA3AF',textAlign:'center'}}>しふぽん — シフト確定表</div>
+    </div>
+  );
+}
+
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const staffUserId = params.get('staff');
   const staffDeptId = params.get('dept');
   const staffCfgB64 = params.get('cfg');
-  if (staffUserId) return <StaffPortal adminUserId={staffUserId} fixedDeptId={staffDeptId||undefined} cfgPreload={staffCfgB64} />;
+  const staffViewMode = params.get('view');
+  // 短縮UUID（22文字）を通常UUIDに戻す
+  const resolvedUserId = staffUserId ? (staffUserId.length <= 24 ? shortToUuid(staffUserId) : staffUserId) : null;
+  if (resolvedUserId && staffViewMode === 'shift') return <ShiftViewPortal adminUserId={resolvedUserId} deptId={staffDeptId} ym={params.get('ym')} />;
+  if (resolvedUserId) return <StaffPortal adminUserId={resolvedUserId} fixedDeptId={staffDeptId||undefined} cfgPreload={staffCfgB64} />;
 
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -8405,7 +8509,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
               const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
-              const urlShort=`${window.location.origin}?staff=${session.user.id}&dept=${d.id}`;
+              const urlShort=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlShort).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlShort}`));}else{alert(`URLをコピーしてください:\n${urlShort}`);}};
               const doLine=()=>{const lineUrl=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label}の希望休入力はこちら\n${urlShort}`)}`;window.open(lineUrl,'_blank');};              const doSaveSettings=async()=>{
@@ -8449,9 +8553,26 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                       <QRCodeSVG value={urlShort} size={140} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
                     </div>
                   </div>
-                  <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <div style={{fontSize:11,fontWeight:700,color:"#52525B",marginBottom:4}}>希望休入力リンク</div>
+                  <div style={{display:"flex",gap:8,marginTop:4,marginBottom:12}}>
                     <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
                     <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
+                  </div>
+                  {/* 確定シフト送信 */}
+                  <div style={{paddingTop:10,borderTop:"1px solid #E4E4E7"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#6366F1",marginBottom:4}}>📋 確定シフトを送る（{year}年{month+1}月）</div>
+                    <div style={{fontSize:10,color:"#52525B",marginBottom:6}}>スタッフが開くと{year}年{month+1}月のシフト表が確認できます</div>
+                    {(()=>{
+                      const shiftUrl=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}&view=shift&ym=${year}${String(month+1).padStart(2,'0')}`;
+                      const doShiftLine=()=>{const l=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${shiftUrl}`)}`;window.open(l,'_blank');};
+                      const doShiftCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(shiftUrl).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${shiftUrl}`));}else{alert(`URLをコピーしてください:\n${shiftUrl}`);}};
+                      return(
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={doShiftLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
+                          <button onClick={doShiftCopy} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               );
