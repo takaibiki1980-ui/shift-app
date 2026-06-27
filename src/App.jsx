@@ -3493,7 +3493,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
   const WD = ["日","月","火","水","木","金","土"];
   const TAG = (t) => '<' + t + '>';
   const CTAG = (t) => '</' + t + '>';
-  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('meta name="viewport" content="width=device-width,initial-scale=1"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:11px;margin:12px 8px;color:#111;}h2{font-size:14px;margin:14px 0 8px;border-bottom:2px solid #6366F1;padding-bottom:6px;}table{border-collapse:collapse;table-layout:fixed;margin-bottom:24px;}th,td{border:1px solid #ccc;padding:3px 1px;text-align:center;font-size:11px;width:34px;max-width:34px;overflow:hidden;box-sizing:border-box;height:32px;}th{background:#e8f0fe;font-weight:bold;line-height:1.2;}td{line-height:1.3;}.name{text-align:left;width:76px;max-width:76px;font-weight:bold;font-size:11px;word-break:break-all;white-space:normal;height:auto;padding:3px 4px;}.sum{width:32px;max-width:32px;font-size:10px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}.ev-row th{background:#fffbea!important;border-bottom:2px solid #fde68a;color:#92400e;font-weight:bold;}@media print{body{margin:4px;}h2{font-size:10px;page-break-before:auto;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
+  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('meta name="viewport" content="width=device-width,initial-scale=1"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:11px;margin:12px 8px;color:#111;}h2{font-size:14px;margin:14px 0 8px;border-bottom:2px solid #6366F1;padding-bottom:6px;}table{border-collapse:collapse;table-layout:fixed;margin-bottom:24px;}th,td{border:1px solid #ccc;padding:3px 1px;text-align:center;font-size:11px;width:34px;max-width:34px;overflow:hidden;box-sizing:border-box;height:32px;}th{background:#e8f0fe;font-weight:bold;line-height:1.2;}td{line-height:1.3;}.name{text-align:left;width:76px;max-width:76px;padding:3px 4px;vertical-align:middle;}.name-inner{font-weight:bold;font-size:11px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}.sum{width:32px;max-width:32px;font-size:10px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}.ev-row th{background:#fffbea!important;border-bottom:2px solid #fde68a;color:#92400e;font-weight:bold;}@media print{body{margin:4px;}h2{font-size:10px;page-break-before:auto;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
   depts.filter(d=>selectedDepts.includes(d.id)).forEach(dept => {
     const shifts = allShifts[dept.id] || {};
     const deptEvents = (allEvents && allEvents[dept.id] && allEvents[dept.id][mk]) || {};
@@ -3507,7 +3507,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       let w=0,n=0,r=0;
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
-      html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
+      html += TAG('tr')+'<td class="name"><div class="name-inner">'+s.name+'</div></td>';
       for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"; const cellText=isKibo||v==="希望休"||v==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':HALF_REST_TYPES.has(v)?v:(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}`)+cellText+CTAG('td'); }
       html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+r+CTAG('td')+CTAG('tr');
     });
@@ -6678,8 +6678,12 @@ function SharedShiftView({ token }) {
   const CELL_W = 34; // 「日/休」3文字が余裕を持って収まる幅（全勤務セル共通）
   const NAME_W = 76;
   const SUM_W = 32;
+  const ROW_H = 36; // 全行の固定高さ（2行分: 11px * 1.4 * 2 + padding）
   const th = { border:'1px solid #ccc', padding:'3px 1px', textAlign:'center', fontSize:11, background:'#e8f0fe', fontWeight:'bold', width:CELL_W, maxWidth:CELL_W, overflow:'hidden', boxSizing:'border-box', lineHeight:'1.2' };
-  const td = { border:'1px solid #ccc', padding:'3px 1px', textAlign:'center', fontSize:11, width:CELL_W, maxWidth:CELL_W, overflow:'hidden', boxSizing:'border-box', height:34 };
+  const td = { border:'1px solid #ccc', padding:'3px 1px', textAlign:'center', fontSize:11, width:CELL_W, maxWidth:CELL_W, overflow:'hidden', boxSizing:'border-box', height:ROW_H };
+  // 氏名セル: 全行で2行分の固定高さ。短い名前も長い名前も高さは揃える
+  const nameTdStyle = { ...td, textAlign:'left', width:NAME_W, maxWidth:NAME_W, padding:'3px 4px', verticalAlign:'middle' };
+  const nameInnerStyle = { fontWeight:'bold', fontSize:11, lineHeight:1.4, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', wordBreak:'break-all' };
 
   return (
     <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:'12px 8px',color:'#111',maxWidth:900}}>
@@ -6713,7 +6717,7 @@ function SharedShiftView({ token }) {
                     const ss = deptShifts[s.id] || {};
                     return (
                       <tr key={s.id}>
-                        <td style={{...td,textAlign:'left',width:NAME_W,maxWidth:NAME_W,fontWeight:'bold',fontSize:11,wordBreak:'break-all',whiteSpace:'normal',height:'auto',padding:'3px 4px'}}>{s.name}</td>
+                        <td style={nameTdStyle}><div style={nameInnerStyle}>{s.name}</div></td>
                         {Array.from({length:days},(_,i)=>i+1).map(d=>{
                           const v=ss[d]||'';
                           if(WORK_TYPES.has(v))w++;
