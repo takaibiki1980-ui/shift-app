@@ -6536,11 +6536,13 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
   useEffect(() => {
     (async () => {
       const shiftKey = `shifts_${year}_${month+1}_${deptId}`;
+      console.log('[PORTAL①] ShiftViewPortal 読込開始', { table: 'shift_data', user_id: adminUserId, data_key: shiftKey, ym, year, month: month+1, deptId });
       const [cfgRes, shiftsRes, evRes] = await Promise.all([
         supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', 'facilityConfig').maybeSingle(),
         supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', shiftKey).maybeSingle(),
         supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', 'events_data').maybeSingle(),
       ]);
+      console.log('[PORTAL②] Supabase 取得結果', { cfgFound: !!cfgRes.data?.data_value, shiftsFound: !!shiftsRes.data?.data_value, shiftsError: shiftsRes.error?.message || null, rawValue: shiftsRes.data?.data_value });
       if (!cfgRes.data?.data_value) { setLoadError(true); setLoading(false); return; }
       const cfg = cfgRes.data.data_value;
       const dept = cfg.depts?.find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
@@ -6679,7 +6681,10 @@ export default function App() {
   const staffViewMode = params.get('view');
   // 短縮UUID（22文字）を通常UUIDに戻す
   const resolvedUserId = staffUserId ? (staffUserId.length <= 24 ? shortToUuid(staffUserId) : staffUserId) : null;
-  if (resolvedUserId && staffViewMode === 'shift') return <ShiftViewPortal adminUserId={resolvedUserId} deptId={staffDeptId} ym={params.get('ym')} />;
+  if (resolvedUserId && staffViewMode === 'shift') {
+    console.log('[PORTAL-URL] URL パラメータ解析', { staff_param: staffUserId, resolved_user_id: resolvedUserId, dept: staffDeptId, ym: params.get('ym'), view: staffViewMode });
+    return <ShiftViewPortal adminUserId={resolvedUserId} deptId={staffDeptId} ym={params.get('ym')} />;
+  }
   if (resolvedUserId) return <StaffPortal adminUserId={resolvedUserId} fixedDeptId={staffDeptId||undefined} cfgPreload={staffCfgB64} />;
 
   const [session, setSession] = useState(null);
@@ -7427,7 +7432,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const deptData = allShifts[currentDeptId] || {};
         console.log('[TRACE⑤] forループ開始', { currentDeptId, key, staffCount: Object.keys(deptData).length });
         try {
-          console.log('[TRACE⑥] supabase.upsert() 呼び出し直前', { table: 'shift_data', key, staffCount: Object.keys(deptData).length });
+          console.log('[TRACE⑥] supabase.upsert() 呼び出し直前', { table: 'shift_data', user_id: session.user.id, data_key: key, staffCount: Object.keys(deptData).length });
           const { error } = await supabase.from('shift_data').upsert(
             { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
             { onConflict:'user_id,data_key' }
