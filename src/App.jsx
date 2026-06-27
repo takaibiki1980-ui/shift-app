@@ -4840,40 +4840,50 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
 }
 
 function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, onClose }) {
-  const [selectedDepts, setSelectedDepts] = useState([activeDeptId]);
-  const [sharingDept, setSharingDept] = useState(null);
-  // INSERT成功後のみセット: { deptId: { token, shareUrl } }
-  const [sharedResults, setSharedResults] = useState({});
+  // 全部署を初期表示（activeDeptId に関係なく全部署一覧）
+  const [selectedDepts, setSelectedDepts] = useState(depts.map(d => d.id));
+  const [isSharing, setIsSharing] = useState(false);
+  // INSERT成功後のみセット（全選択部署を1つのURLで共有）
+  const [sharedResult, setSharedResult] = useState(null);
   const noSelection = selectedDepts.length === 0;
   const fname = `シフト表_${year}年${month+1}月`;
   const toggleDept = (id) => {
     setSelectedDepts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-    // 部署選択が変わったら発行済み結果をリセット
-    setSharedResults(prev => { const n = {...prev}; delete n[id]; return n; });
+    // 部署選択が変わったら発行済み結果をリセット（URLが変わるため）
+    setSharedResult(null);
   };
   const doDownload = (ext) => { if(noSelection)return; let content="",type=""; if(ext==="csv"){content=buildCSV(depts,staffList,allShifts,year,month,selectedDepts);type="text/csv;charset=utf-8";} if(ext==="html"){content=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents);type="text/html;charset=utf-8";} triggerDownload(content,`${fname}.${ext}`,type); };
   const doPrint = () => { if(noSelection)return; const html=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents); printWithIframe(html); onClose(); };
 
-  // 共有ボタン押下: INSERT成功後のみ shareToken / URL / QR を発行
-  const doShare = async (d) => {
-    setSharingDept(d.id);
+  // 共有ボタン押下: 選択中の全部署を1つのINSERTで保存し、共通URLを発行
+  const doShare = async () => {
+    if (noSelection) return;
+    setIsSharing(true);
     try {
       // STEP2: 押下時点のスナップショットをメモリ上で作成
       const token = genToken();
-      const shift_data = JSON.parse(JSON.stringify(allShifts[d.id] || {}));
-      const staff_data = staffList
-        .filter(s => s.dept === d.id)
-        .map(s => ({ id: s.id, name: s.name, dept: s.dept }));
-      const dept_data = [{ id: d.id, label: d.label, icon: d.icon }];
+      const selectedDeptObjs = depts.filter(d => selectedDepts.includes(d.id));
 
-      // STEP3: shared_shifts へ INSERT（upsert・update は使わない）
+      // 全選択部署の shift_data をまとめる
+      const shift_data = {};
+      selectedDepts.forEach(deptId => {
+        shift_data[deptId] = JSON.parse(JSON.stringify(allShifts[deptId] || {}));
+      });
+
+      const staff_data = staffList
+        .filter(s => selectedDepts.includes(s.dept))
+        .map(s => ({ id: s.id, name: s.name, dept: s.dept }));
+
+      const dept_data = selectedDeptObjs.map(d => ({ id: d.id, label: d.label, icon: d.icon }));
+
+      // STEP3: shared_shifts へ INSERT（全部署を1レコードで保存）
       const { error } = await supabase.from('shared_shifts').insert({
         token,
         admin_user_id: session.user.id,
         year,
         month: month + 1,
-        dept_ids: [d.id],
-        shift_data: { [d.id]: shift_data },
+        dept_ids: selectedDepts,
+        shift_data,
         staff_data,
         dept_data,
         schema_version: 1,
@@ -4882,28 +4892,29 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
 
       // STEP4: INSERT成功後のみ shareToken 確定・QR/LINE/URLを有効化
       const shareUrl = `${window.location.origin}?share=${token}`;
-      setSharedResults(prev => ({ ...prev, [d.id]: { token, shareUrl } }));
+      setSharedResult({ token, shareUrl });
     } catch(e) {
       // INSERT失敗: URL・QR・LINEは発行しない
       alert('共有データの保存に失敗しました。再度お試しください。\n' + (e?.message || e));
     } finally {
-      setSharingDept(null);
+      setIsSharing(false);
     }
   };
 
-  const doLine = (d) => {
-    const r = sharedResults[d.id];
-    if (!r) return;
-    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${r.shareUrl}`)}`, '_blank');
+  const doLine = () => {
+    if (!sharedResult) return;
+    const label = selectedDepts.length === 1
+      ? (depts.find(d => d.id === selectedDepts[0])?.label || '')
+      : `${selectedDepts.length}部署`;
+    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(`${label} ${year}年${month+1}月のシフト表はこちら\n${sharedResult.shareUrl}`)}`, '_blank');
   };
 
-  const doCopy = async (d) => {
-    const r = sharedResults[d.id];
-    if (!r) return;
+  const doCopy = async () => {
+    if (!sharedResult) return;
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(r.shareUrl).then(() => alert('URLをコピーしました！')).catch(() => alert(`URLをコピーしてください:\n${r.shareUrl}`));
+      await navigator.clipboard.writeText(sharedResult.shareUrl).then(() => alert('URLをコピーしました！')).catch(() => alert(`URLをコピーしてください:\n${sharedResult.shareUrl}`));
     } else {
-      alert(`URLをコピーしてください:\n${r.shareUrl}`);
+      alert(`URLをコピーしてください:\n${sharedResult.shareUrl}`);
     }
   };
 
@@ -4921,39 +4932,42 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         {/* ── 共有セクション ── */}
         <div style={{marginTop:16,paddingTop:16,borderTop:"2px solid #E4E4E7"}}>
           <div style={{fontSize:13,fontWeight:900,color:"#18181B",marginBottom:4}}>📲 共有</div>
-          <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>「共有リンクを発行」を押すと現在のシフトを保存し、QR・LINE・URLが使えるようになります。</div>
-          {session && depts.filter(d=>selectedDepts.includes(d.id)).map(d=>{
-            const isSharing = sharingDept === d.id;
-            const result = sharedResults[d.id];
-            return(
-              <div key={d.id} style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                <div style={{fontWeight:800,fontSize:12,color:"#18181B",marginBottom:10}}>{d.icon} {d.label}（{year}年{month+1}月）</div>
-                {!result ? (
-                  /* INSERT前: 共有リンク発行ボタンのみ */
-                  <button onClick={()=>doShare(d)} disabled={isSharing} style={{width:"100%",background:isSharing?"#E4E4E7":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:13,fontWeight:800}}>
-                    {isSharing ? "保存中..." : "🔗 共有リンクを発行"}
-                  </button>
-                ) : (
-                  /* INSERT成功後: QR + LINE + URLコピー を表示 */
-                  <>
-                    <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
-                      <div style={{padding:6,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
-                        <QRCodeSVG value={result.shareUrl} size={120} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
-                      </div>
-                    </div>
-                    <div style={{display:"flex",gap:8,marginBottom:8}}>
-                      <button onClick={()=>doLine(d)} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
-                      <button onClick={()=>doCopy(d)} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 URLコピー</button>
-                    </div>
-                    <button onClick={()=>doShare(d)} disabled={isSharing} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #E4E4E7",borderRadius:8,padding:"7px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:11}}>
-                      {isSharing ? "保存中..." : "↩ 再発行（シフト変更後）"}
-                    </button>
-                  </>
-                )}
+          <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>
+            選択中の部署をまとめて1つのURLで共有します。スタッフは全部署のシフトを1画面で確認できます。
+          </div>
+          {session && (
+            <div style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px"}}>
+              {/* 選択部署の確認表示 */}
+              <div style={{fontSize:11,color:"#52525B",marginBottom:8}}>
+                共有対象: {noSelection
+                  ? <span style={{color:"#ef4444"}}>部署を選択してください</span>
+                  : depts.filter(d=>selectedDepts.includes(d.id)).map(d=>`${d.icon} ${d.label}`).join('・')}
               </div>
-            );
-          })}
-          {noSelection&&<div style={{fontSize:11,color:"#9CA3AF",textAlign:"center"}}>部署を選択すると共有ボタンが表示されます</div>}
+              {!sharedResult ? (
+                /* INSERT前: 共有リンク発行ボタン */
+                <button onClick={doShare} disabled={isSharing||noSelection} style={{width:"100%",background:(isSharing||noSelection)?"#E4E4E7":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:(isSharing||noSelection)?"not-allowed":"pointer",fontSize:13,fontWeight:800}}>
+                  {isSharing ? "保存中..." : "🔗 共有リンクを発行"}
+                </button>
+              ) : (
+                /* INSERT成功後: QR + LINE + URLコピー + 再発行 */
+                <>
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
+                    <div style={{padding:6,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
+                      <QRCodeSVG value={sharedResult.shareUrl} size={120} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8,marginBottom:8}}>
+                    <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
+                    <button onClick={doCopy} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 URLコピー</button>
+                  </div>
+                  <button onClick={doShare} disabled={isSharing} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #E4E4E7",borderRadius:8,padding:"7px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:11}}>
+                    {isSharing ? "保存中..." : "↩ 再発行（シフト変更後）"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+          {noSelection&&<div style={{fontSize:11,color:"#9CA3AF",textAlign:"center",marginTop:8}}>部署を選択すると共有ボタンが表示されます</div>}
         </div>
       </div>
     </div>
@@ -6711,8 +6725,8 @@ function SharedShiftView({ token }) {
 
   return (
     // maxWidth なし・overflow 制限なし・touch-action なし
-    // → テーブルをページレベルに直置きし、ブラウザ標準のピンチズームを妨げない
-    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:'12px 8px',color:'#111'}}>
+    // backgroundColor + minHeight:100vh でページ全体の背景色を統一
+    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:0,padding:'12px 8px',color:'#111',backgroundColor:'#f0fbfa',minHeight:'100vh'}}>
       {dept_ids.map(deptId => {
         const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
         const deptStaff = (staff_data || []).filter(s => s.dept === deptId);
