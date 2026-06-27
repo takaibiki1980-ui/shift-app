@@ -2116,13 +2116,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
   // [DEBUG 最終出力] 公休スナップショット
   { const _R=new Set(['休み','希望休','有休']); console.error('── 最終出力 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,diff:Object.values(res[s.id]).filter(v=>_R.has(v)).length-(s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8),休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
-  // ── DiagnosticEngine: Phase3 Step1 ──
-  // 空のコンテナを用意。Step2以降でblankCheck・prevTailを移管する。
+  // ── DiagnosticEngine: Phase3 Step2 ──
+  // prevTail 引数（builtPrevTail）から実データを取り出してレポートに格納する。
+  const _dtStaffCount = Object.keys(prevTail).length;
+  const _dtDayCount = Object.values(prevTail).reduce((s, tail) => s + Object.keys(tail).length, 0);
   const diagnosticReport = {
     dept: dept.id,
     year,
     month,
-    prevTail: { loaded: false, staffCount: 0, dayCount: 0 },
+    prevTail: {
+      loaded: _dtStaffCount > 0,
+      staffCount: _dtStaffCount,
+      dayCount: _dtDayCount,
+    },
     blankCheck: null,
   };
   return { shifts: res, warnings, timelineWarnings, diagnosticReport };
@@ -3442,12 +3448,18 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     console.error(_abcLines.join('\n'));
   }
 
-  // ── DiagnosticEngine: Phase3 Step1 ──
+  // ── DiagnosticEngine: Phase3 Step2 ──
+  const _gtStaffCount = Object.keys(prevTail).length;
+  const _gtDayCount = Object.values(prevTail).reduce((s, tail) => s + Object.keys(tail).length, 0);
   const diagnosticReport = {
     dept: dept.id,
     year,
     month,
-    prevTail: { loaded: false, staffCount: 0, dayCount: 0 },
+    prevTail: {
+      loaded: _gtStaffCount > 0,
+      staffCount: _gtStaffCount,
+      dayCount: _gtDayCount,
+    },
     blankCheck: null,
   };
   return { shifts: selectedRes, warnings, timelineWarnings: [], diagnosticReport };
