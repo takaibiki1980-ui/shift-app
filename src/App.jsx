@@ -3498,11 +3498,11 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
   const WD = ["日","月","火","水","木","金","土"];
   const TAG = (t) => '<' + t + '>';
   const CTAG = (t) => '</' + t + '>';
-  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('meta name="viewport" content="width=device-width,initial-scale=1"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:11px;margin:12px 8px;color:#111;}h2{font-size:14px;margin:14px 0 8px;border-bottom:2px solid #6366F1;padding-bottom:6px;}table{border-collapse:collapse;table-layout:fixed;margin-bottom:24px;}th,td{border:1px solid #ccc;padding:3px 1px;text-align:center;font-size:11px;width:34px;max-width:34px;overflow:hidden;box-sizing:border-box;height:32px;}th{background:#e8f0fe;font-weight:bold;line-height:1.2;}td{line-height:1.3;}.name{text-align:left;width:76px;max-width:76px;padding:3px 4px;vertical-align:middle;}.name-inner{font-weight:bold;font-size:11px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}.sum{width:32px;max-width:32px;font-size:10px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}.ev-row th{background:#fffbea!important;border-bottom:2px solid #fde68a;color:#92400e;font-weight:bold;}@media print{body{margin:4px;}h2{font-size:10px;page-break-before:auto;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
+  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('meta name="viewport" content="width=device-width,initial-scale=1"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:11px;margin:12px 8px;color:#111;}.dept-header{margin:16px 0 8px;border-bottom:2px solid #6366F1;padding-bottom:8px;}.dept-name{font-size:16px;font-weight:900;color:#18181B;line-height:1.2;}.dept-month{font-size:11px;color:#52525B;margin-top:3px;font-weight:500;}table{border-collapse:collapse;table-layout:fixed;margin-bottom:24px;}th,td{border:1px solid #ccc;padding:3px 1px;text-align:center;font-size:11px;width:34px;max-width:34px;overflow:hidden;box-sizing:border-box;height:32px;}th{background:#e8f0fe;font-weight:bold;line-height:1.2;}td{line-height:1.3;}.name{text-align:left;width:76px;max-width:76px;padding:3px 4px;vertical-align:middle;}.name-inner{font-weight:bold;font-size:11px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}.sum{width:32px;max-width:32px;font-size:10px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}.ev-row th{background:#fffbea!important;border-bottom:2px solid #fde68a;color:#92400e;font-weight:bold;}@media print{body{margin:4px;}.dept-name{font-size:11px;}.dept-month{font-size:9px;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
   depts.filter(d=>selectedDepts.includes(d.id)).forEach(dept => {
     const shifts = allShifts[dept.id] || {};
     const deptEvents = (allEvents && allEvents[dept.id] && allEvents[dept.id][mk]) || {};
-    html += TAG('h2')+`${dept.icon} ${dept.label}　${year}年${month+1}月`+CTAG('h2');
+    html += `<div class="dept-header"><div class="dept-name">${dept.label}</div><div class="dept-month">${year}年${month+1}月 シフト表</div></div>`;
     html += TAG('table')+TAG('thead')+TAG('tr')+TAG('th class="name"')+'氏名'+CTAG('th');
     for(let d=1;d<=days;d++){ const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); html += TAG(`th class="${isWe?"we":""}"`)+''+d+'<br>'+wd+CTAG('th'); }
     html += TAG('th class="sum"')+'勤務'+CTAG('th')+TAG('th class="sum"')+'夜勤'+CTAG('th')+TAG('th class="sum"')+'休'+CTAG('th')+CTAG('tr');
@@ -6739,9 +6739,10 @@ function SharedShiftView({ token }) {
         const deptShifts = (shift_data || {})[deptId] || {};
         return (
           <div key={deptId} style={{marginBottom:32}}>
-            <h2 style={{fontSize:16,margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8,color:'#18181B'}}>
-              {dept.icon} {dept.label}　{year}年{month}月 シフト表
-            </h2>
+            <div style={{margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8}}>
+              <div style={{fontSize:16,fontWeight:900,color:'#18181B',lineHeight:1.2}}>{dept.label}</div>
+              <div style={{fontSize:11,color:'#52525B',marginTop:3,fontWeight:500}}>{year}年{month}月 シフト表</div>
+            </div>
             {/* overflow ラッパーを除去: iOS Safari でも pinch zoom がページレベルで動作する */}
               <table style={{borderCollapse:'collapse',tableLayout:'fixed',minWidth:NAME_W+CELL_W*days+SUM_W*3}}>
                 <thead>
