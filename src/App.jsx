@@ -4895,7 +4895,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
       if (error) throw error;
 
       // STEP4: INSERT成功後のみ shareToken 確定・QR/LINE/URLを有効化
-      const shareUrl = `${window.location.origin}?share=${token}`;
+      const shareUrl = `${window.location.origin}/?share=${token}`;
       setSharedResult({ token, shareUrl });
     } catch(e) {
       // INSERT失敗: URL・QR・LINEは発行しない
@@ -4911,6 +4911,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
       ? (depts.find(d => d.id === selectedDepts[0])?.label || '')
       : `${selectedDepts.length}部署`;
     const msg = `${label}\n${year}年${month+1}月 確定シフト\n\nこちらをタップしてください。\n${sharedResult.shareUrl}`;
+    console.log('[LINE送信文字列]', msg);
     window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
   };
 
