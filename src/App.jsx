@@ -6636,6 +6636,20 @@ function SharedShiftView({ token }) {
   const [row, setRow] = useState(null);
   const [notFound, setNotFound] = useState(false);
 
+  // スタッフ画面ではピンチズーム（縮小・拡大）を有効にする
+  // minimum-scale=0.25 で全体俯瞰、maximum-scale=5 で拡大も可能
+  // アンマウント時に元の viewport に戻す（管理画面に影響しない）
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="viewport"]');
+    const original = meta ? meta.getAttribute('content') : null;
+    if (meta) {
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=0.25, maximum-scale=5.0, user-scalable=yes');
+    }
+    return () => {
+      if (meta && original) meta.setAttribute('content', original);
+    };
+  }, []);
+
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
@@ -6696,7 +6710,7 @@ function SharedShiftView({ token }) {
             <h2 style={{fontSize:16,margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8,color:'#18181B'}}>
               {dept.icon} {dept.label}　{year}年{month}月 シフト表
             </h2>
-            <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+            <div style={{overflowX:'auto',touchAction:'pan-x pan-y'}}>
               <table style={{borderCollapse:'collapse',tableLayout:'fixed',minWidth:NAME_W+CELL_W*days+SUM_W*3}}>
                 <thead>
                   <tr>
