@@ -4845,8 +4845,8 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
 }
 
 function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, onClose }) {
-  // 全部署を初期表示（activeDeptId に関係なく全部署一覧）
-  const [selectedDepts, setSelectedDepts] = useState(depts.map(d => d.id));
+  // 初期状態: 全部署未選択
+  const [selectedDepts, setSelectedDepts] = useState([]);
   const [isSharing, setIsSharing] = useState(false);
   // INSERT成功後のみセット（全選択部署を1つのURLで共有）
   const [sharedResult, setSharedResult] = useState(null);
@@ -4854,7 +4854,18 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   const fname = `シフト表_${year}年${month+1}月`;
   const toggleDept = (id) => {
     setSelectedDepts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-    // 部署選択が変わったら発行済み結果をリセット（URLが変わるため）
+    setSharedResult(null);
+  };
+  // 「1階＋2階」プリセット
+  const PRESET_KAIGO = ['kaigo1', 'kaigo2'];
+  const hasKaigoPreset = PRESET_KAIGO.every(id => depts.some(d => d.id === id));
+  const kaigoPresetActive = hasKaigoPreset && PRESET_KAIGO.every(id => selectedDepts.includes(id));
+  const toggleKaigoPreset = () => {
+    if (kaigoPresetActive) {
+      setSelectedDepts(prev => prev.filter(id => !PRESET_KAIGO.includes(id)));
+    } else {
+      setSelectedDepts(prev => [...new Set([...prev, ...PRESET_KAIGO])]);
+    }
     setSharedResult(null);
   };
   const doDownload = (ext) => { if(noSelection)return; let content="",type=""; if(ext==="csv"){content=buildCSV(depts,staffList,allShifts,year,month,selectedDepts);type="text/csv;charset=utf-8";} if(ext==="html"){content=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents);type="text/html;charset=utf-8";} triggerDownload(content,`${fname}.${ext}`,type); };
@@ -4928,8 +4939,17 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📤 書き出し</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
         <div style={{fontSize:11,color:"#52525B",fontWeight:700,marginBottom:7}}>対象部署</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:16}}>{depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#A1A1AA":"transparent",color:sel?"#6366F1":"#3F3F46",border:`1px solid ${sel?"#6366F1":"#E4E4E7"}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:sel?700:400}}>{d.icon} {d.label}</button>;})}</div>
-        {noSelection&&<div style={{fontSize:11,color:"#ef4444",marginBottom:10}}>⚠ 部署を1つ以上選択してください</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:8}}>
+          {hasKaigoPreset && (
+            <button onClick={toggleKaigoPreset} style={{background:kaigoPresetActive?"#4F46E5":"#F4F4F5",color:kaigoPresetActive?"#fff":"#52525B",border:`1.5px solid ${kaigoPresetActive?"#4F46E5":"#D4D4D8"}`,borderRadius:7,padding:"4px 12px",cursor:"pointer",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
+              {kaigoPresetActive ? "✓ " : ""}🏠🏢 1階＋2階
+            </button>
+          )}
+          {depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#EEF2FF":"transparent",color:sel?"#4F46E5":"#71717A",border:`1.5px solid ${sel?"#6366F1":"#D4D4D8"}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:sel?700:400,transition:"all 0.15s"}}>{d.icon} {d.label}</button>;})}
+        </div>
+        <div style={{fontSize:11,marginBottom:12,minHeight:18,color:noSelection?"#9CA3AF":"#4F46E5",fontWeight:noSelection?400:600}}>
+          {noSelection ? "共有する部署を選択してください" : `共有対象（${selectedDepts.length}部署）: ${depts.filter(d=>selectedDepts.includes(d.id)).map(d=>`${d.icon}${d.label}`).join('・')}`}
+        </div>
         <button onClick={doPrint} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#6366F1",border:"none",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>🖨️</span><div><div style={{fontSize:13,fontWeight:800,color:"#fff"}}>今すぐ印刷</div><div style={{fontSize:11,color:"#d5f5f5",marginTop:2}}>印刷ダイアログがすぐに開きます</div></div></button>
         <button onClick={()=>doDownload("csv")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#e8f5ee",border:"1px solid #2d8a52",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>📊</span><div><div style={{fontSize:13,fontWeight:800,color:"#34d399"}}>CSV（Excel・スプレッドシート）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>Excel・Googleスプレッドシートで開けます</div></div></button>
         <button onClick={()=>doDownload("html")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#F4F4F5",border:"1px solid #A1A1AA",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>💾</span><div><div style={{fontSize:13,fontWeight:800,color:"#6366F1"}}>HTMLで保存（USB用）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>他のPCやUSBで印刷する場合に使用</div></div></button>
@@ -4942,16 +4962,10 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
           </div>
           {session && (
             <div style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px"}}>
-              {/* 選択部署の確認表示 */}
-              <div style={{fontSize:11,color:"#52525B",marginBottom:8}}>
-                共有対象: {noSelection
-                  ? <span style={{color:"#ef4444"}}>部署を選択してください</span>
-                  : depts.filter(d=>selectedDepts.includes(d.id)).map(d=>`${d.icon} ${d.label}`).join('・')}
-              </div>
               {!sharedResult ? (
                 /* INSERT前: 共有リンク発行ボタン */
-                <button onClick={doShare} disabled={isSharing||noSelection} style={{width:"100%",background:(isSharing||noSelection)?"#E4E4E7":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:(isSharing||noSelection)?"not-allowed":"pointer",fontSize:13,fontWeight:800}}>
-                  {isSharing ? "保存中..." : "🔗 共有リンクを発行"}
+                <button onClick={doShare} disabled={isSharing||noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":isSharing?"#A5B4FC":"#6366F1",color:noSelection?"#A1A1AA":"#fff",border:noSelection?"1px solid #E4E4E7":"none",borderRadius:8,padding:"11px 0",cursor:(isSharing||noSelection)?"not-allowed":"pointer",fontSize:13,fontWeight:800,transition:"all 0.15s"}}>
+                  {isSharing ? "保存中..." : noSelection ? "共有する部署を選択してください" : "🔗 共有リンクを発行"}
                 </button>
               ) : (
                 /* INSERT成功後: QR + LINE + URLコピー + 再発行 */
@@ -4972,7 +4986,6 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
               )}
             </div>
           )}
-          {noSelection&&<div style={{fontSize:11,color:"#9CA3AF",textAlign:"center",marginTop:8}}>部署を選択すると共有ボタンが表示されます</div>}
         </div>
       </div>
     </div>
