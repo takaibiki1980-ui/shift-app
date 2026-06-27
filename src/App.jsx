@@ -3448,9 +3448,53 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     console.error(_abcLines.join('\n'));
   }
 
-  // ── DiagnosticEngine: Phase3 Step2 ──
+  // ── DiagnosticEngine: Phase3 Step3 ──
   const _gtStaffCount = Object.keys(prevTail).length;
   const _gtDayCount = Object.values(prevTail).reduce((s, tail) => s + Object.keys(tail).length, 0);
+
+  // BLANK-CHECK-FUKUDA と同じロジックで blankCheck を構築（eiyo のみ、readonly）
+  const _diagDowN = ['日','月','火','水','木','金','土'];
+  const _diagBlankCheck = dept.id === 'eiyo' ? ds.map(s => {
+    const _blanks = [];
+    for (let d = 1; d <= days; d++) { if (!selectedRes[s.id][d]) _blanks.push(d); }
+    const _allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+    if (_blanks.length === 0) {
+      return { staffId: s.id, name: s.name, role: s.role || '', blankDays: [], improveableDays: 0 };
+    }
+    let _improveableDays = 0;
+    const _blankDays = _blanks.map(d => {
+      const dow = _diagDowN[new Date(year, month, d).getDay()];
+      const prevDay = d > 1 ? (selectedRes[s.id][d - 1] || '空白') : '(月初)';
+      const nextDay = d < days ? (selectedRes[s.id][d + 1] || '空白') : '(月末)';
+      let sb = 0, sa = 0;
+      for (let i = d - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+      for (let i = d + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+      const shiftResults = _allowed.map(shiftKey => {
+        const viols = [];
+        if (sb + 1 + sa > maxConsec) viols.push(`④連勤超過(${sb}+1+${sa}>${maxConsec})`);
+        const cur = ds.filter(sx => selectedRes[sx.id][d] === shiftKey).length;
+        if (cur + 1 > (cleanMaxStaff[shiftKey] ?? 99)) viols.push(`⑤maxStaff超過(${cur+1}>${cleanMaxStaff[shiftKey]})`);
+        return { shift: shiftKey, canPlace: viols.length === 0, violations: viols };
+      });
+      const canPlace = shiftResults.some(r => r.canPlace);
+      const helps = [];
+      for (const [sk, minC] of Object.entries(cleanMinStaff)) {
+        if (!_allowed.includes(sk)) continue;
+        const cur = ds.filter(sx => selectedRes[sx.id][d] === sk).length;
+        if (cur < minC && shiftResults.find(r => r.shift === sk && r.canPlace)) helps.push(`${sk}不足解消`);
+      }
+      if (helps.length > 0) _improveableDays++;
+      return {
+        day: d, dow, prevDay, nextDay,
+        streakBefore: sb, streakAfter: sa,
+        shiftResults, canPlace,
+        conclusion: canPlace ? '⚠️埋め忘れ' : '✅構造的不可',
+        helps,
+      };
+    });
+    return { staffId: s.id, name: s.name, role: s.role || '', blankDays: _blankDays, improveableDays: _improveableDays };
+  }) : null;
+
   const diagnosticReport = {
     dept: dept.id,
     year,
@@ -3460,7 +3504,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       staffCount: _gtStaffCount,
       dayCount: _gtDayCount,
     },
-    blankCheck: null,
+    blankCheck: _diagBlankCheck,
   };
   return { shifts: selectedRes, warnings, timelineWarnings: [], diagnosticReport };
 }
