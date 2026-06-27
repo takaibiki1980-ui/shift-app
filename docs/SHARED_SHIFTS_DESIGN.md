@@ -2,6 +2,7 @@
 # 完成シフト共有機能 設計書
 
 作成日: 2026-06-27
+更新日: 2026-06-27
 
 ---
 
@@ -13,6 +14,33 @@
 - 共有ボタン押下時に `shared_shifts` テーブルへ保存し、その時点のスナップショットを共有する
 - 共有画面（SharedShiftView）は `shared_shifts` のみを参照し、`shift_data` には依存しない
 - ShiftViewPortal（旧共有コンポーネント）は段階的に廃止する
+
+### 追加原則（確定）
+
+#### ① スナップショット保存
+
+共有ボタンを押した時点の完成シフトを `shared_shifts` に保存する。
+
+- 保存後に管理画面でシフトを変更しても、`shared_shifts` の内容は変わらない
+- 「この URL に保存されたシフト」＝「共有ボタンを押した瞬間の確定シフト」である
+
+#### ② 単体完結（自己完結型テーブル）
+
+`shared_shifts` 1レコードに共有表示に必要な全データを含める。
+
+- `shift_data`（シフトデータ）
+- `staff_data`（スタッフ氏名・部署）
+- `dept_data`（部署名・アイコン）
+
+共有画面は他テーブル（`shift_data` / `staffList` / `depts`）を一切参照しない。
+
+#### ③ 発行済みURLの不変性
+
+発行済みの URL は管理画面の変更から独立している。
+
+- 同じ部署・同じ月に対して共有ボタンを再押下した場合 → **新しい token を発行**し新しい URL を生成する
+- 旧 URL はそのまま旧スナップショットを表示し続ける
+- 「上書き更新」は行わない（token は immutable）
 
 ### 旧設計との比較
 
@@ -37,18 +65,28 @@
 ```sql
 create table shared_shifts (
   id            uuid primary key default gen_random_uuid(),
-  token         text not null unique,          -- 短縮トークン（8文字英数字）
-  admin_user_id uuid not null,                 -- 管理者のuser_id（参照用）
+  token         text not null unique,          -- 短縮トークン（8文字英数字）・不変
+  admin_user_id uuid not null,                 -- 管理者のuser_id（参照用のみ）
   year          integer not null,
   month         integer not null,              -- 1-indexed（1〜12）
   dept_ids      text[] not null,               -- 共有対象部署IDの配列（将来の複数部署対応）
-  shift_data    jsonb not null,                -- { "kaigo1": { staffId: { day: value } }, ... }
-  staff_data    jsonb not null,                -- [{ id, name, dept }] スタッフ名表示用
-  dept_data     jsonb not null,                -- [{ id, label, icon }] 部署名表示用
+
+  -- ② 単体完結: 共有表示に必要な全データをここに含める
+  -- 他テーブル（shift_data / staffList / depts）は参照しない
+  shift_data    jsonb not null,                -- 押下時点のスナップショット { "kaigo1": { staffId: { day: value } } }
+  staff_data    jsonb not null,                -- 押下時点のスナップショット [{ id, name, dept }]
+  dept_data     jsonb not null,                -- 押下時点のスナップショット [{ id, label, icon }]
+
   created_at    timestamptz default now(),
   expires_at    timestamptz                    -- 将来: 有効期限（null = 無期限）
 );
 ```
+
+### 不変性の保証（③）
+
+- `token` には `unique` 制約のみ。`upsert` / `update` は使用しない
+- 共有ボタン押下 → 毎回 `insert`（新 token 生成）
+- 既存レコードは変更・削除しない（管理画面の操作が影響しない）
 
 ### RLS ポリシー
 
@@ -151,16 +189,25 @@ https://<origin>?share=<token>
 
 ```
 doShare(selectedDepts, mode)
-  1. token = genToken()（8文字）
-  2. shift_data = selectedDepts の allShifts を抽出
-  3. staff_data = selectedDepts に所属するスタッフを staffList から抽出
-  4. dept_data  = selectedDepts の部署情報を depts から抽出
-  5. supabase.from('shared_shifts').upsert({
-       token, admin_user_id: session.user.id,
-       year, month, dept_ids: selectedDepts,
-       shift_data, staff_data, dept_data
-     }, { onConflict: 'token' })
-     ※ 同一部署・同月の再共有は token を新規生成（上書きしない）
+
+  【① スナップショット作成】
+  1. token     = genToken()（8文字・毎回新規生成）
+  2. shift_data = selectedDepts の allShifts[dept] を抽出（押下時点のコピー）
+  3. staff_data = selectedDepts に所属するスタッフを staffList から抽出（押下時点のコピー）
+  4. dept_data  = selectedDepts の部署情報を depts から抽出（押下時点のコピー）
+
+  【② 単体完結データとして INSERT（upsert/update は使わない）】
+  5. supabase.from('shared_shifts').insert({
+       token,
+       admin_user_id: session.user.id,
+       year, month,
+       dept_ids: selectedDepts,
+       shift_data,   ← 他テーブルを後から参照しない完結データ
+       staff_data,   ← 同上
+       dept_data     ← 同上
+     })
+
+  【③ 発行済みURL不変：毎回新token・既存レコード変更なし】
   6. shareUrl = `${origin}?share=${token}`
   7. mode === 'line'  → LINE送信
      mode === 'copy'  → クリップボードコピー
