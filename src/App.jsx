@@ -6530,6 +6530,7 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
   const month = ym ? (Number(ym) % 100) - 1 : new Date().getMonth();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [diagInfo, setDiagInfo] = useState(null);
   const [info, setInfo] = useState(null);
 
   useEffect(() => {
@@ -6546,13 +6547,58 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
       const staffList = (cfg.staffList || []).filter(s => s.dept === deptId);
       const mk = monthKey(year, month);
       const events = evRes.data?.data_value?.[deptId]?.[mk] || {};
-      setInfo({ dept, staffList, shifts: shiftsRes.data?.data_value || {}, events });
+      let rawShifts = shiftsRes.data?.data_value;
+      // 新キー（部署サフィックスあり）で見つからない場合、旧キー形式にフォールバック
+      if (!rawShifts) {
+        const legacyKey = `shifts_${year}_${month+1}`;
+        const legacyRes = await supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', legacyKey).maybeSingle();
+        const legacyData = legacyRes.data?.data_value;
+        if (legacyData) {
+          // 旧形式: { deptId: { staffId: { day: value } } } → 対象部署を抽出
+          rawShifts = legacyData[deptId] || null;
+        }
+      }
+      if (!rawShifts) {
+        // 保存済みの全シフトキーを検索して診断情報を収集
+        const allKeysRes = await supabase.from('shift_data').select('data_key').eq('user_id', adminUserId).like('data_key', 'shifts_%');
+        const foundKeys = (allKeysRes.data || []).map(r => r.data_key);
+        setDiagInfo({
+          shiftKey,
+          userId: adminUserId?.slice(0,8) + '...',
+          error: shiftsRes.error?.message || null,
+          staffCount: staffList.length,
+          foundKeys,
+        });
+      }
+      setInfo({ dept, staffList, shifts: rawShifts || {}, events });
       setLoading(false);
     })();
   }, []); // eslint-disable-line
 
   if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
   if (loadError || !info) return <div style={{padding:48,textAlign:'center',color:'#c44b4b',fontSize:14}}>シフト表を読み込めませんでした。URLを確認してください。</div>;
+  if (diagInfo) return (
+    <div style={{padding:24,fontSize:13}}>
+      <div style={{fontSize:20,marginBottom:8,textAlign:'center'}}>📋</div>
+      <div style={{color:'#18181B',fontWeight:700,marginBottom:12,textAlign:'center'}}>{info.dept.label}　{year}年{month+1}月のシフト表</div>
+      <div style={{color:'#b45309',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:8,padding:12,marginBottom:12}}>
+        <div style={{fontWeight:700,marginBottom:4}}>⚠️ シフトデータが見つかりません</div>
+        <div style={{color:'#52525B',fontSize:11}}>管理者がシフトを生成・保存してから再度開いてください。</div>
+      </div>
+      <div style={{background:'#F4F4F5',borderRadius:8,padding:10,fontSize:10,color:'#52525B'}}>
+        <div style={{fontWeight:700,marginBottom:4,color:'#18181B'}}>🔍 診断情報（スクショを管理者へ）</div>
+        <div>探したキー: <code style={{background:'#E4E4E7',padding:'1px 4px',borderRadius:3,fontSize:9}}>{diagInfo.shiftKey}</code></div>
+        <div style={{marginTop:2}}>ユーザーID: <code style={{background:'#E4E4E7',padding:'1px 4px',borderRadius:3}}>{diagInfo.userId}</code></div>
+        <div style={{marginTop:2}}>スタッフ数: {diagInfo.staffCount}名</div>
+        {diagInfo.error && <div style={{color:'#c44b4b',marginTop:4}}>DBエラー: {diagInfo.error}</div>}
+        <div style={{marginTop:4,fontWeight:700}}>保存済みシフトキー ({diagInfo.foundKeys?.length || 0}件):</div>
+        {diagInfo.foundKeys?.length > 0
+          ? diagInfo.foundKeys.map(k => <div key={k} style={{paddingLeft:8,fontFamily:'monospace',fontSize:9}}>{k}</div>)
+          : <div style={{color:'#c44b4b',paddingLeft:8}}>シフトデータが一件も保存されていません</div>
+        }
+      </div>
+    </div>
+  );
 
   const { dept, staffList, shifts, events } = info;
   const days = getDays(year, month);
@@ -7344,9 +7390,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    // ★防衛C: 部署IDをクロージャでキャプチャ（タイマー発火時に部署が変わっても正しい部署に保存）
+    // ★防衛C: 部署IDをクロージャでキャプチャ（アクティブ部署を安全網として追加）
     const closureDeptId = activeDeptIdRef.current;
-    dirtyDeptIdsRef.current.add(closureDeptId); // ★Fix W-2: dirty追跡（緊急保存の多部署対応）
+    dirtyDeptIdsRef.current.add(closureDeptId); // ★Fix W-2: dirty追跡
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
       // ★防衛3: 保存直前に年月一致検証（クロージャの年月 vs 現在の画面の年月）
@@ -7358,57 +7404,61 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         setSaveStatus('saved'); // 画面上のステータスは安全側に倒す
         return;
       }
-      // 部署IDはクロージャ値を使用（編集時の部署に正確に保存）
-      const currentDeptId = closureDeptId;
-      const key = `shifts_${year}_${month+1}_${currentDeptId}`;
-      const deptData = allShifts[currentDeptId] || {};
-      try {
-        const { error } = await supabase.from('shift_data').upsert(
-          { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
-          { onConflict:'user_id,data_key' }
-        );
-        if (error) {
-          // 認証エラー検知
-          if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("token")) {
-            console.error("[save] 認証トークン切れ:", error.message);
-            alert("セッションが切れました。再ログインしてください。");
-            await supabase.auth.signOut();
-            return;
+      // ★Fix S-1: dirty全部署を保存（生成部署とactive部署が違う場合でも漏れなく保存）
+      const deptIdsToSave = new Set(dirtyDeptIdsRef.current);
+      deptIdsToSave.add(closureDeptId); // 安全網: アクティブ部署も必ず含める
+      let saveError = null;
+      for (const currentDeptId of deptIdsToSave) {
+        const key = `shifts_${year}_${month+1}_${currentDeptId}`;
+        const deptData = allShifts[currentDeptId] || {};
+        try {
+          const { error } = await supabase.from('shift_data').upsert(
+            { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
+            { onConflict:'user_id,data_key' }
+          );
+          if (error) {
+            // 認証エラー検知
+            if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("token")) {
+              console.error("[save] 認証トークン切れ:", error.message);
+              alert("セッションが切れました。再ログインしてください。");
+              await supabase.auth.signOut();
+              return;
+            }
+            throw error;
           }
-          throw error;
+          dirtyDeptIdsRef.current.delete(currentDeptId); // 保存成功 → dirty解除
+          console.log("[save] Supabase保存OK:", key);
+          // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
+          allDBDataRef.current[key] = deptData;
+          {
+            const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current, currentDeptId);
+            if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
+          }
+          const genRef = lastAutoGenRef.current[currentDeptId];
+          if (genRef) {
+            const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
+            const kiboPatterns = detectKiboNightPatterns(genRef, deptData, deptStaff, year, month);
+            if (Object.keys(kiboPatterns).length > 0) {
+              setStaffList(prev => prev.map(s => {
+                if (!kiboPatterns[s.id]) return s;
+                return { ...s, kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id]) };
+              }));
+            }
+            lastAutoGenRef.current[currentDeptId] = {...deptData};
+          }
+        } catch(e) {
+          saveError = e;
+          console.error("[save] Supabase保存失敗:", key, e?.message || e);
         }
+      }
+      if (!saveError) {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current = 0;
         lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
-        dirtyDeptIdsRef.current.delete(currentDeptId); // ★Fix W-2: 保存成功 → dirty解除
         setSaveStatus("saved");
-        console.log("[save] Supabase保存OK:", key);
-        // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
-        // → 調整済みシフトが同セッション内の次月生成に即座に反映される
-        allDBDataRef.current[key] = deptData;
-        {
-          const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current, currentDeptId);
-          if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
-        }
-        const genRef = lastAutoGenRef.current[currentDeptId];
-        if (genRef) {
-          const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
-          const kiboPatterns = detectKiboNightPatterns(genRef, deptData, deptStaff, year, month);
-          if (Object.keys(kiboPatterns).length > 0) {
-            setStaffList(prev => prev.map(s => {
-              if (!kiboPatterns[s.id]) return s;
-              return {
-                ...s,
-                kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id]),
-              };
-            }));
-          }
-          lastAutoGenRef.current[currentDeptId] = {...deptData};
-        }
-      } catch(e) {
+      } else {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current += 1;
-        console.error("[save] Supabase保存失敗(" + saveFailCountRef.current + "回目):", e?.message || e);
         setSaveStatus("unsaved");
         if (saveFailCountRef.current >= 5) {
           saveFailCountRef.current = 0;
@@ -8174,6 +8224,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           console.warn('[VALIDATION WARNING] 制約違反:\n' + _hardErrs.join('\n'));
         }
 
+        dirtyDeptIdsRef.current.add(cd.id); // ★Fix S-1: 生成部署を明示dirty登録（active部署と異なる場合でも保存される）
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
         if (ratioFeedback && Object.keys(ratioFeedback).length > 0) {
@@ -8220,6 +8271,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           if (ratioFeedback) Object.assign(allRatioFeedback, ratioFeedback);
         }
         setUndoCount(undoStackRef.current[activeDeptIdRef.current]?.length ?? 0);
+        Object.keys(newShifts).forEach(id => dirtyDeptIdsRef.current.add(id)); // ★Fix S-1: 全生成部署を明示dirty登録
         setAllShifts(prev => ({...prev, ...newShifts}));
         if (Object.keys(allRatioFeedback).length > 0) {
           setStaffList(prev => prev.map(s => {
@@ -8561,15 +8613,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   {/* 確定シフト送信 */}
                   <div style={{paddingTop:10,borderTop:"1px solid #E4E4E7"}}>
                     <div style={{fontSize:11,fontWeight:700,color:"#6366F1",marginBottom:4}}>📋 確定シフトを送る（{year}年{month+1}月）</div>
-                    <div style={{fontSize:10,color:"#52525B",marginBottom:6}}>スタッフが開くと{year}年{month+1}月のシフト表が確認できます</div>
+                    {saveStatus!=='saved'&&<div style={{fontSize:10,color:"#b45309",background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:6,padding:"4px 8px",marginBottom:6}}>⚠️ シフトが保存中です。「保存済」になってから送ってください。</div>}
+                    {saveStatus==='saved'&&<div style={{fontSize:10,color:"#52525B",marginBottom:6}}>スタッフが開くと{year}年{month+1}月のシフト表が確認できます</div>}
                     {(()=>{
                       const shiftUrl=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}&view=shift&ym=${year}${String(month+1).padStart(2,'0')}`;
-                      const doShiftLine=()=>{const l=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${shiftUrl}`)}`;window.open(l,'_blank');};
-                      const doShiftCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(shiftUrl).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${shiftUrl}`));}else{alert(`URLをコピーしてください:\n${shiftUrl}`);}};
+                      const doShiftLine=()=>{
+                        if(saveStatus!=='saved'){alert('シフトがまだ保存中です。画面上の「保存済」表示を確認してから送ってください。');return;}
+                        const l=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${shiftUrl}`)}`;window.open(l,'_blank');
+                      };
+                      const doShiftCopy=()=>{
+                        if(saveStatus!=='saved'){alert('シフトがまだ保存中です。画面上の「保存済」表示を確認してから送ってください。');return;}
+                        if(navigator.clipboard?.writeText){navigator.clipboard.writeText(shiftUrl).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${shiftUrl}`));}else{alert(`URLをコピーしてください:\n${shiftUrl}`);}
+                      };
                       return(
                         <div style={{display:"flex",gap:8}}>
-                          <button onClick={doShiftLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
-                          <button onClick={doShiftCopy} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
+                          <button onClick={doShiftLine} style={{background:saveStatus==='saved'?"linear-gradient(135deg,#06C755,#00a040)":"#9CA3AF",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
+                          <button onClick={doShiftCopy} style={{background:saveStatus==='saved'?"#eff6ff":"#F4F4F5",color:saveStatus==='saved'?"#2563EB":"#9CA3AF",border:`1px solid ${saveStatus==='saved'?"#93c5fd":"#E4E4E7"}`,borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
                         </div>
                       );
                     })()}
