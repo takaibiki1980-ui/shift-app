@@ -6636,14 +6636,18 @@ function SharedShiftView({ token }) {
   const [row, setRow] = useState(null);
   const [notFound, setNotFound] = useState(false);
 
-  // スタッフ画面ではピンチズーム（縮小・拡大）を有効にする
-  // minimum-scale=0.25 で全体俯瞰、maximum-scale=5 で拡大も可能
-  // アンマウント時に元の viewport に戻す（管理画面に影響しない）
+  // スタッフ画面: ブラウザ標準のピンチズームを有効化
+  // ・overflow ラッパーなしでテーブルをページ直置き → iOS Safari でも pinch zoom が動作
+  // ・minimum-scale=0.25: 31日表（≈1220px）が iPhone(390px)で 0.32 スケールで収まる
+  // ・maximum-scale=5.0: 5倍まで拡大可能
+  // ・アンマウント時に元の viewport に復元（管理画面に影響しない）
   useEffect(() => {
     const meta = document.querySelector('meta[name="viewport"]');
     const original = meta ? meta.getAttribute('content') : null;
     if (meta) {
-      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, minimum-scale=0.25, maximum-scale=5.0, user-scalable=yes');
+      meta.setAttribute('content',
+        'width=device-width, initial-scale=1.0, minimum-scale=0.25, maximum-scale=5.0, user-scalable=yes'
+      );
     }
     return () => {
       if (meta && original) meta.setAttribute('content', original);
@@ -6700,7 +6704,9 @@ function SharedShiftView({ token }) {
   const nameInnerStyle = { fontWeight:'bold', fontSize:11, lineHeight:1.4, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', wordBreak:'break-all' };
 
   return (
-    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:'12px 8px',color:'#111',maxWidth:900}}>
+    // maxWidth なし・overflow 制限なし・touch-action なし
+    // → テーブルをページレベルに直置きし、ブラウザ標準のピンチズームを妨げない
+    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:'12px 8px',color:'#111'}}>
       {dept_ids.map(deptId => {
         const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
         const deptStaff = (staff_data || []).filter(s => s.dept === deptId);
@@ -6710,7 +6716,7 @@ function SharedShiftView({ token }) {
             <h2 style={{fontSize:16,margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8,color:'#18181B'}}>
               {dept.icon} {dept.label}　{year}年{month}月 シフト表
             </h2>
-            <div style={{overflowX:'auto',touchAction:'pan-x pan-y'}}>
+            {/* overflow ラッパーを除去: iOS Safari でも pinch zoom がページレベルで動作する */}
               <table style={{borderCollapse:'collapse',tableLayout:'fixed',minWidth:NAME_W+CELL_W*days+SUM_W*3}}>
                 <thead>
                   <tr>
@@ -6748,7 +6754,6 @@ function SharedShiftView({ token }) {
                   })}
                 </tbody>
               </table>
-            </div>
           </div>
         );
       })}
