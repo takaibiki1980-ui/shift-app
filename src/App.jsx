@@ -3293,46 +3293,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     }
   }
 
-  // [BLANK-CHECK-FUKUDA] 全スタッフの空白日ごとに原因と不足解消可能性を出力（eiyo のみ、readonly）
-  if (dept.id === 'eiyo') {
-    const _bfDowN = ['日','月','火','水','木','金','土'];
-    ds.forEach(s => {
-      const _bfBlanks = [];
-      for (let d = 1; d <= days; d++) { if (!selectedRes[s.id][d]) _bfBlanks.push(d); }
-      const _bfAllowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
-      if (_bfBlanks.length === 0) { console.log(`[BLANK-CHECK-FUKUDA] ${s.name}(${s.role}): 空白日なし 許可=${_bfAllowed.join('/')}`); return; }
-      const _bfLines = [`[BLANK-CHECK-FUKUDA] ${s.name}(${s.role}): 空白${_bfBlanks.length}日 許可=${_bfAllowed.join('/')}`];
-      let _bfImproveable = 0;
-      _bfBlanks.forEach(d => {
-        const _bfDow = new Date(year, month, d).getDay();
-        const _bfPrev = d > 1 ? (selectedRes[s.id][d - 1] || '空白') : '(月初)';
-        const _bfNext = d < days ? (selectedRes[s.id][d + 1] || '空白') : '(月末)';
-        let _bfSb = 0, _bfSa = 0;
-        for (let i = d - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') _bfSb++; else break; }
-        for (let i = d + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') _bfSa++; else break; }
-        const _bfResults = [];
-        for (const shiftKey of _bfAllowed) {
-          const _bfViols = [];
-          if (_bfSb + 1 + _bfSa > maxConsec) _bfViols.push(`④連勤超過(${_bfSb}+1+${_bfSa}>${maxConsec})`);
-          const _bfCur = ds.filter(sx => selectedRes[sx.id][d] === shiftKey).length;
-          if (_bfCur + 1 > (cleanMaxStaff[shiftKey] ?? 99)) _bfViols.push(`⑤maxStaff超過(${_bfCur+1}>${cleanMaxStaff[shiftKey]})`);
-          _bfResults.push(_bfViols.length > 0 ? `${shiftKey}=[${_bfViols.join(',')}]` : `${shiftKey}=○`);
-        }
-        const _bfCanPlace = _bfResults.some(r => r.includes('○'));
-        // この日の不足を解消できるか
-        const _bfHelps = [];
-        for (const [sk, minC] of Object.entries(cleanMinStaff)) {
-          if (!_bfAllowed.includes(sk)) continue;
-          const cur = ds.filter(sx => selectedRes[sx.id][d] === sk).length;
-          if (cur < minC && _bfResults.find(r => r.startsWith(sk + '=○'))) _bfHelps.push(`${sk}不足解消`);
-        }
-        if (_bfHelps.length > 0) _bfImproveable++;
-        _bfLines.push(`  ${d}日(${_bfDowN[_bfDow]}) 前日=${_bfPrev} 翌日=${_bfNext} 連勤前${_bfSb}後${_bfSa} | ${_bfResults.join(' / ')} → ${_bfCanPlace ? '⚠️埋め忘れ' : '✅構造的不可'} | ${_bfHelps.join(',') || '不足解消なし'}`);
-      });
-      _bfLines.push(`  → 埋めれば不足解消できる日数: ${_bfImproveable}日 (不足${adoptedMinStaffShortDays}→${adoptedMinStaffShortDays - _bfImproveable}日が理論値)`);
-      console.log(_bfLines.join('\n'));
-    });
-  }
+  // [BLANK-CHECK-FUKUDA] → Phase3 Step3 で diagnosticReport.blankCheck へ完全移管済み
 
   // [SHORTAGE-ABC] ABC分類 + 日勤B理論検証（eiyo のみ、readonly）
   if (dept.id === 'eiyo' && adoptedMinStaffShortDays > 0) {
@@ -7910,25 +7871,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         if (Object.keys(tail).length > 0) { builtPrevTail[staffId] = tail; staffCount++; }
       }
-      console.log(`[prevTail] 前月キー=${prevMonthKey} 職員数=${staffCount} 格納日数=${dayCount}`);
-    } else {
-      console.log(`[prevTail] 前月キー=${prevMonthKey} データなし（前月シフト未保存）`);
+      // prevTail情報は diagnosticReport.prevTail に格納済み（Phase3 Step2）
     }
-
 
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
     const genStack = undoStackRef.current[targetDept.id] || [];
     undoStackRef.current[targetDept.id] = [...genStack, genSnapshot].slice(-30);
     let _genResult;
     if (targetDept.engineType === 'time') {
-      const { shifts, warnings, timelineWarnings } = generateTimeAxis(cs, targetDept, year, month, genSnapshot, ct, builtPrevTail);
-      _genResult = { shifts, warnings, timelineWarnings, score: 0, ratioFeedback: {} };
+      const { shifts, warnings, timelineWarnings, diagnosticReport } = generateTimeAxis(cs, targetDept, year, month, genSnapshot, ct, builtPrevTail);
+      _genResult = { shifts, warnings, timelineWarnings, score: 0, ratioFeedback: {}, diagnosticReport };
     } else {
       _genResult = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
     }
-    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = _genResult;
+    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback, diagnosticReport} = _genResult;
     lastAutoGenRef.current[targetDept.id] = result;
-    return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot };
+    return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot, diagnosticReport };
   }, [year, month]);
 
   const repairHardConstraints = (dept, res, ds, year, month) => {
