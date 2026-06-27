@@ -6724,9 +6724,12 @@ function SharedShiftView({ token }) {
   const nameInnerStyle = { fontWeight:'bold', fontSize:11, lineHeight:1.4, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', wordBreak:'break-all' };
 
   return (
-    // maxWidth なし・overflow 制限なし・touch-action なし
-    // backgroundColor + minHeight:100vh でページ全体の背景色を統一
-    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:0,padding:'12px 8px',color:'#111',backgroundColor:'#f0fbfa',minHeight:'100vh'}}>
+    // position:fixed の背景レイヤーでスクロール位置・viewport変更に関係なく全画面を覆う
+    // iOS Safari ではスクロール時に body/html 背景が白く見えるケースがあるため
+    // fixed レイヤー(z-index:-1) + コンテンツ(z-index:0) の2層構成で確実に背景統一
+    <>
+    <div style={{position:'fixed',inset:0,background:'#f0fbfa',zIndex:-1}} />
+    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:0,padding:'12px 8px',color:'#111',position:'relative',zIndex:0}}>
       {dept_ids.map(deptId => {
         const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
         const deptStaff = (staff_data || []).filter(s => s.dept === deptId);
@@ -6779,6 +6782,7 @@ function SharedShiftView({ token }) {
       })}
       <div style={{marginTop:12,fontSize:10,color:'#9CA3AF',textAlign:'center'}}>しふぽん — シフト確定表</div>
     </div>
+    </>
   );
 }
 
