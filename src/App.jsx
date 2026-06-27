@@ -6547,7 +6547,17 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
       const staffList = (cfg.staffList || []).filter(s => s.dept === deptId);
       const mk = monthKey(year, month);
       const events = evRes.data?.data_value?.[deptId]?.[mk] || {};
-      const rawShifts = shiftsRes.data?.data_value;
+      let rawShifts = shiftsRes.data?.data_value;
+      // 新キー（部署サフィックスあり）で見つからない場合、旧キー形式にフォールバック
+      if (!rawShifts) {
+        const legacyKey = `shifts_${year}_${month+1}`;
+        const legacyRes = await supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', legacyKey).maybeSingle();
+        const legacyData = legacyRes.data?.data_value;
+        if (legacyData) {
+          // 旧形式: { deptId: { staffId: { day: value } } } → 対象部署を抽出
+          rawShifts = legacyData[deptId] || null;
+        }
+      }
       if (!rawShifts) {
         // 保存済みの全シフトキーを検索して診断情報を収集
         const allKeysRes = await supabase.from('shift_data').select('data_key').eq('user_id', adminUserId).like('data_key', 'shifts_%');
