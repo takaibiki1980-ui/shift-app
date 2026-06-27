@@ -7390,9 +7390,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
     setSaveStatus("unsaved");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    // ★防衛C: 部署IDをクロージャでキャプチャ（タイマー発火時に部署が変わっても正しい部署に保存）
+    // ★防衛C: 部署IDをクロージャでキャプチャ（アクティブ部署を安全網として追加）
     const closureDeptId = activeDeptIdRef.current;
-    dirtyDeptIdsRef.current.add(closureDeptId); // ★Fix W-2: dirty追跡（緊急保存の多部署対応）
+    dirtyDeptIdsRef.current.add(closureDeptId); // ★Fix W-2: dirty追跡
     saveTimer.current = setTimeout(async () => {
       if (isLoadingMonth.current) return;
       // ★防衛3: 保存直前に年月一致検証（クロージャの年月 vs 現在の画面の年月）
@@ -7404,57 +7404,61 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         setSaveStatus('saved'); // 画面上のステータスは安全側に倒す
         return;
       }
-      // 部署IDはクロージャ値を使用（編集時の部署に正確に保存）
-      const currentDeptId = closureDeptId;
-      const key = `shifts_${year}_${month+1}_${currentDeptId}`;
-      const deptData = allShifts[currentDeptId] || {};
-      try {
-        const { error } = await supabase.from('shift_data').upsert(
-          { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
-          { onConflict:'user_id,data_key' }
-        );
-        if (error) {
-          // 認証エラー検知
-          if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("token")) {
-            console.error("[save] 認証トークン切れ:", error.message);
-            alert("セッションが切れました。再ログインしてください。");
-            await supabase.auth.signOut();
-            return;
+      // ★Fix S-1: dirty全部署を保存（生成部署とactive部署が違う場合でも漏れなく保存）
+      const deptIdsToSave = new Set(dirtyDeptIdsRef.current);
+      deptIdsToSave.add(closureDeptId); // 安全網: アクティブ部署も必ず含める
+      let saveError = null;
+      for (const currentDeptId of deptIdsToSave) {
+        const key = `shifts_${year}_${month+1}_${currentDeptId}`;
+        const deptData = allShifts[currentDeptId] || {};
+        try {
+          const { error } = await supabase.from('shift_data').upsert(
+            { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
+            { onConflict:'user_id,data_key' }
+          );
+          if (error) {
+            // 認証エラー検知
+            if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("token")) {
+              console.error("[save] 認証トークン切れ:", error.message);
+              alert("セッションが切れました。再ログインしてください。");
+              await supabase.auth.signOut();
+              return;
+            }
+            throw error;
           }
-          throw error;
+          dirtyDeptIdsRef.current.delete(currentDeptId); // 保存成功 → dirty解除
+          console.log("[save] Supabase保存OK:", key);
+          // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
+          allDBDataRef.current[key] = deptData;
+          {
+            const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current, currentDeptId);
+            if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
+          }
+          const genRef = lastAutoGenRef.current[currentDeptId];
+          if (genRef) {
+            const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
+            const kiboPatterns = detectKiboNightPatterns(genRef, deptData, deptStaff, year, month);
+            if (Object.keys(kiboPatterns).length > 0) {
+              setStaffList(prev => prev.map(s => {
+                if (!kiboPatterns[s.id]) return s;
+                return { ...s, kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id]) };
+              }));
+            }
+            lastAutoGenRef.current[currentDeptId] = {...deptData};
+          }
+        } catch(e) {
+          saveError = e;
+          console.error("[save] Supabase保存失敗:", key, e?.message || e);
         }
+      }
+      if (!saveError) {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current = 0;
         lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
-        dirtyDeptIdsRef.current.delete(currentDeptId); // ★Fix W-2: 保存成功 → dirty解除
         setSaveStatus("saved");
-        console.log("[save] Supabase保存OK:", key);
-        // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
-        // → 調整済みシフトが同セッション内の次月生成に即座に反映される
-        allDBDataRef.current[key] = deptData;
-        {
-          const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current, currentDeptId);
-          if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
-        }
-        const genRef = lastAutoGenRef.current[currentDeptId];
-        if (genRef) {
-          const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
-          const kiboPatterns = detectKiboNightPatterns(genRef, deptData, deptStaff, year, month);
-          if (Object.keys(kiboPatterns).length > 0) {
-            setStaffList(prev => prev.map(s => {
-              if (!kiboPatterns[s.id]) return s;
-              return {
-                ...s,
-                kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id]),
-              };
-            }));
-          }
-          lastAutoGenRef.current[currentDeptId] = {...deptData};
-        }
-      } catch(e) {
+      } else {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current += 1;
-        console.error("[save] Supabase保存失敗(" + saveFailCountRef.current + "回目):", e?.message || e);
         setSaveStatus("unsaved");
         if (saveFailCountRef.current >= 5) {
           saveFailCountRef.current = 0;
@@ -8220,6 +8224,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           console.warn('[VALIDATION WARNING] 制約違反:\n' + _hardErrs.join('\n'));
         }
 
+        dirtyDeptIdsRef.current.add(cd.id); // ★Fix S-1: 生成部署を明示dirty登録（active部署と異なる場合でも保存される）
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
         if (ratioFeedback && Object.keys(ratioFeedback).length > 0) {
@@ -8266,6 +8271,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           if (ratioFeedback) Object.assign(allRatioFeedback, ratioFeedback);
         }
         setUndoCount(undoStackRef.current[activeDeptIdRef.current]?.length ?? 0);
+        Object.keys(newShifts).forEach(id => dirtyDeptIdsRef.current.add(id)); // ★Fix S-1: 全生成部署を明示dirty登録
         setAllShifts(prev => ({...prev, ...newShifts}));
         if (Object.keys(allRatioFeedback).length > 0) {
           setStaffList(prev => prev.map(s => {
