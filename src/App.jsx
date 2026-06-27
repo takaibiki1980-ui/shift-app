@@ -7384,22 +7384,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const saveFailCountRef = useRef(0);
   useEffect(() => {
     // DB初期化完了前・ロード中は物理的に保存不可
-    // ★TRACE①: 保存エフェクト開始
-    console.log('[TRACE①] 保存エフェクト開始', {
-      dbInitialized: dbInitialized.current,
-      isLoadingMonth: isLoadingMonth.current,
-      userEditSeq: userEditSeq.current,
-      seqAtLastRemoteLoad: seqAtLastRemoteLoad.current,
-      saveStatus: saveStatusRef.current,
-      activeDeptId: activeDeptIdRef.current,
-      dirtyDeptIds: [...dirtyDeptIdsRef.current],
-    });
-    if (!dbInitialized.current) { console.log('[TRACE②] STOP: dbInitialized=false → return'); return; }
-    if (isLoadingMonth.current) { console.log('[TRACE②] STOP: isLoadingMonth=true → return'); return; }
+    console.log("[SAVE] START");
+    if (!dbInitialized.current) { console.log("[SAVE] STOP L7382 dbInitialized=false"); return; }
+    if (isLoadingMonth.current) { console.log("[SAVE] STOP L7383 isLoadingMonth=true"); return; }
     // Realtime直後で userEditSeq が変化していない = ユーザー/生成の変更なし → 保存不要
     // userEditSeq > seqAtLastRemoteLoad であれば編集・生成があった → 保存する
     if (userEditSeq.current === seqAtLastRemoteLoad.current) {
-      console.log('[TRACE②] STOP: L7386 true (userEditSeq===seqAtLastRemoteLoad=' + userEditSeq.current + ') → setSaveStatus("saved") → return');
+      console.log("[SAVE] STOP L7386 userEditSeq===seqAtLastRemoteLoad=" + userEditSeq.current);
       setSaveStatus('saved');
       return;
     }
@@ -7409,35 +7400,31 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // ★防衛C: 部署IDをクロージャでキャプチャ（アクティブ部署を安全網として追加）
     const closureDeptId = activeDeptIdRef.current;
     dirtyDeptIdsRef.current.add(closureDeptId); // ★Fix W-2: dirty追跡
-    console.log('[TRACE③] 保存タイマー開始 setTimeout(1000ms)', { closureDeptId, dirtyDeptIds: [...dirtyDeptIdsRef.current] });
     saveTimer.current = setTimeout(async () => {
-      if (isLoadingMonth.current) { console.log('[TRACE②] STOP: タイマー内 isLoadingMonth=true → return'); return; }
+      if (isLoadingMonth.current) { console.log("[SAVE] STOP L7383(timer) isLoadingMonth=true"); return; }
       // ★防衛3: 保存直前に年月一致検証（クロージャの年月 vs 現在の画面の年月）
       if (year !== yearRef.current || month !== monthRef.current) {
         console.warn('[save] 🚨 年月不一致を検出 - データ破壊を防ぐため保存を中断', {
           closureYear: year, closureMonth: month + 1,
           currentYear: yearRef.current, currentMonth: monthRef.current + 1
         });
-        console.log('[TRACE②] STOP: L7399 年月不一致 → setSaveStatus("saved") → return');
+        console.log("[SAVE] STOP L7399 year/month mismatch");
         setSaveStatus('saved'); // 画面上のステータスは安全側に倒す
         return;
       }
       // ★Fix S-1: dirty全部署を保存（生成部署とactive部署が違う場合でも漏れなく保存）
       const deptIdsToSave = new Set(dirtyDeptIdsRef.current);
       deptIdsToSave.add(closureDeptId); // 安全網: アクティブ部署も必ず含める
-      console.log('[TRACE④] 保存対象部署:', [...deptIdsToSave]);
       let saveError = null;
       for (const currentDeptId of deptIdsToSave) {
         const key = `shifts_${year}_${month+1}_${currentDeptId}`;
         const deptData = allShifts[currentDeptId] || {};
-        console.log('[TRACE⑤] forループ開始', { currentDeptId, key, staffCount: Object.keys(deptData).length });
         try {
-          console.log('[TRACE⑥] supabase.upsert() 呼び出し直前', { table: 'shift_data', user_id: session.user.id, data_key: key, staffCount: Object.keys(deptData).length });
+          console.log("[SAVE] UPSERT", key, Object.keys(deptData).length);
           const { error } = await supabase.from('shift_data').upsert(
             { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
             { onConflict:'user_id,data_key' }
           );
-          console.log('[TRACE⑦] supabase.upsert() 戻り値', { key, error: error ? error.message : null, success: !error });
           if (error) {
             // 認証エラー検知
             if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("token")) {
@@ -7449,7 +7436,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             throw error;
           }
           dirtyDeptIdsRef.current.delete(currentDeptId); // 保存成功 → dirty解除
-          console.log("[save] Supabase保存OK:", key);
+          console.log("[SAVE] UPSERT OK");
           // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
           allDBDataRef.current[key] = deptData;
           {
@@ -7470,20 +7457,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         } catch(e) {
           saveError = e;
-          console.error("[save] Supabase保存失敗:", key, e?.message || e);
+          console.log("[SAVE] UPSERT ERROR", e?.message || e);
         }
       }
-      console.log('[TRACE⑧] 保存ループ完了', { saveError: saveError ? saveError.message : null });
       if (!saveError) {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current = 0;
         lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
-        console.log('[TRACE⑧] setSaveStatus("saved") 呼び出し（upsert成功）');
         setSaveStatus("saved");
       } else {
         try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
         saveFailCountRef.current += 1;
-        console.log('[TRACE⑧] setSaveStatus("unsaved") 呼び出し（upsert失敗）');
         setSaveStatus("unsaved");
         if (saveFailCountRef.current >= 5) {
           saveFailCountRef.current = 0;
