@@ -185,34 +185,70 @@ https://<origin>?share=<token>
 
 ## 5. 共有フロー（実装詳細）
 
-### 5-1. 共有ボタン押下時（管理画面側）
+### 5-1. 共有ボタン押下時（管理画面側）— 処理順
 
 ```
-doShare(selectedDepts, mode)
+doShare(selectedDepts, mode) の処理順序（この順序は変更不可）
 
-  【① スナップショット作成】
-  1. token     = genToken()（8文字・毎回新規生成）
-  2. shift_data = selectedDepts の allShifts[dept] を抽出（押下時点のコピー）
-  3. staff_data = selectedDepts に所属するスタッフを staffList から抽出（押下時点のコピー）
-  4. dept_data  = selectedDepts の部署情報を depts から抽出（押下時点のコピー）
+  ─────────────────────────────────────────
+  STEP 1: ボタン状態を「保存中...」にする（UI即時反映）
+  ─────────────────────────────────────────
+  setSharingDept(d.id)
+  → ボタンを disabled にし「保存中...」と表示
+  → ユーザーの二重押下を防ぐ
 
-  【② 単体完結データとして INSERT（upsert/update は使わない）】
-  5. supabase.from('shared_shifts').insert({
-       token,
-       admin_user_id: session.user.id,
-       year, month,
-       dept_ids: selectedDepts,
-       shift_data,   ← 他テーブルを後から参照しない完結データ
-       staff_data,   ← 同上
-       dept_data     ← 同上
-     })
+  ─────────────────────────────────────────
+  STEP 2: 押下時点のスナップショットをメモリ上で作成
+  ─────────────────────────────────────────
+  token      = genToken()                          （8文字・毎回新規生成）
+  shift_data = allShifts[dept] のディープコピー     （押下時点の確定シフト）
+  staff_data = staffList から selectedDepts 所属スタッフを抽出
+  dept_data  = depts から selectedDepts の部署情報を抽出
 
-  【③ 発行済みURL不変：毎回新token・既存レコード変更なし】
-  6. shareUrl = `${origin}?share=${token}`
-  7. mode === 'line'  → LINE送信
-     mode === 'copy'  → クリップボードコピー
-     QR              → shareUrl から即時生成（QRCodeSVG）
+  ─────────────────────────────────────────
+  STEP 3: shared_shifts へ INSERT（Supabase）
+  ─────────────────────────────────────────
+  supabase.from('shared_shifts').insert({ token, admin_user_id, year, month,
+    dept_ids, shift_data, staff_data, dept_data })
+
+  ├─ 成功 → STEP 4へ
+  └─ 失敗 → STEP 5E（エラー処理）へ ※ URL・QR・LINEは一切発行しない
+
+  ─────────────────────────────────────────
+  STEP 4: INSERT 成功後のみ — shareToken 取得・送信実行
+  ─────────────────────────────────────────
+  shareUrl = `${origin}?share=${token}`  ← INSERT成功後に確定
+
+  QRコード生成 → shareUrl をもとにレンダリング
+  mode === 'line' → window.open(LINE共有URL with shareUrl)
+  mode === 'copy' → navigator.clipboard.writeText(shareUrl) → alert('コピーしました')
+
+  ─────────────────────────────────────────
+  STEP 5: 完了処理（成功 or 失敗 いずれでも必ず実行）
+  ─────────────────────────────────────────
+  setSharingDept(null)  → ボタンを通常状態に戻す
+
+  STEP 5E（エラー時のみ）:
+  → alert('共有データの保存に失敗しました。再度お試しください。')
+  → URL・QR・LINEは発行しない
 ```
+
+### INSERT 失敗時の保証
+
+| 項目 | 保証内容 |
+|---|---|
+| URL | 発行しない。shareUrl は STEP 4 以降でのみ生成する |
+| QRコード | 生成しない。INSERT 成功後にのみ表示する |
+| LINE送信 | 実行しない |
+| エラー表示 | alert で通知し、ボタンを通常状態に戻す |
+
+### 処理順の設計根拠
+
+| 原則 | 理由 |
+|---|---|
+| INSERT が成功してから URL/QR/LINE を発行する | 先に送信するとスタッフがURLを開いてもデータが存在しない |
+| ボタンを即時 disabled にする | INSERT 中の二重押下で重複 token が発行されるのを防ぐ |
+| エラー時は何も送らない | 不完全な URL をスタッフに渡さないためのフェイルセーフ |
 
 ### 5-2. スタッフがURLを開いたとき（共有画面側）
 
