@@ -2116,7 +2116,16 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
   // [DEBUG 最終出力] 公休スナップショット
   { const _R=new Set(['休み','希望休','有休']); console.error('── 最終出力 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,diff:Object.values(res[s.id]).filter(v=>_R.has(v)).length-(s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8),休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
-  return { shifts: res, warnings, timelineWarnings };
+  // ── DiagnosticEngine: Phase3 Step1 ──
+  // 空のコンテナを用意。Step2以降でblankCheck・prevTailを移管する。
+  const diagnosticReport = {
+    dept: dept.id,
+    year,
+    month,
+    prevTail: { loaded: false, staffCount: 0, dayCount: 0 },
+    blankCheck: null,
+  };
+  return { shifts: res, warnings, timelineWarnings, diagnosticReport };
 }
 
 // 生成結果のペナルティスコアを計算（低いほど良い）
@@ -2353,10 +2362,10 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
       const cap = nikkinMin + (i % (range + 1));
       deptVariant = { ...dept, maxStaff: { ...dept.maxStaff, "日勤": cap } };
     }
-    const { shifts, warnings, timelineWarnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend, prevTail);
+    const { shifts, warnings, timelineWarnings, diagnosticReport } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend, prevTail);
     // スコアリングは常に元のdeptで評価（公平な比較）
     const score = scoreShifts(shifts, ds, dept, days, year, month, shiftTrend);
-    if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score }; }
+    if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score, diagnosticReport }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
   }
   // 局所探索（swap改善）: 30回試行の最良案をさらにスコア改善
@@ -3433,7 +3442,15 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     console.error(_abcLines.join('\n'));
   }
 
-  return { shifts: selectedRes, warnings, timelineWarnings: [] };
+  // ── DiagnosticEngine: Phase3 Step1 ──
+  const diagnosticReport = {
+    dept: dept.id,
+    year,
+    month,
+    prevTail: { loaded: false, staffCount: 0, dayCount: 0 },
+    blankCheck: null,
+  };
+  return { shifts: selectedRes, warnings, timelineWarnings: [], diagnosticReport };
 }
 
 function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
