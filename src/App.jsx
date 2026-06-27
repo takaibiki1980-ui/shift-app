@@ -6536,11 +6536,13 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
   useEffect(() => {
     (async () => {
       const shiftKey = `shifts_${year}_${month+1}_${deptId}`;
+      console.log('[PORTAL①] ShiftViewPortal 読込開始', { table: 'shift_data', user_id: adminUserId, data_key: shiftKey, ym, year, month: month+1, deptId });
       const [cfgRes, shiftsRes, evRes] = await Promise.all([
         supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', 'facilityConfig').maybeSingle(),
         supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', shiftKey).maybeSingle(),
         supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', 'events_data').maybeSingle(),
       ]);
+      console.log('[PORTAL②] Supabase 取得結果', { cfgFound: !!cfgRes.data?.data_value, shiftsFound: !!shiftsRes.data?.data_value, shiftsError: shiftsRes.error?.message || null, rawValue: shiftsRes.data?.data_value });
       if (!cfgRes.data?.data_value) { setLoadError(true); setLoading(false); return; }
       const cfg = cfgRes.data.data_value;
       const dept = cfg.depts?.find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
@@ -6679,7 +6681,10 @@ export default function App() {
   const staffViewMode = params.get('view');
   // 短縮UUID（22文字）を通常UUIDに戻す
   const resolvedUserId = staffUserId ? (staffUserId.length <= 24 ? shortToUuid(staffUserId) : staffUserId) : null;
-  if (resolvedUserId && staffViewMode === 'shift') return <ShiftViewPortal adminUserId={resolvedUserId} deptId={staffDeptId} ym={params.get('ym')} />;
+  if (resolvedUserId && staffViewMode === 'shift') {
+    console.log('[PORTAL-URL] URL パラメータ解析', { staff_param: staffUserId, resolved_user_id: resolvedUserId, dept: staffDeptId, ym: params.get('ym'), view: staffViewMode });
+    return <ShiftViewPortal adminUserId={resolvedUserId} deptId={staffDeptId} ym={params.get('ym')} />;
+  }
   if (resolvedUserId) return <StaffPortal adminUserId={resolvedUserId} fixedDeptId={staffDeptId||undefined} cfgPreload={staffCfgB64} />;
 
   const [session, setSession] = useState(null);
@@ -7379,11 +7384,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const saveFailCountRef = useRef(0);
   useEffect(() => {
     // DB初期化完了前・ロード中は物理的に保存不可
-    if (!dbInitialized.current) return;
-    if (isLoadingMonth.current) return;
+    console.log("[SAVE] START");
+    if (!dbInitialized.current) { console.log("[SAVE] STOP L7382 dbInitialized=false"); return; }
+    if (isLoadingMonth.current) { console.log("[SAVE] STOP L7383 isLoadingMonth=true"); return; }
     // Realtime直後で userEditSeq が変化していない = ユーザー/生成の変更なし → 保存不要
     // userEditSeq > seqAtLastRemoteLoad であれば編集・生成があった → 保存する
     if (userEditSeq.current === seqAtLastRemoteLoad.current) {
+      console.log("[SAVE] STOP L7386 userEditSeq===seqAtLastRemoteLoad=" + userEditSeq.current);
       setSaveStatus('saved');
       return;
     }
@@ -7394,13 +7401,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const closureDeptId = activeDeptIdRef.current;
     dirtyDeptIdsRef.current.add(closureDeptId); // ★Fix W-2: dirty追跡
     saveTimer.current = setTimeout(async () => {
-      if (isLoadingMonth.current) return;
+      if (isLoadingMonth.current) { console.log("[SAVE] STOP L7383(timer) isLoadingMonth=true"); return; }
       // ★防衛3: 保存直前に年月一致検証（クロージャの年月 vs 現在の画面の年月）
       if (year !== yearRef.current || month !== monthRef.current) {
         console.warn('[save] 🚨 年月不一致を検出 - データ破壊を防ぐため保存を中断', {
           closureYear: year, closureMonth: month + 1,
           currentYear: yearRef.current, currentMonth: monthRef.current + 1
         });
+        console.log("[SAVE] STOP L7399 year/month mismatch");
         setSaveStatus('saved'); // 画面上のステータスは安全側に倒す
         return;
       }
@@ -7412,6 +7420,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const key = `shifts_${year}_${month+1}_${currentDeptId}`;
         const deptData = allShifts[currentDeptId] || {};
         try {
+          console.log("[SAVE] UPSERT", key, Object.keys(deptData).length);
           const { error } = await supabase.from('shift_data').upsert(
             { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
             { onConflict:'user_id,data_key' }
@@ -7427,7 +7436,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             throw error;
           }
           dirtyDeptIdsRef.current.delete(currentDeptId); // 保存成功 → dirty解除
-          console.log("[save] Supabase保存OK:", key);
+          console.log("[SAVE] UPSERT OK");
           // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
           allDBDataRef.current[key] = deptData;
           {
@@ -7448,7 +7457,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         } catch(e) {
           saveError = e;
-          console.error("[save] Supabase保存失敗:", key, e?.message || e);
+          console.log("[SAVE] UPSERT ERROR", e?.message || e);
         }
       }
       if (!saveError) {
