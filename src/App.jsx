@@ -1021,7 +1021,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   const prevMonthIdx  = month === 0 ? 11 : month - 1;
   const prevDays = getDays(prevMonthYear, prevMonthIdx);
   const prevShift = (id) => prevTail[id]?.[prevDays] ?? null;
-  console.log('[prevTail-autoGenerate]', '宇賀神', prevShift('kaigo1_6'));
+
 
   const _consecWork = (id, d) => consecWork(id, d, res, deptWork, prevTail, prevDays); // Step8: グローバル昇格
   const _consecRest = (id, d) => consecRest(id, d, res, deptRest); // Step8: グローバル昇格
@@ -2338,7 +2338,6 @@ function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}
 
 // N回試行して最もスコアが低い（違反が少ない）結果を返す
 function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, prevTail = {}) {
-  console.log('[prevTail-bestOfN]', Object.keys(prevTail || {}).length, prevTail['kaigo1_6']);
   const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
   let best = null, bestScore = Infinity;
@@ -3277,39 +3276,6 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
         ..._scDetail
       ].join('\n'));
     }
-  }
-
-  // [BLANK-CHECK] 全スタッフの空白日が構造的に埋め不可か埋め忘れかを判定（eiyo のみ、readonly）
-  if (dept.id === 'eiyo') {
-    const _bcDowN = ['日','月','火','水','木','金','土'];
-    ds.forEach(s => {
-      const _bcBlanks = [];
-      for (let d = 1; d <= days; d++) { if (!selectedRes[s.id][d]) _bcBlanks.push(d); }
-      if (_bcBlanks.length === 0) { console.log(`[BLANK-CHECK] ${s.name}: 空白日なし`); return; }
-      const _bcAllowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
-      _bcBlanks.forEach(d => {
-        const _bcDow = new Date(year, month, d).getDay();
-        const _bcResults = [];
-        for (const shiftKey of _bcAllowed) {
-          const _bcViols = [];
-          // ④ 最大連勤チェック
-          let _bcStreak = 0, _bcMax = 0;
-          for (let dd = Math.max(1, d - maxConsec - 1); dd <= Math.min(days, d + maxConsec + 1); dd++) {
-            const v = dd === d ? shiftKey : (selectedRes[s.id][dd] ?? '');
-            if (v && deptWork.has(v) && v !== '明け') { _bcStreak++; _bcMax = Math.max(_bcMax, _bcStreak); }
-            else _bcStreak = 0;
-          }
-          if (_bcMax > maxConsec) _bcViols.push(`④連勤超過(${_bcMax}連)`);
-          // ⑤ maxStaff 超過チェック
-          const _bcCur = ds.filter(sx => selectedRes[sx.id][d] === shiftKey).length;
-          if (_bcCur + 1 > (cleanMaxStaff[shiftKey] ?? 99)) _bcViols.push(`⑤maxStaff超過(${_bcCur+1}>${cleanMaxStaff[shiftKey]})`);
-          _bcResults.push(_bcViols.length > 0 ? `${shiftKey}=[${_bcViols.join(',')}]` : `${shiftKey}=配置可`);
-        }
-        const _bcCanPlace = _bcResults.some(r => r.includes('配置可'));
-        const _bcConclusion = _bcCanPlace ? '⚠️埋め忘れの疑い' : '✅構造的に埋め不可';
-        console.log(`[BLANK-CHECK] ${s.name} ${d}日(${_bcDowN[_bcDow]}): ${_bcResults.join(' / ')} → ${_bcConclusion}`);
-      });
-    });
   }
 
   // [BLANK-CHECK-FUKUDA] 全スタッフの空白日ごとに原因と不足解消可能性を出力（eiyo のみ、readonly）
@@ -7875,7 +7841,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     } else {
       console.log(`[prevTail] 前月キー=${prevMonthKey} データなし（前月シフト未保存）`);
     }
-    console.log('[prevTail-build]', targetDept.id, Object.keys(builtPrevTail).length, builtPrevTail['kaigo1_6']);
+
 
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
     const genStack = undoStackRef.current[targetDept.id] || [];
