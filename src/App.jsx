@@ -6636,24 +6636,6 @@ function SharedShiftView({ token }) {
   const [row, setRow] = useState(null);
   const [notFound, setNotFound] = useState(false);
 
-  // スタッフ画面: ブラウザ標準のピンチズームを有効化
-  // ・overflow ラッパーなしでテーブルをページ直置き → iOS Safari でも pinch zoom が動作
-  // ・minimum-scale=0.25: 31日表（≈1220px）が iPhone(390px)で 0.32 スケールで収まる
-  // ・maximum-scale=5.0: 5倍まで拡大可能
-  // ・アンマウント時に元の viewport に復元（管理画面に影響しない）
-  useEffect(() => {
-    const meta = document.querySelector('meta[name="viewport"]');
-    const original = meta ? meta.getAttribute('content') : null;
-    if (meta) {
-      meta.setAttribute('content',
-        'width=device-width, initial-scale=1.0, minimum-scale=0.25, maximum-scale=5.0, user-scalable=yes'
-      );
-    }
-    return () => {
-      if (meta && original) meta.setAttribute('content', original);
-    };
-  }, []);
-
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
@@ -6666,6 +6648,30 @@ function SharedShiftView({ token }) {
       setLoading(false);
     })();
   }, []); // eslint-disable-line
+
+  // データロード後: テーブル実幅に合わせた viewport を設定
+  // width=<テーブル幅> にすることで:
+  //   ① ブラウザが自動的に全体を画面に収めてスケールダウン（俯瞰表示）
+  //   ② 背景色(html/body)がテーブル幅まで伸びるため背景の途切れが解消
+  //   ③ ユーザーはそこから自由にピンチズーム可能（user-scalable=yes）
+  // アンマウント時に管理画面用の viewport に復元
+  useEffect(() => {
+    if (!row) return;
+    const days = getDays(row.year, row.month - 1);
+    const NAME_W = 76, CELL_W = 34, SUM_W = 32, MARGIN = 24;
+    const tableWidth = NAME_W + CELL_W * days + SUM_W * 3 + MARGIN;
+
+    const meta = document.querySelector('meta[name="viewport"]');
+    const original = meta ? meta.getAttribute('content') : null;
+    if (meta) {
+      meta.setAttribute('content',
+        `width=${tableWidth}, initial-scale=1.0, minimum-scale=0.5, maximum-scale=5.0, user-scalable=yes`
+      );
+    }
+    return () => {
+      if (meta && original) meta.setAttribute('content', original);
+    };
+  }, [row]);
 
   if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
   if (notFound || !row) return (
