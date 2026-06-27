@@ -4833,14 +4833,43 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   );
 }
 
-function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, saveStatus, onClose }) {
+function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, onClose }) {
   const [selectedDepts, setSelectedDepts] = useState([activeDeptId]);
+  const [sharingDept, setSharingDept] = useState(null);
   const noSelection = selectedDepts.length === 0;
   const fname = `シフト表_${year}年${month+1}月`;
   const toggleDept = (id) => setSelectedDepts(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   const doDownload = (ext) => { if(noSelection)return; let content="",type=""; if(ext==="csv"){content=buildCSV(depts,staffList,allShifts,year,month,selectedDepts);type="text/csv;charset=utf-8";} if(ext==="html"){content=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents);type="text/html;charset=utf-8";} triggerDownload(content,`${fname}.${ext}`,type); };
   const doPrint = () => { if(noSelection)return; const html=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents); printWithIframe(html); onClose(); };
-  const isSaved = saveStatus === 'saved';
+
+  const doShare = async (d, mode) => {
+    const shiftUrl = `${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}&view=shift&ym=${year}${String(month+1).padStart(2,'0')}`;
+    setSharingDept(d.id);
+    try {
+      const deptData = allShifts[d.id] || {};
+      const key = `shifts_${year}_${month+1}_${d.id}`;
+      const { error } = await supabase.from('shift_data').upsert(
+        { user_id: session.user.id, data_key: key, data_value: deptData, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,data_key' }
+      );
+      if (error) throw error;
+      if (mode === 'line') {
+        window.open(`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${shiftUrl}`)}`, '_blank');
+      } else {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(shiftUrl);
+          alert('URLをコピーしました！');
+        } else {
+          alert(`URLをコピーしてください:\n${shiftUrl}`);
+        }
+      }
+    } catch(e) {
+      alert('共有データの保存に失敗しました。再度お試しください。\n' + (e?.message || e));
+    } finally {
+      setSharingDept(null);
+    }
+  };
+
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
@@ -4855,18 +4884,10 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         {/* ── 共有セクション ── */}
         <div style={{marginTop:16,paddingTop:16,borderTop:"2px solid #E4E4E7"}}>
           <div style={{fontSize:13,fontWeight:900,color:"#18181B",marginBottom:4}}>📲 共有</div>
-          <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>確定シフトのURLをスタッフに送ります。部署ごとのURLが生成されます。</div>
-          {!isSaved&&<div style={{fontSize:11,color:"#b45309",background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:6,padding:"6px 10px",marginBottom:10}}>⚠️ 保存が完了してから共有してください（現在: 保存中）</div>}
+          <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>確定シフトをスタッフに送ります。ボタンを押すと現在の画面データを保存して送信します。</div>
           {session && depts.filter(d=>selectedDepts.includes(d.id)).map(d=>{
             const shiftUrl=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}&view=shift&ym=${year}${String(month+1).padStart(2,'0')}`;
-            const doShareLine=()=>{
-              if(!isSaved){alert('シフトが保存中です。「保存済」になってから送ってください。');return;}
-              window.open(`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${shiftUrl}`)}`,'_blank');
-            };
-            const doShareCopy=()=>{
-              if(!isSaved){alert('シフトが保存中です。「保存済」になってから送ってください。');return;}
-              if(navigator.clipboard?.writeText){navigator.clipboard.writeText(shiftUrl).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${shiftUrl}`));}else{alert(`URLをコピーしてください:\n${shiftUrl}`);}
-            };
+            const isSharing = sharingDept === d.id;
             return(
               <div key={d.id} style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
                 <div style={{fontWeight:800,fontSize:12,color:"#18181B",marginBottom:8}}>{d.icon} {d.label}（{year}年{month+1}月）</div>
@@ -4876,8 +4897,8 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
                   </div>
                 </div>
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={doShareLine} style={{background:isSaved?"linear-gradient(135deg,#06C755,#00a040)":"#9CA3AF",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
-                  <button onClick={doShareCopy} style={{background:isSaved?"#eff6ff":"#F4F4F5",color:isSaved?"#2563EB":"#9CA3AF",border:`1px solid ${isSaved?"#93c5fd":"#E4E4E7"}`,borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 URLコピー</button>
+                  <button onClick={()=>doShare(d,'line')} disabled={isSharing} style={{background:isSharing?"#9CA3AF":"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:12,fontWeight:800,flex:1}}>{isSharing?"保存中...":"💬 LINEで送る"}</button>
+                  <button onClick={()=>doShare(d,'copy')} disabled={isSharing} style={{background:isSharing?"#F4F4F5":"#eff6ff",color:isSharing?"#9CA3AF":"#2563EB",border:`1px solid ${isSharing?"#E4E4E7":"#93c5fd"}`,borderRadius:8,padding:"8px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:12,fontWeight:800,flex:1}}>{isSharing?"保存中...":"📋 URLコピー"}</button>
                 </div>
               </div>
             );
@@ -8540,7 +8561,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             setExcelPasteModal(false);
           }} onClose={()=>setExcelPasteModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
-      {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} session={session} saveStatus={saveStatus} onClose={()=>setDownloadModal(false)}/>}
+      {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} session={session} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} coverageWarnings={generateWarnings.coverageWarnings} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#F4F4F5",border:"1px solid #D4D4D8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#A1A1AA",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#6366F1",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
