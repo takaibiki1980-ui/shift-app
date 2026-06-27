@@ -3493,14 +3493,14 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
   const WD = ["日","月","火","水","木","金","土"];
   const TAG = (t) => '<' + t + '>';
   const CTAG = (t) => '</' + t + '>';
-  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:10px;margin:16px;color:#111;}h2{font-size:13px;margin:14px 0 5px;}table{border-collapse:collapse;width:100%;margin-bottom:20px;}th,td{border:1px solid #ccc;padding:2px 3px;text-align:center;font-size:9px;white-space:nowrap;}th{background:#e8f0fe;font-weight:bold;}.name{text-align:left;min-width:70px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}.ev-row th{background:#fffbea!important;border-bottom:2px solid #fde68a;color:#92400e;font-weight:bold;}@media print{body{margin:4px;}h2{font-size:10px;page-break-before:auto;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
+  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('meta name="viewport" content="width=device-width,initial-scale=1"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:11px;margin:12px 8px;color:#111;}h2{font-size:14px;margin:14px 0 8px;border-bottom:2px solid #6366F1;padding-bottom:6px;}table{border-collapse:collapse;table-layout:fixed;margin-bottom:24px;}th,td{border:1px solid #ccc;padding:4px 1px;text-align:center;font-size:12px;width:26px;max-width:26px;overflow:hidden;box-sizing:border-box;height:32px;}th{background:#e8f0fe;font-weight:bold;line-height:1.2;}td{line-height:1.3;}.name{text-align:left;width:76px;max-width:76px;font-weight:bold;font-size:11px;word-break:break-all;white-space:normal;height:auto;padding:3px 4px;}.sum{width:30px;max-width:30px;font-size:10px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}.ev-row th{background:#fffbea!important;border-bottom:2px solid #fde68a;color:#92400e;font-weight:bold;}@media print{body{margin:4px;}h2{font-size:10px;page-break-before:auto;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
   depts.filter(d=>selectedDepts.includes(d.id)).forEach(dept => {
     const shifts = allShifts[dept.id] || {};
     const deptEvents = (allEvents && allEvents[dept.id] && allEvents[dept.id][mk]) || {};
     html += TAG('h2')+`${dept.icon} ${dept.label}　${year}年${month+1}月`+CTAG('h2');
     html += TAG('table')+TAG('thead')+TAG('tr')+TAG('th class="name"')+'氏名'+CTAG('th');
     for(let d=1;d<=days;d++){ const wd=WD[new Date(year,month,d).getDay()]; html += TAG(`th class="${(wd==="日"||wd==="土")?"we":""}"`)+''+d+'<br>'+wd+CTAG('th'); }
-    html += TAG('th')+'勤務'+CTAG('th')+TAG('th')+'夜勤'+CTAG('th')+TAG('th')+'休'+CTAG('th')+CTAG('tr');
+    html += TAG('th class="sum"')+'勤務'+CTAG('th')+TAG('th class="sum"')+'夜勤'+CTAG('th')+TAG('th class="sum"')+'休'+CTAG('th')+CTAG('tr');
     if(Object.keys(deptEvents).length>0){ html += '<tr class="ev-row"><th class="name">行事</th>'; for(let d=1;d<=days;d++){ const ev=deptEvents[d]||''; html += '<th style="text-align:center;vertical-align:top;padding:2px 1px;background:'+(ev?'#fef3c7':'#fffdf0')+';">'+(ev?'<span style="writing-mode:vertical-rl;text-orientation:mixed;font-size:8px;color:#92400e;font-weight:bold;">'+ev+'</span>':'')+'</th>'; } html += '<th></th><th></th><th></th></tr>'; }
     html += CTAG('thead')+TAG('tbody');
     staffList.filter(s=>s.dept===dept.id).forEach(s => {
@@ -3508,8 +3508,8 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const cellText=isKibo||v==="希望休"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG('td')+cellText+CTAG('td'); }
-      html += TAG('td')+w+CTAG('td')+TAG('td')+(n||"－")+CTAG('td')+TAG('td')+r+CTAG('td')+CTAG('tr');
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"; const cellText=isKibo||v==="希望休"||v==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}`)+cellText+CTAG('td'); }
+      html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
   });
@@ -6664,20 +6664,21 @@ function SharedShiftView({ token }) {
   const REST_SET = new Set(['休み','希望休','有休']);
 
   // 共有画面のみ適用するセル変換（管理データは変更しない）
+  // 希望休・希 は「休」に統一。それ以外は SHIFTS の short を使用（日/休→日休 など正しく変換）
   const cellText = (v) => {
     if (!v) return '－';
-    if (v === '希望休' || v === '休み' || v === '希') return '休';
-    if (v === '有休') return '有';
-    if (v === '明け') return '明';
-    if (v === '夜勤') return '夜';
-    return v.slice(0, 2);
+    if (v === '希望休' || v === '希') return '休';
+    return SHIFTS[v]?.short || v.slice(0, 1) || '－';
   };
 
-  const th = { border:'1px solid #ccc', padding:'3px 2px', textAlign:'center', fontSize:11, background:'#e8f0fe', fontWeight:'bold', width:28, maxWidth:28, overflow:'hidden', boxSizing:'border-box' };
-  const td = { border:'1px solid #ccc', padding:'3px 2px', textAlign:'center', fontSize:11, width:28, maxWidth:28, overflow:'hidden', boxSizing:'border-box' };
+  const CELL_W = 26;
+  const NAME_W = 76;
+  const SUM_W = 30;
+  const th = { border:'1px solid #ccc', padding:'4px 1px', textAlign:'center', fontSize:12, background:'#e8f0fe', fontWeight:'bold', width:CELL_W, maxWidth:CELL_W, overflow:'hidden', boxSizing:'border-box', lineHeight:'1.2' };
+  const td = { border:'1px solid #ccc', padding:'4px 1px', textAlign:'center', fontSize:13, width:CELL_W, maxWidth:CELL_W, overflow:'hidden', boxSizing:'border-box', height:34 };
 
   return (
-    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:16,color:'#111',maxWidth:900}}>
+    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:'12px 8px',color:'#111',maxWidth:900}}>
       {dept_ids.map(deptId => {
         const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
         const deptStaff = (staff_data || []).filter(s => s.dept === deptId);
@@ -6687,19 +6688,19 @@ function SharedShiftView({ token }) {
             <h2 style={{fontSize:16,margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8,color:'#18181B'}}>
               {dept.icon} {dept.label}　{year}年{month}月 シフト表
             </h2>
-            <div style={{overflowX:'auto'}}>
-              <table style={{borderCollapse:'collapse',width:'100%',tableLayout:'fixed'}}>
+            <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+              <table style={{borderCollapse:'collapse',tableLayout:'fixed',minWidth:NAME_W+CELL_W*days+SUM_W*3}}>
                 <thead>
                   <tr>
-                    <th style={{...th,textAlign:'left',width:72,maxWidth:72}}>氏名</th>
+                    <th style={{...th,textAlign:'left',width:NAME_W,maxWidth:NAME_W,fontSize:11}}>氏名</th>
                     {Array.from({length:days},(_,i)=>i+1).map(d=>{
                       const wd=WD[new Date(year,month-1,d).getDay()];
                       const isWe=wd==='日'||wd==='土';
                       return <th key={d} style={{...th,background:isWe?'#fff0f6':'#e8f0fe'}}>{d}<br/>{wd}</th>;
                     })}
-                    <th style={{...th,width:32,maxWidth:32}}>勤務</th>
-                    <th style={{...th,width:32,maxWidth:32}}>夜勤</th>
-                    <th style={{...th,width:28,maxWidth:28}}>休</th>
+                    <th style={{...th,width:SUM_W,maxWidth:SUM_W,fontSize:10}}>勤務</th>
+                    <th style={{...th,width:SUM_W,maxWidth:SUM_W,fontSize:10}}>夜勤</th>
+                    <th style={{...th,width:SUM_W,maxWidth:SUM_W,fontSize:10}}>休</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -6708,18 +6709,18 @@ function SharedShiftView({ token }) {
                     const ss = deptShifts[s.id] || {};
                     return (
                       <tr key={s.id}>
-                        <td style={{...td,textAlign:'left'}}>{s.name}</td>
+                        <td style={{...td,textAlign:'left',width:NAME_W,maxWidth:NAME_W,fontWeight:'bold',fontSize:11,wordBreak:'break-all',whiteSpace:'normal',height:'auto',padding:'3px 4px'}}>{s.name}</td>
                         {Array.from({length:days},(_,i)=>i+1).map(d=>{
                           const v=ss[d]||'';
-                          if(v&&!REST_SET.has(v)&&v!=='明け'){w++;}
+                          if(WORK_TYPES.has(v))w++;
                           if(v==='夜勤')n++;
-                          if(REST_SET.has(v)&&v!=='有休')r++;
+                          if(REST_TYPES.has(v)&&v!=='明け'&&v!=='有休')r+=HALF_REST_TYPES.has(v)?0.5:1;
                           const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()]);
                           return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{cellText(v)}</td>;
                         })}
-                        <td style={td}>{w}</td>
-                        <td style={td}>{n||'－'}</td>
-                        <td style={td}>{r}</td>
+                        <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{w}</td>
+                        <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{n||'－'}</td>
+                        <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{r}</td>
                       </tr>
                     );
                   })}
