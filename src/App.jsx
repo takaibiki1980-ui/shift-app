@@ -471,6 +471,12 @@ const shortToUuid = (s) => {
   const hex = Array.from(bin).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 };
+// 紛らわしい文字（0/O, 1/I/l）を除いた8文字トークン生成
+const SHARE_TOKEN_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+const genToken = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(8)))
+    .map(b => SHARE_TOKEN_CHARS[b % SHARE_TOKEN_CHARS.length])
+    .join('');
 
 function calcConsecutive(sShifts, d) {
   let cnt = 0;
@@ -4836,37 +4842,68 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
 function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, onClose }) {
   const [selectedDepts, setSelectedDepts] = useState([activeDeptId]);
   const [sharingDept, setSharingDept] = useState(null);
+  // INSERT成功後のみセット: { deptId: { token, shareUrl } }
+  const [sharedResults, setSharedResults] = useState({});
   const noSelection = selectedDepts.length === 0;
   const fname = `シフト表_${year}年${month+1}月`;
-  const toggleDept = (id) => setSelectedDepts(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+  const toggleDept = (id) => {
+    setSelectedDepts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    // 部署選択が変わったら発行済み結果をリセット
+    setSharedResults(prev => { const n = {...prev}; delete n[id]; return n; });
+  };
   const doDownload = (ext) => { if(noSelection)return; let content="",type=""; if(ext==="csv"){content=buildCSV(depts,staffList,allShifts,year,month,selectedDepts);type="text/csv;charset=utf-8";} if(ext==="html"){content=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents);type="text/html;charset=utf-8";} triggerDownload(content,`${fname}.${ext}`,type); };
   const doPrint = () => { if(noSelection)return; const html=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents); printWithIframe(html); onClose(); };
 
-  const doShare = async (d, mode) => {
-    const shiftUrl = `${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}&view=shift&ym=${year}${String(month+1).padStart(2,'0')}`;
+  // 共有ボタン押下: INSERT成功後のみ shareToken / URL / QR を発行
+  const doShare = async (d) => {
     setSharingDept(d.id);
     try {
-      const deptData = allShifts[d.id] || {};
-      const key = `shifts_${year}_${month+1}_${d.id}`;
-      const { error } = await supabase.from('shift_data').upsert(
-        { user_id: session.user.id, data_key: key, data_value: deptData, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id,data_key' }
-      );
+      // STEP2: 押下時点のスナップショットをメモリ上で作成
+      const token = genToken();
+      const shift_data = JSON.parse(JSON.stringify(allShifts[d.id] || {}));
+      const staff_data = staffList
+        .filter(s => s.dept === d.id)
+        .map(s => ({ id: s.id, name: s.name, dept: s.dept }));
+      const dept_data = [{ id: d.id, label: d.label, icon: d.icon }];
+
+      // STEP3: shared_shifts へ INSERT（upsert・update は使わない）
+      const { error } = await supabase.from('shared_shifts').insert({
+        token,
+        admin_user_id: session.user.id,
+        year,
+        month: month + 1,
+        dept_ids: [d.id],
+        shift_data: { [d.id]: shift_data },
+        staff_data,
+        dept_data,
+        schema_version: 1,
+      });
       if (error) throw error;
-      if (mode === 'line') {
-        window.open(`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${shiftUrl}`)}`, '_blank');
-      } else {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(shiftUrl);
-          alert('URLをコピーしました！');
-        } else {
-          alert(`URLをコピーしてください:\n${shiftUrl}`);
-        }
-      }
+
+      // STEP4: INSERT成功後のみ shareToken 確定・QR/LINE/URLを有効化
+      const shareUrl = `${window.location.origin}?share=${token}`;
+      setSharedResults(prev => ({ ...prev, [d.id]: { token, shareUrl } }));
     } catch(e) {
+      // INSERT失敗: URL・QR・LINEは発行しない
       alert('共有データの保存に失敗しました。再度お試しください。\n' + (e?.message || e));
     } finally {
       setSharingDept(null);
+    }
+  };
+
+  const doLine = (d) => {
+    const r = sharedResults[d.id];
+    if (!r) return;
+    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${r.shareUrl}`)}`, '_blank');
+  };
+
+  const doCopy = async (d) => {
+    const r = sharedResults[d.id];
+    if (!r) return;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(r.shareUrl).then(() => alert('URLをコピーしました！')).catch(() => alert(`URLをコピーしてください:\n${r.shareUrl}`));
+    } else {
+      alert(`URLをコピーしてください:\n${r.shareUrl}`);
     }
   };
 
@@ -4884,26 +4921,39 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         {/* ── 共有セクション ── */}
         <div style={{marginTop:16,paddingTop:16,borderTop:"2px solid #E4E4E7"}}>
           <div style={{fontSize:13,fontWeight:900,color:"#18181B",marginBottom:4}}>📲 共有</div>
-          <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>確定シフトをスタッフに送ります。ボタンを押すと現在の画面データを保存して送信します。</div>
+          <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>「共有リンクを発行」を押すと現在のシフトを保存し、QR・LINE・URLが使えるようになります。</div>
           {session && depts.filter(d=>selectedDepts.includes(d.id)).map(d=>{
-            const shiftUrl=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}&view=shift&ym=${year}${String(month+1).padStart(2,'0')}`;
             const isSharing = sharingDept === d.id;
+            const result = sharedResults[d.id];
             return(
               <div key={d.id} style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                <div style={{fontWeight:800,fontSize:12,color:"#18181B",marginBottom:8}}>{d.icon} {d.label}（{year}年{month+1}月）</div>
-                <div style={{display:"flex",justifyContent:"center",marginBottom:8}}>
-                  <div style={{padding:6,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
-                    <QRCodeSVG value={shiftUrl} size={120} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
-                  </div>
-                </div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>doShare(d,'line')} disabled={isSharing} style={{background:isSharing?"#9CA3AF":"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:12,fontWeight:800,flex:1}}>{isSharing?"保存中...":"💬 LINEで送る"}</button>
-                  <button onClick={()=>doShare(d,'copy')} disabled={isSharing} style={{background:isSharing?"#F4F4F5":"#eff6ff",color:isSharing?"#9CA3AF":"#2563EB",border:`1px solid ${isSharing?"#E4E4E7":"#93c5fd"}`,borderRadius:8,padding:"8px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:12,fontWeight:800,flex:1}}>{isSharing?"保存中...":"📋 URLコピー"}</button>
-                </div>
+                <div style={{fontWeight:800,fontSize:12,color:"#18181B",marginBottom:10}}>{d.icon} {d.label}（{year}年{month+1}月）</div>
+                {!result ? (
+                  /* INSERT前: 共有リンク発行ボタンのみ */
+                  <button onClick={()=>doShare(d)} disabled={isSharing} style={{width:"100%",background:isSharing?"#E4E4E7":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:13,fontWeight:800}}>
+                    {isSharing ? "保存中..." : "🔗 共有リンクを発行"}
+                  </button>
+                ) : (
+                  /* INSERT成功後: QR + LINE + URLコピー を表示 */
+                  <>
+                    <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
+                      <div style={{padding:6,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
+                        <QRCodeSVG value={result.shareUrl} size={120} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:8,marginBottom:8}}>
+                      <button onClick={()=>doLine(d)} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
+                      <button onClick={()=>doCopy(d)} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 URLコピー</button>
+                    </div>
+                    <button onClick={()=>doShare(d)} disabled={isSharing} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #E4E4E7",borderRadius:8,padding:"7px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:11}}>
+                      {isSharing ? "保存中..." : "↩ 再発行（シフト変更後）"}
+                    </button>
+                  </>
+                )}
               </div>
             );
           })}
-          {noSelection&&<div style={{fontSize:11,color:"#9CA3AF",textAlign:"center"}}>部署を選択すると共有URLが表示されます</div>}
+          {noSelection&&<div style={{fontSize:11,color:"#9CA3AF",textAlign:"center"}}>部署を選択すると共有ボタンが表示されます</div>}
         </div>
       </div>
     </div>
@@ -6580,87 +6630,40 @@ function recomputeGenerateWarnings(result, ds, cd, year, month, warnings, score,
   }
 }
 
-function ShiftViewPortal({ adminUserId, deptId, ym }) {
-  const year = ym ? Math.floor(Number(ym) / 100) : new Date().getFullYear();
-  const month = ym ? (Number(ym) % 100) - 1 : new Date().getMonth();
+// ── 共有シフト表示コンポーネント（shared_shifts 専用・他テーブル参照なし）──
+function SharedShiftView({ token }) {
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
-  const [diagInfo, setDiagInfo] = useState(null);
-  const [info, setInfo] = useState(null);
+  const [row, setRow] = useState(null);
+  const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
     (async () => {
-      const shiftKey = `shifts_${year}_${month+1}_${deptId}`;
-      console.log('[PORTAL①] ShiftViewPortal 読込開始', { table: 'shift_data', user_id: adminUserId, data_key: shiftKey, ym, year, month: month+1, deptId });
-      const [cfgRes, shiftsRes, evRes] = await Promise.all([
-        supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', 'facilityConfig').maybeSingle(),
-        supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', shiftKey).maybeSingle(),
-        supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', 'events_data').maybeSingle(),
-      ]);
-      console.log('[PORTAL②] Supabase 取得結果', { cfgFound: !!cfgRes.data?.data_value, shiftsFound: !!shiftsRes.data?.data_value, shiftsError: shiftsRes.error?.message || null, rawValue: shiftsRes.data?.data_value });
-      if (!cfgRes.data?.data_value) { setLoadError(true); setLoading(false); return; }
-      const cfg = cfgRes.data.data_value;
-      const dept = cfg.depts?.find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
-      const staffList = (cfg.staffList || []).filter(s => s.dept === deptId);
-      const mk = monthKey(year, month);
-      const events = evRes.data?.data_value?.[deptId]?.[mk] || {};
-      let rawShifts = shiftsRes.data?.data_value;
-      // 新キー（部署サフィックスあり）で見つからない場合、旧キー形式にフォールバック
-      if (!rawShifts) {
-        const legacyKey = `shifts_${year}_${month+1}`;
-        const legacyRes = await supabase.from('shift_data').select('data_value').eq('user_id', adminUserId).eq('data_key', legacyKey).maybeSingle();
-        const legacyData = legacyRes.data?.data_value;
-        if (legacyData) {
-          // 旧形式: { deptId: { staffId: { day: value } } } → 対象部署を抽出
-          rawShifts = legacyData[deptId] || null;
-        }
-      }
-      if (!rawShifts) {
-        // 保存済みの全シフトキーを検索して診断情報を収集
-        const allKeysRes = await supabase.from('shift_data').select('data_key').eq('user_id', adminUserId).like('data_key', 'shifts_%');
-        const foundKeys = (allKeysRes.data || []).map(r => r.data_key);
-        setDiagInfo({
-          shiftKey,
-          userId: adminUserId?.slice(0,8) + '...',
-          error: shiftsRes.error?.message || null,
-          staffCount: staffList.length,
-          foundKeys,
-        });
-      }
-      setInfo({ dept, staffList, shifts: rawShifts || {}, events });
+      const { data, error } = await supabase
+        .from('shared_shifts')
+        .select('year,month,dept_ids,shift_data,staff_data,dept_data')
+        .eq('token', token)
+        .maybeSingle();
+      if (error || !data) { setNotFound(true); setLoading(false); return; }
+      setRow(data);
       setLoading(false);
     })();
   }, []); // eslint-disable-line
 
   if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
-  if (loadError || !info) return <div style={{padding:48,textAlign:'center',color:'#c44b4b',fontSize:14}}>シフト表を読み込めませんでした。URLを確認してください。</div>;
-  if (diagInfo) return (
-    <div style={{padding:24,fontSize:13}}>
-      <div style={{fontSize:20,marginBottom:8,textAlign:'center'}}>📋</div>
-      <div style={{color:'#18181B',fontWeight:700,marginBottom:12,textAlign:'center'}}>{info.dept.label}　{year}年{month+1}月のシフト表</div>
-      <div style={{color:'#b45309',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:8,padding:12,marginBottom:12}}>
-        <div style={{fontWeight:700,marginBottom:4}}>⚠️ シフトデータが見つかりません</div>
-        <div style={{color:'#52525B',fontSize:11}}>管理者がシフトを生成・保存してから再度開いてください。</div>
-      </div>
-      <div style={{background:'#F4F4F5',borderRadius:8,padding:10,fontSize:10,color:'#52525B'}}>
-        <div style={{fontWeight:700,marginBottom:4,color:'#18181B'}}>🔍 診断情報（スクショを管理者へ）</div>
-        <div>探したキー: <code style={{background:'#E4E4E7',padding:'1px 4px',borderRadius:3,fontSize:9}}>{diagInfo.shiftKey}</code></div>
-        <div style={{marginTop:2}}>ユーザーID: <code style={{background:'#E4E4E7',padding:'1px 4px',borderRadius:3}}>{diagInfo.userId}</code></div>
-        <div style={{marginTop:2}}>スタッフ数: {diagInfo.staffCount}名</div>
-        {diagInfo.error && <div style={{color:'#c44b4b',marginTop:4}}>DBエラー: {diagInfo.error}</div>}
-        <div style={{marginTop:4,fontWeight:700}}>保存済みシフトキー ({diagInfo.foundKeys?.length || 0}件):</div>
-        {diagInfo.foundKeys?.length > 0
-          ? diagInfo.foundKeys.map(k => <div key={k} style={{paddingLeft:8,fontFamily:'monospace',fontSize:9}}>{k}</div>)
-          : <div style={{color:'#c44b4b',paddingLeft:8}}>シフトデータが一件も保存されていません</div>
-        }
-      </div>
+  if (notFound || !row) return (
+    <div style={{padding:48,textAlign:'center'}}>
+      <div style={{fontSize:32,marginBottom:12}}>🔗</div>
+      <div style={{color:'#c44b4b',fontWeight:700,fontSize:15,marginBottom:8}}>共有リンクが無効です</div>
+      <div style={{color:'#52525B',fontSize:12}}>URLを確認するか、管理者に再発行を依頼してください。</div>
     </div>
   );
 
-  const { dept, staffList, shifts, events } = info;
-  const days = getDays(year, month);
+  const { year, month, dept_ids, shift_data, staff_data, dept_data } = row;
+  const days = getDays(year, month - 1);
   const WD = ['日','月','火','水','木','金','土'];
   const REST_SET = new Set(['休み','希望休','有休']);
+
+  // 共有画面のみ適用するセル変換（管理データは変更しない）
   const cellText = (v) => {
     if (!v) return '－';
     if (v === '希望休' || v === '休み' || v === '希') return '休';
@@ -6669,77 +6672,82 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
     if (v === '夜勤') return '夜';
     return v.slice(0, 2);
   };
+
   const th = { border:'1px solid #ccc', padding:'3px 2px', textAlign:'center', fontSize:11, background:'#e8f0fe', fontWeight:'bold', width:28, maxWidth:28, overflow:'hidden', boxSizing:'border-box' };
   const td = { border:'1px solid #ccc', padding:'3px 2px', textAlign:'center', fontSize:11, width:28, maxWidth:28, overflow:'hidden', boxSizing:'border-box' };
 
   return (
     <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:16,color:'#111',maxWidth:900}}>
-      <h2 style={{fontSize:16,margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8,color:'#18181B'}}>
-        {dept.icon} {dept.label}　{year}年{month+1}月 シフト表
-      </h2>
-      <div style={{overflowX:'auto'}}>
-        <table style={{borderCollapse:'collapse',width:'100%',tableLayout:'fixed'}}>
-          <thead>
-            <tr>
-              <th style={{...th,textAlign:'left',width:72,maxWidth:72}}>氏名</th>
-              {Array.from({length:days},(_,i)=>i+1).map(d=>{
-                const wd=WD[new Date(year,month,d).getDay()];
-                const isWe=wd==='日'||wd==='土';
-                return <th key={d} style={{...th,background:isWe?'#fff0f6':'#e8f0fe'}}>{d}<br/>{wd}</th>;
-              })}
-              <th style={{...th,width:32,maxWidth:32}}>勤務</th><th style={{...th,width:32,maxWidth:32}}>夜勤</th><th style={{...th,width:28,maxWidth:28}}>休</th>
-            </tr>
-            {Object.keys(events).length>0&&(
-              <tr>
-                <th style={{...th,textAlign:'left',background:'#fffbea'}}>行事</th>
-                {Array.from({length:days},(_,i)=>i+1).map(d=>(
-                  <th key={d} style={{...th,background:events[d]?'#fef3c7':'#fffdf0',writingMode:events[d]?'vertical-rl':undefined,fontSize:9,color:'#92400e',padding:'2px 1px'}}>{events[d]||''}</th>
-                ))}
-                <th style={th}/><th style={th}/><th style={th}/>
-              </tr>
-            )}
-          </thead>
-          <tbody>
-            {staffList.map(s=>{
-              let w=0,n=0,r=0;
-              const ss=shifts[s.id]||{};
-              return(
-                <tr key={s.id}>
-                  <td style={{...td,textAlign:'left'}}>{s.name}</td>
-                  {Array.from({length:days},(_,i)=>i+1).map(d=>{
-                    const v=ss[d]||'';
-                    if(v&&!REST_SET.has(v)&&v!=='明け'){w++;}
-                    if(v==='夜勤')n++;
-                    if(REST_SET.has(v)&&v!=='有休')r++;
-                    const isWe=['日','土'].includes(WD[new Date(year,month,d).getDay()]);
-                    return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{cellText(v)}</td>;
+      {dept_ids.map(deptId => {
+        const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
+        const deptStaff = (staff_data || []).filter(s => s.dept === deptId);
+        const deptShifts = (shift_data || {})[deptId] || {};
+        return (
+          <div key={deptId} style={{marginBottom:32}}>
+            <h2 style={{fontSize:16,margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8,color:'#18181B'}}>
+              {dept.icon} {dept.label}　{year}年{month}月 シフト表
+            </h2>
+            <div style={{overflowX:'auto'}}>
+              <table style={{borderCollapse:'collapse',width:'100%',tableLayout:'fixed'}}>
+                <thead>
+                  <tr>
+                    <th style={{...th,textAlign:'left',width:72,maxWidth:72}}>氏名</th>
+                    {Array.from({length:days},(_,i)=>i+1).map(d=>{
+                      const wd=WD[new Date(year,month-1,d).getDay()];
+                      const isWe=wd==='日'||wd==='土';
+                      return <th key={d} style={{...th,background:isWe?'#fff0f6':'#e8f0fe'}}>{d}<br/>{wd}</th>;
+                    })}
+                    <th style={{...th,width:32,maxWidth:32}}>勤務</th>
+                    <th style={{...th,width:32,maxWidth:32}}>夜勤</th>
+                    <th style={{...th,width:28,maxWidth:28}}>休</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deptStaff.map(s=>{
+                    let w=0,n=0,r=0;
+                    const ss = deptShifts[s.id] || {};
+                    return (
+                      <tr key={s.id}>
+                        <td style={{...td,textAlign:'left'}}>{s.name}</td>
+                        {Array.from({length:days},(_,i)=>i+1).map(d=>{
+                          const v=ss[d]||'';
+                          if(v&&!REST_SET.has(v)&&v!=='明け'){w++;}
+                          if(v==='夜勤')n++;
+                          if(REST_SET.has(v)&&v!=='有休')r++;
+                          const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()]);
+                          return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{cellText(v)}</td>;
+                        })}
+                        <td style={td}>{w}</td>
+                        <td style={td}>{n||'－'}</td>
+                        <td style={td}>{r}</td>
+                      </tr>
+                    );
                   })}
-                  <td style={td}>{w}</td>
-                  <td style={td}>{n||'－'}</td>
-                  <td style={td}>{r}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
       <div style={{marginTop:12,fontSize:10,color:'#9CA3AF',textAlign:'center'}}>しふぽん — シフト確定表</div>
     </div>
   );
 }
 
+
 export default function App() {
   const params = new URLSearchParams(window.location.search);
+  const shareToken = params.get('share');
   const staffUserId = params.get('staff');
   const staffDeptId = params.get('dept');
   const staffCfgB64 = params.get('cfg');
-  const staffViewMode = params.get('view');
   // 短縮UUID（22文字）を通常UUIDに戻す
   const resolvedUserId = staffUserId ? (staffUserId.length <= 24 ? shortToUuid(staffUserId) : staffUserId) : null;
-  if (resolvedUserId && staffViewMode === 'shift') {
-    console.log('[PORTAL-URL] URL パラメータ解析', { staff_param: staffUserId, resolved_user_id: resolvedUserId, dept: staffDeptId, ym: params.get('ym'), view: staffViewMode });
-    return <ShiftViewPortal adminUserId={resolvedUserId} deptId={staffDeptId} ym={params.get('ym')} />;
-  }
+
+  // 新共有ルート: ?share=token → SharedShiftView（shared_shifts 専用）
+  if (shareToken) return <SharedShiftView token={shareToken} />;
+
+  // 希望休ポータル（スタッフURL）
   if (resolvedUserId) return <StaffPortal adminUserId={resolvedUserId} fixedDeptId={staffDeptId||undefined} cfgPreload={staffCfgB64} />;
 
   const [session, setSession] = useState(null);
