@@ -6530,7 +6530,7 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
   const month = ym ? (Number(ym) % 100) - 1 : new Date().getMonth();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  const [noShiftData, setNoShiftData] = useState(false);
+  const [diagInfo, setDiagInfo] = useState(null);
   const [info, setInfo] = useState(null);
 
   useEffect(() => {
@@ -6548,7 +6548,18 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
       const mk = monthKey(year, month);
       const events = evRes.data?.data_value?.[deptId]?.[mk] || {};
       const rawShifts = shiftsRes.data?.data_value;
-      if (!rawShifts) setNoShiftData(true);
+      if (!rawShifts) {
+        // 保存済みの全シフトキーを検索して診断情報を収集
+        const allKeysRes = await supabase.from('shift_data').select('data_key').eq('user_id', adminUserId).like('data_key', 'shifts_%');
+        const foundKeys = (allKeysRes.data || []).map(r => r.data_key);
+        setDiagInfo({
+          shiftKey,
+          userId: adminUserId?.slice(0,8) + '...',
+          error: shiftsRes.error?.message || null,
+          staffCount: staffList.length,
+          foundKeys,
+        });
+      }
       setInfo({ dept, staffList, shifts: rawShifts || {}, events });
       setLoading(false);
     })();
@@ -6556,11 +6567,26 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
 
   if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
   if (loadError || !info) return <div style={{padding:48,textAlign:'center',color:'#c44b4b',fontSize:14}}>シフト表を読み込めませんでした。URLを確認してください。</div>;
-  if (noShiftData) return (
-    <div style={{padding:48,textAlign:'center',fontSize:14}}>
-      <div style={{fontSize:32,marginBottom:12}}>📋</div>
-      <div style={{color:'#18181B',fontWeight:700,marginBottom:8}}>{info.dept.label}　{year}年{month+1}月のシフト表</div>
-      <div style={{color:'#52525B',marginBottom:16}}>シフトがまだ保存されていません。<br/>管理者がシフトを確定・保存してから再度開いてください。</div>
+  if (diagInfo) return (
+    <div style={{padding:24,fontSize:13}}>
+      <div style={{fontSize:20,marginBottom:8,textAlign:'center'}}>📋</div>
+      <div style={{color:'#18181B',fontWeight:700,marginBottom:12,textAlign:'center'}}>{info.dept.label}　{year}年{month+1}月のシフト表</div>
+      <div style={{color:'#b45309',background:'#fffbeb',border:'1px solid #fcd34d',borderRadius:8,padding:12,marginBottom:12}}>
+        <div style={{fontWeight:700,marginBottom:4}}>⚠️ シフトデータが見つかりません</div>
+        <div style={{color:'#52525B',fontSize:11}}>管理者がシフトを生成・保存してから再度開いてください。</div>
+      </div>
+      <div style={{background:'#F4F4F5',borderRadius:8,padding:10,fontSize:10,color:'#52525B'}}>
+        <div style={{fontWeight:700,marginBottom:4,color:'#18181B'}}>🔍 診断情報（スクショを管理者へ）</div>
+        <div>探したキー: <code style={{background:'#E4E4E7',padding:'1px 4px',borderRadius:3,fontSize:9}}>{diagInfo.shiftKey}</code></div>
+        <div style={{marginTop:2}}>ユーザーID: <code style={{background:'#E4E4E7',padding:'1px 4px',borderRadius:3}}>{diagInfo.userId}</code></div>
+        <div style={{marginTop:2}}>スタッフ数: {diagInfo.staffCount}名</div>
+        {diagInfo.error && <div style={{color:'#c44b4b',marginTop:4}}>DBエラー: {diagInfo.error}</div>}
+        <div style={{marginTop:4,fontWeight:700}}>保存済みシフトキー ({diagInfo.foundKeys?.length || 0}件):</div>
+        {diagInfo.foundKeys?.length > 0
+          ? diagInfo.foundKeys.map(k => <div key={k} style={{paddingLeft:8,fontFamily:'monospace',fontSize:9}}>{k}</div>)
+          : <div style={{color:'#c44b4b',paddingLeft:8}}>シフトデータが一件も保存されていません</div>
+        }
+      </div>
     </div>
   );
 
