@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
+import HolidayJP from "@holiday-jp/holiday_jp";
 import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal } from 'lucide-react';
 
 const LOGO_CHARS = [
@@ -472,6 +473,10 @@ const shortToUuid = (s) => {
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 };
 // 紛らわしい文字（0/O, 1/I/l）を除いた8文字トークン生成
+// 日本の祝日判定（振替休日・国民の休日を含む）
+// year: 年, month: 0-indexed月, day: 日
+const isJpHoliday = (year, month, day) => HolidayJP.isHoliday(new Date(year, month, day));
+
 const SHARE_TOKEN_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
 const genToken = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(8)))
@@ -3499,7 +3504,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
     const deptEvents = (allEvents && allEvents[dept.id] && allEvents[dept.id][mk]) || {};
     html += TAG('h2')+`${dept.icon} ${dept.label}　${year}年${month+1}月`+CTAG('h2');
     html += TAG('table')+TAG('thead')+TAG('tr')+TAG('th class="name"')+'氏名'+CTAG('th');
-    for(let d=1;d<=days;d++){ const wd=WD[new Date(year,month,d).getDay()]; html += TAG(`th class="${(wd==="日"||wd==="土")?"we":""}"`)+''+d+'<br>'+wd+CTAG('th'); }
+    for(let d=1;d<=days;d++){ const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); html += TAG(`th class="${isWe?"we":""}"`)+''+d+'<br>'+wd+CTAG('th'); }
     html += TAG('th class="sum"')+'勤務'+CTAG('th')+TAG('th class="sum"')+'夜勤'+CTAG('th')+TAG('th class="sum"')+'休'+CTAG('th')+CTAG('tr');
     if(Object.keys(deptEvents).length>0){ html += '<tr class="ev-row"><th class="name">行事</th>'; for(let d=1;d<=days;d++){ const ev=deptEvents[d]||''; html += '<th style="text-align:center;vertical-align:top;padding:2px 1px;background:'+(ev?'#fef3c7':'#fffdf0')+';">'+(ev?'<span style="writing-mode:vertical-rl;text-orientation:mixed;font-size:8px;color:#92400e;font-weight:bold;">'+ev+'</span>':'')+'</th>'; } html += '<th></th><th></th><th></th></tr>'; }
     html += CTAG('thead')+TAG('tbody');
@@ -3508,7 +3513,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+'<td class="name"><div class="name-inner">'+s.name+'</div></td>';
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"; const cellText=isKibo||v==="希望休"||v==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':HALF_REST_TYPES.has(v)?v:(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}`)+cellText+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||v==="希望休"||v==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':HALF_REST_TYPES.has(v)?v:(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}`)+cellText+CTAG('td'); }
       html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
@@ -6746,7 +6751,7 @@ function SharedShiftView({ token }) {
                     <th style={{...th,textAlign:'left',width:NAME_W,maxWidth:NAME_W,fontSize:11}}>氏名</th>
                     {Array.from({length:days},(_,i)=>i+1).map(d=>{
                       const wd=WD[new Date(year,month-1,d).getDay()];
-                      const isWe=wd==='日'||wd==='土';
+                      const isWe=wd==='日'||wd==='土'||isJpHoliday(year,month-1,d);
                       return <th key={d} style={{...th,background:isWe?'#fff0f6':'#e8f0fe'}}>{d}<br/>{wd}</th>;
                     })}
                     <th style={{...th,width:SUM_W,maxWidth:SUM_W,fontSize:10}}>勤務</th>
@@ -6766,7 +6771,7 @@ function SharedShiftView({ token }) {
                           if(WORK_TYPES.has(v))w++;
                           if(v==='夜勤')n++;
                           if(REST_TYPES.has(v)&&v!=='明け'&&v!=='有休')r+=HALF_REST_TYPES.has(v)?0.5:1;
-                          const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()]);
+                          const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()])||isJpHoliday(year,month-1,d);
                           return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{cellText(v)}</td>;
                         })}
                         <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{w}</td>
