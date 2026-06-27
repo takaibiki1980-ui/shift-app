@@ -4910,7 +4910,8 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
     const label = selectedDepts.length === 1
       ? (depts.find(d => d.id === selectedDepts[0])?.label || '')
       : `${selectedDepts.length}部署`;
-    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(`${label} ${year}年${month+1}月のシフト表はこちら\n${sharedResult.shareUrl}`)}`, '_blank');
+    const msg = `${label}\n${year}年${month+1}月 確定シフト\n\nこちらをタップしてください。\n${sharedResult.shareUrl}`;
+    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
   };
 
   const doCopy = async () => {
