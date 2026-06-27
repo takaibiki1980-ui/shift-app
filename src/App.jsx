@@ -6530,6 +6530,7 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
   const month = ym ? (Number(ym) % 100) - 1 : new Date().getMonth();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [noShiftData, setNoShiftData] = useState(false);
   const [info, setInfo] = useState(null);
 
   useEffect(() => {
@@ -6546,13 +6547,22 @@ function ShiftViewPortal({ adminUserId, deptId, ym }) {
       const staffList = (cfg.staffList || []).filter(s => s.dept === deptId);
       const mk = monthKey(year, month);
       const events = evRes.data?.data_value?.[deptId]?.[mk] || {};
-      setInfo({ dept, staffList, shifts: shiftsRes.data?.data_value || {}, events });
+      const rawShifts = shiftsRes.data?.data_value;
+      if (!rawShifts) setNoShiftData(true);
+      setInfo({ dept, staffList, shifts: rawShifts || {}, events });
       setLoading(false);
     })();
   }, []); // eslint-disable-line
 
   if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
   if (loadError || !info) return <div style={{padding:48,textAlign:'center',color:'#c44b4b',fontSize:14}}>シフト表を読み込めませんでした。URLを確認してください。</div>;
+  if (noShiftData) return (
+    <div style={{padding:48,textAlign:'center',fontSize:14}}>
+      <div style={{fontSize:32,marginBottom:12}}>📋</div>
+      <div style={{color:'#18181B',fontWeight:700,marginBottom:8}}>{info.dept.label}　{year}年{month+1}月のシフト表</div>
+      <div style={{color:'#52525B',marginBottom:16}}>シフトがまだ保存されていません。<br/>管理者がシフトを確定・保存してから再度開いてください。</div>
+    </div>
+  );
 
   const { dept, staffList, shifts, events } = info;
   const days = getDays(year, month);
@@ -8561,15 +8571,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   {/* 確定シフト送信 */}
                   <div style={{paddingTop:10,borderTop:"1px solid #E4E4E7"}}>
                     <div style={{fontSize:11,fontWeight:700,color:"#6366F1",marginBottom:4}}>📋 確定シフトを送る（{year}年{month+1}月）</div>
-                    <div style={{fontSize:10,color:"#52525B",marginBottom:6}}>スタッフが開くと{year}年{month+1}月のシフト表が確認できます</div>
+                    {saveStatus!=='saved'&&<div style={{fontSize:10,color:"#b45309",background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:6,padding:"4px 8px",marginBottom:6}}>⚠️ シフトが保存中です。「保存済」になってから送ってください。</div>}
+                    {saveStatus==='saved'&&<div style={{fontSize:10,color:"#52525B",marginBottom:6}}>スタッフが開くと{year}年{month+1}月のシフト表が確認できます</div>}
                     {(()=>{
                       const shiftUrl=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}&view=shift&ym=${year}${String(month+1).padStart(2,'0')}`;
-                      const doShiftLine=()=>{const l=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${shiftUrl}`)}`;window.open(l,'_blank');};
-                      const doShiftCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(shiftUrl).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${shiftUrl}`));}else{alert(`URLをコピーしてください:\n${shiftUrl}`);}};
+                      const doShiftLine=()=>{
+                        if(saveStatus!=='saved'){alert('シフトがまだ保存中です。画面上の「保存済」表示を確認してから送ってください。');return;}
+                        const l=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${shiftUrl}`)}`;window.open(l,'_blank');
+                      };
+                      const doShiftCopy=()=>{
+                        if(saveStatus!=='saved'){alert('シフトがまだ保存中です。画面上の「保存済」表示を確認してから送ってください。');return;}
+                        if(navigator.clipboard?.writeText){navigator.clipboard.writeText(shiftUrl).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${shiftUrl}`));}else{alert(`URLをコピーしてください:\n${shiftUrl}`);}
+                      };
                       return(
                         <div style={{display:"flex",gap:8}}>
-                          <button onClick={doShiftLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
-                          <button onClick={doShiftCopy} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
+                          <button onClick={doShiftLine} style={{background:saveStatus==='saved'?"linear-gradient(135deg,#06C755,#00a040)":"#9CA3AF",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
+                          <button onClick={doShiftCopy} style={{background:saveStatus==='saved'?"#eff6ff":"#F4F4F5",color:saveStatus==='saved'?"#2563EB":"#9CA3AF",border:`1px solid ${saveStatus==='saved'?"#93c5fd":"#E4E4E7"}`,borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
                         </div>
                       );
                     })()}
