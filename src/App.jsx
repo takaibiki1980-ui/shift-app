@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
+import HolidayJP from "@holiday-jp/holiday_jp";
 import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal } from 'lucide-react';
 
 const LOGO_CHARS = [
@@ -472,6 +473,10 @@ const shortToUuid = (s) => {
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 };
 // 紛らわしい文字（0/O, 1/I/l）を除いた8文字トークン生成
+// 日本の祝日判定（振替休日・国民の休日を含む）
+// year: 年, month: 0-indexed月, day: 日
+const isJpHoliday = (year, month, day) => HolidayJP.isHoliday(new Date(year, month, day));
+
 const SHARE_TOKEN_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
 const genToken = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(8)))
@@ -1016,7 +1021,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   const prevMonthIdx  = month === 0 ? 11 : month - 1;
   const prevDays = getDays(prevMonthYear, prevMonthIdx);
   const prevShift = (id) => prevTail[id]?.[prevDays] ?? null;
-  console.log('[prevTail-autoGenerate]', '宇賀神', prevShift('kaigo1_6'));
+
 
   const _consecWork = (id, d) => consecWork(id, d, res, deptWork, prevTail, prevDays); // Step8: グローバル昇格
   const _consecRest = (id, d) => consecRest(id, d, res, deptRest); // Step8: グローバル昇格
@@ -2111,7 +2116,22 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
   // [DEBUG 最終出力] 公休スナップショット
   { const _R=new Set(['休み','希望休','有休']); console.error('── 最終出力 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,diff:Object.values(res[s.id]).filter(v=>_R.has(v)).length-(s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8),休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
-  return { shifts: res, warnings, timelineWarnings };
+  // ── DiagnosticEngine: Phase3 Step2 ──
+  // prevTail 引数（builtPrevTail）から実データを取り出してレポートに格納する。
+  const _dtStaffCount = Object.keys(prevTail).length;
+  const _dtDayCount = Object.values(prevTail).reduce((s, tail) => s + Object.keys(tail).length, 0);
+  const diagnosticReport = {
+    dept: dept.id,
+    year,
+    month,
+    prevTail: {
+      loaded: _dtStaffCount > 0,
+      staffCount: _dtStaffCount,
+      dayCount: _dtDayCount,
+    },
+    blankCheck: null,
+  };
+  return { shifts: res, warnings, timelineWarnings, diagnosticReport };
 }
 
 // 生成結果のペナルティスコアを計算（低いほど良い）
@@ -2333,7 +2353,6 @@ function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}
 
 // N回試行して最もスコアが低い（違反が少ない）結果を返す
 function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, prevTail = {}) {
-  console.log('[prevTail-bestOfN]', Object.keys(prevTail || {}).length, prevTail['kaigo1_6']);
   const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
   let best = null, bestScore = Infinity;
@@ -2349,10 +2368,10 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
       const cap = nikkinMin + (i % (range + 1));
       deptVariant = { ...dept, maxStaff: { ...dept.maxStaff, "日勤": cap } };
     }
-    const { shifts, warnings, timelineWarnings } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend, prevTail);
+    const { shifts, warnings, timelineWarnings, diagnosticReport } = autoGenerate(staffList, deptVariant, year, month, prevShifts, shiftTrend, prevTail);
     // スコアリングは常に元のdeptで評価（公平な比較）
     const score = scoreShifts(shifts, ds, dept, days, year, month, shiftTrend);
-    if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score }; }
+    if (score < bestScore) { bestScore = score; best = { shifts, warnings, timelineWarnings, score, diagnosticReport }; }
     if (bestScore === 0) break; // 違反ゼロなら即採用
   }
   // 局所探索（swap改善）: 30回試行の最良案をさらにスコア改善
@@ -3274,79 +3293,7 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     }
   }
 
-  // [BLANK-CHECK] 全スタッフの空白日が構造的に埋め不可か埋め忘れかを判定（eiyo のみ、readonly）
-  if (dept.id === 'eiyo') {
-    const _bcDowN = ['日','月','火','水','木','金','土'];
-    ds.forEach(s => {
-      const _bcBlanks = [];
-      for (let d = 1; d <= days; d++) { if (!selectedRes[s.id][d]) _bcBlanks.push(d); }
-      if (_bcBlanks.length === 0) { console.log(`[BLANK-CHECK] ${s.name}: 空白日なし`); return; }
-      const _bcAllowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
-      _bcBlanks.forEach(d => {
-        const _bcDow = new Date(year, month, d).getDay();
-        const _bcResults = [];
-        for (const shiftKey of _bcAllowed) {
-          const _bcViols = [];
-          // ④ 最大連勤チェック
-          let _bcStreak = 0, _bcMax = 0;
-          for (let dd = Math.max(1, d - maxConsec - 1); dd <= Math.min(days, d + maxConsec + 1); dd++) {
-            const v = dd === d ? shiftKey : (selectedRes[s.id][dd] ?? '');
-            if (v && deptWork.has(v) && v !== '明け') { _bcStreak++; _bcMax = Math.max(_bcMax, _bcStreak); }
-            else _bcStreak = 0;
-          }
-          if (_bcMax > maxConsec) _bcViols.push(`④連勤超過(${_bcMax}連)`);
-          // ⑤ maxStaff 超過チェック
-          const _bcCur = ds.filter(sx => selectedRes[sx.id][d] === shiftKey).length;
-          if (_bcCur + 1 > (cleanMaxStaff[shiftKey] ?? 99)) _bcViols.push(`⑤maxStaff超過(${_bcCur+1}>${cleanMaxStaff[shiftKey]})`);
-          _bcResults.push(_bcViols.length > 0 ? `${shiftKey}=[${_bcViols.join(',')}]` : `${shiftKey}=配置可`);
-        }
-        const _bcCanPlace = _bcResults.some(r => r.includes('配置可'));
-        const _bcConclusion = _bcCanPlace ? '⚠️埋め忘れの疑い' : '✅構造的に埋め不可';
-        console.log(`[BLANK-CHECK] ${s.name} ${d}日(${_bcDowN[_bcDow]}): ${_bcResults.join(' / ')} → ${_bcConclusion}`);
-      });
-    });
-  }
-
-  // [BLANK-CHECK-FUKUDA] 全スタッフの空白日ごとに原因と不足解消可能性を出力（eiyo のみ、readonly）
-  if (dept.id === 'eiyo') {
-    const _bfDowN = ['日','月','火','水','木','金','土'];
-    ds.forEach(s => {
-      const _bfBlanks = [];
-      for (let d = 1; d <= days; d++) { if (!selectedRes[s.id][d]) _bfBlanks.push(d); }
-      const _bfAllowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
-      if (_bfBlanks.length === 0) { console.log(`[BLANK-CHECK-FUKUDA] ${s.name}(${s.role}): 空白日なし 許可=${_bfAllowed.join('/')}`); return; }
-      const _bfLines = [`[BLANK-CHECK-FUKUDA] ${s.name}(${s.role}): 空白${_bfBlanks.length}日 許可=${_bfAllowed.join('/')}`];
-      let _bfImproveable = 0;
-      _bfBlanks.forEach(d => {
-        const _bfDow = new Date(year, month, d).getDay();
-        const _bfPrev = d > 1 ? (selectedRes[s.id][d - 1] || '空白') : '(月初)';
-        const _bfNext = d < days ? (selectedRes[s.id][d + 1] || '空白') : '(月末)';
-        let _bfSb = 0, _bfSa = 0;
-        for (let i = d - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') _bfSb++; else break; }
-        for (let i = d + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') _bfSa++; else break; }
-        const _bfResults = [];
-        for (const shiftKey of _bfAllowed) {
-          const _bfViols = [];
-          if (_bfSb + 1 + _bfSa > maxConsec) _bfViols.push(`④連勤超過(${_bfSb}+1+${_bfSa}>${maxConsec})`);
-          const _bfCur = ds.filter(sx => selectedRes[sx.id][d] === shiftKey).length;
-          if (_bfCur + 1 > (cleanMaxStaff[shiftKey] ?? 99)) _bfViols.push(`⑤maxStaff超過(${_bfCur+1}>${cleanMaxStaff[shiftKey]})`);
-          _bfResults.push(_bfViols.length > 0 ? `${shiftKey}=[${_bfViols.join(',')}]` : `${shiftKey}=○`);
-        }
-        const _bfCanPlace = _bfResults.some(r => r.includes('○'));
-        // この日の不足を解消できるか
-        const _bfHelps = [];
-        for (const [sk, minC] of Object.entries(cleanMinStaff)) {
-          if (!_bfAllowed.includes(sk)) continue;
-          const cur = ds.filter(sx => selectedRes[sx.id][d] === sk).length;
-          if (cur < minC && _bfResults.find(r => r.startsWith(sk + '=○'))) _bfHelps.push(`${sk}不足解消`);
-        }
-        if (_bfHelps.length > 0) _bfImproveable++;
-        _bfLines.push(`  ${d}日(${_bfDowN[_bfDow]}) 前日=${_bfPrev} 翌日=${_bfNext} 連勤前${_bfSb}後${_bfSa} | ${_bfResults.join(' / ')} → ${_bfCanPlace ? '⚠️埋め忘れ' : '✅構造的不可'} | ${_bfHelps.join(',') || '不足解消なし'}`);
-      });
-      _bfLines.push(`  → 埋めれば不足解消できる日数: ${_bfImproveable}日 (不足${adoptedMinStaffShortDays}→${adoptedMinStaffShortDays - _bfImproveable}日が理論値)`);
-      console.log(_bfLines.join('\n'));
-    });
-  }
+  // [BLANK-CHECK-FUKUDA] → Phase3 Step3 で diagnosticReport.blankCheck へ完全移管済み
 
   // [SHORTAGE-ABC] ABC分類 + 日勤B理論検証（eiyo のみ、readonly）
   if (dept.id === 'eiyo' && adoptedMinStaffShortDays > 0) {
@@ -3462,7 +3409,65 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     console.error(_abcLines.join('\n'));
   }
 
-  return { shifts: selectedRes, warnings, timelineWarnings: [] };
+  // ── DiagnosticEngine: Phase3 Step3 ──
+  const _gtStaffCount = Object.keys(prevTail).length;
+  const _gtDayCount = Object.values(prevTail).reduce((s, tail) => s + Object.keys(tail).length, 0);
+
+  // BLANK-CHECK-FUKUDA と同じロジックで blankCheck を構築（eiyo のみ、readonly）
+  const _diagDowN = ['日','月','火','水','木','金','土'];
+  const _diagBlankCheck = dept.id === 'eiyo' ? ds.map(s => {
+    const _blanks = [];
+    for (let d = 1; d <= days; d++) { if (!selectedRes[s.id][d]) _blanks.push(d); }
+    const _allowed = getAllowed(s).filter(k => k !== '夜勤' && k !== '明け');
+    if (_blanks.length === 0) {
+      return { staffId: s.id, name: s.name, role: s.role || '', blankDays: [], improveableDays: 0 };
+    }
+    let _improveableDays = 0;
+    const _blankDays = _blanks.map(d => {
+      const dow = _diagDowN[new Date(year, month, d).getDay()];
+      const prevDay = d > 1 ? (selectedRes[s.id][d - 1] || '空白') : '(月初)';
+      const nextDay = d < days ? (selectedRes[s.id][d + 1] || '空白') : '(月末)';
+      let sb = 0, sa = 0;
+      for (let i = d - 1; i >= 1; i--) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sb++; else break; }
+      for (let i = d + 1; i <= days; i++) { const vv = selectedRes[s.id][i]; if (vv && deptWork.has(vv) && vv !== '明け') sa++; else break; }
+      const shiftResults = _allowed.map(shiftKey => {
+        const viols = [];
+        if (sb + 1 + sa > maxConsec) viols.push(`④連勤超過(${sb}+1+${sa}>${maxConsec})`);
+        const cur = ds.filter(sx => selectedRes[sx.id][d] === shiftKey).length;
+        if (cur + 1 > (cleanMaxStaff[shiftKey] ?? 99)) viols.push(`⑤maxStaff超過(${cur+1}>${cleanMaxStaff[shiftKey]})`);
+        return { shift: shiftKey, canPlace: viols.length === 0, violations: viols };
+      });
+      const canPlace = shiftResults.some(r => r.canPlace);
+      const helps = [];
+      for (const [sk, minC] of Object.entries(cleanMinStaff)) {
+        if (!_allowed.includes(sk)) continue;
+        const cur = ds.filter(sx => selectedRes[sx.id][d] === sk).length;
+        if (cur < minC && shiftResults.find(r => r.shift === sk && r.canPlace)) helps.push(`${sk}不足解消`);
+      }
+      if (helps.length > 0) _improveableDays++;
+      return {
+        day: d, dow, prevDay, nextDay,
+        streakBefore: sb, streakAfter: sa,
+        shiftResults, canPlace,
+        conclusion: canPlace ? '⚠️埋め忘れ' : '✅構造的不可',
+        helps,
+      };
+    });
+    return { staffId: s.id, name: s.name, role: s.role || '', blankDays: _blankDays, improveableDays: _improveableDays };
+  }) : null;
+
+  const diagnosticReport = {
+    dept: dept.id,
+    year,
+    month,
+    prevTail: {
+      loaded: _gtStaffCount > 0,
+      staffCount: _gtStaffCount,
+      dayCount: _gtDayCount,
+    },
+    blankCheck: _diagBlankCheck,
+  };
+  return { shifts: selectedRes, warnings, timelineWarnings: [], diagnosticReport };
 }
 
 function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
@@ -3493,23 +3498,23 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
   const WD = ["日","月","火","水","木","金","土"];
   const TAG = (t) => '<' + t + '>';
   const CTAG = (t) => '</' + t + '>';
-  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:10px;margin:16px;color:#111;}h2{font-size:13px;margin:14px 0 5px;}table{border-collapse:collapse;width:100%;margin-bottom:20px;}th,td{border:1px solid #ccc;padding:2px 3px;text-align:center;font-size:9px;white-space:nowrap;}th{background:#e8f0fe;font-weight:bold;}.name{text-align:left;min-width:70px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}.ev-row th{background:#fffbea!important;border-bottom:2px solid #fde68a;color:#92400e;font-weight:bold;}@media print{body{margin:4px;}h2{font-size:10px;page-break-before:auto;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
+  let html = TAG('!DOCTYPE html')+TAG('html lang="ja"')+TAG('head')+TAG('meta charset="UTF-8"')+TAG('meta name="viewport" content="width=device-width,initial-scale=1"')+TAG('title')+`シフト表 ${year}年${month+1}月`+CTAG('title')+TAG('style')+`body{font-family:'Noto Sans JP',sans-serif;font-size:11px;margin:12px 8px;color:#111;}.dept-header{margin:16px 0 8px;border-bottom:2px solid #6366F1;padding-bottom:8px;}.dept-name{font-size:16px;font-weight:900;color:#18181B;line-height:1.2;}.dept-month{font-size:11px;color:#52525B;margin-top:3px;font-weight:500;}table{border-collapse:collapse;table-layout:fixed;margin-bottom:24px;}th,td{border:1px solid #ccc;padding:3px 1px;text-align:center;font-size:11px;width:34px;max-width:34px;overflow:hidden;box-sizing:border-box;height:32px;}th{background:#e8f0fe;font-weight:bold;line-height:1.2;}td{line-height:1.3;}.name{text-align:left;width:76px;max-width:76px;padding:3px 4px;vertical-align:middle;}.name-inner{font-weight:bold;font-size:11px;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-all;}.sum{width:32px;max-width:32px;font-size:10px;}.we{background:#fff0f6;}thead{display:table-header-group;}tr{page-break-inside:avoid;break-inside:avoid;}.dept-section{page-break-inside:avoid;break-inside:avoid;}.ev-row th{background:#fffbea!important;border-bottom:2px solid #fde68a;color:#92400e;font-weight:bold;}@media print{body{margin:4px;}.dept-name{font-size:11px;}.dept-month{font-size:9px;}th,td{font-size:8px;padding:1px 2px;}}`+CTAG('style')+CTAG('head')+TAG('body');
   depts.filter(d=>selectedDepts.includes(d.id)).forEach(dept => {
     const shifts = allShifts[dept.id] || {};
     const deptEvents = (allEvents && allEvents[dept.id] && allEvents[dept.id][mk]) || {};
-    html += TAG('h2')+`${dept.icon} ${dept.label}　${year}年${month+1}月`+CTAG('h2');
+    html += `<div class="dept-header"><div class="dept-name">${dept.label}</div><div class="dept-month">${year}年${month+1}月 シフト表</div></div>`;
     html += TAG('table')+TAG('thead')+TAG('tr')+TAG('th class="name"')+'氏名'+CTAG('th');
-    for(let d=1;d<=days;d++){ const wd=WD[new Date(year,month,d).getDay()]; html += TAG(`th class="${(wd==="日"||wd==="土")?"we":""}"`)+''+d+'<br>'+wd+CTAG('th'); }
-    html += TAG('th')+'勤務'+CTAG('th')+TAG('th')+'夜勤'+CTAG('th')+TAG('th')+'休'+CTAG('th')+CTAG('tr');
+    for(let d=1;d<=days;d++){ const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); html += TAG(`th class="${isWe?"we":""}"`)+''+d+'<br>'+wd+CTAG('th'); }
+    html += TAG('th class="sum"')+'勤務'+CTAG('th')+TAG('th class="sum"')+'夜勤'+CTAG('th')+TAG('th class="sum"')+'休'+CTAG('th')+CTAG('tr');
     if(Object.keys(deptEvents).length>0){ html += '<tr class="ev-row"><th class="name">行事</th>'; for(let d=1;d<=days;d++){ const ev=deptEvents[d]||''; html += '<th style="text-align:center;vertical-align:top;padding:2px 1px;background:'+(ev?'#fef3c7':'#fffdf0')+';">'+(ev?'<span style="writing-mode:vertical-rl;text-orientation:mixed;font-size:8px;color:#92400e;font-weight:bold;">'+ev+'</span>':'')+'</th>'; } html += '<th></th><th></th><th></th></tr>'; }
     html += CTAG('thead')+TAG('tbody');
     staffList.filter(s=>s.dept===dept.id).forEach(s => {
       let w=0,n=0,r=0;
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
-      html += TAG('tr')+TAG('td class="name"')+s.name+CTAG('td');
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const cellText=isKibo||v==="希望休"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG('td')+cellText+CTAG('td'); }
-      html += TAG('td')+w+CTAG('td')+TAG('td')+(n||"－")+CTAG('td')+TAG('td')+r+CTAG('td')+CTAG('tr');
+      html += TAG('tr')+'<td class="name"><div class="name-inner">'+s.name+'</div></td>';
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||v==="希望休"||v==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':HALF_REST_TYPES.has(v)?v:(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}`)+cellText+CTAG('td'); }
+      html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
   });
@@ -4840,40 +4845,49 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
 }
 
 function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, onClose }) {
-  const [selectedDepts, setSelectedDepts] = useState([activeDeptId]);
-  const [sharingDept, setSharingDept] = useState(null);
-  // INSERT成功後のみセット: { deptId: { token, shareUrl } }
-  const [sharedResults, setSharedResults] = useState({});
+  // 初期状態: 全部署未選択
+  const [selectedDepts, setSelectedDepts] = useState([]);
+  const [isSharing, setIsSharing] = useState(false);
+  // INSERT成功後のみセット（全選択部署を1つのURLで共有）
+  const [sharedResult, setSharedResult] = useState(null);
   const noSelection = selectedDepts.length === 0;
   const fname = `シフト表_${year}年${month+1}月`;
   const toggleDept = (id) => {
     setSelectedDepts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-    // 部署選択が変わったら発行済み結果をリセット
-    setSharedResults(prev => { const n = {...prev}; delete n[id]; return n; });
+    setSharedResult(null);
   };
   const doDownload = (ext) => { if(noSelection)return; let content="",type=""; if(ext==="csv"){content=buildCSV(depts,staffList,allShifts,year,month,selectedDepts);type="text/csv;charset=utf-8";} if(ext==="html"){content=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents);type="text/html;charset=utf-8";} triggerDownload(content,`${fname}.${ext}`,type); };
   const doPrint = () => { if(noSelection)return; const html=buildPrintHTML(depts,staffList,allShifts,year,month,selectedDepts,allEvents); printWithIframe(html); onClose(); };
 
-  // 共有ボタン押下: INSERT成功後のみ shareToken / URL / QR を発行
-  const doShare = async (d) => {
-    setSharingDept(d.id);
+  // 共有ボタン押下: 選択中の全部署を1つのINSERTで保存し、共通URLを発行
+  const doShare = async () => {
+    if (noSelection) return;
+    setIsSharing(true);
     try {
       // STEP2: 押下時点のスナップショットをメモリ上で作成
       const token = genToken();
-      const shift_data = JSON.parse(JSON.stringify(allShifts[d.id] || {}));
-      const staff_data = staffList
-        .filter(s => s.dept === d.id)
-        .map(s => ({ id: s.id, name: s.name, dept: s.dept }));
-      const dept_data = [{ id: d.id, label: d.label, icon: d.icon }];
+      const selectedDeptObjs = depts.filter(d => selectedDepts.includes(d.id));
 
-      // STEP3: shared_shifts へ INSERT（upsert・update は使わない）
+      // 全選択部署の shift_data をまとめる
+      const shift_data = {};
+      selectedDepts.forEach(deptId => {
+        shift_data[deptId] = JSON.parse(JSON.stringify(allShifts[deptId] || {}));
+      });
+
+      const staff_data = staffList
+        .filter(s => selectedDepts.includes(s.dept))
+        .map(s => ({ id: s.id, name: s.name, dept: s.dept }));
+
+      const dept_data = selectedDeptObjs.map(d => ({ id: d.id, label: d.label, icon: d.icon }));
+
+      // STEP3: shared_shifts へ INSERT（全部署を1レコードで保存）
       const { error } = await supabase.from('shared_shifts').insert({
         token,
         admin_user_id: session.user.id,
         year,
         month: month + 1,
-        dept_ids: [d.id],
-        shift_data: { [d.id]: shift_data },
+        dept_ids: selectedDepts,
+        shift_data,
         staff_data,
         dept_data,
         schema_version: 1,
@@ -4881,29 +4895,32 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
       if (error) throw error;
 
       // STEP4: INSERT成功後のみ shareToken 確定・QR/LINE/URLを有効化
-      const shareUrl = `${window.location.origin}?share=${token}`;
-      setSharedResults(prev => ({ ...prev, [d.id]: { token, shareUrl } }));
+      const shareUrl = `${window.location.origin}/?share=${token}`;
+      setSharedResult({ token, shareUrl });
     } catch(e) {
       // INSERT失敗: URL・QR・LINEは発行しない
       alert('共有データの保存に失敗しました。再度お試しください。\n' + (e?.message || e));
     } finally {
-      setSharingDept(null);
+      setIsSharing(false);
     }
   };
 
-  const doLine = (d) => {
-    const r = sharedResults[d.id];
-    if (!r) return;
-    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label} ${year}年${month+1}月のシフト表はこちら\n${r.shareUrl}`)}`, '_blank');
+  const doLine = () => {
+    if (!sharedResult) return;
+    const label = selectedDepts.length === 1
+      ? (depts.find(d => d.id === selectedDepts[0])?.label || '')
+      : `${selectedDepts.length}部署`;
+    const msg = `${label}\n${year}年${month+1}月 確定シフト\n\nこちらをタップしてください。\n${sharedResult.shareUrl}`;
+    console.log('[LINE送信文字列]', msg);
+    window.open(`https://line.me/R/msg/text/?${encodeURIComponent(msg)}`, '_blank');
   };
 
-  const doCopy = async (d) => {
-    const r = sharedResults[d.id];
-    if (!r) return;
+  const doCopy = async () => {
+    if (!sharedResult) return;
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(r.shareUrl).then(() => alert('URLをコピーしました！')).catch(() => alert(`URLをコピーしてください:\n${r.shareUrl}`));
+      await navigator.clipboard.writeText(sharedResult.shareUrl).then(() => alert('URLをコピーしました！')).catch(() => alert(`URLをコピーしてください:\n${sharedResult.shareUrl}`));
     } else {
-      alert(`URLをコピーしてください:\n${r.shareUrl}`);
+      alert(`URLをコピーしてください:\n${sharedResult.shareUrl}`);
     }
   };
 
@@ -4912,8 +4929,12 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📤 書き出し</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
         <div style={{fontSize:11,color:"#52525B",fontWeight:700,marginBottom:7}}>対象部署</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:16}}>{depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#A1A1AA":"transparent",color:sel?"#6366F1":"#3F3F46",border:`1px solid ${sel?"#6366F1":"#E4E4E7"}`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:sel?700:400}}>{d.icon} {d.label}</button>;})}</div>
-        {noSelection&&<div style={{fontSize:11,color:"#ef4444",marginBottom:10}}>⚠ 部署を1つ以上選択してください</div>}
+        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+          {depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#4F46E5":"#fff",color:sel?"#fff":"#52525B",border:`1.5px solid ${sel?"#4F46E5":"#D4D4D8"}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:sel?700:400,letterSpacing:"0.01em",transition:"background 0.12s,color 0.12s,border-color 0.12s"}}>{d.label}</button>;})}
+        </div>
+        <div style={{fontSize:11,marginBottom:12,minHeight:18,color:noSelection?"#A1A1AA":"#4F46E5",fontWeight:noSelection?400:500}}>
+          {noSelection ? "共有する部署を選択してください" : `共有対象（${selectedDepts.length}部署）: ${depts.filter(d=>selectedDepts.includes(d.id)).map(d=>d.label).join(' · ')}`}
+        </div>
         <button onClick={doPrint} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#6366F1",border:"none",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>🖨️</span><div><div style={{fontSize:13,fontWeight:800,color:"#fff"}}>今すぐ印刷</div><div style={{fontSize:11,color:"#d5f5f5",marginTop:2}}>印刷ダイアログがすぐに開きます</div></div></button>
         <button onClick={()=>doDownload("csv")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#e8f5ee",border:"1px solid #2d8a52",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>📊</span><div><div style={{fontSize:13,fontWeight:800,color:"#34d399"}}>CSV（Excel・スプレッドシート）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>Excel・Googleスプレッドシートで開けます</div></div></button>
         <button onClick={()=>doDownload("html")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#F4F4F5",border:"1px solid #A1A1AA",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>💾</span><div><div style={{fontSize:13,fontWeight:800,color:"#6366F1"}}>HTMLで保存（USB用）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>他のPCやUSBで印刷する場合に使用</div></div></button>
@@ -4921,39 +4942,35 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         {/* ── 共有セクション ── */}
         <div style={{marginTop:16,paddingTop:16,borderTop:"2px solid #E4E4E7"}}>
           <div style={{fontSize:13,fontWeight:900,color:"#18181B",marginBottom:4}}>📲 共有</div>
-          <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>「共有リンクを発行」を押すと現在のシフトを保存し、QR・LINE・URLが使えるようになります。</div>
-          {session && depts.filter(d=>selectedDepts.includes(d.id)).map(d=>{
-            const isSharing = sharingDept === d.id;
-            const result = sharedResults[d.id];
-            return(
-              <div key={d.id} style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                <div style={{fontWeight:800,fontSize:12,color:"#18181B",marginBottom:10}}>{d.icon} {d.label}（{year}年{month+1}月）</div>
-                {!result ? (
-                  /* INSERT前: 共有リンク発行ボタンのみ */
-                  <button onClick={()=>doShare(d)} disabled={isSharing} style={{width:"100%",background:isSharing?"#E4E4E7":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:13,fontWeight:800}}>
-                    {isSharing ? "保存中..." : "🔗 共有リンクを発行"}
+          <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>
+            選択中の部署をまとめて1つのURLで共有します。スタッフは全部署のシフトを1画面で確認できます。
+          </div>
+          {session && (
+            <div style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px"}}>
+              {!sharedResult ? (
+                /* INSERT前: 共有リンク発行ボタン */
+                <button onClick={doShare} disabled={isSharing||noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":isSharing?"#A5B4FC":"#6366F1",color:noSelection?"#A1A1AA":"#fff",border:noSelection?"1px solid #E4E4E7":"none",borderRadius:8,padding:"11px 0",cursor:(isSharing||noSelection)?"not-allowed":"pointer",fontSize:13,fontWeight:800,transition:"all 0.15s"}}>
+                  {isSharing ? "保存中..." : noSelection ? "共有する部署を選択してください" : "🔗 共有リンクを発行"}
+                </button>
+              ) : (
+                /* INSERT成功後: QR + LINE + URLコピー + 再発行 */
+                <>
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
+                    <div style={{padding:6,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
+                      <QRCodeSVG value={sharedResult.shareUrl} size={120} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8,marginBottom:8}}>
+                    <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
+                    <button onClick={doCopy} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 URLコピー</button>
+                  </div>
+                  <button onClick={doShare} disabled={isSharing} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #E4E4E7",borderRadius:8,padding:"7px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:11}}>
+                    {isSharing ? "保存中..." : "↩ 再発行（シフト変更後）"}
                   </button>
-                ) : (
-                  /* INSERT成功後: QR + LINE + URLコピー を表示 */
-                  <>
-                    <div style={{display:"flex",justifyContent:"center",marginBottom:10}}>
-                      <div style={{padding:6,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
-                        <QRCodeSVG value={result.shareUrl} size={120} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
-                      </div>
-                    </div>
-                    <div style={{display:"flex",gap:8,marginBottom:8}}>
-                      <button onClick={()=>doLine(d)} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
-                      <button onClick={()=>doCopy(d)} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 URLコピー</button>
-                    </div>
-                    <button onClick={()=>doShare(d)} disabled={isSharing} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #E4E4E7",borderRadius:8,padding:"7px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:11}}>
-                      {isSharing ? "保存中..." : "↩ 再発行（シフト変更後）"}
-                    </button>
-                  </>
-                )}
-              </div>
-            );
-          })}
-          {noSelection&&<div style={{fontSize:11,color:"#9CA3AF",textAlign:"center"}}>部署を選択すると共有ボタンが表示されます</div>}
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -6649,6 +6666,30 @@ function SharedShiftView({ token }) {
     })();
   }, []); // eslint-disable-line
 
+  // データロード後: テーブル実幅に合わせた viewport を設定
+  // width=<テーブル幅> にすることで:
+  //   ① ブラウザが自動的に全体を画面に収めてスケールダウン（俯瞰表示）
+  //   ② 背景色(html/body)がテーブル幅まで伸びるため背景の途切れが解消
+  //   ③ ユーザーはそこから自由にピンチズーム可能（user-scalable=yes）
+  // アンマウント時に管理画面用の viewport に復元
+  useEffect(() => {
+    if (!row) return;
+    const days = getDays(row.year, row.month - 1);
+    const NAME_W = 76, CELL_W = 34, SUM_W = 32, MARGIN = 24;
+    const tableWidth = NAME_W + CELL_W * days + SUM_W * 3 + MARGIN;
+
+    const meta = document.querySelector('meta[name="viewport"]');
+    const original = meta ? meta.getAttribute('content') : null;
+    if (meta) {
+      meta.setAttribute('content',
+        `width=${tableWidth}, initial-scale=1.0, minimum-scale=0.5, maximum-scale=5.0, user-scalable=yes`
+      );
+    }
+    return () => {
+      if (meta && original) meta.setAttribute('content', original);
+    };
+  }, [row]);
+
   if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
   if (notFound || !row) return (
     <div style={{padding:48,textAlign:'center'}}>
@@ -6664,42 +6705,57 @@ function SharedShiftView({ token }) {
   const REST_SET = new Set(['休み','希望休','有休']);
 
   // 共有画面のみ適用するセル変換（管理データは変更しない）
+  // ・希望休・希 → 休
+  // ・半勤務（日/休, 休/日, 早/休, 休/遅）→ スラッシュ付きそのまま表示（例: 日/休）
+  // ・それ以外は SHIFTS の short を使用（早番→早, 日勤→日 など）
+  // セル幅は「日/休」3文字が1行で収まる幅を全セル共通で使用
   const cellText = (v) => {
     if (!v) return '－';
-    if (v === '希望休' || v === '休み' || v === '希') return '休';
-    if (v === '有休') return '有';
-    if (v === '明け') return '明';
-    if (v === '夜勤') return '夜';
-    return v.slice(0, 2);
+    if (v === '希望休' || v === '希') return '休';
+    if (HALF_REST_TYPES.has(v)) return v; // 日/休, 休/日, 早/休, 休/遅 → スラッシュ付きで表示
+    return SHIFTS[v]?.short || v.slice(0, 1) || '－';
   };
 
-  const th = { border:'1px solid #ccc', padding:'3px 2px', textAlign:'center', fontSize:11, background:'#e8f0fe', fontWeight:'bold', width:28, maxWidth:28, overflow:'hidden', boxSizing:'border-box' };
-  const td = { border:'1px solid #ccc', padding:'3px 2px', textAlign:'center', fontSize:11, width:28, maxWidth:28, overflow:'hidden', boxSizing:'border-box' };
+  const CELL_W = 34; // 「日/休」3文字が余裕を持って収まる幅（全勤務セル共通）
+  const NAME_W = 76;
+  const SUM_W = 32;
+  const ROW_H = 36; // 全行の固定高さ（2行分: 11px * 1.4 * 2 + padding）
+  const th = { border:'1px solid #ccc', padding:'3px 1px', textAlign:'center', fontSize:11, background:'#e8f0fe', fontWeight:'bold', width:CELL_W, maxWidth:CELL_W, overflow:'hidden', boxSizing:'border-box', lineHeight:'1.2' };
+  const td = { border:'1px solid #ccc', padding:'3px 1px', textAlign:'center', fontSize:11, width:CELL_W, maxWidth:CELL_W, overflow:'hidden', boxSizing:'border-box', height:ROW_H };
+  // 氏名セル: 全行で2行分の固定高さ。短い名前も長い名前も高さは揃える
+  const nameTdStyle = { ...td, textAlign:'left', width:NAME_W, maxWidth:NAME_W, padding:'3px 4px', verticalAlign:'middle' };
+  const nameInnerStyle = { fontWeight:'bold', fontSize:11, lineHeight:1.4, overflow:'hidden', display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', wordBreak:'break-all' };
 
   return (
-    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:16,color:'#111',maxWidth:900}}>
+    // position:fixed の背景レイヤーでスクロール位置・viewport変更に関係なく全画面を覆う
+    // iOS Safari ではスクロール時に body/html 背景が白く見えるケースがあるため
+    // fixed レイヤー(z-index:-1) + コンテンツ(z-index:0) の2層構成で確実に背景統一
+    <>
+    <div style={{position:'fixed',inset:0,background:'#f0fbfa',zIndex:-1}} />
+    <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:0,padding:'12px 8px',color:'#111',position:'relative',zIndex:0}}>
       {dept_ids.map(deptId => {
         const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
         const deptStaff = (staff_data || []).filter(s => s.dept === deptId);
         const deptShifts = (shift_data || {})[deptId] || {};
         return (
           <div key={deptId} style={{marginBottom:32}}>
-            <h2 style={{fontSize:16,margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8,color:'#18181B'}}>
-              {dept.icon} {dept.label}　{year}年{month}月 シフト表
-            </h2>
-            <div style={{overflowX:'auto'}}>
-              <table style={{borderCollapse:'collapse',width:'100%',tableLayout:'fixed'}}>
+            <div style={{margin:'0 0 12px',borderBottom:'2px solid #6366F1',paddingBottom:8}}>
+              <div style={{fontSize:16,fontWeight:900,color:'#18181B',lineHeight:1.2}}>{dept.label}</div>
+              <div style={{fontSize:11,color:'#52525B',marginTop:3,fontWeight:500}}>{year}年{month}月 シフト表</div>
+            </div>
+            {/* overflow ラッパーを除去: iOS Safari でも pinch zoom がページレベルで動作する */}
+              <table style={{borderCollapse:'collapse',tableLayout:'fixed',minWidth:NAME_W+CELL_W*days+SUM_W*3}}>
                 <thead>
                   <tr>
-                    <th style={{...th,textAlign:'left',width:72,maxWidth:72}}>氏名</th>
+                    <th style={{...th,textAlign:'left',width:NAME_W,maxWidth:NAME_W,fontSize:11}}>氏名</th>
                     {Array.from({length:days},(_,i)=>i+1).map(d=>{
                       const wd=WD[new Date(year,month-1,d).getDay()];
-                      const isWe=wd==='日'||wd==='土';
+                      const isWe=wd==='日'||wd==='土'||isJpHoliday(year,month-1,d);
                       return <th key={d} style={{...th,background:isWe?'#fff0f6':'#e8f0fe'}}>{d}<br/>{wd}</th>;
                     })}
-                    <th style={{...th,width:32,maxWidth:32}}>勤務</th>
-                    <th style={{...th,width:32,maxWidth:32}}>夜勤</th>
-                    <th style={{...th,width:28,maxWidth:28}}>休</th>
+                    <th style={{...th,width:SUM_W,maxWidth:SUM_W,fontSize:10}}>勤務</th>
+                    <th style={{...th,width:SUM_W,maxWidth:SUM_W,fontSize:10}}>夜勤</th>
+                    <th style={{...th,width:SUM_W,maxWidth:SUM_W,fontSize:10}}>休</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -6708,29 +6764,29 @@ function SharedShiftView({ token }) {
                     const ss = deptShifts[s.id] || {};
                     return (
                       <tr key={s.id}>
-                        <td style={{...td,textAlign:'left'}}>{s.name}</td>
+                        <td style={nameTdStyle}><div style={nameInnerStyle}>{s.name}</div></td>
                         {Array.from({length:days},(_,i)=>i+1).map(d=>{
                           const v=ss[d]||'';
-                          if(v&&!REST_SET.has(v)&&v!=='明け'){w++;}
+                          if(WORK_TYPES.has(v))w++;
                           if(v==='夜勤')n++;
-                          if(REST_SET.has(v)&&v!=='有休')r++;
-                          const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()]);
+                          if(REST_TYPES.has(v)&&v!=='明け'&&v!=='有休')r+=HALF_REST_TYPES.has(v)?0.5:1;
+                          const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()])||isJpHoliday(year,month-1,d);
                           return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{cellText(v)}</td>;
                         })}
-                        <td style={td}>{w}</td>
-                        <td style={td}>{n||'－'}</td>
-                        <td style={td}>{r}</td>
+                        <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{w}</td>
+                        <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{n||'－'}</td>
+                        <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{r}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
-            </div>
           </div>
         );
       })}
       <div style={{marginTop:12,fontSize:10,color:'#9CA3AF',textAlign:'center'}}>しふぽん — シフト確定表</div>
     </div>
+    </>
   );
 }
 
@@ -7815,25 +7871,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         if (Object.keys(tail).length > 0) { builtPrevTail[staffId] = tail; staffCount++; }
       }
-      console.log(`[prevTail] 前月キー=${prevMonthKey} 職員数=${staffCount} 格納日数=${dayCount}`);
-    } else {
-      console.log(`[prevTail] 前月キー=${prevMonthKey} データなし（前月シフト未保存）`);
+      // prevTail情報は diagnosticReport.prevTail に格納済み（Phase3 Step2）
     }
-    console.log('[prevTail-build]', targetDept.id, Object.keys(builtPrevTail).length, builtPrevTail['kaigo1_6']);
 
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
     const genStack = undoStackRef.current[targetDept.id] || [];
     undoStackRef.current[targetDept.id] = [...genStack, genSnapshot].slice(-30);
     let _genResult;
     if (targetDept.engineType === 'time') {
-      const { shifts, warnings, timelineWarnings } = generateTimeAxis(cs, targetDept, year, month, genSnapshot, ct, builtPrevTail);
-      _genResult = { shifts, warnings, timelineWarnings, score: 0, ratioFeedback: {} };
+      const { shifts, warnings, timelineWarnings, diagnosticReport } = generateTimeAxis(cs, targetDept, year, month, genSnapshot, ct, builtPrevTail);
+      _genResult = { shifts, warnings, timelineWarnings, score: 0, ratioFeedback: {}, diagnosticReport };
     } else {
       _genResult = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
     }
-    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback} = _genResult;
+    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback, diagnosticReport} = _genResult;
     lastAutoGenRef.current[targetDept.id] = result;
-    return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot };
+    return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot, diagnosticReport };
   }, [year, month]);
 
   const repairHardConstraints = (dept, res, ds, year, month) => {
