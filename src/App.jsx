@@ -1294,6 +1294,24 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   const targetShiftCounts = {};
   const assignedShiftCounts = {};
 
+  // ── DiagnosticEngine Phase4 Step2〜5: autoGenerate 収集変数 ────────────
+  // Step4: passA
+  const _pa_rows = [];
+  // Step3: passB
+  let _pb_snap = [], _pb_short = [], _pb_consec = { maxConsec, violatingStaffCount:0, totalViolationDays:0, maxStreak:0, rows:[] };
+  // Step3: passC
+  let _pc_nonSlotFixed = 0, _pc_tier2Absorbed = 0;
+  const _pc_typeBreakdown = [], _pc_guards = [], _pc_tier2Changes = [], _pc_nonSlotChanges = [];
+  let _pc_residualViolations = 0, _pc_residualSlotProtected = 0;
+  let _pc_snap = [], _pc_short_arr = [];
+  // Step2: restAdjustment
+  const _ra_phases = {
+    afterRestAdj:     { rows:[], shortage:[] },
+    afterEnforceMax3: { rows:[], shortage:[] },
+    afterRestRecovery:{ rows:[] },
+    afterExcessVal:   { rows:[] },
+  };
+
   if (dayTypes.length === 0) {
     ds.forEach(s => { for (let d = 1; d <= days; d++) { if (!res[s.id][d]) res[s.id][d] = "休み"; } });
   } else {
@@ -1436,23 +1454,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         }
       }
     });
-    // ── DiagnosticEngine Phase4 Step2〜5: autoGenerate 収集変数 ────────────
-    // Step4: passA
-    const _pa_rows = [];
-    // Step3: passB
-    let _pb_snap = [], _pb_short = [], _pb_consec = { maxConsec, violatingStaffCount:0, totalViolationDays:0, maxStreak:0, rows:[] };
-    // Step3: passC
-    let _pc_nonSlotFixed = 0, _pc_tier2Absorbed = 0;
-    const _pc_typeBreakdown = [], _pc_guards = [], _pc_tier2Changes = [], _pc_nonSlotChanges = [];
-    let _pc_residualViolations = 0, _pc_residualSlotProtected = 0;
-    let _pc_snap = [], _pc_short_arr = [];
-    // Step2: restAdjustment
-    const _ra_phases = {
-      afterRestAdj:     { rows:[], shortage:[] },
-      afterEnforceMax3: { rows:[], shortage:[] },
-      afterRestRecovery:{ rows:[] },
-      afterExcessVal:   { rows:[] },
-    };
 
     // [DIAG-PassA] eiyo専用スナップショット
     if (dept.id === 'eiyo') {
