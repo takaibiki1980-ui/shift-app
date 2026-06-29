@@ -1129,15 +1129,16 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     }
   }
 
-  // ★ステップ2: 夜勤配置（Phase5 Step2 改善版: 多因子スコアによる月内均等化）
+  // ★ステップ2: 夜勤配置（Phase5 Step2 v3: 優先順位型比較関数）
+  // ① 夜勤回数（主キー）: 累積回数少ない順
+  // ② 前半/後半カウント（副キー）: 当日の半月内での夜勤数少ない順
+  // ③ 夜勤間隔（三次キー）: 前回夜勤からの間隔長い順
+  // posBonus / idealInterval / targetCount を廃止。_lastNightDay は間隔比較のみに使用。
   if (dept.shiftTypes.includes("夜勤")) {
     const nightPool = ds.filter(s => s.nightOk && _nightAllowed(s));
     const autoMax = Math.ceil(days / Math.max(nightPool.length, 1));
-    // Phase5 Step2: 均等化パラメータ
-    const targetCount = autoMax; // ceil(days / nightPool.length) = 目標夜勤回数
-    const idealInterval = Math.max(3, Math.floor(days / targetCount)); // 理想夜勤間隔
 
-    // Phase5 Step2: 間隔トラッキング（アンカー配置済み夜勤日を初期値に設定）
+    // 間隔トラッキング（アンカー配置済み夜勤日を初期値に設定）
     const _lastNightDay = {};
     nightPool.forEach(s => {
       const nightDays = Object.entries(res[s.id])
@@ -1145,25 +1146,20 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       _lastNightDay[s.id] = nightDays.length ? Math.max(...nightDays) : 0;
     });
 
-    // Phase5 Step2 再設計: 優先順位型ソート（①回数均等 > ②間隔ティア > ③月内位置）
-    // 加重和を廃止し、回数均等を厳密主キーとすることで count equity を保証する
-    const _intervalTier = (s, d) => {
-      const interval = d - (_lastNightDay[s.id] || 0);
-      if (interval >= idealInterval) return 2;                        // 理想以上
-      if (interval >= Math.ceil(idealInterval * 0.6)) return 1;      // 猶予帯
-      return 0;                                                       // 短すぎる
-    };
-    const _posBonus = (s, d) => {
-      const idealNext = (_lastNightDay[s.id] || 0) + idealInterval;
-      return 1.0 - Math.abs(d - idealNext) / days;
-    };
+    // 比較関数（評価スコアを使わない純粋な優先順位型）
     const _nightCandSort = (a, b, d) => {
+      // ① 夜勤回数: 少ない順（count equity を絶対優先）
       const cntA = Object.values(res[a.id]).filter(v => v === '夜勤').length;
       const cntB = Object.values(res[b.id]).filter(v => v === '夜勤').length;
-      if (cntA !== cntB) return cntA - cntB;                         // ①回数少ない順（厳密）
-      const tA = _intervalTier(a, d), tB = _intervalTier(b, d);
-      if (tA !== tB) return tB - tA;                                  // ②ティア高い順
-      return _posBonus(b, d) - _posBonus(a, d);                      // ③位置近い順
+      if (cntA !== cntB) return cntA - cntB;
+      // ② 前半/後半カウント: 当日の半月内夜勤数少ない順
+      const half = d <= Math.floor(days / 2);
+      const halfCnt = s => Object.entries(res[s.id])
+        .filter(([dd, v]) => (half ? Number(dd) <= Math.floor(days / 2) : Number(dd) > Math.floor(days / 2)) && v === '夜勤').length;
+      const hA = halfCnt(a), hB = halfCnt(b);
+      if (hA !== hB) return hA - hB;
+      // ③ 夜勤間隔: 前回夜勤からの間隔長い順（待機期間が長いスタッフを優先）
+      return (_lastNightDay[b.id] || 0) - (_lastNightDay[a.id] || 0); // 小さいほど古い → 優先
     };
 
     for (let d = 1; d <= days; d++) {
