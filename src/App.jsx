@@ -1129,10 +1129,35 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     }
   }
 
-  // ★ステップ2: 夜勤配置（ロック済みの日・翌日がロックの人は候補から除外）
+  // ★ステップ2: 夜勤配置（Phase5 Step2 改善版: 多因子スコアによる月内均等化）
   if (dept.shiftTypes.includes("夜勤")) {
     const nightPool = ds.filter(s => s.nightOk && _nightAllowed(s));
     const autoMax = Math.ceil(days / Math.max(nightPool.length, 1));
+    // Phase5 Step2: 均等化パラメータ
+    const targetCount = autoMax; // ceil(days / nightPool.length) = 目標夜勤回数
+    const idealInterval = Math.max(3, Math.floor(days / targetCount)); // 理想夜勤間隔
+
+    // Phase5 Step2: 間隔トラッキング（アンカー配置済み夜勤日を初期値に設定）
+    const _lastNightDay = {};
+    nightPool.forEach(s => {
+      const nightDays = Object.entries(res[s.id])
+        .filter(([, v]) => v === '夜勤').map(([d]) => Number(d));
+      _lastNightDay[s.id] = nightDays.length ? Math.max(...nightDays) : 0;
+    });
+
+    // Phase5 Step2: 多因子スコア関数（均等化 + 間隔 + 位置）
+    const nightScore = (s, d) => {
+      const usedNight = Object.values(res[s.id]).filter(v => v === '夜勤').length;
+      const remainSlots = targetCount - usedNight;
+      const interval = d - (_lastNightDay[s.id] || 0);
+      const idealNext = (_lastNightDay[s.id] || 0) + idealInterval;
+      const intervalBonus = interval >= idealInterval
+        ? 1.0
+        : Math.max(0, (interval - 3) / Math.max(1, idealInterval - 3));
+      const posBonus = 1.0 - Math.abs(d - idealNext) / days;
+      return 3.0 * remainSlots + 2.0 * intervalBonus + 1.0 * posBonus;
+    };
+
     for (let d = 1; d <= days; d++) {
       const already = ds.filter(s => res[s.id][d] === "夜勤").length;
       let need = (dept.minStaff["夜勤"] || 0) - already;
@@ -1149,10 +1174,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (!canNight(s)) return false;
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         return usedNight < Math.max(s.nightMax || 5, autoMax);
-      }).sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
+      }).sort((a, b) => nightScore(b, d) - nightScore(a, d)); // Phase5 Step2: 多因子スコア降順
       if (cands.length === 0) {
         cands = nightPool.filter(s => canNight(s))
-          .sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
+          .sort((a, b) => nightScore(b, d) - nightScore(a, d));
       }
       // G-1/NG-2: スロット単位動的判定（配置ごとに夜勤状況を再評価）
       const _isLowNR = (s) => {
@@ -1174,14 +1199,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             const aF = a.foreignNightSupportRequired ? 1 : 0;
             const bF = b.foreignNightSupportRequired ? 1 : 0;
             if (aF !== bF) return aF - bF;
-            return Object.values(res[a.id]).filter(v => v === '夜勤').length
-                 - Object.values(res[b.id]).filter(v => v === '夜勤').length;
+            return nightScore(b, d) - nightScore(a, d); // Phase5 Step2: G-1再ソートも多因子スコア
           });
         }
         const s = _cands.shift();
         res[s.id][d] = "夜勤";
         if (d + 1 <= days) res[s.id][d + 1] = "明け";
         if (d + 2 <= days && !res[s.id][d + 2]) res[s.id][d + 2] = "休み";
+        _lastNightDay[s.id] = d; // Phase5 Step2: 間隔トラッキング更新
         need--;
       }
     }
