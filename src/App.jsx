@@ -1299,9 +1299,39 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   } else {
 
     // ── Pass A: 休み日を確率サンプリングで全スタッフに先行確定 ──────────────
-    // dowRestRate がある → 確率的非復元サンプリング（30試行間で多様性）
-    // trendなし → 均等分散でランダムサンプリング
-    ds.forEach(s => {
+    // Phase5 Step1 改善: 4点
+    //   1. 日別在籍数ガード（dailyRestLimit）: 特定日への休み集中を防止
+    //   2. 処理順ソート: 制約の強いスタッフ（夜勤多・希望休多）を先行処理
+    //   3. Branch A 連続制約チェック: サンプリング後に maxConsec 超区間を修正
+    //   4. Branch B break → 4段階フォールバック: 公休数達成を優先
+
+    // [改善1] 日別在籍数ガードテーブル構築
+    // minRequired = Σ dept.minStaff（その日に必要な最低勤務者数）
+    const _paMinRequired = Math.max(1, Object.values(dept.minStaff || {}).reduce((a, b) => a + b, 0));
+    const _paDailyRestLimit = {};
+    const _paDailyRestCount = {};
+    for (let d = 1; d <= days; d++) {
+      _paDailyRestLimit[d] = Math.max(0, ds.length - _paMinRequired);
+      // ロック済み公休を初期カウントに反映
+      _paDailyRestCount[d] = ds.filter(s => {
+        const v = res[s.id][d];
+        return v && deptRest.has(v) && v !== '明け';
+      }).length;
+    }
+
+    // [改善2] 処理順ソート: 制約スコア降順（制約強いスタッフ優先）
+    // スコア = 夜勤数×2 + 明け数×1 + 希望休数×1
+    const _paSortedDs = [...ds].sort((a, b) => {
+      const scoreOf = s => {
+        const vals = Object.values(res[s.id]);
+        return vals.filter(v => v === '夜勤').length * 2
+             + vals.filter(v => v === '明け').length
+             + (s.kiboByMonth?.[mk]?.length ?? 0);
+      };
+      return scoreOf(b) - scoreOf(a);
+    });
+
+    _paSortedDs.forEach(s => {
       const trend = getTrend(s);
       const freeDays = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]);
       const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
@@ -1309,57 +1339,99 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       const restTarget = Math.max(0, totalTarget - lockedRest);
 
       const validDays = freeDays.filter(d => res[s.id][d - 1] !== '明け');
+      // [改善1] dailyRestLimit でフィルタした有効候補日
+      const availDays = validDays.filter(d => _paDailyRestCount[d] < _paDailyRestLimit[d]);
+
       if (trend?.dowRestRate) {
-        // ★確率サンプリング: dowRestRate を重みにして非復元サンプリング
-        const weights = validDays.map(d => {
+        // ── Branch A: 確率サンプリング ──────────────────────────────────────
+        // [改善1] validDays → availDays（日別上限ガード適用）
+        const srcDays = availDays.length >= restTarget ? availDays : validDays;
+        const weights = srcDays.map(d => {
           const dow6 = (new Date(year, month, d).getDay() + 6) % 7;
           return Math.max(0.01, trend.dowRestRate[dow6] ?? 0.01);
         });
-        const picked = weightedSampleN(validDays, weights, restTarget);
-        picked.forEach(d => { res[s.id][d] = '休み'; });
+        const picked = weightedSampleN(srcDays, weights, Math.min(restTarget, srcDays.length));
+
+        // [改善3] 連続制約チェック: maxConsec 超の勤務区間に休みを挿入
+        // pickedSet を最終セットとして確定し、最後に一括でカウント更新する
+        const pickedSet = new Set(picked);
+        let _tryCount = 0;
+        for (let d = 1; d <= days - maxConsec && _tryCount < restTarget; d++) {
+          // d〜d+maxConsec の全日が勤務（pickedSet にない・未ロックの空き日）
+          const allWork = Array.from({length: maxConsec + 1}, (_, i) => d + i)
+            .every(dd => !pickedSet.has(dd) && freeDays.includes(dd));
+          if (allWork) {
+            const mid = d + Math.floor(maxConsec / 2);
+            // 挿入候補: 区間中央付近で validDays かつ未選択
+            const alt = [mid, mid - 1, mid + 1, mid + 2, mid - 2].find(dd =>
+              dd >= 1 && dd <= days && validDays.includes(dd) && !pickedSet.has(dd)
+            );
+            if (alt) {
+              // restTarget を超えないよう最も遠い picked を外す
+              if (pickedSet.size >= restTarget) {
+                const farthest = [...pickedSet].reduce((a, b) =>
+                  Math.abs(b - alt) > Math.abs(a - alt) ? b : a
+                );
+                if (Math.abs(farthest - alt) > maxConsec / 2) pickedSet.delete(farthest);
+              }
+              pickedSet.add(alt);
+            }
+            _tryCount++;
+          }
+        }
+
+        // 最終セットを一括設定・カウント更新
+        for (const d of pickedSet) {
+          res[s.id][d] = '休み';
+          _paDailyRestCount[d] = (_paDailyRestCount[d] || 0) + 1;
+        }
       } else {
-        // trendなし → 均等分散配置（±2日揺らぎ + maxConsec制約保証）
-        // 均等間隔 step = validDays.length / (restTarget+1) を基準に
-        // ランダム揺らぎ±2日を加えつつ「前の休みから maxConsec+1 日以内」を保証
-        const N = validDays.length;
-        const step = N / (restTarget + 1);
+        // ── Branch B: 均等間隔配置 ──────────────────────────────────────────
+        // [改善1] availDays を基準に均等間隔を計算
+        const srcDays = availDays.length > 0 ? availDays : validDays;
+        const N = srcDays.length;
+        const step = N > 0 ? N / (restTarget + 1) : 1;
         const usedSet = new Set();
-        let prevDay = 0; // 前に配置した休みの日付（0=月初前）
+        let prevDay = 0;
 
         for (let i = 1; i <= restTarget; i++) {
           const isLast = (i === restTarget);
 
-          // ─ 制約範囲 ─
           const minDay = prevDay + 1;
           const maxDay = Math.min(days, prevDay + maxConsec + 1);
-          // 末尾制約: 最後の休みは days-maxConsec 以降（月末の連続勤務防止）
           const minDayAdj = isLast ? Math.max(minDay, days - maxConsec) : minDay;
 
-          // ─ 理想位置 ± 揺らぎ ─
-          const idealIdx = Math.min(Math.max(0, Math.round(i * step) - 1), N - 1);
-          const idealDay = validDays[idealIdx];
-          const jitter   = Math.round((Math.random() - 0.5) * 4); // -2〜+2 均等
+          const idealIdx = Math.min(Math.max(0, Math.round(i * step) - 1), N > 0 ? N - 1 : 0);
+          const idealDay = srcDays[idealIdx] ?? days;
+          const jitter   = Math.round((Math.random() - 0.5) * 4);
           const targetDay = idealDay + jitter;
 
-          // ─ 候補: [minDayAdj, maxDay] ∩ validDays ∩ 未使用 ─
-          // フォールバック①: isLast 末尾制約を緩和
-          // フォールバック②: maxDay 制約も緩和（連続違反は PassC が修正）
-          let cands = validDays.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
+          // FB0: availDays 優先
+          let cands = availDays.filter(d => d >= minDayAdj && d <= maxDay && !usedSet.has(d));
           if (!cands.length && isLast) {
-            cands = validDays.filter(d => d >= minDay && d <= maxDay && !usedSet.has(d));
+            cands = availDays.filter(d => d >= minDay && d <= maxDay && !usedSet.has(d));
           }
+          if (!cands.length) {
+            cands = availDays.filter(d => d >= minDay && !usedSet.has(d));
+          }
+          // [改善4] FB3: dailyRestLimit +1 緩和（公休数死守優先）
+          if (!cands.length) {
+            cands = validDays.filter(d => d >= minDay && !usedSet.has(d) &&
+              _paDailyRestCount[d] < _paDailyRestLimit[d] + 1);
+          }
+          // [改善4] FB4: 全 validDays（連続違反は PassC 委任、ただし break しない）
           if (!cands.length) {
             cands = validDays.filter(d => d >= minDay && !usedSet.has(d));
           }
           if (!cands.length) break;
 
-          // targetDay に最も近い候補を選択
           const best = cands.reduce((a, b) =>
             Math.abs(a - targetDay) < Math.abs(b - targetDay) ? a : b
           );
 
           usedSet.add(best);
           res[s.id][best] = '休み';
+          _paDailyRestCount[best] = (_paDailyRestCount[best] || 0) + 1;
           prevDay = best;
         }
       }
