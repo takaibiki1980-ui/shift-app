@@ -1106,26 +1106,50 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   if (dept.shiftTypes.includes("夜勤")) {
     const anchorPool = ds.filter(s => s.nightOk && _nightAllowed(s));
     const anchorAutoMax = Math.ceil(days / Math.max(anchorPool.length, 1));
-    // kiboNightPreference が高いスタッフほど先にアンカー権を得る（学習データ反映）
-    const sortedAnchorPool = [...anchorPool].sort((a, b) => (b.kiboNightPreference || 0) - (a.kiboNightPreference || 0));
-    for (const s of sortedAnchorPool) {
+    const _anchorHalfMid = Math.floor(days / 2); // ★Step3: 前後半境界
+
+    // ★Phase5 Step3: 前後半均等アンカー配置
+    // 全候補を前後半キューに分類し、交互に選択することで
+    // アンカーが前半・後半に偏らないよう制御する。
+    // kiboNightPreference はキュー内での優先順位として維持。
+    const _anchorCands = [];
+    for (const s of anchorPool) {
       const kibodays = (s.kiboByMonth?.[mk] || []).map(Number).sort((a, b) => a - b);
       for (const D of kibodays) {
         const nightDay = D - 2, meakeDay = D - 1;
-        if (nightDay < 1) continue; // 月頭すぎて前々日がない
-        if (lockedDays[s.id].has(nightDay) || lockedDays[s.id].has(meakeDay)) continue; // どちらかが既にロック済み
-        if (s.nightExcludeDays?.has(nightDay)) continue; // クロスフロア夜勤制約
-        if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue; // 夜勤の前日が夜勤/明けは不可
-        const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
-        if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue; // 夜勤上限超過
-        const dayNightCount = ds.filter(sx => res[sx.id][nightDay] === "夜勤").length;
-        if (dayNightCount >= (maxStaff["夜勤"] ?? 1)) continue; // 日別maxStaff超過ならアンカーしない
-        // アンカー成立: 夜勤→明け を仮置き（D の希望休は既にセット済み）
-        res[s.id][nightDay] = "夜勤";
-        res[s.id][meakeDay] = "明け";
-        lockedDays[s.id].add(nightDay);
-        lockedDays[s.id].add(meakeDay);
+        if (nightDay < 1) continue;
+        if (s.nightExcludeDays?.has(nightDay)) continue;
+        if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue;
+        _anchorCands.push({ s, nightDay, meakeDay,
+          isFirstHalf: nightDay <= _anchorHalfMid,
+          pref: s.kiboNightPreference || 0 });
       }
+    }
+    // 前後半それぞれ kiboNightPreference 降順・同率は夜勤日昇順でソート
+    const _frontQ = _anchorCands.filter(c =>  c.isFirstHalf).sort((a, b) => (b.pref - a.pref) || (a.nightDay - b.nightDay));
+    const _backQ  = _anchorCands.filter(c => !c.isFirstHalf).sort((a, b) => (b.pref - a.pref) || (a.nightDay - b.nightDay));
+    // 交互マージ: 処理済み数の少ない半から優先して選択（F,B,F,B,...）
+    const _anchorOrdered = [];
+    let _fi = 0, _bi = 0;
+    while (_fi < _frontQ.length || _bi < _backQ.length) {
+      if (_fi < _frontQ.length && (_bi >= _backQ.length || _fi <= _bi)) {
+        _anchorOrdered.push(_frontQ[_fi++]);
+      } else {
+        _anchorOrdered.push(_backQ[_bi++]);
+      }
+    }
+    // 配置（制約を配置時に再チェック）
+    for (const { s, nightDay, meakeDay } of _anchorOrdered) {
+      if (lockedDays[s.id].has(nightDay) || lockedDays[s.id].has(meakeDay)) continue;
+      if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue;
+      const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
+      if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue;
+      const dayNightCount = ds.filter(sx => res[sx.id][nightDay] === "夜勤").length;
+      if (dayNightCount >= (maxStaff["夜勤"] ?? 1)) continue;
+      res[s.id][nightDay] = "夜勤";
+      res[s.id][meakeDay] = "明け";
+      lockedDays[s.id].add(nightDay);
+      lockedDays[s.id].add(meakeDay);
     }
   }
 
