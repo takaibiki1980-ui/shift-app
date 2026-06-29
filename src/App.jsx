@@ -1145,17 +1145,25 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       _lastNightDay[s.id] = nightDays.length ? Math.max(...nightDays) : 0;
     });
 
-    // Phase5 Step2: 多因子スコア関数（均等化 + 間隔 + 位置）
-    const nightScore = (s, d) => {
-      const usedNight = Object.values(res[s.id]).filter(v => v === '夜勤').length;
-      const remainSlots = targetCount - usedNight;
+    // Phase5 Step2 再設計: 優先順位型ソート（①回数均等 > ②間隔ティア > ③月内位置）
+    // 加重和を廃止し、回数均等を厳密主キーとすることで count equity を保証する
+    const _intervalTier = (s, d) => {
       const interval = d - (_lastNightDay[s.id] || 0);
+      if (interval >= idealInterval) return 2;                        // 理想以上
+      if (interval >= Math.ceil(idealInterval * 0.6)) return 1;      // 猶予帯
+      return 0;                                                       // 短すぎる
+    };
+    const _posBonus = (s, d) => {
       const idealNext = (_lastNightDay[s.id] || 0) + idealInterval;
-      const intervalBonus = interval >= idealInterval
-        ? 1.0
-        : Math.max(0, (interval - 3) / Math.max(1, idealInterval - 3));
-      const posBonus = 1.0 - Math.abs(d - idealNext) / days;
-      return 3.0 * remainSlots + 2.0 * intervalBonus + 1.0 * posBonus;
+      return 1.0 - Math.abs(d - idealNext) / days;
+    };
+    const _nightCandSort = (a, b, d) => {
+      const cntA = Object.values(res[a.id]).filter(v => v === '夜勤').length;
+      const cntB = Object.values(res[b.id]).filter(v => v === '夜勤').length;
+      if (cntA !== cntB) return cntA - cntB;                         // ①回数少ない順（厳密）
+      const tA = _intervalTier(a, d), tB = _intervalTier(b, d);
+      if (tA !== tB) return tB - tA;                                  // ②ティア高い順
+      return _posBonus(b, d) - _posBonus(a, d);                      // ③位置近い順
     };
 
     for (let d = 1; d <= days; d++) {
@@ -1174,10 +1182,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (!canNight(s)) return false;
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         return usedNight < Math.max(s.nightMax || 5, autoMax);
-      }).sort((a, b) => nightScore(b, d) - nightScore(a, d)); // Phase5 Step2: 多因子スコア降順
+      }).sort((a, b) => _nightCandSort(a, b, d));
       if (cands.length === 0) {
         cands = nightPool.filter(s => canNight(s))
-          .sort((a, b) => nightScore(b, d) - nightScore(a, d));
+          .sort((a, b) => _nightCandSort(a, b, d));
       }
       // G-1/NG-2: スロット単位動的判定（配置ごとに夜勤状況を再評価）
       const _isLowNR = (s) => {
@@ -1199,7 +1207,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             const aF = a.foreignNightSupportRequired ? 1 : 0;
             const bF = b.foreignNightSupportRequired ? 1 : 0;
             if (aF !== bF) return aF - bF;
-            return nightScore(b, d) - nightScore(a, d); // Phase5 Step2: G-1再ソートも多因子スコア
+            return _nightCandSort(a, b, d); // G-1再ソートも優先順位型
           });
         }
         const s = _cands.shift();
