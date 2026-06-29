@@ -2048,6 +2048,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
 
   enforceMaxStaff(); // 4回目: 比率修復後の最終確認
 
+  // ── DiagnosticEngine Phase4 Step1: repair.final 収集変数 ──────────────
+  const _rf_maxViolations = [];
+  let   _rf_totalViolations = 0;
+  let   _rf_nightOrphans = 0;
+  const _rf_nightOrphanList = [];
+  const _rf_snapshot = [];
+
   // ★最終検証ログ: maxStaff違反が残っていないか確認
   {
     let totalViolations = 0;
@@ -2058,11 +2065,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (cnt > limit) {
           console.error(`[AG-v7] FINAL VIOLATION: day=${d} shift=${k} cnt=${cnt} limit=${limit}`);
           totalViolations++;
+          _rf_maxViolations.push({ day: d, shift: k, cnt, limit }); // Phase4 Step1
         }
       }
     }
     if (totalViolations === 0) console.log('[AG-v7] FINAL: 違反ゼロ ✓');
     else console.error(`[AG-v7] FINAL: ${totalViolations}件の違反が残存！`);
+    _rf_totalViolations = totalViolations; // Phase4 Step1
   }
 
   // ★[Night-Sequence-Final] read-only: autoGenerate完了後の明け孤立数スキャン（診断のみ）
@@ -2082,6 +2091,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (sh === '明け' && !_nf_nset.has(prev)) {
           _nf_orphans++;
           _nf_list.push(`${s.name} d${d}(prev=${prev || '空'})`);
+          _rf_nightOrphans++; // Phase4 Step1
+          _rf_nightOrphanList.push(`${s.name} d${d}(prev=${prev || '空'})`); // Phase4 Step1
         }
       }
     }
@@ -2116,6 +2127,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
   // [DEBUG 最終出力] 公休スナップショット
   { const _R=new Set(['休み','希望休','有休']); console.error('── 最終出力 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,diff:Object.values(res[s.id]).filter(v=>_R.has(v)).length-(s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8),休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
+  // Phase4 Step1: 最終スナップショット収集
+  { const _R=new Set(['休み','希望休','有休']); ds.forEach(s=>{const tK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,vals=Object.values(res[s.id]);const aK=vals.filter(v=>_R.has(v)).length;_rf_snapshot.push({name:s.name,targetKyuko:tK,actualKyuko:aK,diff:aK-tK,kyumi:vals.filter(v=>v==='休み').length,kibosyu:vals.filter(v=>v==='希望休').length,yuyuu:vals.filter(v=>v==='有休').length,ake:vals.filter(v=>v==='明け').length});}); }
   // ── DiagnosticEngine: Phase3 Step2 ──
   // prevTail 引数（builtPrevTail）から実データを取り出してレポートに格納する。
   const _dtStaffCount = Object.keys(prevTail).length;
@@ -2130,6 +2143,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       dayCount: _dtDayCount,
     },
     blankCheck: null,
+    // ── DiagnosticEngine Phase4 Step1: repair.final ──────────────────────
+    repair: {
+      summary: null, passA: null, passB: null, passC: null, restAdjustment: null,
+      final: {
+        maxStaffViolations: _rf_maxViolations,
+        totalViolations: _rf_totalViolations,
+        nightOrphans: _rf_nightOrphans,
+        nightOrphanList: _rf_nightOrphanList,
+        snapshot: _rf_snapshot,
+      },
+      shortage: null, bestOf: null, hillClimb: null, kyukoRetry: null,
+      nightSequence: null, maxStaff: null, minStaff: null, repairHistory: [],
+    },
   };
   return { shifts: res, warnings, timelineWarnings, diagnosticReport };
 }
@@ -3409,6 +3435,16 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
     console.error(_abcLines.join('\n'));
   }
 
+  // ── DiagnosticEngine Phase4 Step1: repair.final 収集（generateTimeAxis）──
+  const _gt_rf_maxViolations = [];
+  let   _gt_rf_totalViolations = 0;
+  { for (let d = 1; d <= days; d++) { for (const [k, limit] of Object.entries(maxStaff)) { if (limit >= 99) continue; const cnt = ds.filter(s => selectedRes[s.id][d] === k).length; if (cnt > limit) { _gt_rf_maxViolations.push({ day: d, shift: k, cnt, limit }); _gt_rf_totalViolations++; } } } }
+  let   _gt_rf_nightOrphans = 0;
+  const _gt_rf_nightOrphanList = [];
+  { const _nset=new Set(); [...new Set(dept.shiftTypes||[])].forEach(k=>{const nc=(dept.customShiftDefs||[]).find(c=>c.key===k);if((nc?.baseType||k)==='夜勤')_nset.add(k);}); for(const s of ds){for(let d=2;d<=days;d++){const sh=selectedRes[s.id][d]??'';const prev=selectedRes[s.id][d-1]??'';if(sh==='明け'&&!_nset.has(prev)){_gt_rf_nightOrphans++;_gt_rf_nightOrphanList.push(`${s.name} d${d}(prev=${prev||'空'})`);}}}}
+  const _gt_rf_snapshot = [];
+  { const _R=new Set(['休み','希望休','有休']); ds.forEach(s=>{const tK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,vals=Object.values(selectedRes[s.id]);const aK=vals.filter(v=>_R.has(v)).length;_gt_rf_snapshot.push({name:s.name,targetKyuko:tK,actualKyuko:aK,diff:aK-tK,kyumi:vals.filter(v=>v==='休み').length,kibosyu:vals.filter(v=>v==='希望休').length,yuyuu:vals.filter(v=>v==='有休').length,ake:vals.filter(v=>v==='明け').length});}); }
+
   // ── DiagnosticEngine: Phase3 Step3 ──
   const _gtStaffCount = Object.keys(prevTail).length;
   const _gtDayCount = Object.values(prevTail).reduce((s, tail) => s + Object.keys(tail).length, 0);
@@ -3466,6 +3502,19 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       dayCount: _gtDayCount,
     },
     blankCheck: _diagBlankCheck,
+    // ── DiagnosticEngine Phase4 Step1: repair.final ──────────────────────
+    repair: {
+      summary: null, passA: null, passB: null, passC: null, restAdjustment: null,
+      final: {
+        maxStaffViolations: _gt_rf_maxViolations,
+        totalViolations: _gt_rf_totalViolations,
+        nightOrphans: _gt_rf_nightOrphans,
+        nightOrphanList: _gt_rf_nightOrphanList,
+        snapshot: _gt_rf_snapshot,
+      },
+      shortage: null, bestOf: null, hillClimb: null, kyukoRetry: null,
+      nightSequence: null, maxStaff: null, minStaff: null, repairHistory: [],
+    },
   };
   return { shifts: selectedRes, warnings, timelineWarnings: [], diagnosticReport };
 }
