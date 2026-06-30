@@ -1401,6 +1401,126 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     }
   }
 
+  // ★ Phase5 Step4-B: Night Slot Optimizer データ構築（配置は行わない）
+  // 既存 Step2 は上記で完了済み。ここでは NSO が必要とするデータ構造を生成・検証する。
+  // autoGenerate の戻り値・res[] には一切影響しない。
+  if (dept.shiftTypes.includes("夜勤")) {
+    const _nsoPool = ds.filter(s => s.nightOk && _nightAllowed(s));
+    if (_nsoPool.length > 0) {
+      const _nsoM      = dept.minStaff["夜勤"] || 0;
+      const _nsoHalf   = Math.floor(days / 2);
+      const _nsoAutoMax = Math.ceil(days / _nsoPool.length);
+
+      // ── STEP 0: アンカー配置済み夜勤を assignment に取り込む ──────────────
+      // lockedDays.has(d) かつ res[s.id][d]==="夜勤" → Step1.5 のアンカー配置分
+      const _nsoAssignment = {};
+      _nsoPool.forEach(s => {
+        const anchorNights = Object.entries(res[s.id])
+          .filter(([d, v]) => v === '夜勤' && lockedDays[s.id].has(Number(d)))
+          .map(([d]) => Number(d));
+        _nsoAssignment[s.id] = new Set(anchorNights);
+      });
+
+      // ── STEP 1: 静的 feasible マトリクス構築（C3 を除く）─────────────────
+      // NSO_canAssignInitial は C1/C2/C4/C5 のみ評価（C3 は NSO_checkC3 で動的評価）
+      const _nsoFeasible = {};
+      _nsoPool.forEach(s => {
+        _nsoFeasible[s.id] = {};
+        for (let d = 1; d <= days; d++) {
+          _nsoFeasible[s.id][d] = NSO_canAssignInitial(s, d, lockedDays, res, deptWork, days);
+        }
+      });
+      // アンカー配置済み日の feasible を false に設定し、隣接日に C3 を伝播
+      _nsoPool.forEach(s => {
+        for (const d of _nsoAssignment[s.id]) {
+          _nsoFeasible[s.id][d] = false;
+          NSO_propagateConstraints(s.id, d, _nsoFeasible, days);
+        }
+      });
+
+      // ── STEP 2: 目標回数計算（アンカー分を差し引いた残余スロット）──────────
+      const _nsoTotalSlots    = days * _nsoM;
+      const _nsoAnchorTotal   = _nsoPool.reduce((acc, s) => acc + _nsoAssignment[s.id].size, 0);
+      const _nsoRemaining     = _nsoTotalSlots - _nsoAnchorTotal;
+      const _nsoBase          = Math.floor(_nsoRemaining / _nsoPool.length);
+      const _nsoExtra         = _nsoRemaining % _nsoPool.length;
+      const _nsoTargetCount   = {};
+      const _nsoTargetFirst   = {};
+      const _nsoTargetSecond  = {};
+      _nsoPool.forEach((s, i) => {
+        const anchorFirst  = [..._nsoAssignment[s.id]].filter(d => d <= _nsoHalf).length;
+        const anchorSecond = _nsoAssignment[s.id].size - anchorFirst;
+        const remainTarget = _nsoBase + (i < _nsoExtra ? 1 : 0);
+        const remainFirst  = Math.ceil(remainTarget / 2);
+        const remainSecond = remainTarget - remainFirst;
+        _nsoTargetCount[s.id]  = _nsoAssignment[s.id].size + remainTarget;
+        _nsoTargetFirst[s.id]  = anchorFirst  + remainFirst;
+        _nsoTargetSecond[s.id] = anchorSecond + remainSecond;
+      });
+
+      // ── STEP 3: NightSlot生成・difficultyScore算出・dayOrder生成 ──────────
+      // NightSlot: 各日（d）の夜勤スロット情報
+      // feasible 数（C3除く静的制約のみ）で difficulty を定義
+      const _nsoSlots = [];
+      const _nsoDayAssigned = {};
+      _nsoPool.forEach(s => {
+        for (const d of _nsoAssignment[s.id]) {
+          _nsoDayAssigned[d] = (_nsoDayAssigned[d] || 0) + 1;
+        }
+      });
+      for (let d = 1; d <= days; d++) {
+        const alreadyCount = _nsoDayAssigned[d] || 0;
+        const need = _nsoM - alreadyCount;
+        // feasible 候補数（静的。C3の動的変化は difficulty の近似として無視）
+        const feasibleCount = _nsoPool.filter(s => _nsoFeasible[s.id][d]).length;
+        _nsoSlots.push({
+          day:           d,
+          need,                          // まだ埋める必要があるスロット数
+          alreadyCount,                  // アンカーで配置済み夜勤数
+          feasibleCount,                 // 静的 feasible 候補数（C3近似）
+          difficultyScore: feasibleCount, // 小さいほど困難（dayOrder ソートに使用）
+          isFirst: d <= _nsoHalf,
+        });
+      }
+      // dayOrder: difficultyScore 昇順（困難日優先）、同率は日付昇順
+      const _nsoDayOrder = _nsoSlots
+        .filter(sl => sl.need > 0)
+        .sort((a, b) => a.difficultyScore - b.difficultyScore || a.day - b.day)
+        .map(sl => sl.day);
+
+      // ── Candidate一覧生成（各スロット×スタッフの全組み合わせ）─────────────
+      // Phase4-C の配置ループ検証用。ここでは生成のみ行い配置はしない。
+      const _nsoCandidates = [];
+      for (const d of _nsoDayOrder.slice(0, 3)) { // ログ量削減のため先頭3日分のみ収集
+        for (const s of _nsoPool) {
+          if (!_nsoFeasible[s.id][d]) continue;
+          if (NSO_checkC3(s, d, _nsoAssignment[s.id], res, lockedDays, prevShift)) continue;
+          if (_nsoAssignment[s.id].size >= Math.max(s.nightMax || 5, _nsoAutoMax)) continue;
+          _nsoCandidates.push({ staffId: s.id, day: d,
+            targetRem: _nsoTargetCount[s.id] - _nsoAssignment[s.id].size });
+        }
+      }
+
+      // ── デバッグログ（console.log のみ。res[] への書き込みなし）────────────
+      console.log('[NSO-B] pool:', _nsoPool.length,
+        'slots:', _nsoSlots.length,
+        'totalSlots:', _nsoTotalSlots,
+        'anchorTotal:', _nsoAnchorTotal,
+        'remaining:', _nsoRemaining);
+      console.log('[NSO-B] targetCount:', JSON.stringify(_nsoTargetCount));
+      console.log('[NSO-B] targetFirst:', JSON.stringify(_nsoTargetFirst));
+      console.log('[NSO-B] targetSecond:', JSON.stringify(_nsoTargetSecond));
+      console.log('[NSO-B] dayOrder(first10):', _nsoDayOrder.slice(0, 10));
+      console.log('[NSO-B] feasibleMatrix sample d=1:',
+        Object.fromEntries(_nsoPool.map(s => [s.id, _nsoFeasible[s.id][1]])));
+      console.log('[NSO-B] candidates(first3days):', _nsoCandidates.length, 'entries');
+      const _nsoInitCost = NSO_computeCost(
+        _nsoAssignment, _nsoTargetCount, _nsoTargetFirst, _nsoTargetSecond, _nsoPool, _nsoHalf);
+      console.log('[NSO-B] initialCost(anchor-only):', _nsoInitCost);
+    }
+  }
+  // ★ Phase5 Step4-B ここまで。res[] / lockedDays への変更なし。
+
   const dayTypes = [...new Set(dept.shiftTypes.filter(s => s !== "夜勤"))];
   const isCtd = isCustomTimeDept(dept);
   const getAllowedTypes = (s) => {
