@@ -1501,25 +1501,150 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         }
       }
 
-      // ── デバッグログ（console.log のみ。res[] への書き込みなし）────────────
+      // ── STEP 4: difficulty-first 配置ループ（Phase4-C）─────────────────────
+      // _nsoAssignment のみ更新。res[] / lockedDays は絶対に変更しない。
+      // 既存 Step2 の結果とは独立した「NSO 比較用配置」として保持する。
+      let _nsoPropagateCount = 0;   // propagateConstraints 実行回数（統計用）
+      let _nsoCandSelectCount = 0;  // Candidate 選択回数（統計用）
+      let _nsoC3ViolCount = 0;      // C3 違反で除外されたケース数（統計用）
+      let _nsoShortageCount = 0;    // 充足できなかったスロット数（shortage）
+
+      // _nsoDayAssigned を配置進行に合わせて更新するためコピーして使用
+      const _nsoDayCount = { ..._nsoDayAssigned }; // アンカー分の初期値込み
+
+      for (const d of _nsoDayOrder) {
+        const alreadyCount = _nsoDayCount[d] || 0;
+        const need = _nsoM - alreadyCount;
+        if (need <= 0) continue;
+
+        const isFirst = d <= _nsoHalf;
+
+        // ── 候補者フィルタ（3段階）────────────────────────────────────────
+        // 段階1: 静的 feasible + C3 動的チェック + targetCount 上限（autoMax）
+        const _nsoPassCands = [];
+        let _c3ViolThisDay = 0;
+        for (const s of _nsoPool) {
+          if (!_nsoFeasible[s.id][d]) continue;                          // 静的制約
+          if (NSO_checkC3(s, d, _nsoAssignment[s.id], res, lockedDays, prevShift)) {
+            _c3ViolThisDay++;
+            continue;                                                      // C3 動的
+          }
+          if (_nsoAssignment[s.id].size >= Math.max(s.nightMax || 5, _nsoAutoMax)) continue; // C6
+          _nsoPassCands.push(s);
+        }
+        _nsoC3ViolCount += _c3ViolThisDay;
+
+        // 段階2: フォールバック（autoMax 上限なし）
+        let _nsoCands = _nsoPassCands;
+        if (_nsoCands.length < need) {
+          const fallback = [];
+          for (const s of _nsoPool) {
+            if (!_nsoFeasible[s.id][d]) continue;
+            if (NSO_checkC3(s, d, _nsoAssignment[s.id], res, lockedDays, prevShift)) continue;
+            fallback.push(s);
+          }
+          if (fallback.length > 0) _nsoCands = fallback;
+        }
+
+        if (_nsoCands.length === 0) {
+          _nsoShortageCount += need;
+          continue;
+        }
+
+        // ── スコアリング: ① targetCount残り降順 → ② 前後半バランス → ③ 最終夜勤日昇順
+        _nsoCands = [..._nsoCands].sort((a, b) => {
+          // ① 残り目標回数が多いスタッフを優先（count equity）
+          const remA = _nsoTargetCount[a.id] - _nsoAssignment[a.id].size;
+          const remB = _nsoTargetCount[b.id] - _nsoAssignment[b.id].size;
+          if (remA !== remB) return remB - remA;
+
+          // ② 前後半バランス: 当該半月の残り目標が多いスタッフを優先
+          const halfRemA = isFirst
+            ? _nsoTargetFirst[a.id]  - [..._nsoAssignment[a.id]].filter(dd => dd <= _nsoHalf).length
+            : _nsoTargetSecond[a.id] - [..._nsoAssignment[a.id]].filter(dd => dd > _nsoHalf).length;
+          const halfRemB = isFirst
+            ? _nsoTargetFirst[b.id]  - [..._nsoAssignment[b.id]].filter(dd => dd <= _nsoHalf).length
+            : _nsoTargetSecond[b.id] - [..._nsoAssignment[b.id]].filter(dd => dd > _nsoHalf).length;
+          if (halfRemA !== halfRemB) return halfRemB - halfRemA;
+
+          // ③ 最終夜勤日が古い（間隔が長い）スタッフを優先
+          const lastA = _nsoAssignment[a.id].size ? Math.max(..._nsoAssignment[a.id]) : 0;
+          const lastB = _nsoAssignment[b.id].size ? Math.max(..._nsoAssignment[b.id]) : 0;
+          return lastA - lastB;
+        });
+
+        // ── 上位 need 名を選択・assignment 更新 ────────────────────────────
+        const selected = _nsoCands.slice(0, need);
+        for (const s of selected) {
+          _nsoAssignment[s.id].add(d);
+          _nsoDayCount[d] = (_nsoDayCount[d] || 0) + 1;
+          _nsoFeasible[s.id][d] = false;                         // 自分自身は配置済み
+          NSO_propagateConstraints(s.id, d, _nsoFeasible, days); // C3 伝播
+          _nsoPropagateCount++;
+          _nsoCandSelectCount++;
+        }
+
+        // shortage 判定（need 未達の場合）
+        const actualSelected = Math.min(selected.length, need);
+        if (actualSelected < need) _nsoShortageCount += (need - actualSelected);
+      }
+
+      // ── NSO_result 生成（比較用データ）─────────────────────────────────
+      // res[] / lockedDays には一切書き込まない。参照のみ。
+      const _nsoResult = {};
+      _nsoPool.forEach(s => { _nsoResult[s.id] = [..._nsoAssignment[s.id]].sort((a, b) => a - b); });
+
+      // ── NSO_stats 生成（充足率・KPI）────────────────────────────────────
+      const _nsoTotalNeed = _nsoDayOrder.length * _nsoM;
+      const _nsoTotalPlaced = _nsoPool.reduce((acc, s) => acc + _nsoAssignment[s.id].size, 0);
+      const _nsoFulfillRate = _nsoTotalNeed > 0
+        ? ((_nsoTotalNeed - _nsoShortageCount) / _nsoTotalNeed * 100).toFixed(1)
+        : '100.0';
+
+      // カウント均等性（σ）
+      const _nsoCounts   = _nsoPool.map(s => _nsoAssignment[s.id].size);
+      const _nsoCountMean = _nsoCounts.reduce((a, b) => a + b, 0) / _nsoCounts.length;
+      const _nsoCountSigma = Math.sqrt(
+        _nsoCounts.reduce((acc, c) => acc + (c - _nsoCountMean) ** 2, 0) / _nsoCounts.length
+      );
+
+      // 前半後半偏差
+      const _nsoHalfDevs = _nsoPool.map(s => {
+        const f = [..._nsoAssignment[s.id]].filter(d => d <= _nsoHalf).length;
+        const b = _nsoAssignment[s.id].size - f;
+        return Math.abs(f - b);
+      });
+      const _nsoHalfDevMean = _nsoHalfDevs.reduce((a, b) => a + b, 0) / _nsoHalfDevs.length;
+
+      const _nsoFinalCost = NSO_computeCost(
+        _nsoAssignment, _nsoTargetCount, _nsoTargetFirst, _nsoTargetSecond, _nsoPool, _nsoHalf);
+
+      const _nsoStats = {
+        pool:           _nsoPool.length,
+        totalSlots:     _nsoTotalSlots,
+        totalPlaced:    _nsoTotalPlaced,
+        shortage:       _nsoShortageCount,
+        fulfillRate:    _nsoFulfillRate + '%',
+        countSigma:     _nsoCountSigma.toFixed(3),
+        halfDevMean:    _nsoHalfDevMean.toFixed(3),
+        finalCost:      _nsoFinalCost.toFixed(1),
+        propagateCount: _nsoPropagateCount,
+        candSelectCount:_nsoCandSelectCount,
+        c3ViolCount:    _nsoC3ViolCount,
+      };
+
+      // ── ログ出力（console.log のみ）─────────────────────────────────────
       console.log('[NSO-B] pool:', _nsoPool.length,
         'slots:', _nsoSlots.length,
         'totalSlots:', _nsoTotalSlots,
         'anchorTotal:', _nsoAnchorTotal,
         'remaining:', _nsoRemaining);
-      console.log('[NSO-B] targetCount:', JSON.stringify(_nsoTargetCount));
-      console.log('[NSO-B] targetFirst:', JSON.stringify(_nsoTargetFirst));
-      console.log('[NSO-B] targetSecond:', JSON.stringify(_nsoTargetSecond));
       console.log('[NSO-B] dayOrder(first10):', _nsoDayOrder.slice(0, 10));
-      console.log('[NSO-B] feasibleMatrix sample d=1:',
-        Object.fromEntries(_nsoPool.map(s => [s.id, _nsoFeasible[s.id][1]])));
-      console.log('[NSO-B] candidates(first3days):', _nsoCandidates.length, 'entries');
-      const _nsoInitCost = NSO_computeCost(
-        _nsoAssignment, _nsoTargetCount, _nsoTargetFirst, _nsoTargetSecond, _nsoPool, _nsoHalf);
-      console.log('[NSO-B] initialCost(anchor-only):', _nsoInitCost);
+      console.log('[NSO-C] assignment:', JSON.stringify(_nsoResult));
+      console.log('[NSO-C] stats:', JSON.stringify(_nsoStats));
     }
   }
-  // ★ Phase5 Step4-B ここまで。res[] / lockedDays への変更なし。
+  // ★ Phase5 Step4-B/C ここまで。res[] / lockedDays への変更なし。
 
   const dayTypes = [...new Set(dept.shiftTypes.filter(s => s !== "夜勤"))];
   const isCtd = isCustomTimeDept(dept);
