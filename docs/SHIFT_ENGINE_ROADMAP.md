@@ -382,7 +382,7 @@ handleGenerate / _runGenerateCore
 
 | Step | 対象エンジン | 改善項目 | 期待される定量的効果 |
 |---|---|---|---|
-| Step1 | autoGenerate | PassA公休配置 | PassC修復件数 30〜50% 削減 / 公休目標達成率 向上 |
+| Step1 | autoGenerate | PassA公休配置 | **完了・mainマージ済み**（PassC修復削減・公休目標達成率向上 実装済み）|
 | Step2 | autoGenerate | 夜勤配置分析・検証 | **完了**（比較関数の限界を実証）|
 | Step3 | autoGenerate | 夜勤アンカー配置最適化 | **検証完了・不採用**（100試行比較 t=0.00 / 改善効果なし）|
 | Step4 | autoGenerate | Night Slot Optimizer（difficulty-first）| **検証完了・不採用**（shortage +178.9%・σ +56.0%）|
@@ -419,17 +419,17 @@ handleGenerate / _runGenerateCore
 
 ## 最終回答
 
-### ① 最優先で改善すべき処理
+### ① 最優先で改善すべき処理（未着手の中で）
 
-**Pass A 公休配置（Step1）**
+**Step5: generateTimeAxis checkAbsolute 合格率向上**
 
-理由: autoGenerate の全 Repair フェーズの負荷は PassA の品質に依存している。PassA で連続違反を起こさない公休を配置できれば PassC・enforceMaxStaff・公休数回復フェーズがすべて軽くなる。「上流品質向上が下流 Repair を不要にする」最もレバレッジの大きい改善。
+根拠: ROADMAP ④優先順位に「【次点②】generateTimeAxis checkAbsolute 合格率向上（P04）」と明記。完了済み Step1/Step2/Step3/Step4 を除いた残りステップの中で、診断データ（P04: 優先度「高」）に基づく最上位。
 
-### ② 最も生成品質が向上する改善
+### ② 最も生成品質が向上する改善（未着手の中で）
 
-**Step1（PassA）単独**
+**Step5: generateTimeAxis checkAbsolute 合格率向上**
 
-Step3 は 100試行比較で t=0.00（改善効果なし）、Step4（NSO）は shortage +178.9%★★ 悪化。実測で改善が確認されていない現時点では、Step1（PassA）のみが診断データで根拠のある未検証施策として残っている。
+ROADMAP の問題優先度表で P04（合格率低下）は優先度「高」、P07（遷移確率未使用）も優先度「高」だが、ROADMAP ④の優先順位では P04 が P07 より先に位置づけられている。Step1〜Step4 完了後の次の未着手ステップは Step5。
 
 ### ③ 最もコードが簡潔になる改善
 
@@ -444,14 +444,14 @@ Step3 は 100試行比較で t=0.00（改善効果なし）、Step4（NSO）は 
 - Step2: 完了（分析・検証のみ、コード採用なし）
 - Step3: 完了（検証完了・不採用 / t=0.00）
 - Step4: 完了（NSO difficulty-first 検証完了・不採用）
-- 推奨実行順: Step1 → Step5 → Step6 → Step7 → Step8 → Step9
+- 推奨実行順: ~~Step1~~（完了） → Step5 → Step6 → Step7 → Step8 → Step9
 - Step5〜Step7 は相互に独立しているため並行検討可能。
 
 ### ⑤ Phase5完了後に何が改善されるか
 
 | 項目 | 現状 | Phase5完了後 |
 |---|---|---|
-| PassC修復件数 | 毎回数件〜10件以上 | 30〜50% 削減（Step1）|
+| PassC修復件数 | 毎回数件〜10件以上 | **実装済み**（Step1 mainマージ済み）|
 | 夜勤前半後半偏差 | mean 0.854 (kaigo1) | 未定（Step3不採用・代替施策未検証）|
 | 夜勤回数σ | 0.037 (kaigo1) | 維持目標（Step3不採用のため別途検討要）|
 | eiyo passCount | 200試行中 passCount が低い場合あり | 合格率 向上（Step5）|
