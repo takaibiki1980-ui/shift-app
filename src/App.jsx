@@ -923,6 +923,9 @@ function NSO_checkC3(s, d, assignSet, res, lockedDays, prevShiftFn) {
   }
   // NSO 内部 assignment を参照（d-1 が NSO 配置済みなら d は明け確定）
   if (assignSet.has(d - 1)) return true;
+  // d+2 が配置済みの場合: d を置くと d+1=明け → d+2=夜勤 で C3違反（逆方向防護）
+  // assignSet は有効な日のみ含むため d+2>days の場合は自然に has()=false
+  if (assignSet.has(d + 2)) return true;
   // res[] の既確定値（アンカー配置・前日明け等）
   const prevVal = res[s.id][d - 1];
   return prevVal === '夜勤' || prevVal === '明け';
@@ -954,6 +957,7 @@ function NSO_propagateConstraints(staffId, d, feasible, days) {
   if (d + 1 <= days) feasible[staffId][d + 1] = false; // C3 forward（翌日明け確定）
   if (d + 2 <= days) feasible[staffId][d + 2] = false; // C3 forward+1（明けの翌日も夜勤不可）
   if (d - 1 >= 1)   feasible[staffId][d - 1] = false; // C3 backward（前日夜勤になれない）
+  if (d - 2 >= 1)   feasible[staffId][d - 2] = false; // C3 backward-1（d-2=夜勤→d-1=明け→d=夜勤 防止）
 }
 
 /**
