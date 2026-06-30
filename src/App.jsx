@@ -2441,7 +2441,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
           const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
           const actualKyuko = Object.values(res[s.id]).filter(v => v === "休み" || v === "希望休").length;
-          return actualKyuko > targetKyuko;
+          return actualKyuko >= targetKyuko;
         }).sort((a, b) => {
           const targetA = a.kyukoDaysByMonth?.[mk] ?? a.kyukoDays ?? 8;
           const targetB = b.kyukoDaysByMonth?.[mk] ?? b.kyukoDays ?? 8;
