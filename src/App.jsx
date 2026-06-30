@@ -3460,6 +3460,23 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
       }
     });
 
+    // ── Step7後補正（Phase5 Step5-B）: v1公休数違反を解消 ─────────────────
+    // workRem>0 で終了した場合、空白セルが残り actualRest < totalTarget になる。
+    // 空白セルを '休み' に変換して公休数を totalTarget に合わせる。
+    // 変換対象: 非ロック・空白セルのみ。v2〜v5 には影響しない。
+    ds.forEach(s => {
+      const actualRest = Object.values(res[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
+      const need = s._ta_totalTarget - actualRest;
+      if (need <= 0) return;
+      let filled = 0;
+      for (let d = 1; d <= days && filled < need; d++) {
+        if (res[s.id][d]) continue;            // 既割当済み（勤務・休み）はスキップ
+        if (lockedDays[s.id].has(d)) continue; // ロック日はスキップ
+        res[s.id][d] = '休み';
+        filled++;
+      }
+    });
+
     return res;
   };
 
