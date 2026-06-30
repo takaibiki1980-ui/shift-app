@@ -952,6 +952,7 @@ function NSO_checkC3(s, d, assignSet, res, lockedDays, prevShiftFn) {
  */
 function NSO_propagateConstraints(staffId, d, feasible, days) {
   if (d + 1 <= days) feasible[staffId][d + 1] = false; // C3 forward（翌日明け確定）
+  if (d + 2 <= days) feasible[staffId][d + 2] = false; // C3 forward+1（明けの翌日も夜勤不可）
   if (d - 1 >= 1)   feasible[staffId][d - 1] = false; // C3 backward（前日夜勤になれない）
 }
 
