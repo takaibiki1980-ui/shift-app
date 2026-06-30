@@ -285,7 +285,28 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step4: generateTimeAxis checkAbsolute 合格率向上
+### Step4: Night Slot Optimizer（difficulty-first方式）**検証完了・不採用**
+**目的**: 夜勤配置のグローバル最適化（difficulty-first + feasibility matrix）
+
+**検証結果（Phase5 Step4-A〜D）**:
+
+| 指標 | Step2（ベースライン）| NSO最終 | 判定 |
+|---|---|---|---|
+| C3違反/trial | 0.010 | 0.010 | ✅ 同等 |
+| shortage/trial | 0.190 | 0.530 (+178.9%) | ❌ 大幅悪化 |
+| 夜勤回数σ | 0.502 | 0.783 (+56.0%) | ❌ 大幅悪化 |
+| maxDiff | 1.040 | 1.850 (+77.9%) | ❌ 大幅悪化 |
+| halfDev | 0.757 | 0.613 (-19.1%★★) | ✅ 改善 |
+| intSig | 1.179 | 1.056 (-10.5%★★) | ✅ 改善 |
+
+**不採用理由**: difficulty-first + 5日除外ゾーン がトレードオフを生む構造的問題。3回の修正サイクル（d+2追加・d-2追加・checkC3追加）でも shortage/σ/maxDiff の悪化を解消できず。
+
+**WIPコード**: `src/App.jsx` に残存（L875〜L1648）。main へはマージしない。  
+**関連ドキュメント**: `docs/NSO_FINAL_EVALUATION.md`, `docs/NSO_C3_ROOTCAUSE.md`, `docs/NIGHT_SLOT_OPTIMIZER_DESIGN_v2.md`
+
+---
+
+### Step5: generateTimeAxis checkAbsolute 合格率向上
 **目的**: eiyo の合格候補ゼロ（bestPassing=null）を減らす
 
 **現状の問題**:
@@ -302,7 +323,9 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step5: 学習遷移確率を PassB' に活用
+---
+
+### Step6: 学習遷移確率を PassB' に活用
 **目的**: computeLearnedTrend で学習済みの遷移確率を生成に使う
 
 **現状の問題**:
@@ -318,7 +341,7 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step6: bestOfN 適応的試行数制御
+### Step7: bestOfN 適応的試行数制御
 **目的**: 早期収束時の無駄な試行を省いて速度を改善する
 
 **現状の問題**:
@@ -334,7 +357,7 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step7: score改善・ペナルティバランス調整
+### Step8: score改善・ペナルティバランス調整
 **目的**: scoreShifts のペナルティ重みを診断データで根拠立てて調整する
 
 **現状の問題**:
@@ -351,7 +374,7 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step8: コード整理（可読性・保守性）
+### Step9: コード整理（可読性・保守性）
 **目的**: 将来の修正コストを下げる
 
 **改善内容**:
@@ -371,11 +394,12 @@ handleGenerate / _runGenerateCore
 | Step1 | autoGenerate | PassA公休配置 | PassC修復件数 30〜50% 削減 / 公休目標達成率 向上 |
 | Step2 | autoGenerate | 夜勤配置分析・検証 | **完了**（比較関数の限界を実証）|
 | Step3 | autoGenerate | 夜勤アンカー配置最適化 | 前半後半偏差 -40〜60% / count equity維持 |
-| Step4 | generateTimeAxis | 合格率向上 | passCount 増加 / bestPassing 採用率 向上 |
-| Step5 | autoGenerate | 遷移確率活用 | syncRate（学習再現率）5〜15% 向上 |
-| Step6 | bestOfN | 適応的試行数 | 実行時間 20〜30% 短縮 |
-| Step7 | scoreShifts | ペナルティ調整 | bestOfN選択の「見かけ最良」と「実運用最良」の一致率向上 |
-| Step8 | 全体 | コード整理 | バグ混入リスク低下 / 保守コスト 削減 |
+| Step4 | autoGenerate | Night Slot Optimizer（difficulty-first）| **検証完了・不採用**（shortage +178.9%・σ +56.0%）|
+| Step5 | generateTimeAxis | 合格率向上 | passCount 増加 / bestPassing 採用率 向上 |
+| Step6 | autoGenerate | 遷移確率活用 | syncRate（学習再現率）5〜15% 向上 |
+| Step7 | bestOfN | 適応的試行数 | 実行時間 20〜30% 短縮 |
+| Step8 | scoreShifts | ペナルティ調整 | bestOfN選択の「見かけ最良」と「実運用最良」の一致率向上 |
+| Step9 | 全体 | コード整理 | バグ混入リスク低下 / 保守コスト 削減 |
 
 ---
 
@@ -424,11 +448,12 @@ PassA改善で公休品質が上がり、Step3でアンカー前後半均等化�
 
 ### ④ Phase5は何ステップ必要か
 
-**8ステップ**（Step1〜Step8）
+**9ステップ**（Step1〜Step9）
 
 - Step2: 完了（分析・検証のみ、コード採用なし）
-- 推奨実行順: Step3 → Step4 → Step5 → Step6 → Step7 → Step8
-- Step4〜Step6 は相互に独立しているため並行検討可能。
+- Step4: 完了（NSO difficulty-first 検証完了・不採用）
+- 推奨実行順: Step3 → Step5 → Step6 → Step7 → Step8 → Step9
+- Step5〜Step7 は相互に独立しているため並行検討可能。
 
 ### ⑤ Phase5完了後に何が改善されるか
 
@@ -437,7 +462,7 @@ PassA改善で公休品質が上がり、Step3でアンカー前後半均等化�
 | PassC修復件数 | 毎回数件〜10件以上 | 30〜50% 削減（Step1）|
 | 夜勤前半後半偏差 | mean 0.854 (kaigo1) | -40〜60% 改善（Step3）|
 | 夜勤回数σ | 0.037 (kaigo1) | 維持（Step3でcount equity保持）|
-| eiyo passCount | 200試行中 passCount が低い場合あり | 合格率 向上（Step4）|
-| 学習再現率（syncRate）| 現行水準 | 5〜15% 向上（Step5）|
-| 実行時間 | 現行水準 | 20〜30% 短縮（Step6）|
-| 保守性 | badTrans 重複 / enforceMaxStaff インライン | 重複排除・可読性向上（Step8）|
+| eiyo passCount | 200試行中 passCount が低い場合あり | 合格率 向上（Step5）|
+| 学習再現率（syncRate）| 現行水準 | 5〜15% 向上（Step6）|
+| 実行時間 | 現行水準 | 20〜30% 短縮（Step7）|
+| 保守性 | badTrans 重複 / enforceMaxStaff インライン | 重複排除・可読性向上（Step9）|
