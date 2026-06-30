@@ -872,6 +872,167 @@ function canRest(id, d, res, deptRest, days) {
   return (consecRest(id, d - 1, res, deptRest) + 1 + consecRestFwd(id, d, res, deptRest, days)) <= 2;
 }
 // ─────────────────────────────────────────────────────────────────────────────
+// ★ Phase5 Step4: Night Slot Optimizer 基盤関数（Phase4-A）
+// 既存コードからは呼び出されない。Phase4-E で Step2 ループを置換する際に使用する。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * NSO_canAssignInitial
+ * 静的制約のみ評価（C1/C2/C4/C5）。C3（前日夜勤/明け）は評価しない。
+ * C3 は配置ループ内で NSO_checkC3 を使って動的評価する。
+ *
+ * C1: nightExcludeDays に d が含まれる（クロスフロア夜勤禁止日）
+ * C2: lockedDays に d が含まれる（希望休・有休・アンカー固定）
+ * C4: lockedDays に d+1 が含まれ、res[d+1] が "明け" 以外（翌日ロック済み非明け）
+ * C5: lockedDays に d+2 が含まれ、res[d+2] が deptWork に含まれる（翌々日固定勤務）
+ *
+ * @returns {boolean} true = 静的制約クリア（C3は別途 NSO_checkC3 でチェック必要）
+ */
+function NSO_canAssignInitial(s, d, lockedDays, res, deptWork, days) {
+  if (s.nightExcludeDays?.has(d)) return false;                               // C1
+  if (lockedDays[s.id].has(d)) return false;                                  // C2
+  if (d + 1 <= days
+      && lockedDays[s.id].has(d + 1)
+      && res[s.id][d + 1] !== '明け') return false;                           // C4
+  if (d + 2 <= days
+      && lockedDays[s.id].has(d + 2)
+      && deptWork.has(res[s.id][d + 2])) return false;                        // C5
+  return true;
+}
+
+/**
+ * NSO_checkC3
+ * C3: 前日 d-1 が夜勤/明けなら d への配置は不可。
+ * 判定順序:
+ *   1. assignmentSet に d-1 が含まれる → NSO が夜勤を割り当て済み → 明け確定 → C3違反
+ *   2. res[s.id][d-1] が "夜勤" または "明け" → アンカー配置・前月繰り越し → C3違反
+ *   3. d === 1 かつ prevShiftFn(s.id) が "夜勤"/"明け" → 前月末繰り越し → C3違反
+ *
+ * @param {Object} s              スタッフオブジェクト
+ * @param {number} d              対象日
+ * @param {Set<number>} assignSet NSO 内部の当該スタッフの配置済み日集合
+ * @param {Object} res            シフト配列（res[s.id][d]）
+ * @param {Object} lockedDays     ロック済み日集合（参照のみ）
+ * @param {Function|null} prevShiftFn (staffId) => string|null（前月末シフト）
+ * @returns {boolean} true = C3違反（配置不可）
+ */
+function NSO_checkC3(s, d, assignSet, res, lockedDays, prevShiftFn) {
+  if (d === 1) {
+    const prev = prevShiftFn?.(s.id);
+    return prev === '夜勤' || prev === '明け';
+  }
+  // NSO 内部 assignment を参照（d-1 が NSO 配置済みなら d は明け確定）
+  if (assignSet.has(d - 1)) return true;
+  // res[] の既確定値（アンカー配置・前日明け等）
+  const prevVal = res[s.id][d - 1];
+  return prevVal === '夜勤' || prevVal === '明け';
+}
+
+/**
+ * NSO_propagateConstraints
+ * d 日に staffId を夜勤配置確定した後に呼ぶ。
+ * C3 の逆方向・順方向を feasible に反映する。
+ *
+ * 順方向（C3 forward）:
+ *   d に夜勤が入ると d+1 は明け確定 → 同スタッフは d+1 に夜勤配置不可
+ *   → feasible[staffId][d+1] = false
+ *
+ * 逆方向（C3 backward）:
+ *   d に夜勤が入ると d-1 への後からの夜勤配置も不可（前日夜勤になる）
+ *   → feasible[staffId][d-1] = false
+ *   （困難日優先で d-1 が後から処理される場合に備える）
+ *
+ * 他スタッフへの影響: minStaff["夜勤"]=1 の部署では他スタッフに影響しない。
+ * minStaff >= 2 の部署への拡張は将来課題。
+ *
+ * @param {string} staffId
+ * @param {number} d              配置確定日
+ * @param {Object} feasible       feasible[staffId][d] を更新する
+ * @param {number} days           月の日数
+ */
+function NSO_propagateConstraints(staffId, d, feasible, days) {
+  if (d + 1 <= days) feasible[staffId][d + 1] = false; // C3 forward（翌日明け確定）
+  if (d - 1 >= 1)   feasible[staffId][d - 1] = false; // C3 backward（前日夜勤になれない）
+}
+
+/**
+ * NSO_computeCost
+ * 現在の assignment のコストを計算する。
+ * hill-climbing の採否判定に使用（小さいほど良い）。
+ *
+ * Cost = CountEquity × 100 + HalfBalance × 50 + IntervalEquity × 10
+ *
+ * CountEquity:    Σ_s (actual[s] - targetCount[s])²
+ * HalfBalance:    Σ_s (|actualFirst[s] - targetFirst[s]| + |actualSecond[s] - targetSecond[s]|)
+ * IntervalEquity: Σ_s Var(夜勤間隔[s])
+ *
+ * @param {Object} assignment   Map<staffId, Set<day>>
+ * @param {Object} targetCount  Map<staffId, number>
+ * @param {Object} targetFirst  Map<staffId, number> 前半目標
+ * @param {Object} targetSecond Map<staffId, number> 後半目標
+ * @param {Array}  nightPool    スタッフ配列
+ * @param {number} halfMid      前後半境界日（Math.floor(days/2)）
+ * @returns {number} コスト値（小さいほど良い）
+ */
+function NSO_computeCost(assignment, targetCount, targetFirst, targetSecond, nightPool, halfMid) {
+  let countCost = 0, halfCost = 0, intervalCost = 0;
+  for (const s of nightPool) {
+    const nights = [...assignment[s.id]].sort((a, b) => a - b);
+    const actual       = nights.length;
+    const actualFirst  = nights.filter(d => d <= halfMid).length;
+    const actualSecond = actual - actualFirst;
+
+    countCost += (actual - targetCount[s.id]) ** 2;
+    halfCost  += Math.abs(actualFirst  - targetFirst[s.id])
+               + Math.abs(actualSecond - targetSecond[s.id]);
+
+    if (nights.length >= 2) {
+      const intervals = [];
+      for (let i = 1; i < nights.length; i++) intervals.push(nights[i] - nights[i - 1]);
+      const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      const variance = intervals.reduce((acc, v) => acc + (v - mean) ** 2, 0) / intervals.length;
+      intervalCost += variance;
+    }
+  }
+  return countCost * 100 + halfCost * 50 + intervalCost * 10;
+}
+
+/**
+ * NSO_canSwap
+ * s1 の夜勤日 d1 と s2 の夜勤日 d2 を入れ替えたとき、全制約をクリアするか確認する。
+ * hill-climbing で使用。アンカー配置日（lockedDays に含まれる日）は呼び出し前に除外すること。
+ *
+ * チェック内容:
+ *   A. s1 が d2 に配置できるか（d1 を仮想的に外した assignment で確認）
+ *      - NSO_canAssignInitial(s1, d2, ...) → 静的制約 C1/C2/C4/C5
+ *      - NSO_checkC3(s1, d2, assignWithoutD1, ...) → C3 動的チェック
+ *   B. s2 が d1 に配置できるか（d2 を仮想的に外した assignment で確認）
+ *      - NSO_canAssignInitial(s2, d1, ...) → 静的制約 C1/C2/C4/C5
+ *      - NSO_checkC3(s2, d1, assignWithoutD2, ...) → C3 動的チェック
+ *   C. d1 === d2 または s1.id === s2.id → swap 無意味 → false
+ *
+ * @returns {boolean} true = swap 可能
+ */
+function NSO_canSwap(s1, s2, d1, d2, assignment, lockedDays, res, deptWork, days, prevShiftFn) {
+  if (d1 === d2) return false;
+  if (s1.id === s2.id) return false;
+
+  // A: s1 が d2 に入れられるか（s1 の d1 を外した仮想状態で確認）
+  const a1without = new Set(assignment[s1.id]);
+  a1without.delete(d1);
+  if (!NSO_canAssignInitial(s1, d2, lockedDays, res, deptWork, days)) return false;
+  if (NSO_checkC3(s1, d2, a1without, res, lockedDays, prevShiftFn)) return false;
+
+  // B: s2 が d1 に入れられるか（s2 の d2 を外した仮想状態で確認）
+  const a2without = new Set(assignment[s2.id]);
+  a2without.delete(d2);
+  if (!NSO_canAssignInitial(s2, d1, lockedDays, res, deptWork, days)) return false;
+  if (NSO_checkC3(s2, d1, a2without, res, lockedDays, prevShiftFn)) return false;
+
+  return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
   const days = getDays(year, month);
