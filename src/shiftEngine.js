@@ -142,6 +142,10 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   const _trendTopMap = _diag?.topTrend ? new Map() : null;  // key: `${sid}:${d}`, value: proposedShift
   let _snapPostPassB = null;   // snapshot of res after PassB
   let _snapPostPassC = null;   // snapshot of res after PassC
+  // debugProtectNight=true の場合、phaseSnapsが未初期化なら内部で自動初期化
+  const _debugProtectNightEnabled = options.debugProtectNight === true;
+  const _phaseSnapsAutoInit = _debugProtectNightEnabled && _phaseSnaps === null;
+  if (_phaseSnapsAutoInit) { _phaseSnaps = {}; }
 
   const days = getDays(year, month);
   const mk = monthKey(year, month);
@@ -794,11 +798,15 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
 
     // ── Pass C: 連続勤務超過の修正 ────────────────────────────────────────────
+    const _passANightSnap = _debugProtectNightEnabled && _phaseSnaps?.['postStep2_night']
+      ? _phaseSnaps['postStep2_night']
+      : null;
     ds.forEach(s => {
       for (let d = 1; d <= days; d++) {
         if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
         if (consecWork(s.id, d) <= maxConsec) continue;
         if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
+        if (_passANightSnap && _passANightSnap[s.id]?.[d] === '夜勤') continue;
         res[s.id][d] = '休み';
       }
     });
@@ -1290,6 +1298,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
   if (_phaseSnaps !== null) { _phaseSnaps['final'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
+  // debugProtectNight=true で内部初期化した場合は使用後にリセット
+  if (_phaseSnapsAutoInit) { _phaseSnaps = null; }
   return { shifts: res, warnings, timelineWarnings };
 }
 
