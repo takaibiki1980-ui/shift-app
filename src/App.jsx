@@ -1959,8 +1959,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (lockedDays[s.id].has(d)) return false;
             if (res[s.id][d]) return false;
             const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1], next = res[s.id][d + 1];
-            if (s.id === 'kaigo1_6' && d === 1) {
-            }
             if (prev === '明け') return false;
             if (_isBadTransition(prev, shiftType)) return false;
             if (_isBadTransition(shiftType, next)) return false;
@@ -9093,52 +9091,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       finally{setGenerating(false);}
     },700);
   }, [staffList,dept,year,month,learnedTrend,_runGenerateCore]);
-
-  const handleGenerateAllKaigo = useCallback(() => {
-    if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
-    setGenerating(true);
-    isInitializing.current = false;
-    const _gen_refDate = new Date();
-    const cs = staffList.map(s => {
-      const fy = s.facilityJoinDate ? deriveYears(s.facilityJoinDate, _gen_refDate) : (s.facilityYears ?? null);
-      const fl = s.floorJoinDate    ? deriveYears(s.floorJoinDate,    _gen_refDate) : (s.floorYears    ?? null);
-      return { ...s, facilityYears: fy, floorYears: fl };
-    });
-    generateTimerRef.current = setTimeout(() => {
-      if (year !== yearRef.current || month !== monthRef.current) {
-        setGenerating(false);
-        return;
-      }
-      userEditSeq.current++;
-      saveStatusRef.current = "unsaved";
-      try {
-        const newShifts = {};
-        const allRatioFeedback = {};
-        const targetDeptIds = ['kaigo1', 'kaigo2'].filter(id => depts.some(d => d.id === id));
-        for (const deptId of targetDeptIds) {
-          const cd = depts.find(d => d.id === deptId);
-          if (!cd) continue;
-          const ct = learnedTrend;
-          const { result, ratioFeedback } = _runGenerateCore(cd, cs, ct);
-          newShifts[deptId] = result;
-          if (ratioFeedback) Object.assign(allRatioFeedback, ratioFeedback);
-        }
-        setUndoCount(undoStackRef.current[activeDeptIdRef.current]?.length ?? 0);
-        Object.keys(newShifts).forEach(id => dirtyDeptIdsRef.current.add(id)); // ★Fix S-1: 全生成部署を明示dirty登録
-        setAllShifts(prev => ({...prev, ...newShifts}));
-        if (Object.keys(allRatioFeedback).length > 0) {
-          setStaffList(prev => prev.map(s => {
-            const fb = allRatioFeedback[s.id];
-            if (!fb) return s;
-            return {...s, shiftRatioCorrection: fb};
-          }));
-        }
-        setSaveStatus("unsaved");
-      }
-      catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
-      finally{setGenerating(false);}
-    }, 700);
-  }, [staffList, depts, year, month, learnedTrend, _runGenerateCore]);
 
   const handleUndo = useCallback(() => {
     if (isLockedRef.current) return;
