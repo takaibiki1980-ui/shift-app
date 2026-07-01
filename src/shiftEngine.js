@@ -42,6 +42,7 @@ export function getDiag()     { return _diag ? JSON.parse(JSON.stringify(_diag))
 // ──────────────────────────────────────────────────────────────────────────
 
 
+
 export const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 export const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]);
 export const WORK_TYPES  = new Set(["早番","日勤","遅番","夜勤"]);
