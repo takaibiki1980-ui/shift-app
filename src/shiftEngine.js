@@ -138,6 +138,31 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   let _snapPostPassB = null;   // snapshot of res after PassB
   let _snapPostPassC = null;   // snapshot of res after PassC
   const days = getDays(year, month);
+  // ── [フェーズログ] ブラウザコンソール確認用 ─────────────────────────────
+  const _phaseT0 = performance.now();
+  let _phaseStart = _phaseT0;
+  const _REST_LOG = new Set(["休み","希望休"]);
+  const _logPhase = (label) => {
+    const now = performance.now();
+    const elapsed = (now - _phaseStart).toFixed(1);
+    _phaseStart = now;
+    const REST = _REST_LOG;
+    let kyukoViol = 0;
+    for (const s of ds) {
+      const target = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const actual = Object.values(res[s.id] || {}).filter(v => REST.has(v)).length;
+      if (actual !== target) kyukoViol++;
+    }
+    let shortage = 0, nightShortage = 0;
+    for (let d = 1; d <= days; d++) {
+      for (const [k, minC] of Object.entries(dept.minStaff || {})) {
+        const cnt = ds.filter(s => res[s.id]?.[d] === k).length;
+        if (cnt < minC) { shortage += minC - cnt; if (k === '夜勤') nightShortage += minC - cnt; }
+      }
+    }
+    console.log(`[シフトログ] ${label} | 公休違反:${kyukoViol}人 | shortage:${shortage} | 夜勤shortage:${nightShortage} | 処理:${elapsed}ms`);
+  };
+  // ─────────────────────────────────────────────────────────────────────
   const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
   // 前月末日数と「前月最終日のシフト」参照ヘルパー（res への負数キー格納なし）
@@ -581,6 +606,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     ds.forEach(s => { for (let d = 1; d <= days; d++) { if (!res[s.id][d]) res[s.id][d] = "休み"; } });
   } else {
 
+    console.log('[シフトログ] PassA開始');
     // ── Pass A: 休み日を確率サンプリングで全スタッフに先行確定 ──────────────
     ds.forEach(s => {
       const trend = getTrend(s);
@@ -640,6 +666,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     });
 
+    _logPhase('PassA終了');
+    console.log('[シフトログ] PassB開始');
     // ── Pass B: 全スタッフの勤務シフトを確率サンプリングで配置 ──────────────
     ds.forEach(s => {
       assignedShiftCounts[s.id] = {};
@@ -778,6 +806,8 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     });
 
+    _logPhase('PassB終了');
+    console.log('[シフトログ] PassC開始');
     // Snapshot for PassC/TierIV change tracking
     if (_diag?.topTrend) {
       _snapPostPassB = {};
@@ -811,6 +841,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       for (const s of ds) _snapPostPassC[s.id] = { ...res[s.id] };
     }
 
+    _logPhase('PassC終了');
     // ── 公休数調整 ────────────────────────────────────────────────────────────
     const _snapRestAdj = _diag?.topTrend?.tier4
       ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
@@ -900,7 +931,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   }
 
   // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
-  const enforceMaxStaff = () => {
+  const enforceMaxStaff = (callLabel = '') => {
     const _snap = _diag?.topTrend?.tier4
       ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
       : null;
@@ -924,7 +955,13 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             const cnt = ds.filter(sx => res[sx.id][d] === k).length;
             return cnt < (maxStaff[k] ?? 99);
           });
-          res[s.id][d] = altShift || "休み";
+          const _before = res[s.id][d];
+          const _after = altShift || "休み";
+          res[s.id][d] = _after;
+          if (callLabel) {
+            const _reason = altShift ? 'maxStaff超過→altShift振替' : 'maxStaff超過→altShift候補なし→休み';
+            console.log(`[超過バリデーション]\n${s.name || s.id}\n${month+1}/${d}\n${_before}\n↓\n${_after}\n理由:\n${_reason} (${callLabel})\n--------------------------------`);
+          }
           excess--;
         }
       }
@@ -946,7 +983,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   };
-  enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
+  console.log('[シフトログ] enforceMax①開始');
+  enforceMaxStaff('enforceMax①'); // 1回目: 調整フェーズ後の超過を除去
+  _logPhase('enforceMax①終了');
 
   {
     const _snapTransFix = _diag?.topTrend?.tier4
@@ -1008,8 +1047,11 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
 
-  enforceMaxStaff(); // 2回目
+  console.log('[シフトログ] enforceMax②開始');
+  enforceMaxStaff('enforceMax②'); // 2回目
+  _logPhase('enforceMax②終了');
 
+  console.log('[シフトログ] minStaff保証開始');
   {
     const _snapMinStaff = _diag?.topTrend?.tier4
       ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
@@ -1094,11 +1136,15 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
 
-  enforceMaxStaff(); // 3回目
+  _logPhase('minStaff保証終了');
+  console.log('[シフトログ] enforceMax③開始');
+  enforceMaxStaff('enforceMax③'); // 3回目
+  _logPhase('enforceMax③終了');
 
   const _snapRestAdj2 = _diag?.topTrend?.tier4
     ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
     : null;
+  console.log('[シフトログ] 公休数調整②開始');
   {
     const REST_KYU = new Set(["休み","希望休"]);
     for (const s of ds) {
@@ -1235,7 +1281,10 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
 
-  enforceMaxStaff(); // 4回目: 比率修復パス後の最終確認
+  _logPhase('公休数調整②終了');
+  console.log('[シフトログ] enforceMax④開始');
+  enforceMaxStaff('enforceMax④'); // 4回目: 比率修復パス後の最終確認
+  _logPhase('enforceMax④終了（最終出力）');
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
