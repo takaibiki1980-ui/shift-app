@@ -931,7 +931,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   }
 
   // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
-  const enforceMaxStaff = () => {
+  const enforceMaxStaff = (callLabel = '') => {
     const _snap = _diag?.topTrend?.tier4
       ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
       : null;
@@ -955,7 +955,13 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
             const cnt = ds.filter(sx => res[sx.id][d] === k).length;
             return cnt < (maxStaff[k] ?? 99);
           });
-          res[s.id][d] = altShift || "休み";
+          const _before = res[s.id][d];
+          const _after = altShift || "休み";
+          res[s.id][d] = _after;
+          if (callLabel) {
+            const _reason = altShift ? 'maxStaff超過→altShift振替' : 'maxStaff超過→altShift候補なし→休み';
+            console.log(`[超過バリデーション]\n${s.name || s.id}\n${month+1}/${d}\n${_before}\n↓\n${_after}\n理由:\n${_reason} (${callLabel})\n--------------------------------`);
+          }
           excess--;
         }
       }
@@ -978,7 +984,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   };
   console.log('[シフトログ] enforceMax①開始');
-  enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
+  enforceMaxStaff('enforceMax①'); // 1回目: 調整フェーズ後の超過を除去
   _logPhase('enforceMax①終了');
 
   {
@@ -1042,7 +1048,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   }
 
   console.log('[シフトログ] enforceMax②開始');
-  enforceMaxStaff(); // 2回目
+  enforceMaxStaff('enforceMax②'); // 2回目
   _logPhase('enforceMax②終了');
 
   console.log('[シフトログ] minStaff保証開始');
@@ -1132,7 +1138,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
 
   _logPhase('minStaff保証終了');
   console.log('[シフトログ] enforceMax③開始');
-  enforceMaxStaff(); // 3回目
+  enforceMaxStaff('enforceMax③'); // 3回目
   _logPhase('enforceMax③終了');
 
   const _snapRestAdj2 = _diag?.topTrend?.tier4
@@ -1277,7 +1283,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
 
   _logPhase('公休数調整②終了');
   console.log('[シフトログ] enforceMax④開始');
-  enforceMaxStaff(); // 4回目: 比率修復パス後の最終確認
+  enforceMaxStaff('enforceMax④'); // 4回目: 比率修復パス後の最終確認
   _logPhase('enforceMax④終了（最終出力）');
 
   const warnings = {};
