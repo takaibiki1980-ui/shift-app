@@ -41,6 +41,13 @@ export function disableDiag() { _diag = null; }
 export function getDiag()     { return _diag ? JSON.parse(JSON.stringify(_diag)) : null; }
 // ──────────────────────────────────────────────────────────────────────────
 
+// ── [フェーズスナップショット] 夜勤セル変更トレース用 ──────────────────────
+let _phaseSnaps = null;
+export function enablePhaseSnaps()  { _phaseSnaps = {}; }
+export function disablePhaseSnaps() { _phaseSnaps = null; }
+export function getPhaseSnaps()     { return _phaseSnaps ? JSON.parse(JSON.stringify(_phaseSnaps)) : null; }
+// ──────────────────────────────────────────────────────────────────────────
+
 export const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 export const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]);
 export const WORK_TYPES  = new Set(["早番","日勤","遅番","夜勤"]);
@@ -368,6 +375,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+  if (_phaseSnaps !== null) { _phaseSnaps['postStep2_night'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
   const dayTypes = [...new Set(dept.shiftTypes.filter(s => s !== "夜勤"))];
   const isCtd = isCustomTimeDept(dept);
@@ -540,6 +548,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+  if (_phaseSnaps !== null) { _phaseSnaps['postStep25'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 確率優先配置フェーズ（slot-first後の残スタッフへ 日勤/休み を配分）
@@ -637,6 +646,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         if (_diag?.topTrend) _diag.topTrend.passA.noTrend++;
       }
     });
+    if (_phaseSnaps !== null) { _phaseSnaps['postPassA'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
     // ── Pass B: 全スタッフの勤務シフトを確率サンプリングで配置 ──────────────
     ds.forEach(s => {
@@ -776,6 +786,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     });
 
+    if (_phaseSnaps !== null) { _phaseSnaps['postPassB'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
     // Snapshot for PassC/TierIV change tracking
     if (_diag?.topTrend) {
       _snapPostPassB = {};
@@ -807,6 +818,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       _snapPostPassC = {};
       for (const s of ds) _snapPostPassC[s.id] = { ...res[s.id] };
     }
+    if (_phaseSnaps !== null) { _phaseSnaps['postPassC'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
     // ── 公休数調整 ────────────────────────────────────────────────────────────
     const _snapRestAdj = _diag?.topTrend?.tier4
@@ -894,6 +906,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         }
       }
     }
+    if (_phaseSnaps !== null) { _phaseSnaps['postRestAdj1'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
   }
 
   // ★設定絶対優先: maxStaff超過を強制修正（他シフトへ振替→無理なら休み）
@@ -944,6 +957,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   };
   enforceMaxStaff(); // 1回目: 調整フェーズ後の超過を除去
+  if (_phaseSnaps !== null) { _phaseSnaps['postEnforceMax1'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
   {
     const _snapTransFix = _diag?.topTrend?.tier4
@@ -1004,8 +1018,10 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+  if (_phaseSnaps !== null) { _phaseSnaps['postTransitionFix'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
   enforceMaxStaff(); // 2回目
+  if (_phaseSnaps !== null) { _phaseSnaps['postEnforceMax2'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
   {
     const _snapMinStaff = _diag?.topTrend?.tier4
@@ -1091,7 +1107,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
 
+  if (_phaseSnaps !== null) { _phaseSnaps['postMinStaff'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
   enforceMaxStaff(); // 3回目
+  if (_phaseSnaps !== null) { _phaseSnaps['postEnforceMax3'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
   const _snapRestAdj2 = _diag?.topTrend?.tier4
     ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
@@ -1232,7 +1250,9 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     }
   }
 
+  if (_phaseSnaps !== null) { _phaseSnaps['postRestAdj2'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
   enforceMaxStaff(); // 4回目: 比率修復パス後の最終確認
+  if (_phaseSnaps !== null) { _phaseSnaps['postEnforceMax4'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
 
   const warnings = {};
   for (let d = 1; d <= days; d++) {
@@ -1269,6 +1289,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+  if (_phaseSnaps !== null) { _phaseSnaps['final'] = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}])); }
   return { shifts: res, warnings, timelineWarnings };
 }
 
