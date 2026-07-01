@@ -846,22 +846,35 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
     const _snapRestAdj = _diag?.topTrend?.tier4
       ? Object.fromEntries(ds.map(s => [s.id, { ...res[s.id] }]))
       : null;
+    {
+      const _REST_K1 = new Set(["休み","希望休"]);
+      const _kyukoTargetCount1 = ds.filter(s => {
+        const tot = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+        const kibo = Object.values(res[s.id]).filter(v => v === "希望休").length;
+        const tgt = Math.max(0, tot - kibo);
+        const act = Object.values(res[s.id]).filter(v => v === "休み").length;
+        return act !== tgt;
+      }).length;
+      console.log('[KYUKO-START] 公休数調整①');
+      console.log(`[KYUKO-TARGET] 件数=${_kyukoTargetCount1}`);
+    }
     ds.forEach(s => {
       const totalTarget = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
       const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休").length;
       const target = Math.max(0, totalTarget - kiboCount);
+      const _sName1 = s.name || s.id;
       {
         const restDays = Object.entries(res[s.id]).filter(([, v]) => v === "休み").map(([d]) => +d).sort((a, b) => a - b);
         let excess = restDays.length - target;
         for (const d of restDays) {
           if (excess <= 0) break;
-          if (lockedDays[s.id].has(d)) continue;
-          if (res[s.id][d - 1] === "明け") continue;
-          if (res[s.id][d - 1] === "夜勤") continue;
+          if (lockedDays[s.id].has(d)) { console.log(`[KYUKO-SKIP]\n${_sName1}\nlockedDays`); continue; }
+          if (res[s.id][d - 1] === "明け") { console.log(`[KYUKO-SKIP]\n${_sName1}\nprev===明け`); continue; }
+          if (res[s.id][d - 1] === "夜勤") { console.log(`[KYUKO-SKIP]\n${_sName1}\nprev===夜勤`); continue; }
           const actualBefore = consecWork(s.id, d - 1);
           let actualAfter = 0;
           for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) actualAfter++; else break; }
-          if (actualBefore + 1 + actualAfter > maxConsec) continue;
+          if (actualBefore + 1 + actualAfter > maxConsec) { console.log(`[KYUKO-SKIP]\n${_sName1}\nmaxConsec超過`); continue; }
           const dayCnts = {};
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
@@ -880,10 +893,13 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
                   if (isBadTransition(k, nextShift)) return false;
                   return ds.filter(sx=>res[sx.id][d]===k).length < (maxStaff[k]??99);
                 }) || "日勤");
-            res[s.id][d] = forceShift; excess--; continue;
+            const _b1 = res[s.id][d]; res[s.id][d] = forceShift; excess--;
+            console.log(`[KYUKO-FIX]\n${_sName1}\n${month+1}/${d}\n${_b1}\n↓\n${forceShift}`);
+            continue;
           }
           const pick = [...av].sort((a, b) => { const dA=Math.max(0,(dept.minStaff[a]||0)-dayCnts[a]),dB=Math.max(0,(dept.minStaff[b]||0)-dayCnts[b]); if(dA!==dB)return dB-dA; return (PRIORITY[a]??3)-(PRIORITY[b]??3); })[0];
-          res[s.id][d] = pick; excess--;
+          const _b2 = res[s.id][d]; res[s.id][d] = pick; excess--;
+          console.log(`[KYUKO-FIX]\n${_sName1}\n${month+1}/${d}\n${_b2}\n↓\n${pick}`);
         }
       }
       {
@@ -893,7 +909,12 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
           const workDays2 = Object.entries(res[s.id]).filter(([, v]) => deptWork.has(v)).map(([d]) => +d)
             .filter(d => res[s.id][d - 1] !== "明け" && res[s.id][d + 1] !== "明け" && canRest(s.id, d))
             .sort((a, b) => consecWork(s.id, b - 1) - consecWork(s.id, a - 1));
-          for (const d of workDays2) { if (shortage <= 0) break; if (!canRest(s.id, d)) continue; res[s.id][d] = "休み"; shortage--; }
+          for (const d of workDays2) {
+            if (shortage <= 0) break;
+            if (!canRest(s.id, d)) continue;
+            const _b3 = res[s.id][d]; res[s.id][d] = "休み"; shortage--;
+            console.log(`[KYUKO-FIX]\n${_sName1}\n${month+1}/${d}\n${_b3}\n↓\n休み`);
+          }
         }
       }
       for (let d = 1; d <= days; d++) {
@@ -909,9 +930,19 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         av = av.filter(k => getAllowedTypes(s).includes(k));
         { const p=res[s.id][d-1],nx=res[s.id][d+1]; if(p) av=av.filter(k=>!isBadTransition(p,k)); if(nx) av=av.filter(k=>!isBadTransition(k,nx)); }
         if (!av.length) continue;
-        res[s.id][d] = [...av].sort((a, b) => fixCnts[a] - fixCnts[b])[0];
+        const _b4 = res[s.id][d]; res[s.id][d] = [...av].sort((a, b) => fixCnts[a] - fixCnts[b])[0];
+        console.log(`[KYUKO-FIX]\n${_sName1}\n${month+1}/${d}\n${_b4}\n↓\n${res[s.id][d]}`);
       }
     });
+    {
+      const _REST_K1e = new Set(["休み","希望休"]);
+      const _kyukoEndViol1 = ds.filter(s => {
+        const tot = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+        const act = Object.values(res[s.id]).filter(v => _REST_K1e.has(v)).length;
+        return act !== tot;
+      }).length;
+      console.log(`[KYUKO-END] 違反人数=${_kyukoEndViol1}`);
+    }
     if (_snapRestAdj && _diag?.topTrend?.tier4) {
       const tier = _diag.topTrend.tier4.restAdjust;
       for (const s of ds) {
@@ -1147,11 +1178,19 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   console.log('[シフトログ] 公休数調整②開始');
   {
     const REST_KYU = new Set(["休み","希望休"]);
+    const _kyukoTargetCount2 = ds.filter(s => {
+      const tot = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const act = Object.values(res[s.id]).filter(v => REST_KYU.has(v)).length;
+      return act !== tot;
+    }).length;
+    console.log('[KYUKO-START] 公休数調整②');
+    console.log(`[KYUKO-TARGET] 件数=${_kyukoTargetCount2}`);
     for (const s of ds) {
       const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
       const actualKyuko = Object.values(res[s.id]).filter(v => REST_KYU.has(v)).length;
       let shortage = targetKyuko - actualKyuko;
       if (shortage <= 0) continue;
+      const _sName2 = s.name || s.id;
       const nikkinDays = Object.entries(res[s.id])
         .filter(([d, v]) => v === "日勤" && !lockedDays[s.id].has(+d))
         .map(([d]) => +d)
@@ -1171,19 +1210,33 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         });
       for (const d of nikkinDays) {
         if (shortage <= 0) break;
-        res[s.id][d] = "休み";
-        shortage--;
+        const _b5 = res[s.id][d]; res[s.id][d] = "休み"; shortage--;
+        console.log(`[KYUKO-FIX]\n${_sName2}\n${month+1}/${d}\n${_b5}\n↓\n休み`);
       }
     }
+    const _kyukoEndViol2a = ds.filter(s => {
+      const tot = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const act = Object.values(res[s.id]).filter(v => REST_KYU.has(v)).length;
+      return act !== tot;
+    }).length;
+    console.log(`[KYUKO-END] 違反人数=${_kyukoEndViol2a}`);
   }
 
   {
     const REST_OVER = new Set(["休み","希望休"]);
+    const _kyukoTargetCount2b = ds.filter(s => {
+      const tot = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const act = Object.values(res[s.id]).filter(v => REST_OVER.has(v)).length;
+      return act !== tot;
+    }).length;
+    console.log('[KYUKO-START] 公休数調整②-excess');
+    console.log(`[KYUKO-TARGET] 件数=${_kyukoTargetCount2b}`);
     for (const s of ds) {
       const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
       const actualKyuko = Object.values(res[s.id]).filter(v => REST_OVER.has(v)).length;
       let excess = actualKyuko - targetKyuko;
       if (excess <= 0) continue;
+      const _sName2b = s.name || s.id;
       const allowedForS = getAllowedTypes(s);
       const excessRestDays = Object.entries(res[s.id])
         .filter(([d, v]) => v === "休み" && !lockedDays[s.id].has(+d))
@@ -1210,10 +1263,16 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       for (const d of excessRestDays) {
         if (excess <= 0) break;
         const tgt = allowedForS.includes("日勤") ? "日勤" : (allowedForS[0] || "日勤");
-        res[s.id][d] = tgt;
-        excess--;
+        const _b6 = res[s.id][d]; res[s.id][d] = tgt; excess--;
+        console.log(`[KYUKO-FIX]\n${_sName2b}\n${month+1}/${d}\n${_b6}\n↓\n${tgt}`);
       }
     }
+    const _kyukoEndViol2b = ds.filter(s => {
+      const tot = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+      const act = Object.values(res[s.id]).filter(v => REST_OVER.has(v)).length;
+      return act !== tot;
+    }).length;
+    console.log(`[KYUKO-END] 違反人数=${_kyukoEndViol2b}`);
   }
 
   {

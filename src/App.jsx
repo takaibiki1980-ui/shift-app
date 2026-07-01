@@ -4849,7 +4849,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
           <div><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>目標勤務日数</div><div onClick={e=>setKp({value:form.targetWork,min:1,max:31,unit:"日",onConfirm:v=>set("targetWork",v===""?1:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.targetWork}</div></div>
           <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#6366F1",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>
         </div>
-        {["kaigo1","kaigo2"].includes(deptId)&&(
+        {deptObj?.shiftTypes?.includes("夜勤")&&(
           <div style={{marginBottom:14}}>
             <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:10}}><input type="checkbox" checked={!!form.nightOk} onChange={e=>set("nightOk",e.target.checked)} style={{width:15,height:15,accentColor:"#6366F1"}}/><span style={{color:"#71717A",fontSize:13}}>夜勤対応可</span></label>
             {form.nightOk&&<div><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>夜勤 月間上限回数</div><div onClick={e=>setKp({value:form.nightMax,min:0,max:15,unit:"回",onConfirm:v=>set("nightMax",v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:80,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.nightMax}</div></div>}
