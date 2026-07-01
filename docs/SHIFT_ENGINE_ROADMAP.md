@@ -231,24 +231,73 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step2: 夜勤配置 月内均等化
-**目的**: 月初集中を防ぎ月末夜勤不足を解消する
+### Step2: 夜勤配置 分析・検証（**完了**）
+**目的**: 夜勤配置の月内均等化改善の可能性と限界を検証する
 
-**現状の問題**:
-- 日付順（d=1〜days）に minStaff["夜勤"] を充足する貪欲法
-- 夜勤可能スタッフが少ない場合、月初に全員使い切って月末が shortage になる
-- autoMax = ceil(days / nightPool.length) で上限を設けているが、局所的な集中を防げない
+**実施内容と結果**:
 
-**改善内容**:
-- 月内を均等ブロック（days / nightPool.length 間隔）に分割し、各ブロックで夜勤をスケジューリングする事前計画フェーズを追加
-- 各スタッフの「次に夜勤できる最早日（前回夜勤 + 最低間隔）」を動的に追跡
+| 実装 | 手法 | 夜勤回数σ | 前半後半偏差 | 夜勤間隔σ | 採用判定 |
+|---|---|---|---|---|---|
+| 旧アルゴリズム | count-only stable sort | 0.037 (k1) | 0.854 (k1) | 1.216 (k1) | ベースライン |
+| v1 | 多因子スコア（count×3 + interval×2 + pos×1）| 0.107 (+187%) | 1.030 (+21%) | 1.086 (-11%) | ❌ 回数・偏差悪化 |
+| v2 | 優先順位型（count→intervalTier→posBonus）| 0.107 (+187%) | 1.030 (+21%) | 1.086 (-11%) | ❌ v1と同一（等価証明）|
+| v3 | 優先順位型（count→halfCount→lastNightDay）| 0.050 (+35% n.s.) | **0.406 (-53% ★★)** | **1.082 (-11% ★★)** | ❌ count σ微増（厳密条件未達）|
 
-**スコープ**: autoGenerate のステップ2（夜勤配置ループ）のみ  
-**期待効果**: 月末夜勤 shortage 解消 / nightOrphans 削減
+**判明した構造的限界**:
+
+1. **旧アルゴリズムのcount equity源泉**: count-only stable sortによる決定論的ラウンドロビン。`30日 ÷ 5名 = 6回`で完全割り切れる数学的性質が kaigo1 の σ=0.037 を実現。
+
+2. **v1/v2の失敗原因**: posBonus/idealIntervalがroster順ラウンドロビンを破壊。循環キューが崩れることでcount不均等が発生。
+
+3. **前半後半偏差の真の主因**: ステップ1.5アンカー配置の偶発的前後半分布。比較関数は「残余配置の選択順」しか制御できず、アンカー起因の偏りを根本的に補正できない。
+
+4. **比較関数のみでは解決不可能**: ステップ2比較関数改善の限界が実証された。
+
+**Step2の結論**: 「比較関数のみでは改善限界あり」。アンカー配置（ステップ1.5）自体の改善が必要。→ **Step3**へ引き継ぎ。
+
+**成果物**: `docs/NIGHT_BALANCE_ANALYSIS.md`
 
 ---
 
-### Step3: generateTimeAxis checkAbsolute 合格率向上
+### Step3: 夜勤アンカー配置最適化 **検証完了・不採用**
+**目的**: 前半後半偏差の真の主因であるステップ1.5アンカー配置を改善する
+
+**検証結果（100試行比較）**:
+
+| 指標 | ベースライン | Step3改善版 | t値 | 判定 |
+|---|---|---|---|---|
+| 前半後半偏差（halfDev）| 0.854 | — | t=0.00 | ❌ 改善効果なし |
+| 夜勤回数σ | 0.037 | — | — | — |
+| 夜勤間隔σ | 1.216 | — | — | — |
+
+**不採用理由**: 100試行比較で全指標 t=0.00。アンカー配置の前後半バランス調整は前半後半偏差に統計的有意な影響を与えなかった。
+
+**Step3の結論**: 「アンカー配置の順序制御では前半後半偏差を改善できない」ことが実証された。halfDev の根本原因はアンカー順序ではなく別の要因にある。
+
+---
+
+### Step4: Night Slot Optimizer（difficulty-first方式）**検証完了・不採用**
+**目的**: 夜勤配置のグローバル最適化（difficulty-first + feasibility matrix）
+
+**検証結果（Phase5 Step4-A〜D）**:
+
+| 指標 | Step2（ベースライン）| NSO最終 | 判定 |
+|---|---|---|---|
+| C3違反/trial | 0.010 | 0.010 | ✅ 同等 |
+| shortage/trial | 0.190 | 0.530 (+178.9%) | ❌ 大幅悪化 |
+| 夜勤回数σ | 0.502 | 0.783 (+56.0%) | ❌ 大幅悪化 |
+| maxDiff | 1.040 | 1.850 (+77.9%) | ❌ 大幅悪化 |
+| halfDev | 0.757 | 0.613 (-19.1%★★) | ✅ 改善 |
+| intSig | 1.179 | 1.056 (-10.5%★★) | ✅ 改善 |
+
+**不採用理由**: difficulty-first + 5日除外ゾーン がトレードオフを生む構造的問題。3回の修正サイクル（d+2追加・d-2追加・checkC3追加）でも shortage/σ/maxDiff の悪化を解消できず。
+
+**WIPコード**: `src/App.jsx` に残存（L875〜L1648）。main へはマージしない。  
+**関連ドキュメント**: `docs/NSO_FINAL_EVALUATION.md`, `docs/NSO_C3_ROOTCAUSE.md`, `docs/NIGHT_SLOT_OPTIMIZER_DESIGN_v2.md`
+
+---
+
+### Step5: generateTimeAxis checkAbsolute 合格率向上
 **目的**: eiyo の合格候補ゼロ（bestPassing=null）を減らす
 
 **現状の問題**:
@@ -265,7 +314,9 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step4: 学習遷移確率を PassB' に活用
+---
+
+### Step6: 学習遷移確率を PassB' に活用
 **目的**: computeLearnedTrend で学習済みの遷移確率を生成に使う
 
 **現状の問題**:
@@ -281,7 +332,7 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step5: bestOfN 適応的試行数制御
+### Step7: bestOfN 適応的試行数制御
 **目的**: 早期収束時の無駄な試行を省いて速度を改善する
 
 **現状の問題**:
@@ -297,7 +348,7 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step6: score改善・ペナルティバランス調整
+### Step8: score改善・ペナルティバランス調整
 **目的**: scoreShifts のペナルティ重みを診断データで根拠立てて調整する
 
 **現状の問題**:
@@ -314,7 +365,7 @@ handleGenerate / _runGenerateCore
 
 ---
 
-### Step7: コード整理（可読性・保守性）
+### Step9: コード整理（可読性・保守性）
 **目的**: 将来の修正コストを下げる
 
 **改善内容**:
@@ -331,13 +382,15 @@ handleGenerate / _runGenerateCore
 
 | Step | 対象エンジン | 改善項目 | 期待される定量的効果 |
 |---|---|---|---|
-| Step1 | autoGenerate | PassA公休配置 | PassC修復件数 30〜50% 削減 / 公休目標達成率 向上 |
-| Step2 | autoGenerate | 夜勤均等化 | 月末夜勤 shortage ゼロ化 / nightOrphans 削減 |
-| Step3 | generateTimeAxis | 合格率向上 | passCount 増加 / bestPassing 採用率 向上 |
-| Step4 | autoGenerate | 遷移確率活用 | syncRate（学習再現率）5〜15% 向上 |
-| Step5 | bestOfN | 適応的試行数 | 実行時間 20〜30% 短縮 |
-| Step6 | scoreShifts | ペナルティ調整 | bestOfN選択の「見かけ最良」と「実運用最良」の一致率向上 |
-| Step7 | 全体 | コード整理 | バグ混入リスク低下 / 保守コスト 削減 |
+| Step1 | autoGenerate | PassA公休配置 | **完了・mainマージ済み**（PassC修復削減・公休目標達成率向上 実装済み）|
+| Step2 | autoGenerate | 夜勤配置分析・検証 | **完了**（比較関数の限界を実証）|
+| Step3 | autoGenerate | 夜勤アンカー配置最適化 | **検証完了・不採用**（100試行比較 t=0.00 / 改善効果なし）|
+| Step4 | autoGenerate | Night Slot Optimizer（difficulty-first）| **検証完了・不採用**（shortage +178.9%・σ +56.0%）|
+| Step5 | generateTimeAxis | 合格率向上 | passCount 増加 / bestPassing 採用率 向上 |
+| Step6 | autoGenerate | 遷移確率活用 | syncRate（学習再現率）5〜15% 向上 |
+| Step7 | bestOfN | 適応的試行数 | 実行時間 20〜30% 短縮 |
+| Step8 | scoreShifts | ペナルティ調整 | bestOfN選択の「見かけ最良」と「実運用最良」の一致率向上 |
+| Step9 | 全体 | コード整理 | バグ混入リスク低下 / 保守コスト 削減 |
 
 ---
 
@@ -346,10 +399,10 @@ handleGenerate / _runGenerateCore
 | リスク | 対象Step | 内容 | 対策 |
 |---|---|---|---|
 | bestOfNの多様性低下 | Step1 | PassA公休配置が deterministic に近づくと30試行が同じ結果になる可能性 | 乱数性（ランダムジッタ）を残す設計にする |
-| アンカーと夜勤均等化の競合 | Step2 | 希望休アンカー（Step1.5）が夜勤事前スケジュールと干渉する可能性 | アンカー確定後に夜勤スケジュールを実行する順序を維持 |
+| アンカー均等化と希望休充足の競合 | Step3 | 前後半バランスのため一部アンカーを抑制すると希望休が満たせないケースが生じる可能性 | 希望休充足を優先し、それでも均等化できる場合のみ抑制する設計にする |
 | PassA変更による既存テスト失敗 | Step1 | パラメータ変更で一部ケースの公休配置結果が変わる | 変更前後で同じ条件で10回実行して平均スコアを比較 |
-| 遷移確率フォールバック漏れ | Step4 | transitions データがないスタッフでエラー | `?.` チェーンで安全アクセス / フォールバックは dowShiftRate に |
-| scoreペナルティ変更でbestOfN評価が変わる | Step6 | 同じシフトに対するスコアが変わるため最良解が変わる | 変更前後でscoreShifts結果を並べて検証してからコミット |
+| 遷移確率フォールバック漏れ | Step5 | transitions データがないスタッフでエラー | `?.` チェーンで安全アクセス / フォールバックは dowShiftRate に |
+| scoreペナルティ変更でbestOfN評価が変わる | Step7 | 同じシフトに対するスコアが変わるため最良解が変わる | 変更前後でscoreShifts結果を並べて検証してからコミット |
 
 ---
 
@@ -366,38 +419,42 @@ handleGenerate / _runGenerateCore
 
 ## 最終回答
 
-### ① 最優先で改善すべき処理
+### ① 最優先で改善すべき処理（未着手の中で）
 
-**Pass A 公休配置（Step1）**
+**Step5: generateTimeAxis checkAbsolute 合格率向上**
 
-理由: autoGenerate の全 Repair フェーズの負荷は PassA の品質に依存している。PassA で連続違反を起こさない公休を配置できれば PassC・enforceMaxStaff・公休数回復フェーズがすべて軽くなる。「上流品質向上が下流 Repair を不要にする」最もレバレッジの大きい改善。
+根拠: ROADMAP ④優先順位に「【次点②】generateTimeAxis checkAbsolute 合格率向上（P04）」と明記。完了済み Step1/Step2/Step3/Step4 を除いた残りステップの中で、診断データ（P04: 優先度「高」）に基づく最上位。
 
-### ② 最も生成品質が向上する改善
+### ② 最も生成品質が向上する改善（未着手の中で）
 
-**Step1（PassA）+ Step2（夜勤均等化）の組み合わせ**
+**Step5: generateTimeAxis checkAbsolute 合格率向上**
 
-PassA改善で公休品質が上がり、夜勤均等化で月末 shortage が解消されると、最終出力の「minStaff未達日数」と「公休数逸脱」の両方が同時に改善される。scoreShifts の上位ペナルティ（公休逸脱10,000点、minStaff不足1,000〜300点）が下がるため bestOfN が選ぶ解の品質が大きく向上する。
+ROADMAP の問題優先度表で P04（合格率低下）は優先度「高」、P07（遷移確率未使用）も優先度「高」だが、ROADMAP ④の優先順位では P04 が P07 より先に位置づけられている。Step1〜Step4 完了後の次の未着手ステップは Step5。
 
 ### ③ 最もコードが簡潔になる改善
 
-**Step7（コード整理）**
+**Step8（コード整理）**
 
 `localSearchImprove` の `badTrans` 再実装を `isBadTransition` で置換すると重複が排除され、遷移ルール変更時の修正箇所が1箇所になる。`enforceMaxStaff` の外部切り出しも保守性を大きく改善する。
 
 ### ④ Phase5は何ステップ必要か
 
-**7ステップ**（Step1〜Step7）
+**9ステップ**（Step1〜Step9）
 
-推奨実行順: Step1 → Step2 → Step3 → Step5 → Step4 → Step6 → Step7  
-Step3〜Step5 は相互に独立しているため並行検討可能。
+- Step2: 完了（分析・検証のみ、コード採用なし）
+- Step3: 完了（検証完了・不採用 / t=0.00）
+- Step4: 完了（NSO difficulty-first 検証完了・不採用）
+- 推奨実行順: ~~Step1~~（完了） → Step5 → Step6 → Step7 → Step8 → Step9
+- Step5〜Step7 は相互に独立しているため並行検討可能。
 
 ### ⑤ Phase5完了後に何が改善されるか
 
 | 項目 | 現状 | Phase5完了後 |
 |---|---|---|
-| PassC修復件数 | 毎回数件〜10件以上 | 30〜50% 削減 |
-| 月末夜勤 shortage | 発生あり | ほぼ解消 |
-| eiyo passCount | 200試行中 passCount が低い場合あり | 合格率 向上 |
-| 学習再現率（syncRate）| 現行水準 | 5〜15% 向上 |
-| 実行時間 | 現行水準 | 20〜30% 短縮（Step5効果）|
-| 保守性 | badTrans 重複 / enforceMaxStaff インライン | 重複排除・可読性向上 |
+| PassC修復件数 | 毎回数件〜10件以上 | **実装済み**（Step1 mainマージ済み）|
+| 夜勤前半後半偏差 | mean 0.854 (kaigo1) | 未定（Step3不採用・代替施策未検証）|
+| 夜勤回数σ | 0.037 (kaigo1) | 維持目標（Step3不採用のため別途検討要）|
+| eiyo passCount | 200試行中 passCount が低い場合あり | 合格率 向上（Step5）|
+| 学習再現率（syncRate）| 現行水準 | 5〜15% 向上（Step6）|
+| 実行時間 | 現行水準 | 20〜30% 短縮（Step7）|
+| 保守性 | badTrans 重複 / enforceMaxStaff インライン | 重複排除・可読性向上（Step9）|

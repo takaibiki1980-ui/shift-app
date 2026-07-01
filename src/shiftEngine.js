@@ -41,6 +41,8 @@ export function disableDiag() { _diag = null; }
 export function getDiag()     { return _diag ? JSON.parse(JSON.stringify(_diag)) : null; }
 // ──────────────────────────────────────────────────────────────────────────
 
+
+
 export const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 export const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]);
 export const WORK_TYPES  = new Set(["早番","日勤","遅番","夜勤"]);
@@ -135,7 +137,6 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
   const _trendTopMap = _diag?.topTrend ? new Map() : null;  // key: `${sid}:${d}`, value: proposedShift
   let _snapPostPassB = null;   // snapshot of res after PassB
   let _snapPostPassC = null;   // snapshot of res after PassC
-
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const maxConsec = dept.maxConsecutive || 5;
@@ -368,6 +369,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
       }
     }
   }
+  const _nightProtectSnap = Object.fromEntries(ds.map(s => [s.id, {...res[s.id]}]));
 
   const dayTypes = [...new Set(dept.shiftTypes.filter(s => s !== "夜勤"))];
   const isCtd = isCustomTimeDept(dept);
@@ -788,6 +790,7 @@ export function autoGenerate(staffList, dept, year, month, prevShifts, shiftTren
         if (!deptWork.has(res[s.id][d]) || res[s.id][d] === '明け') continue;
         if (consecWork(s.id, d) <= maxConsec) continue;
         if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
+        if (_nightProtectSnap[s.id]?.[d] === '夜勤') continue;
         res[s.id][d] = '休み';
       }
     });

@@ -872,6 +872,172 @@ function canRest(id, d, res, deptRest, days) {
   return (consecRest(id, d - 1, res, deptRest) + 1 + consecRestFwd(id, d, res, deptRest, days)) <= 2;
 }
 // ─────────────────────────────────────────────────────────────────────────────
+// ★ Phase5 Step4: Night Slot Optimizer 基盤関数（Phase4-A）
+// 既存コードからは呼び出されない。Phase4-E で Step2 ループを置換する際に使用する。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * NSO_canAssignInitial
+ * 静的制約のみ評価（C1/C2/C4/C5）。C3（前日夜勤/明け）は評価しない。
+ * C3 は配置ループ内で NSO_checkC3 を使って動的評価する。
+ *
+ * C1: nightExcludeDays に d が含まれる（クロスフロア夜勤禁止日）
+ * C2: lockedDays に d が含まれる（希望休・有休・アンカー固定）
+ * C4: lockedDays に d+1 が含まれ、res[d+1] が "明け" 以外（翌日ロック済み非明け）
+ * C5: lockedDays に d+2 が含まれ、res[d+2] が deptWork に含まれる（翌々日固定勤務）
+ *
+ * @returns {boolean} true = 静的制約クリア（C3は別途 NSO_checkC3 でチェック必要）
+ */
+function NSO_canAssignInitial(s, d, lockedDays, res, deptWork, days) {
+  if (s.nightExcludeDays?.has(d)) return false;                               // C1
+  if (lockedDays[s.id].has(d)) return false;                                  // C2
+  if (d + 1 <= days
+      && lockedDays[s.id].has(d + 1)
+      && res[s.id][d + 1] !== '明け') return false;                           // C4
+  if (d + 2 <= days
+      && lockedDays[s.id].has(d + 2)
+      && deptWork.has(res[s.id][d + 2])) return false;                        // C5
+  return true;
+}
+
+/**
+ * NSO_checkC3
+ * C3: 前日 d-1 が夜勤/明けなら d への配置は不可。
+ * 判定順序:
+ *   1. assignmentSet に d-1 が含まれる → NSO が夜勤を割り当て済み → 明け確定 → C3違反
+ *   2. res[s.id][d-1] が "夜勤" または "明け" → アンカー配置・前月繰り越し → C3違反
+ *   3. d === 1 かつ prevShiftFn(s.id) が "夜勤"/"明け" → 前月末繰り越し → C3違反
+ *
+ * @param {Object} s              スタッフオブジェクト
+ * @param {number} d              対象日
+ * @param {Set<number>} assignSet NSO 内部の当該スタッフの配置済み日集合
+ * @param {Object} res            シフト配列（res[s.id][d]）
+ * @param {Object} lockedDays     ロック済み日集合（参照のみ）
+ * @param {Function|null} prevShiftFn (staffId) => string|null（前月末シフト）
+ * @returns {boolean} true = C3違反（配置不可）
+ */
+function NSO_checkC3(s, d, assignSet, res, lockedDays, prevShiftFn) {
+  if (d === 1) {
+    const prev = prevShiftFn?.(s.id);
+    return prev === '夜勤' || prev === '明け';
+  }
+  // NSO 内部 assignment を参照（d-1 が NSO 配置済みなら d は明け確定）
+  if (assignSet.has(d - 1)) return true;
+  // d+2 が配置済みの場合: d を置くと d+1=明け → d+2=夜勤 で C3違反（逆方向防護）
+  // assignSet は有効な日のみ含むため d+2>days の場合は自然に has()=false
+  if (assignSet.has(d + 2)) return true;
+  // res[] の既確定値（アンカー配置・前日明け等）
+  const prevVal = res[s.id][d - 1];
+  return prevVal === '夜勤' || prevVal === '明け';
+}
+
+/**
+ * NSO_propagateConstraints
+ * d 日に staffId を夜勤配置確定した後に呼ぶ。
+ * C3 の逆方向・順方向を feasible に反映する。
+ *
+ * 順方向（C3 forward）:
+ *   d に夜勤が入ると d+1 は明け確定 → 同スタッフは d+1 に夜勤配置不可
+ *   → feasible[staffId][d+1] = false
+ *
+ * 逆方向（C3 backward）:
+ *   d に夜勤が入ると d-1 への後からの夜勤配置も不可（前日夜勤になる）
+ *   → feasible[staffId][d-1] = false
+ *   （困難日優先で d-1 が後から処理される場合に備える）
+ *
+ * 他スタッフへの影響: minStaff["夜勤"]=1 の部署では他スタッフに影響しない。
+ * minStaff >= 2 の部署への拡張は将来課題。
+ *
+ * @param {string} staffId
+ * @param {number} d              配置確定日
+ * @param {Object} feasible       feasible[staffId][d] を更新する
+ * @param {number} days           月の日数
+ */
+function NSO_propagateConstraints(staffId, d, feasible, days) {
+  if (d + 1 <= days) feasible[staffId][d + 1] = false; // C3 forward（翌日明け確定）
+  if (d + 2 <= days) feasible[staffId][d + 2] = false; // C3 forward+1（明けの翌日も夜勤不可）
+  if (d - 1 >= 1)   feasible[staffId][d - 1] = false; // C3 backward（前日夜勤になれない）
+  if (d - 2 >= 1)   feasible[staffId][d - 2] = false; // C3 backward-1（d-2=夜勤→d-1=明け→d=夜勤 防止）
+}
+
+/**
+ * NSO_computeCost
+ * 現在の assignment のコストを計算する。
+ * hill-climbing の採否判定に使用（小さいほど良い）。
+ *
+ * Cost = CountEquity × 100 + HalfBalance × 50 + IntervalEquity × 10
+ *
+ * CountEquity:    Σ_s (actual[s] - targetCount[s])²
+ * HalfBalance:    Σ_s (|actualFirst[s] - targetFirst[s]| + |actualSecond[s] - targetSecond[s]|)
+ * IntervalEquity: Σ_s Var(夜勤間隔[s])
+ *
+ * @param {Object} assignment   Map<staffId, Set<day>>
+ * @param {Object} targetCount  Map<staffId, number>
+ * @param {Object} targetFirst  Map<staffId, number> 前半目標
+ * @param {Object} targetSecond Map<staffId, number> 後半目標
+ * @param {Array}  nightPool    スタッフ配列
+ * @param {number} halfMid      前後半境界日（Math.floor(days/2)）
+ * @returns {number} コスト値（小さいほど良い）
+ */
+function NSO_computeCost(assignment, targetCount, targetFirst, targetSecond, nightPool, halfMid) {
+  let countCost = 0, halfCost = 0, intervalCost = 0;
+  for (const s of nightPool) {
+    const nights = [...assignment[s.id]].sort((a, b) => a - b);
+    const actual       = nights.length;
+    const actualFirst  = nights.filter(d => d <= halfMid).length;
+    const actualSecond = actual - actualFirst;
+
+    countCost += (actual - targetCount[s.id]) ** 2;
+    halfCost  += Math.abs(actualFirst  - targetFirst[s.id])
+               + Math.abs(actualSecond - targetSecond[s.id]);
+
+    if (nights.length >= 2) {
+      const intervals = [];
+      for (let i = 1; i < nights.length; i++) intervals.push(nights[i] - nights[i - 1]);
+      const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      const variance = intervals.reduce((acc, v) => acc + (v - mean) ** 2, 0) / intervals.length;
+      intervalCost += variance;
+    }
+  }
+  return countCost * 100 + halfCost * 50 + intervalCost * 10;
+}
+
+/**
+ * NSO_canSwap
+ * s1 の夜勤日 d1 と s2 の夜勤日 d2 を入れ替えたとき、全制約をクリアするか確認する。
+ * hill-climbing で使用。アンカー配置日（lockedDays に含まれる日）は呼び出し前に除外すること。
+ *
+ * チェック内容:
+ *   A. s1 が d2 に配置できるか（d1 を仮想的に外した assignment で確認）
+ *      - NSO_canAssignInitial(s1, d2, ...) → 静的制約 C1/C2/C4/C5
+ *      - NSO_checkC3(s1, d2, assignWithoutD1, ...) → C3 動的チェック
+ *   B. s2 が d1 に配置できるか（d2 を仮想的に外した assignment で確認）
+ *      - NSO_canAssignInitial(s2, d1, ...) → 静的制約 C1/C2/C4/C5
+ *      - NSO_checkC3(s2, d1, assignWithoutD2, ...) → C3 動的チェック
+ *   C. d1 === d2 または s1.id === s2.id → swap 無意味 → false
+ *
+ * @returns {boolean} true = swap 可能
+ */
+function NSO_canSwap(s1, s2, d1, d2, assignment, lockedDays, res, deptWork, days, prevShiftFn) {
+  if (d1 === d2) return false;
+  if (s1.id === s2.id) return false;
+
+  // A: s1 が d2 に入れられるか（s1 の d1 を外した仮想状態で確認）
+  const a1without = new Set(assignment[s1.id]);
+  a1without.delete(d1);
+  if (!NSO_canAssignInitial(s1, d2, lockedDays, res, deptWork, days)) return false;
+  if (NSO_checkC3(s1, d2, a1without, res, lockedDays, prevShiftFn)) return false;
+
+  // B: s2 が d1 に入れられるか（s2 の d2 を外した仮想状態で確認）
+  const a2without = new Set(assignment[s2.id]);
+  a2without.delete(d2);
+  if (!NSO_canAssignInitial(s2, d1, lockedDays, res, deptWork, days)) return false;
+  if (NSO_checkC3(s2, d1, a2without, res, lockedDays, prevShiftFn)) return false;
+
+  return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
   const days = getDays(year, month);
@@ -1106,33 +1272,86 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   if (dept.shiftTypes.includes("夜勤")) {
     const anchorPool = ds.filter(s => s.nightOk && _nightAllowed(s));
     const anchorAutoMax = Math.ceil(days / Math.max(anchorPool.length, 1));
-    // kiboNightPreference が高いスタッフほど先にアンカー権を得る（学習データ反映）
-    const sortedAnchorPool = [...anchorPool].sort((a, b) => (b.kiboNightPreference || 0) - (a.kiboNightPreference || 0));
-    for (const s of sortedAnchorPool) {
+    const _anchorHalfMid = Math.floor(days / 2); // ★Step3: 前後半境界
+
+    // ★Phase5 Step3: 前後半均等アンカー配置
+    // 全候補を前後半キューに分類し、交互に選択することで
+    // アンカーが前半・後半に偏らないよう制御する。
+    // kiboNightPreference はキュー内での優先順位として維持。
+    const _anchorCands = [];
+    for (const s of anchorPool) {
       const kibodays = (s.kiboByMonth?.[mk] || []).map(Number).sort((a, b) => a - b);
       for (const D of kibodays) {
         const nightDay = D - 2, meakeDay = D - 1;
-        if (nightDay < 1) continue; // 月頭すぎて前々日がない
-        if (lockedDays[s.id].has(nightDay) || lockedDays[s.id].has(meakeDay)) continue; // どちらかが既にロック済み
-        if (s.nightExcludeDays?.has(nightDay)) continue; // クロスフロア夜勤制約
-        if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue; // 夜勤の前日が夜勤/明けは不可
-        const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
-        if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue; // 夜勤上限超過
-        const dayNightCount = ds.filter(sx => res[sx.id][nightDay] === "夜勤").length;
-        if (dayNightCount >= (maxStaff["夜勤"] ?? 1)) continue; // 日別maxStaff超過ならアンカーしない
-        // アンカー成立: 夜勤→明け を仮置き（D の希望休は既にセット済み）
-        res[s.id][nightDay] = "夜勤";
-        res[s.id][meakeDay] = "明け";
-        lockedDays[s.id].add(nightDay);
-        lockedDays[s.id].add(meakeDay);
+        if (nightDay < 1) continue;
+        if (s.nightExcludeDays?.has(nightDay)) continue;
+        if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue;
+        _anchorCands.push({ s, nightDay, meakeDay,
+          isFirstHalf: nightDay <= _anchorHalfMid,
+          pref: s.kiboNightPreference || 0 });
       }
+    }
+    // 前後半それぞれ kiboNightPreference 降順・同率は夜勤日昇順でソート
+    const _frontQ = _anchorCands.filter(c =>  c.isFirstHalf).sort((a, b) => (b.pref - a.pref) || (a.nightDay - b.nightDay));
+    const _backQ  = _anchorCands.filter(c => !c.isFirstHalf).sort((a, b) => (b.pref - a.pref) || (a.nightDay - b.nightDay));
+    // 交互マージ: 処理済み数の少ない半から優先して選択（F,B,F,B,...）
+    const _anchorOrdered = [];
+    let _fi = 0, _bi = 0;
+    while (_fi < _frontQ.length || _bi < _backQ.length) {
+      if (_fi < _frontQ.length && (_bi >= _backQ.length || _fi <= _bi)) {
+        _anchorOrdered.push(_frontQ[_fi++]);
+      } else {
+        _anchorOrdered.push(_backQ[_bi++]);
+      }
+    }
+    // 配置（制約を配置時に再チェック）
+    for (const { s, nightDay, meakeDay } of _anchorOrdered) {
+      if (lockedDays[s.id].has(nightDay) || lockedDays[s.id].has(meakeDay)) continue;
+      if (["夜勤", "明け"].includes(nightDay === 1 ? prevShift(s.id) : res[s.id][nightDay - 1])) continue;
+      const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
+      if (usedNight >= Math.max(s.nightMax || 5, anchorAutoMax)) continue;
+      const dayNightCount = ds.filter(sx => res[sx.id][nightDay] === "夜勤").length;
+      if (dayNightCount >= (maxStaff["夜勤"] ?? 1)) continue;
+      res[s.id][nightDay] = "夜勤";
+      res[s.id][meakeDay] = "明け";
+      lockedDays[s.id].add(nightDay);
+      lockedDays[s.id].add(meakeDay);
     }
   }
 
-  // ★ステップ2: 夜勤配置（ロック済みの日・翌日がロックの人は候補から除外）
+  // ★ステップ2: 夜勤配置（Phase5 Step2 v3: 優先順位型比較関数）
+  // ① 夜勤回数（主キー）: 累積回数少ない順
+  // ② 前半/後半カウント（副キー）: 当日の半月内での夜勤数少ない順
+  // ③ 夜勤間隔（三次キー）: 前回夜勤からの間隔長い順
+  // posBonus / idealInterval / targetCount を廃止。_lastNightDay は間隔比較のみに使用。
   if (dept.shiftTypes.includes("夜勤")) {
     const nightPool = ds.filter(s => s.nightOk && _nightAllowed(s));
     const autoMax = Math.ceil(days / Math.max(nightPool.length, 1));
+
+    // 間隔トラッキング（アンカー配置済み夜勤日を初期値に設定）
+    const _lastNightDay = {};
+    nightPool.forEach(s => {
+      const nightDays = Object.entries(res[s.id])
+        .filter(([, v]) => v === '夜勤').map(([d]) => Number(d));
+      _lastNightDay[s.id] = nightDays.length ? Math.max(...nightDays) : 0;
+    });
+
+    // 比較関数（評価スコアを使わない純粋な優先順位型）
+    const _nightCandSort = (a, b, d) => {
+      // ① 夜勤回数: 少ない順（count equity を絶対優先）
+      const cntA = Object.values(res[a.id]).filter(v => v === '夜勤').length;
+      const cntB = Object.values(res[b.id]).filter(v => v === '夜勤').length;
+      if (cntA !== cntB) return cntA - cntB;
+      // ② 前半/後半カウント: 当日の半月内夜勤数少ない順
+      const half = d <= Math.floor(days / 2);
+      const halfCnt = s => Object.entries(res[s.id])
+        .filter(([dd, v]) => (half ? Number(dd) <= Math.floor(days / 2) : Number(dd) > Math.floor(days / 2)) && v === '夜勤').length;
+      const hA = halfCnt(a), hB = halfCnt(b);
+      if (hA !== hB) return hA - hB;
+      // ③ 夜勤間隔: 前回夜勤からの間隔長い順（待機期間が長いスタッフを優先）
+      return (_lastNightDay[b.id] || 0) - (_lastNightDay[a.id] || 0); // 小さいほど古い → 優先
+    };
+
     for (let d = 1; d <= days; d++) {
       const already = ds.filter(s => res[s.id][d] === "夜勤").length;
       let need = (dept.minStaff["夜勤"] || 0) - already;
@@ -1149,10 +1368,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (!canNight(s)) return false;
         const usedNight = Object.values(res[s.id]).filter(v => v === "夜勤").length;
         return usedNight < Math.max(s.nightMax || 5, autoMax);
-      }).sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
+      }).sort((a, b) => _nightCandSort(a, b, d));
       if (cands.length === 0) {
         cands = nightPool.filter(s => canNight(s))
-          .sort((a, b) => Object.values(res[a.id]).filter(v => v === "夜勤").length - Object.values(res[b.id]).filter(v => v === "夜勤").length);
+          .sort((a, b) => _nightCandSort(a, b, d));
       }
       // G-1/NG-2: スロット単位動的判定（配置ごとに夜勤状況を再評価）
       const _isLowNR = (s) => {
@@ -1174,18 +1393,263 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             const aF = a.foreignNightSupportRequired ? 1 : 0;
             const bF = b.foreignNightSupportRequired ? 1 : 0;
             if (aF !== bF) return aF - bF;
-            return Object.values(res[a.id]).filter(v => v === '夜勤').length
-                 - Object.values(res[b.id]).filter(v => v === '夜勤').length;
+            return _nightCandSort(a, b, d); // G-1再ソートも優先順位型
           });
         }
         const s = _cands.shift();
         res[s.id][d] = "夜勤";
         if (d + 1 <= days) res[s.id][d + 1] = "明け";
         if (d + 2 <= days && !res[s.id][d + 2]) res[s.id][d + 2] = "休み";
+        _lastNightDay[s.id] = d; // Phase5 Step2: 間隔トラッキング更新
         need--;
       }
     }
   }
+
+  // ★ Phase5 Step4-B: Night Slot Optimizer データ構築（配置は行わない）
+  // 既存 Step2 は上記で完了済み。ここでは NSO が必要とするデータ構造を生成・検証する。
+  // autoGenerate の戻り値・res[] には一切影響しない。
+  if (dept.shiftTypes.includes("夜勤")) {
+    const _nsoPool = ds.filter(s => s.nightOk && _nightAllowed(s));
+    if (_nsoPool.length > 0) {
+      const _nsoM      = dept.minStaff["夜勤"] || 0;
+      const _nsoHalf   = Math.floor(days / 2);
+      const _nsoAutoMax = Math.ceil(days / _nsoPool.length);
+
+      // ── STEP 0: アンカー配置済み夜勤を assignment に取り込む ──────────────
+      // lockedDays.has(d) かつ res[s.id][d]==="夜勤" → Step1.5 のアンカー配置分
+      const _nsoAssignment = {};
+      _nsoPool.forEach(s => {
+        const anchorNights = Object.entries(res[s.id])
+          .filter(([d, v]) => v === '夜勤' && lockedDays[s.id].has(Number(d)))
+          .map(([d]) => Number(d));
+        _nsoAssignment[s.id] = new Set(anchorNights);
+      });
+
+      // ── STEP 1: 静的 feasible マトリクス構築（C3 を除く）─────────────────
+      // NSO_canAssignInitial は C1/C2/C4/C5 のみ評価（C3 は NSO_checkC3 で動的評価）
+      const _nsoFeasible = {};
+      _nsoPool.forEach(s => {
+        _nsoFeasible[s.id] = {};
+        for (let d = 1; d <= days; d++) {
+          _nsoFeasible[s.id][d] = NSO_canAssignInitial(s, d, lockedDays, res, deptWork, days);
+        }
+      });
+      // アンカー配置済み日の feasible を false に設定し、隣接日に C3 を伝播
+      _nsoPool.forEach(s => {
+        for (const d of _nsoAssignment[s.id]) {
+          _nsoFeasible[s.id][d] = false;
+          NSO_propagateConstraints(s.id, d, _nsoFeasible, days);
+        }
+      });
+
+      // ── STEP 2: 目標回数計算（アンカー分を差し引いた残余スロット）──────────
+      const _nsoTotalSlots    = days * _nsoM;
+      const _nsoAnchorTotal   = _nsoPool.reduce((acc, s) => acc + _nsoAssignment[s.id].size, 0);
+      const _nsoRemaining     = _nsoTotalSlots - _nsoAnchorTotal;
+      const _nsoBase          = Math.floor(_nsoRemaining / _nsoPool.length);
+      const _nsoExtra         = _nsoRemaining % _nsoPool.length;
+      const _nsoTargetCount   = {};
+      const _nsoTargetFirst   = {};
+      const _nsoTargetSecond  = {};
+      _nsoPool.forEach((s, i) => {
+        const anchorFirst  = [..._nsoAssignment[s.id]].filter(d => d <= _nsoHalf).length;
+        const anchorSecond = _nsoAssignment[s.id].size - anchorFirst;
+        const remainTarget = _nsoBase + (i < _nsoExtra ? 1 : 0);
+        const remainFirst  = Math.ceil(remainTarget / 2);
+        const remainSecond = remainTarget - remainFirst;
+        _nsoTargetCount[s.id]  = _nsoAssignment[s.id].size + remainTarget;
+        _nsoTargetFirst[s.id]  = anchorFirst  + remainFirst;
+        _nsoTargetSecond[s.id] = anchorSecond + remainSecond;
+      });
+
+      // ── STEP 3: NightSlot生成・difficultyScore算出・dayOrder生成 ──────────
+      // NightSlot: 各日（d）の夜勤スロット情報
+      // feasible 数（C3除く静的制約のみ）で difficulty を定義
+      const _nsoSlots = [];
+      const _nsoDayAssigned = {};
+      _nsoPool.forEach(s => {
+        for (const d of _nsoAssignment[s.id]) {
+          _nsoDayAssigned[d] = (_nsoDayAssigned[d] || 0) + 1;
+        }
+      });
+      for (let d = 1; d <= days; d++) {
+        const alreadyCount = _nsoDayAssigned[d] || 0;
+        const need = _nsoM - alreadyCount;
+        // feasible 候補数（静的。C3の動的変化は difficulty の近似として無視）
+        const feasibleCount = _nsoPool.filter(s => _nsoFeasible[s.id][d]).length;
+        _nsoSlots.push({
+          day:           d,
+          need,                          // まだ埋める必要があるスロット数
+          alreadyCount,                  // アンカーで配置済み夜勤数
+          feasibleCount,                 // 静的 feasible 候補数（C3近似）
+          difficultyScore: feasibleCount, // 小さいほど困難（dayOrder ソートに使用）
+          isFirst: d <= _nsoHalf,
+        });
+      }
+      // dayOrder: difficultyScore 昇順（困難日優先）、同率は日付昇順
+      const _nsoDayOrder = _nsoSlots
+        .filter(sl => sl.need > 0)
+        .sort((a, b) => a.difficultyScore - b.difficultyScore || a.day - b.day)
+        .map(sl => sl.day);
+
+      // ── Candidate一覧生成（各スロット×スタッフの全組み合わせ）─────────────
+      // Phase4-C の配置ループ検証用。ここでは生成のみ行い配置はしない。
+      const _nsoCandidates = [];
+      for (const d of _nsoDayOrder.slice(0, 3)) { // ログ量削減のため先頭3日分のみ収集
+        for (const s of _nsoPool) {
+          if (!_nsoFeasible[s.id][d]) continue;
+          if (NSO_checkC3(s, d, _nsoAssignment[s.id], res, lockedDays, prevShift)) continue;
+          if (_nsoAssignment[s.id].size >= Math.max(s.nightMax || 5, _nsoAutoMax)) continue;
+          _nsoCandidates.push({ staffId: s.id, day: d,
+            targetRem: _nsoTargetCount[s.id] - _nsoAssignment[s.id].size });
+        }
+      }
+
+      // ── STEP 4: difficulty-first 配置ループ（Phase4-C）─────────────────────
+      // _nsoAssignment のみ更新。res[] / lockedDays は絶対に変更しない。
+      // 既存 Step2 の結果とは独立した「NSO 比較用配置」として保持する。
+      let _nsoPropagateCount = 0;   // propagateConstraints 実行回数（統計用）
+      let _nsoCandSelectCount = 0;  // Candidate 選択回数（統計用）
+      let _nsoC3ViolCount = 0;      // C3 違反で除外されたケース数（統計用）
+      let _nsoShortageCount = 0;    // 充足できなかったスロット数（shortage）
+
+      // _nsoDayAssigned を配置進行に合わせて更新するためコピーして使用
+      const _nsoDayCount = { ..._nsoDayAssigned }; // アンカー分の初期値込み
+
+      for (const d of _nsoDayOrder) {
+        const alreadyCount = _nsoDayCount[d] || 0;
+        const need = _nsoM - alreadyCount;
+        if (need <= 0) continue;
+
+        const isFirst = d <= _nsoHalf;
+
+        // ── 候補者フィルタ（3段階）────────────────────────────────────────
+        // 段階1: 静的 feasible + C3 動的チェック + targetCount 上限（autoMax）
+        const _nsoPassCands = [];
+        let _c3ViolThisDay = 0;
+        for (const s of _nsoPool) {
+          if (!_nsoFeasible[s.id][d]) continue;                          // 静的制約
+          if (NSO_checkC3(s, d, _nsoAssignment[s.id], res, lockedDays, prevShift)) {
+            _c3ViolThisDay++;
+            continue;                                                      // C3 動的
+          }
+          if (_nsoAssignment[s.id].size >= Math.max(s.nightMax || 5, _nsoAutoMax)) continue; // C6
+          _nsoPassCands.push(s);
+        }
+        _nsoC3ViolCount += _c3ViolThisDay;
+
+        // 段階2: フォールバック（autoMax 上限なし）
+        let _nsoCands = _nsoPassCands;
+        if (_nsoCands.length < need) {
+          const fallback = [];
+          for (const s of _nsoPool) {
+            if (!_nsoFeasible[s.id][d]) continue;
+            if (NSO_checkC3(s, d, _nsoAssignment[s.id], res, lockedDays, prevShift)) continue;
+            fallback.push(s);
+          }
+          if (fallback.length > 0) _nsoCands = fallback;
+        }
+
+        if (_nsoCands.length === 0) {
+          _nsoShortageCount += need;
+          continue;
+        }
+
+        // ── スコアリング: ① targetCount残り降順 → ② 前後半バランス → ③ 最終夜勤日昇順
+        _nsoCands = [..._nsoCands].sort((a, b) => {
+          // ① 残り目標回数が多いスタッフを優先（count equity）
+          const remA = _nsoTargetCount[a.id] - _nsoAssignment[a.id].size;
+          const remB = _nsoTargetCount[b.id] - _nsoAssignment[b.id].size;
+          if (remA !== remB) return remB - remA;
+
+          // ② 前後半バランス: 当該半月の残り目標が多いスタッフを優先
+          const halfRemA = isFirst
+            ? _nsoTargetFirst[a.id]  - [..._nsoAssignment[a.id]].filter(dd => dd <= _nsoHalf).length
+            : _nsoTargetSecond[a.id] - [..._nsoAssignment[a.id]].filter(dd => dd > _nsoHalf).length;
+          const halfRemB = isFirst
+            ? _nsoTargetFirst[b.id]  - [..._nsoAssignment[b.id]].filter(dd => dd <= _nsoHalf).length
+            : _nsoTargetSecond[b.id] - [..._nsoAssignment[b.id]].filter(dd => dd > _nsoHalf).length;
+          if (halfRemA !== halfRemB) return halfRemB - halfRemA;
+
+          // ③ 最終夜勤日が古い（間隔が長い）スタッフを優先
+          const lastA = _nsoAssignment[a.id].size ? Math.max(..._nsoAssignment[a.id]) : 0;
+          const lastB = _nsoAssignment[b.id].size ? Math.max(..._nsoAssignment[b.id]) : 0;
+          return lastA - lastB;
+        });
+
+        // ── 上位 need 名を選択・assignment 更新 ────────────────────────────
+        const selected = _nsoCands.slice(0, need);
+        for (const s of selected) {
+          _nsoAssignment[s.id].add(d);
+          _nsoDayCount[d] = (_nsoDayCount[d] || 0) + 1;
+          _nsoFeasible[s.id][d] = false;                         // 自分自身は配置済み
+          NSO_propagateConstraints(s.id, d, _nsoFeasible, days); // C3 伝播
+          _nsoPropagateCount++;
+          _nsoCandSelectCount++;
+        }
+
+        // shortage 判定（need 未達の場合）
+        const actualSelected = Math.min(selected.length, need);
+        if (actualSelected < need) _nsoShortageCount += (need - actualSelected);
+      }
+
+      // ── NSO_result 生成（比較用データ）─────────────────────────────────
+      // res[] / lockedDays には一切書き込まない。参照のみ。
+      const _nsoResult = {};
+      _nsoPool.forEach(s => { _nsoResult[s.id] = [..._nsoAssignment[s.id]].sort((a, b) => a - b); });
+
+      // ── NSO_stats 生成（充足率・KPI）────────────────────────────────────
+      const _nsoTotalNeed = _nsoDayOrder.length * _nsoM;
+      const _nsoTotalPlaced = _nsoPool.reduce((acc, s) => acc + _nsoAssignment[s.id].size, 0);
+      const _nsoFulfillRate = _nsoTotalNeed > 0
+        ? ((_nsoTotalNeed - _nsoShortageCount) / _nsoTotalNeed * 100).toFixed(1)
+        : '100.0';
+
+      // カウント均等性（σ）
+      const _nsoCounts   = _nsoPool.map(s => _nsoAssignment[s.id].size);
+      const _nsoCountMean = _nsoCounts.reduce((a, b) => a + b, 0) / _nsoCounts.length;
+      const _nsoCountSigma = Math.sqrt(
+        _nsoCounts.reduce((acc, c) => acc + (c - _nsoCountMean) ** 2, 0) / _nsoCounts.length
+      );
+
+      // 前半後半偏差
+      const _nsoHalfDevs = _nsoPool.map(s => {
+        const f = [..._nsoAssignment[s.id]].filter(d => d <= _nsoHalf).length;
+        const b = _nsoAssignment[s.id].size - f;
+        return Math.abs(f - b);
+      });
+      const _nsoHalfDevMean = _nsoHalfDevs.reduce((a, b) => a + b, 0) / _nsoHalfDevs.length;
+
+      const _nsoFinalCost = NSO_computeCost(
+        _nsoAssignment, _nsoTargetCount, _nsoTargetFirst, _nsoTargetSecond, _nsoPool, _nsoHalf);
+
+      const _nsoStats = {
+        pool:           _nsoPool.length,
+        totalSlots:     _nsoTotalSlots,
+        totalPlaced:    _nsoTotalPlaced,
+        shortage:       _nsoShortageCount,
+        fulfillRate:    _nsoFulfillRate + '%',
+        countSigma:     _nsoCountSigma.toFixed(3),
+        halfDevMean:    _nsoHalfDevMean.toFixed(3),
+        finalCost:      _nsoFinalCost.toFixed(1),
+        propagateCount: _nsoPropagateCount,
+        candSelectCount:_nsoCandSelectCount,
+        c3ViolCount:    _nsoC3ViolCount,
+      };
+
+      // ── ログ出力（console.log のみ）─────────────────────────────────────
+      console.log('[NSO-B] pool:', _nsoPool.length,
+        'slots:', _nsoSlots.length,
+        'totalSlots:', _nsoTotalSlots,
+        'anchorTotal:', _nsoAnchorTotal,
+        'remaining:', _nsoRemaining);
+      console.log('[NSO-B] dayOrder(first10):', _nsoDayOrder.slice(0, 10));
+      console.log('[NSO-C] assignment:', JSON.stringify(_nsoResult));
+      console.log('[NSO-C] stats:', JSON.stringify(_nsoStats));
+    }
+  }
+  // ★ Phase5 Step4-B/C ここまで。res[] / lockedDays への変更なし。
 
   const dayTypes = [...new Set(dept.shiftTypes.filter(s => s !== "夜勤"))];
   const isCtd = isCustomTimeDept(dept);
@@ -2993,6 +3457,23 @@ function generateTimeAxis(staffList, dept, year, month, prevShifts, shiftTrend =
           res[s.id][d] = '休み';
         }
         // workRem[s.id] > 0 → 空白維持（診断ログで出力される）
+      }
+    });
+
+    // ── Step7後補正（Phase5 Step5-B）: v1公休数違反を解消 ─────────────────
+    // workRem>0 で終了した場合、空白セルが残り actualRest < totalTarget になる。
+    // 空白セルを '休み' に変換して公休数を totalTarget に合わせる。
+    // 変換対象: 非ロック・空白セルのみ。v2〜v5 には影響しない。
+    ds.forEach(s => {
+      const actualRest = Object.values(res[s.id]).filter(v => deptRest.has(v) && v !== '明け').length;
+      const need = s._ta_totalTarget - actualRest;
+      if (need <= 0) return;
+      let filled = 0;
+      for (let d = 1; d <= days && filled < need; d++) {
+        if (res[s.id][d]) continue;            // 既割当済み（勤務・休み）はスキップ
+        if (lockedDays[s.id].has(d)) continue; // ロック日はスキップ
+        res[s.id][d] = '休み';
+        filled++;
       }
     });
 
