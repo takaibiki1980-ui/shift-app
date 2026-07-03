@@ -10,7 +10,7 @@
  * バグ4: 通常部署で「遅番 → 日勤」(12.5h インターバル) が成立してしまう
  */
 import { describe, test, expect, beforeEach } from 'vitest';
-import { bestOfN, getDays, WORK_TYPES } from '../shiftEngine.js';
+import { bestOfN, getDays, WORK_TYPES } from '../engine/core.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  テストフィクスチャ
