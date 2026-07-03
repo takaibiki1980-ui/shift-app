@@ -6531,6 +6531,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           console.warn('[VALIDATION WARNING] 制約違反:\n' + _hardErrs.join('\n'));
         }
 
+        // ── eiyo部署のみ: 公休数・maxConsec違反を自動修正 ──
+        repairHardConstraints(cd, result, _p1_ds, year, month);
+
         dirtyDeptIdsRef.current.add(cd.id); // ★Fix S-1: 生成部署を明示dirty登録（active部署と異なる場合でも保存される）
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
