@@ -7,7 +7,7 @@
  *   c. nightOk:false のスタッフが夜勤に入らないこと
  */
 import { describe, test, expect } from 'vitest';
-import { bestOfN, getDays } from '../shiftEngine.js';
+import { bestOfN, getDays } from '../engine/core.js';
 
 const YEAR  = 2026;
 const MONTH = 6; // 7月（0-indexed）
