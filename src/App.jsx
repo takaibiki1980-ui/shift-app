@@ -5287,6 +5287,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [allEvents, setAllEvents] = useState({});
   const [eventEditDay, setEventEditDay] = useState(null);
 
+  const [confirmedMonths, setConfirmedMonths] = useState({}); // { "YYYY_M_deptId": true|false }
+
   const [saveStatus, setSaveStatus] = useState("saved");
   const saveStatusRef = useRef("saved");
   useEffect(() => { saveStatusRef.current = saveStatus; }, [saveStatus]);
@@ -5360,6 +5362,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const latestExceptionMonths = filterExpiredExceptions(byKey['exceptionMonths'] || []);
         if (byKey['exceptionMonths']) { exceptionMonthsSkipSave.current = true; setExceptionMonths(latestExceptionMonths); } // ★Fix W-1
         allDBDataRef.current = byKey; // DBキャッシュを初期化
+        const confirmedInit = {};
+        for (const [k, v] of Object.entries(byKey)) {
+          if (k.startsWith('confirmed_')) confirmedInit[k.slice('confirmed_'.length)] = v;
+        }
+        if (Object.keys(confirmedInit).length > 0) setConfirmedMonths(confirmedInit);
         exceptionMonthsRef.current = latestExceptionMonths;
         const learned = computeLearnedTrend(byKey, latestStaffList, latestExceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
@@ -5460,6 +5467,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['portalSettings']) { portalSettingsSkipSave.current = true; setPortalSettings(byKey['portalSettings']); } // ★Fix W-1
         if (byKey['exceptionMonths']) { exceptionMonthsSkipSave.current = true; setExceptionMonths(latestExcRT); } // ★Fix W-1
         allDBDataRef.current = {...allDBDataRef.current, ...byKey}; // DBキャッシュを更新
+        const confirmedFromRT = {};
+        for (const [k, v] of Object.entries(byKey)) {
+          if (k.startsWith('confirmed_')) confirmedFromRT[k.slice('confirmed_'.length)] = v;
+        }
+        if (Object.keys(confirmedFromRT).length > 0) setConfirmedMonths(prev => ({...prev, ...confirmedFromRT}));
         exceptionMonthsRef.current = latestExcRT;
         const latestStaffListRT = byKey['staffList'] || staffList;
         const learnedRT = computeLearnedTrend(byKey, latestStaffListRT, latestExcRT);
@@ -5988,6 +6000,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const isLocked = !!(depts.find(d=>d.id===activeDeptId)?.pin && unlockedDeptId !== activeDeptId);
   const isLockedRef = useRef(isLocked);
   useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
+  const isConfirmed = confirmedMonths[`${year}_${month+1}_${activeDeptId}`] === true;
+  const isConfirmedRef = useRef(isConfirmed);
+  useEffect(() => { isConfirmedRef.current = isConfirmed; }, [isConfirmed]);
   const generateTimerRef = useRef(null);
   useEffect(() => {
     if (!isInitializing.current) {
@@ -6241,6 +6256,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   };
 
   const handleGenerate = useCallback(() => {
+    if (isConfirmedRef.current) { alert(`${dept?.label} は確定済みです。「編集」ボタンで編集状態に戻してから生成してください。`); return; }
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
     isInitializing.current = false;
@@ -6597,8 +6613,45 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     },700);
   }, [staffList,dept,year,month,learnedTrend,_runGenerateCore]);
 
+  const handleConfirm = useCallback(() => {
+    setConfirmDialog({
+      message: `${year}年${month+1}月 ${dept?.label} のシフトを確定しますか？\n確定後は編集・自動生成ができなくなります。`,
+      okLabel: '確定する',
+      onOk: async () => {
+        const key = `confirmed_${year}_${month+1}_${activeDeptId}`;
+        const { error } = await supabase.from('shift_data').upsert(
+          { user_id: session.user.id, data_key: key, data_value: true, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id,data_key' }
+        );
+        if (!error) {
+          allDBDataRef.current[key] = true;
+          setConfirmedMonths(prev => ({...prev, [`${year}_${month+1}_${activeDeptId}`]: true}));
+        }
+      }
+    });
+  }, [year, month, activeDeptId, dept, session]);
+
+  const handleUnconfirm = useCallback(() => {
+    setConfirmDialog({
+      message: `${year}年${month+1}月 ${dept?.label} のシフトを編集状態に戻しますか？`,
+      okLabel: '編集する',
+      onOk: async () => {
+        const key = `confirmed_${year}_${month+1}_${activeDeptId}`;
+        const { error } = await supabase.from('shift_data').upsert(
+          { user_id: session.user.id, data_key: key, data_value: false, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id,data_key' }
+        );
+        if (!error) {
+          allDBDataRef.current[key] = false;
+          setConfirmedMonths(prev => ({...prev, [`${year}_${month+1}_${activeDeptId}`]: false}));
+        }
+      }
+    });
+  }, [year, month, activeDeptId, dept, session]);
+
   const handleUndo = useCallback(() => {
     if (isLockedRef.current) return;
+    if (isConfirmedRef.current) return; // 確定済みは編集不可
     const stack = undoStackRef.current[activeDeptId] || [];
     if (stack.length === 0) return;
     const previous = stack[stack.length - 1];
@@ -6623,6 +6676,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const handleLeftClick = useCallback((staffId, day) => {
     if (isLockedRef.current) return;
+    if (isConfirmedRef.current) return; // 確定済みは編集不可
     if (isMonthLoading) return; // 月ロード中は操作ブロック
     activeCellRef.current = { staffId, day, time: Date.now() }; // アクティブセル記録（Realtime上書き保護）
     setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const s=staffList.find(x=>x.id===staffId);const roleAllowed=s?dept?.roleShiftTypes?.[s.role]:null;const keys=roleAllowed?SHIFT_KEYS.filter(k=>!WORK_TYPES.has(k)||roleAllowed.includes(k)):SHIFT_KEYS;const idx=keys.indexOf(cur);const next=keys[(idx+1)%keys.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
@@ -6630,6 +6684,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const handleRightClick = useCallback((staffId, day, e, selCells) => {
     if (isLockedRef.current) return;
+    if (isConfirmedRef.current) return; // 確定済みは編集不可
     if (isMonthLoading) return; // 月ロード中は操作ブロック
     setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4,selCells:selCells||null});
   }, []);
@@ -6699,7 +6754,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Lock size={14} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
-            : <button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading} title={isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading)?"#E5E7EB":"#2563EB",color:(generating||saveStatus==="unsaved"||isMonthLoading)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||saveStatus==="unsaved"||isMonthLoading)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
+            : <button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading||isConfirmed} title={isConfirmed?"確定済みです。「編集」ボタンで解除してください":isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading||isConfirmed)?"#E5E7EB":"#2563EB",color:(generating||saveStatus==="unsaved"||isMonthLoading||isConfirmed)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||saveStatus==="unsaved"||isMonthLoading||isConfirmed)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading||isConfirmed)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
+          }
+          {isConfirmed
+            ? <button onClick={handleUnconfirm} style={{background:"#F59E0B",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}>✏️{!isMobile&&" 編集"}</button>
+            : <button onClick={handleConfirm} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に確定できます":undefined} style={{background:saveStatus==="unsaved"?"#E5E7EB":"#10B981",color:saveStatus==="unsaved"?"#9CA3AF":"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:saveStatus==="unsaved"?0.6:1}}>✓{!isMobile&&" 確定"}</button>
           }
           <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:500,opacity:saveStatus==="unsaved"?0.5:1,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>

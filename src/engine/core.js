@@ -2425,7 +2425,11 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = [], diagDep
     if (exceptionSet.has(`${keyYear}-${keyMonthRaw}`)) continue;
     // 直近ほど重く: 今月=4, 1ヶ月前=3, 2ヶ月前=2, 3ヶ月以前=1
     const monthsAgo = Math.max(0, nowYM - (keyYear * 12 + keyMonth));
-    const weight = Math.max(1, 4 - monthsAgo);
+    const baseWeight = Math.max(1, 4 - monthsAgo);
+    // confirmed_* キーが false（下書き保存のまま）の月は weight を 0.3 倍に抑えて学習を弱める
+    // キーが存在しない（旧データ）場合は通常 weight を使用
+    const confirmedVal = allDBData['confirmed_' + parts.slice(1).join('_')];
+    const weight = confirmedVal === false ? baseWeight * 0.3 : baseWeight;
     const daysInMonth = new Date(keyYear, keyMonthRaw, 0).getDate();
     // 対応する edits_* キーから人手修正セルを取得して高速参照用 Set を構築
     // edits_YYYY_M_deptId = { [staffId]: [day, day, ...] }
