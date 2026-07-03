@@ -2361,6 +2361,219 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
 
 // ── 時間軸エンジン（N試行 bestOf / 5絶対条件合格候補から最良スコア選択）────────────────────
 
+// ── 手動修正セル検出 ────────────────────────────────────────────────────────
+/**
+ * 自動生成直後(baseline)と保存時(current)のシフト差分を全シフト種別・全セルで検出する。
+ * 戻り値: { [staffId]: number[] }  ← 差分があった日番号の配列
+ *
+ * 既知の制約（変更は今回スコープ外）:
+ *   a. baseline は最後の自動生成直後の1スナップショットのみ保持。再生成で上書きされる。
+ *   b. undo操作による戻しも「手動修正」として検出される。
+ *   c. 自動生成を行わなかった月は genRef=undefined のため呼び出し元でガードされる。
+ *   d. 月切り替え後は lastAutoGenRef がリセットされるため、月をまたぐ差分は取れない。
+ */
+function detectManualEditCells(baseline, current) {
+  const result = {};
+  const allStaffIds = new Set([...Object.keys(baseline), ...Object.keys(current)]);
+  for (const staffId of allStaffIds) {
+    const baseDays = baseline[staffId] || {};
+    const currDays = current[staffId] || {};
+    const allDays = new Set([...Object.keys(baseDays), ...Object.keys(currDays)]);
+    const edited = [];
+    for (const dayStr of allDays) {
+      if (baseDays[dayStr] !== currDays[dayStr]) edited.push(Number(dayStr));
+    }
+    if (edited.length > 0) result[staffId] = edited;
+  }
+  return result;
+}
+
+// ── 学習トレンド計算 ─────────────────────────────────────────────────────────
+// editData は allDBData の edits_YYYY_M_deptId キーから自動読み取り。
+// 人手修正セルには EDIT_WEIGHT=1.5 を乗算して学習に強く反映させる。
+const EDIT_WEIGHT = 1.5;
+
+function computeLearnedTrend(allDBData, staffList, exceptionMonths = [], diagDeptId = null) {
+  const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
+  const counts = {}, totals = {}, monthSets = {};
+  const transitions = {}, transitionTotals = {}; // 遷移確率集計: [staffId][prev][curr]
+  const dowShifts = {}; // 曜日別シフト集計: [staffId][dow][shiftType]
+  const dowRests = {};   // 曜日別休み集計: [staffId][dow] 重み付きカウント (+6%7: 月=0,日=6)
+  const dowTotalsR = {}; // 曜日別総日数:   [staffId][dow] 重み付きカウント (+6%7: 月=0,日=6)
+  const REST_DOW_SET = new Set(['休み','希望休','有休']);
+  const now = new Date();
+  const nowYM = now.getFullYear() * 12 + now.getMonth();
+  const WORK_SHIFT_SET = new Set(['早番','日勤','遅番','夜勤']);
+  for (const [key2, shifts2] of Object.entries(allDBData)) {
+    if (!key2.startsWith('shifts_') || !shifts2 || typeof shifts2 !== 'object') continue;
+    for (const ss of Object.values(shifts2)) {
+      if (!ss || typeof ss !== 'object') continue;
+      for (const sh of Object.values(ss)) { if (sh && typeof sh === 'string' && !['希望休','有休','明け','休み',''].includes(sh)) WORK_SHIFT_SET.add(sh); }
+    }
+  }
+  const WORK_SHIFT_KEYS = [...WORK_SHIFT_SET];
+  const TRANS_KEYS = new Set([...WORK_SHIFT_KEYS, '明け','休み','希望休']);
+  for (const [key, shifts] of Object.entries(allDBData)) {
+    if (!key.startsWith('shifts_') || !shifts || typeof shifts !== 'object') continue;
+    // キー形式: shifts_YYYY_M_deptId
+    const parts = key.split('_');
+    if (parts.length < 4) continue;
+    const keyYear = parseInt(parts[1]), keyMonthRaw = parseInt(parts[2]);
+    const keyMonth = keyMonthRaw - 1; // 0始まり
+    if (isNaN(keyYear) || isNaN(keyMonth)) continue;
+    // 例外月はスキップ
+    if (exceptionSet.has(`${keyYear}-${keyMonthRaw}`)) continue;
+    // 直近ほど重く: 今月=4, 1ヶ月前=3, 2ヶ月前=2, 3ヶ月以前=1
+    const monthsAgo = Math.max(0, nowYM - (keyYear * 12 + keyMonth));
+    const baseWeight = Math.max(1, 4 - monthsAgo);
+    // confirmed_* キーが false（下書き保存のまま）の月は weight を 0.3 倍に抑えて学習を弱める
+    // キーが存在しない（旧データ）場合は通常 weight を使用
+    const confirmedVal = allDBData['confirmed_' + parts.slice(1).join('_')];
+    const weight = confirmedVal === false ? baseWeight * 0.3 : baseWeight;
+    const daysInMonth = new Date(keyYear, keyMonthRaw, 0).getDate();
+    // 対応する edits_* キーから人手修正セルを取得して高速参照用 Set を構築
+    // edits_YYYY_M_deptId = { [staffId]: [day, day, ...] }
+    const editEntries = allDBData['edits_' + parts.slice(1).join('_')] || {};
+    const editedSet = new Set();
+    for (const [sid, days] of Object.entries(editEntries)) {
+      for (const d of (days || [])) editedSet.add(`${sid}:${d}`);
+    }
+    for (const [staffId, staffShifts] of Object.entries(shifts)) {
+      if (!staffShifts || typeof staffShifts !== 'object') continue;
+      if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; monthSets[staffId] = new Set(); }
+      if (!transitions[staffId]) { transitions[staffId] = {}; transitionTotals[staffId] = {}; }
+      if (!dowShifts[staffId]) dowShifts[staffId] = [{},{},{},{},{},{},{}];
+      if (!dowTotalsR[staffId]) dowTotalsR[staffId] = [0,0,0,0,0,0,0];
+      if (!dowRests[staffId]) dowRests[staffId] = [0,0,0,0,0,0,0];
+      monthSets[staffId].add(`${keyYear}-${keyMonth}`);
+      for (const [dayStr, shift] of Object.entries(staffShifts)) {
+        // dowRestRate用: スキップ前に全シフトを曜日別集計
+        if (shift) {
+          const dr = parseInt(dayStr);
+          if (!isNaN(dr)) {
+            const dow2 = (new Date(keyYear, keyMonth, dr).getDay() + 6) % 7;
+            const ew = editedSet.has(`${staffId}:${dr}`) ? weight * EDIT_WEIGHT : weight;
+            dowTotalsR[staffId][dow2] += ew;
+            if (REST_DOW_SET.has(shift)) dowRests[staffId][dow2] += ew;
+          }
+        }
+        if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
+        const d = parseInt(dayStr);
+        const ew = (!isNaN(d) && editedSet.has(`${staffId}:${d}`)) ? weight * EDIT_WEIGHT : weight;
+        counts[staffId][shift] = (counts[staffId][shift] || 0) + ew;
+        totals[staffId] += ew;
+        // 曜日別シフト集計
+        if (WORK_SHIFT_SET.has(shift)) {
+          if (!isNaN(d)) {
+            const dow = new Date(keyYear, keyMonth, d).getDay();
+            dowShifts[staffId][dow][shift] = (dowShifts[staffId][dow][shift] || 0) + ew;
+          }
+        }
+      }
+      // 日別遷移を集計（前日→当日の遷移確率学習）
+      // 遷移はペア単位のため editWeight 適用対象外
+      for (let d = 2; d <= daysInMonth; d++) {
+        const prev = staffShifts[d-1], curr = staffShifts[d];
+        if (!prev || !curr || !TRANS_KEYS.has(prev) || !TRANS_KEYS.has(curr) || curr === '有休') continue;
+        if (!transitions[staffId][prev]) transitions[staffId][prev] = {};
+        transitions[staffId][prev][curr] = (transitions[staffId][prev][curr] || 0) + weight;
+        transitionTotals[staffId][prev] = (transitionTotals[staffId][prev] || 0) + weight;
+      }
+    }
+  }
+  // ②③ 部署平均を事前計算（スムージング基準: データ豊富スタッフのみ）
+  const deptStaffL = staffList.filter(s => counts[s.id] && totals[s.id] >= 10);
+  const deptAvgFreqL = {}, deptAvgDowL = Array.from({length:7},()=>({})), deptAvgRestL = [null,null,null,null,null,null,null];
+  if (deptStaffL.length > 0) {
+    const allShiftKeys = new Set(deptStaffL.flatMap(s => Object.keys(counts[s.id])));
+    for (const k of allShiftKeys) {
+      deptAvgFreqL[k] = deptStaffL.reduce((s,st)=>s+(counts[st.id][k]||0)/totals[st.id],0)/deptStaffL.length;
+    }
+    for (let i = 0; i < 7; i++) {
+      const totW = deptStaffL.reduce((s,st)=>s+Object.values(dowShifts[st.id]?.[i]||{}).reduce((a,b)=>a+b,0),0);
+      const allDK = new Set(deptStaffL.flatMap(s=>Object.keys(dowShifts[s.id]?.[i]||{})));
+      for (const k of allDK) { deptAvgDowL[i][k]=totW>0?deptStaffL.reduce((s,st)=>s+(dowShifts[st.id]?.[i]?.[k]||0),0)/totW:0; }
+      const totR = deptStaffL.reduce((s,st)=>s+(dowTotalsR[st.id]?.[i]||0),0);
+      deptAvgRestL[i] = totR>0 ? deptStaffL.reduce((s,st)=>s+(dowRests[st.id]?.[i]||0),0)/totR : null;
+    }
+  }
+  const result = {}, monthCounts = {};
+  for (const staff of staffList) {
+    if (!counts[staff.id] || totals[staff.id] < 1) continue; // 完全0件のみスキップ
+    const alpha = Math.min(1, totals[staff.id] / 10);
+    const freq = {};
+    for (const k of new Set([...Object.keys(counts[staff.id]), ...Object.keys(deptAvgFreqL)])) {
+      const raw = totals[staff.id] > 0 ? (counts[staff.id][k]||0)/totals[staff.id] : 0;
+      freq[k] = raw * alpha + (deptAvgFreqL[k] || 0) * (1 - alpha);
+    }
+    // 遷移確率はデータ十分なスタッフのみ（スムージング対象外）
+    const transitionRate = {};
+    if (totals[staff.id] >= 10) {
+      for (const [prev, toCounts] of Object.entries(transitions[staff.id] || {})) {
+        const tot = transitionTotals[staff.id][prev] || 1;
+        transitionRate[prev] = {};
+        for (const [curr, cnt] of Object.entries(toCounts)) transitionRate[prev][curr] = cnt / tot;
+      }
+    }
+    // 曜日別シフト確率（薄曜日は部署平均ブレンド）
+    const dowShiftRate = (dowShifts[staff.id] || [{},{},{},{},{},{},{}]).map((shiftCounts, i) => {
+      const workTot = Object.values(shiftCounts).reduce((s,v)=>s+v,0);
+      const da = Math.min(1, workTot / 2);
+      const rate = {};
+      const dKeys = new Set([...Object.keys(shiftCounts), ...Object.keys(deptAvgDowL[i])]);
+      for (const k of dKeys) {
+        const raw = workTot > 0 ? (shiftCounts[k]||0)/workTot : 0;
+        rate[k] = raw * da + (deptAvgDowL[i][k] || 0) * (1 - da);
+      }
+      return Object.keys(rate).length > 0 ? rate : null;
+    });
+    const dowRestRate = (dowTotalsR[staff.id] || [0,0,0,0,0,0,0]).map((tot, i) => {
+      if (tot === 0) return deptAvgRestL[i];
+      const raw = (dowRests[staff.id]?.[i]||0)/tot, ra = Math.min(1, tot/3);
+      return raw * ra + (deptAvgRestL[i] ?? raw) * (1 - ra);
+    });
+    result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate };
+    monthCounts[staff.name] = monthSets[staff.id].size;
+  }
+  // ── [診断] 学習信頼度 実測ログ（確認後に削除） ─────────────────────
+  if (diagDeptId) {
+    const DOW_NAMES = ['月','火','水','木','金','土','日'];
+    const diagStaff = staffList.filter(s => s.dept === diagDeptId);
+    console.error(`═══ [学習信頼度診断] dept=${diagDeptId} START ═══`);
+    const shiftKeys = Object.keys(allDBData).filter(k => k.startsWith('shifts_') && k.includes(diagDeptId));
+    console.error(`[診断1] ${diagDeptId}シフトキー(${shiftKeys.length}件): ${JSON.stringify(shiftKeys)}`);
+    console.error(`[診断2] diagStaff(${diagStaff.length}名):`);
+    for (const s of diagStaff) console.error(`[診断2]   name=${s.name} id=${s.id} dept=${s.dept}`);
+    const countsIds = Object.keys(counts);
+    console.error(`[診断3] counts staffId一覧(${countsIds.length}件): ${JSON.stringify(countsIds)}`);
+    const totalsIds = Object.keys(totals);
+    console.error(`[診断4] totals staffId一覧(${totalsIds.length}件): ${JSON.stringify(totalsIds)}`);
+    console.error(`[診断5] diagStaff × counts/totals 突合:`);
+    for (const staff of diagStaff) {
+      const c = counts[staff.id];
+      const t = totals[staff.id];
+      console.error(`[診断5]   ${staff.name} | id=${staff.id} | counts=${JSON.stringify(c ?? null)} | totals=${t ?? 'undefined'}`);
+    }
+    for (const staff of diagStaff) {
+      if (!counts[staff.id] || totals[staff.id] < 1) continue;
+      const shiftArr = dowShifts[staff.id] || [{},{},{},{},{},{},{}];
+      const totArr   = dowTotalsR[staff.id] || [0,0,0,0,0,0,0];
+      console.error(`[学習] ── ${staff.name} 学習月数=${monthSets[staff.id].size} 総重み=${totals[staff.id]} ──`);
+      for (let j = 0; j < 7; j++) {
+        const siIdx = (j + 1) % 7;
+        const wTot = Object.values(shiftArr[siIdx]).reduce((s,v)=>s+v,0);
+        const da   = Math.min(1, wTot / 2).toFixed(2);
+        const rTot = totArr[j];
+        const ra   = rTot === 0 ? '0.00' : Math.min(1, rTot / 3).toFixed(2);
+        console.error(`[学習]   ${DOW_NAMES[j]}曜: workTot=${String(wTot).padStart(3)} da=${da}  tot=${String(rTot).padStart(3)} ra=${ra}`);
+      }
+    }
+    console.error(`═══ [学習信頼度診断] dept=${diagDeptId} END ═══`);
+  }
+  result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
+  return result;
+}
+
 export {
   REST_TYPES,
   WORK_TYPES,
@@ -2396,5 +2609,8 @@ export {
   autoGenerate,
   scoreShifts,
   localSearchImprove,
-  bestOfN
+  bestOfN,
+  detectManualEditCells,
+  computeLearnedTrend,
+  EDIT_WEIGHT
 };
