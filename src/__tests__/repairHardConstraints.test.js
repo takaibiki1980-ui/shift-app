@@ -221,3 +221,96 @@ describe('d. maxConsecutive違反の検出と修正', () => {
     expect(Object.values(res.s1).every(v => v === '日勤')).toBe(true);
   });
 });
+
+// ────────────────────────────────────────────────────────────────
+// e. 休み超過の解除時に maxStaff を考慮する
+// ────────────────────────────────────────────────────────────────
+describe('e. 休み超過解除時のmaxStaff考慮', () => {
+  // maxConsec:31 で Step2 を無効化し、Step1 の maxStaff 挙動だけを検証する
+  const deptMax = {
+    id: 'eiyo',
+    shiftTypes: ['早番', '日勤'],
+    minStaff: { 早番: 1, 日勤: 1 },
+    maxStaff: { 早番: 1, 日勤: 99 },
+    roleShiftTypes: { '調理師': ['早番', '日勤'], 'パート': ['早番'] },
+    maxConsec: 31,
+  };
+
+  // s1: 休み10日（目標8日・超過2）。等間隔アルゴリズムの優先候補は d9・d21
+  const S1_RESTS = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30];
+
+  function makeS1(role = '調理師') {
+    return makeStaff({ id: 's1', role });
+  }
+  function makeS1Shifts() {
+    const raw = {};
+    for (let d = 1; d <= 31; d++) raw[d] = '日勤';
+    S1_RESTS.forEach(d => { raw[d] = '休み'; });
+    return raw;
+  }
+  function countOn(res, staffIds, d, k) {
+    return staffIds.filter(id => res[id]?.[d] === k).length;
+  }
+
+  test('a. 早番(maxStaff=1)が埋まっている日に2人目が配置されない', () => {
+    const s1 = makeS1();
+    const s2 = makeStaff({ id: 's2', role: '調理師' });
+    // s2: 休み8日（目標ちょうど・Step1対象外）、優先候補日 d9・d21 だけ早番
+    const raw2 = {};
+    for (let d = 1; d <= 31; d++) raw2[d] = '日勤';
+    [4, 8, 13, 16, 20, 25, 28, 31].forEach(d => { raw2[d] = '休み'; });
+    raw2[9] = '早番'; raw2[21] = '早番';
+
+    const res = { s1: makeS1Shifts(), s2: raw2 };
+    repairHardConstraints(deptMax, res, [s1, s2], YEAR, MONTH);
+
+    // s1 の休みは目標8日ちょうど
+    const restCount = Object.values(res.s1).filter(v => ['休み','希望休','有休'].includes(v)).length;
+    expect(restCount).toBe(8);
+    // どの日も早番は最大1人（maxStaff違反なし）
+    for (let d = 1; d <= 31; d++) {
+      expect(countOn(res, ['s1', 's2'], d, '早番')).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test('b. 全候補日の早番が埋まっている場合、空きのある日勤に配置される', () => {
+    const s1 = makeS1();
+    const s2 = makeStaff({ id: 's2', role: '調理師' });
+    // s2: s1の休み候補日すべてで早番（s2の休みはs1候補と重ならない8日）
+    const raw2 = {};
+    for (let d = 1; d <= 31; d++) raw2[d] = '早番';
+    [1, 5, 11, 14, 20, 23, 29, 31].forEach(d => { raw2[d] = '休み'; });
+
+    const res = { s1: makeS1Shifts(), s2: raw2 };
+    repairHardConstraints(deptMax, res, [s1, s2], YEAR, MONTH);
+
+    const restCount = Object.values(res.s1).filter(v => ['休み','希望休','有休'].includes(v)).length;
+    expect(restCount).toBe(8);
+    // 解除された2日は早番でなく日勤になっている
+    expect(res.s1[9]).toBe('日勤');
+    expect(res.s1[21]).toBe('日勤');
+    // maxStaff違反なし
+    for (let d = 1; d <= 31; d++) {
+      expect(countOn(res, ['s1', 's2'], d, '早番')).toBeLessThanOrEqual(1);
+    }
+  });
+
+  test('c. roleShiftTypesで制限されたスタッフは制限外の種別に配置されない', () => {
+    // s1: パート（早番のみ許可）。全候補日の早番が埋まっていても日勤には置かれない
+    const s1 = makeS1('パート');
+    const s2 = makeStaff({ id: 's2', role: '調理師' });
+    const raw2 = {};
+    for (let d = 1; d <= 31; d++) raw2[d] = '早番';
+    [1, 5, 11, 14, 20, 23, 29, 31].forEach(d => { raw2[d] = '休み'; });
+
+    const res = { s1: makeS1Shifts(), s2: raw2 };
+    // s1の勤務セルも早番にしておく（パートは日勤に入れないため）
+    for (let d = 1; d <= 31; d++) { if (!S1_RESTS.includes(d)) res.s1[d] = '早番'; }
+    repairHardConstraints(deptMax, res, [s1, s2], YEAR, MONTH);
+
+    const restCount = Object.values(res.s1).filter(v => ['休み','希望休','有休'].includes(v)).length;
+    expect(restCount).toBe(8);
+    // 制限外の日勤が1セルもないこと（違反覚悟の配置でも許可種別の早番になる）
+    expect(Object.values(res.s1).some(v => v === '日勤')).toBe(false);
+  });
+});
