@@ -2527,14 +2527,47 @@ function repairHardConstraints(dept, res, ds, year, month) {
         if (d !== undefined && !used.has(d)) { res[s.id][d] = '休み'; used.add(d); }
       }
     } else if (curRestCount > restBudget) {
-      // 超過: 自由休みセルから均等間隔で勤務に変換（getDefaultWork使用）
+      // 超過: 自由休みセルから勤務に変換（maxStaffの空きを考慮）
       const excess = curRestCount - restBudget;
       const step = freeRestDays.length / (excess + 1);
-      const used = new Set();
+      // 均等間隔の希望日を先頭に、残りの自由休み日を後続候補に並べる
+      const preferred = [];
       for (let i = 0; i < excess; i++) {
         const idx = Math.round((i + 1) * step) - 1;
         const d = freeRestDays[Math.max(0, Math.min(idx, freeRestDays.length - 1))];
-        if (d !== undefined && !used.has(d)) { res[s.id][d] = work; used.add(d); }
+        if (d !== undefined && !preferred.includes(d)) preferred.push(d);
+      }
+      const candidates = [...preferred, ...freeRestDays.filter(d => !preferred.includes(d))];
+      // シフト種別kのmaxStaff（scoreShiftsと同じ既定値ロジック）
+      const maxStaffOf = (k) => {
+        const cd = (dept.customShiftDefs || []).find(c => c.key === k);
+        const base = cd?.baseType || k;
+        const def = base === '日勤' ? 99 : 1;
+        const saved = dept.maxStaff?.[k];
+        return (saved != null && !(cd && base === '日勤' && saved === 1)) ? saved : def;
+      };
+      const hasRoom = (d, k) => ds.filter(o => res[o.id]?.[d] === k).length < maxStaffOf(k);
+      // このスタッフが入れる勤務種別（roleShiftTypes制限を尊重）
+      const ra = dept.roleShiftTypes?.[s.role];
+      const allowedWork = (ra?.length > 0 ? ra : (dept.shiftTypes || [work]))
+        .filter(k => !REST.has(k) && k !== '明け' && k !== '夜勤');
+      const altTypes = allowedWork.filter(k => k !== work);
+      const used = new Set();
+      for (let i = 0; i < excess; i++) {
+        // 1) デフォルト種別に空きのある日を優先
+        const d1 = candidates.find(c => !used.has(c) && hasRoom(c, work));
+        if (d1 !== undefined) { res[s.id][d1] = work; used.add(d1); continue; }
+        // 2) 別の許可種別に空きのある日
+        let placed = false;
+        for (const c of candidates) {
+          if (used.has(c)) continue;
+          const alt = altTypes.find(k => hasRoom(c, k));
+          if (alt) { res[s.id][c] = alt; used.add(c); placed = true; break; }
+        }
+        if (placed) continue;
+        // 3) 全候補が埋まっている場合のみ従来動作（違反はvalidateの警告に残す）
+        const d3 = candidates.find(c => !used.has(c));
+        if (d3 !== undefined) { res[s.id][d3] = work; used.add(d3); }
       }
     }
     // 一致している場合は何もしない（既存配分をそのまま維持）
