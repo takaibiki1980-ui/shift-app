@@ -969,15 +969,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         c3ViolCount:    _nsoC3ViolCount,
       };
 
-      // ── ログ出力（console.log のみ）─────────────────────────────────────
-      console.log('[NSO-B] pool:', _nsoPool.length,
-        'slots:', _nsoSlots.length,
-        'totalSlots:', _nsoTotalSlots,
-        'anchorTotal:', _nsoAnchorTotal,
-        'remaining:', _nsoRemaining);
-      console.log('[NSO-B] dayOrder(first10):', _nsoDayOrder.slice(0, 10));
-      console.log('[NSO-C] assignment:', JSON.stringify(_nsoResult));
-      console.log('[NSO-C] stats:', JSON.stringify(_nsoStats));
     }
   }
   // ★ Phase5 Step4-B/C ここまで。res[] / lockedDays への変更なし。
@@ -997,7 +988,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       for (const [shiftKey, limit] of Object.entries(maxStaff)) {
         const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
         if (overStaff.length <= limit) continue;
-        console.log(`[AG-v7] enforceMaxStaff: day=${d} shift=${shiftKey} count=${overStaff.length} limit=${limit}`);
         const toFix = [
           ...overStaff.filter(s => !lockedDays[s.id].has(d)),
           ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
@@ -1030,7 +1020,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           //   （明け = 夜勤後状態。夜勤がなければ明けは存在できない）
           if (_em_isNight && d + 1 <= days && (res[s.id][d + 1] ?? '') === '明け'
               && !lockedDays[s.id].has(d + 1)) {
-            console.log(`[Night-Sequence-EnforceMax] d${d} ${s.name}: ${shiftKey}→${res[s.id][d]} cascade d${d+1}明け→休み ✓`);
             res[s.id][d + 1] = '休み';
           }
           excess--;
@@ -1251,23 +1240,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     });
 
     // [DIAG-PassA] eiyo専用スナップショット
-    if (dept.id === 'eiyo') {
-      const _RA = new Set(['休み','希望休','有休']);
-      const _diagA = ds.map(s => {
-        const actK = Object.values(res[s.id]).filter(v => _RA.has(v)).length;
-        const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-        let st = 0, ms = 0;
-        for (let d = 1; d <= days; d++) {
-          const v = res[s.id][d];
-          if (v && !_RA.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
-        }
-        return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
-      });
-      console.error('[DIAG-PassA] dept=eiyo');
-      console.table(_diagA);
-    }
-    // [PassA-MEASURE] 全部署・全スタッフの目標公休数/実際の公休数/最大連勤
-    { const _MA=new Set(['休み','希望休','有休']); const _mRows=ds.map(s=>{const tgtK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const actK=Object.values(res[s.id]).filter(v=>_MA.has(v)).length;let st=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];if(v&&!_MA.has(v)&&v!=='明け'){st++;ms=Math.max(ms,st);}else st=0;}return{name:s.name,targetRest:tgtK,actualRest:actK,longestStreak:ms,差分:actK-tgtK};}); console.error(`[PassA-MEASURE] dept=${dept.id} maxConsec=${maxConsec}`); console.table(_mRows); }
     // Phase4 Step4: passA 収集
     { const _RA=new Set(['休み','希望休','有休']); ds.forEach(s=>{const tK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,vals=Object.values(res[s.id]);const aK=vals.filter(v=>_RA.has(v)).length;let st=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];if(v&&!_RA.has(v)&&v!=='明け'){st++;ms=Math.max(ms,st);}else st=0;}_pa_rows.push({name:s.name,targetRest:tK,actualRest:aK,longestStreak:ms,diff:aK-tK});}); }
     // ── ステップ2.5: 早番・遅番 slot-first 配置（PassA公休確定後に実行）─────
@@ -1446,28 +1418,9 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       }
     });
     // [DEBUG PassB終了] 公休スナップショット
-    { const _R=new Set(['休み','希望休','有休']); console.error('── PassB終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
-    { const _R=new Set(['休み','希望休','有休']); const _sh=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_R.has(v)).length<t;}); console.error(`[不足] PassB終了: ${_sh.length}名`); _sh.forEach(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const days2=Object.entries(res[s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);const ake=Object.values(res[s.id]).filter(v=>v==='明け').length;console.error(`  ${s.name} target=${t} actual=${days2.length} diff=${days2.length-t} 明け=${ake} 休み日=[${days2.join(',')}]`);}); }
     // [DEBUG PassB-連続チェック] PassB後の実際の連続勤務違反（勤務シフト配置済み）
-    { let _vs=0,_vc=0,_mx=0; const _rows=ds.map(s=>{let st=0,vc=0,ms=0; for(let d=1;d<=days;d++){const v=res[s.id][d]; const isW=deptWork.has(v)&&v!=='明け'; if(!isW){st=0;}else{st++;if(st>maxConsec)vc++;} ms=Math.max(ms,st);} if(vc>0)_vs++; _vc+=vc; _mx=Math.max(_mx,ms); return{name:s.name,最大連続:ms,超過日数:vc};}); console.error(`[PassB-連続チェック] maxConsec=${maxConsec} 超過職員数=${_vs}/${ds.length} 超過日数合計=${_vc} 最大連続=${_mx}`); if(_vs>0)console.table(_rows.filter(r=>r.超過日数>0)); }
     // Phase4 Step3: passB 収集
     { const _RB=new Set(['休み','希望休','有休']); _pb_snap=ds.map(s=>{const tK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,vals=Object.values(res[s.id]);const aK=vals.filter(v=>_RB.has(v)).length;return{name:s.name,targetKyuko:tK,actualKyuko:aK,diff:aK-tK,kyumi:vals.filter(v=>v==='休み').length,kibosyu:vals.filter(v=>v==='希望休').length,yuyuu:vals.filter(v=>v==='有休').length,ake:vals.filter(v=>v==='明け').length};}); _pb_short=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_RB.has(v)).length<t;}).map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_RB.has(v)).length;return{name:s.name,target:t,actual:act,diff:act-t};}); { let _vs2=0,_vc2=0,_mx2=0; const _cr=ds.map(s=>{let st=0,vc=0,ms=0;for(let d=1;d<=days;d++){const v=res[s.id][d];const isW=deptWork.has(v)&&v!=='明け';if(!isW){st=0;}else{st++;if(st>maxConsec)vc++;}ms=Math.max(ms,st);}if(vc>0)_vs2++;_vc2+=vc;_mx2=Math.max(_mx2,ms);return{name:s.name,maxStreak:ms,violationDays:vc};}); _pb_consec={maxConsec,violatingStaffCount:_vs2,totalViolationDays:_vc2,maxStreak:_mx2,rows:_cr.filter(r=>r.violationDays>0)}; } }
-    // [DIAG-PassB] eiyo専用スナップショット（PassA→PassB 差分確認用）
-    if (dept.id === 'eiyo') {
-      const _RB = new Set(['休み','希望休','有休']);
-      const _diagB = ds.map(s => {
-        const actK = Object.values(res[s.id]).filter(v => _RB.has(v)).length;
-        const tgtK = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
-        let st = 0, ms = 0;
-        for (let d = 1; d <= days; d++) {
-          const v = res[s.id][d];
-          if (v && !_RB.has(v) && v !== '明け') { st++; ms = Math.max(ms, st); } else st = 0;
-        }
-        return { staff: s.name, targetRest: tgtK, actualRest: actK, longestStreak: ms, 差分: actK - tgtK };
-      });
-      console.error('[DIAG-PassB] dept=eiyo');
-      console.table(_diagB);
-    }
 
     // ── Pass C: 連続勤務超過の修正 ─ [Tier2 repair] ────────────────────────────
     // 修復方針（介護型 Tier 構造に準拠）:
@@ -1496,7 +1449,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (_consecWork(s.id, d) <= maxConsec) continue;
           if (lockedDays[s.id].has(d) || res[s.id][d - 1] === '明け') continue;
           // ★ PassC 公休超過ガード: actualRest >= targetRest なら休み追加を行わない
-          { const _gAct=Object.values(res[s.id]).filter(v=>deptRest.has(v)&&v!=='明け').length, _gTgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8; if(_gAct>=_gTgt){console.log('[PassC-GUARD]',s.name,'actualRest=',_gAct,'targetRest=',_gTgt,'reason=rest-limit');continue;} }
           const sh = res[s.id][d];
           if (_shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) {
             // ★Tier1保護: d 日は role-slot → 削除不可
@@ -1516,21 +1468,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             }
             const target = nikkinTarget ?? nonSlotTarget; // 日勤優先、なければ非 slot
             if (target !== null) {
-              { const _origT=res[s.id][target]??'?'; _diagTypeMap[_origT]=(_diagTypeMap[_origT]||0)+1; let _bef=_consecWork(s.id,target-1),_aft=0;for(let _i=target+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${target} origShift=${_origT} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (Tier2)`); }
-              console.log(`[PassC-Tier2休み追加] ${s.name} day=${target} before=${res[s.id][target]} (streak切断のため)`);
               res[s.id][target] = '休み'; // ← Tier2（日勤層）を削除して streak を断ち切る
               _absorbedByTier2++;
             }
             continue; // d 自体（role-slot）は変更しない
           }
-          { const _origD=res[s.id][d]??'?'; _diagTypeMap[_origD]=(_diagTypeMap[_origD]||0)+1; let _bef=_consecWork(s.id,d-1),_aft=0;for(let _i=d+1;_i<=days;_i++){if(deptWork.has(res[s.id]?.[_i])&&res[s.id][_i]!=='明け')_aft++;else break;}console.error(`[PassC-DIAG] ${s.name} day=${d} origShift=${_origD} before=${_bef} after=${_aft} streak=${_bef+1+_aft} (非slot)`); }
-          console.log(`[PassC-非slot休み追加] ${s.name} day=${d} before=${res[s.id][d]} _consecWork=${_consecWork(s.id,d)}`);
           res[s.id][d] = '休み';
           _fixedNonSlot++;
         }
       });
-      console.error(`[AG-Phase1] PassC: 非slot修復=${_fixedNonSlot} Tier2吸収(日勤層)=${_absorbedByTier2} 合計追加休み=${_fixedNonSlot+_absorbedByTier2}`);
-      { const _total=_fixedNonSlot+_absorbedByTier2; const _ab=(_diagTypeMap['A']||0)+(_diagTypeMap['B']||0); const _rows=Object.entries(_diagTypeMap).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({元シフト:k,件数:v,割合:(_total>0?(v/_total*100).toFixed(1)+'%':'0%')})); console.error(`[PassC-TYPE-DIAG] dept=${dept.id} 元シフト別集計(合計=${_total}件 A+B=${_ab}件 A+B率=${_total>0?(_ab/_total*100).toFixed(1)+'%':'0%'})`); if(_rows.length)console.table(_rows); }
       // Phase4 Step3: passC 収集（PassC本体）
       _pc_nonSlotFixed = _fixedNonSlot; _pc_tier2Absorbed = _absorbedByTier2;
       Object.entries(_diagTypeMap).forEach(([k,v])=>_pc_typeBreakdown.push({shift:k,count:v}));
@@ -1548,16 +1494,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (_shouldProtectSlot(sh, ds.filter(sx => res[sx.id][d] === sh).length)) _passCSlotProtected++;
         }
       });
-      if (_passCViolations > 0)
-        console.warn(`[AG-Phase1] PassC後 連続違反残存: total=${_passCViolations} slotProtected=${_passCSlotProtected}`);
-      else
-        console.log('[AG-Phase1] PassC後 連続違反: ゼロ ✓');
       // Phase4 Step3: passC 残存違反収集
       _pc_residualViolations = _passCViolations; _pc_residualSlotProtected = _passCSlotProtected;
     }
     // [DEBUG PassC終了] 公休スナップショット
-    { const _R=new Set(['休み','希望休','有休']); console.error('── PassC終了 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
-    { const _R=new Set(['休み','希望休','有休']); const _sh=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_R.has(v)).length<t;}); console.error(`[不足] PassC終了: ${_sh.length}名`); _sh.forEach(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const days=Object.entries(res[s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);const ake=Object.values(res[s.id]).filter(v=>v==='明け').length;console.error(`  ${s.name} target=${t} actual=${days.length} diff=${days.length-t} 明け=${ake} 休み日=[${days.join(',')}]`);}); }
     // Phase4 Step3: passC スナップショット収集
     { const _R=new Set(['休み','希望休','有休']); _pc_snap=ds.map(s=>{const tK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,vals=Object.values(res[s.id]);const aK=vals.filter(v=>_R.has(v)).length;return{name:s.name,targetKyuko:tK,actualKyuko:aK,diff:aK-tK};}); _pc_short_arr=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_R.has(v)).length<t;}).map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:t,actual:act,diff:act-t};}); }
 
@@ -1638,8 +1578,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
 
   // [DEBUG フェーズ追跡①] 公休数調整後
-  { const _R=new Set(['休み','希望休','有休']); console.error('── 公休数調整後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
-  { const _R=new Set(['休み','希望休','有休']); const _sh=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_R.has(v)).length<t;}); console.error(`[不足] 公休数調整後: ${_sh.length}名`); _sh.forEach(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const days=Object.entries(res[s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);const ake=Object.values(res[s.id]).filter(v=>v==='明け').length;console.error(`  ${s.name} target=${t} actual=${days.length} diff=${days.length-t} 明け=${ake} 休み日=[${days.join(',')}]`);}); }
   // Phase4 Step2: restAdjustment afterRestAdj 収集
   { const _R=new Set(['休み','希望休','有休']); _ra_phases.afterRestAdj.rows=ds.map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,a=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:t,actual:a,diff:a-t};}); _ra_phases.afterRestAdj.shortage=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_R.has(v)).length<t;}).map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,a=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:t,actual:a,diff:a-t};}); }
 
@@ -1790,8 +1728,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   enforceMaxStaff(); // 3回目: 最低配置保証後の超過を除去
 
   // [DEBUG フェーズ追跡②] minStaff保証+enforceMaxStaff×3後
-  { const _R=new Set(['休み','希望休','有休']); console.error('── enforceMaxStaff×3後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
-  { const _R=new Set(['休み','希望休','有休']); const _sh=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_R.has(v)).length<t;}); console.error(`[不足] enforceMaxStaff×3後: ${_sh.length}名`); _sh.forEach(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const days=Object.entries(res[s.id]).filter(([,v])=>_R.has(v)).map(([d])=>+d).sort((a,b)=>a-b);const ake=Object.values(res[s.id]).filter(v=>v==='明け').length;console.error(`  ${s.name} target=${t} actual=${days.length} diff=${days.length-t} 明け=${ake} 休み日=[${days.join(',')}]`);}); }
   // Phase4 Step2: restAdjustment afterEnforceMax3 収集
   { const _R=new Set(['休み','希望休','有休']); _ra_phases.afterEnforceMax3.rows=ds.map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,a=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:t,actual:a,diff:a-t};}); _ra_phases.afterEnforceMax3.shortage=ds.filter(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;return Object.values(res[s.id]).filter(v=>_R.has(v)).length<t;}).map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,a=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:t,actual:a,diff:a-t};}); }
 
@@ -1833,7 +1769,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
 
   // [DEBUG フェーズ追跡③] 公休数回復フェーズ後
-  { const _R=new Set(['休み','希望休','有休']); console.error('── 公休数回復後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
   // Phase4 Step2: restAdjustment afterRestRecovery 収集
   { const _R=new Set(['休み','希望休','有休']); _ra_phases.afterRestRecovery.rows=ds.map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,a=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:t,actual:a,diff:a-t};}); }
 
@@ -1887,7 +1822,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   }
 
   // [DEBUG フェーズ追跡④] 公休数超過バリデーション後
-  { const _R=new Set(['休み','希望休','有休']); console.error('── 超過バリデーション後 ──'); console.table(ds.map(s=>{const tgt=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;const act=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:tgt,actual:act,diff:act-tgt};})); }
   // Phase4 Step2: restAdjustment afterExcessVal 収集
   { const _R=new Set(['休み','希望休','有休']); _ra_phases.afterExcessVal.rows=ds.map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,a=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:t,actual:a,diff:a-t};}); }
 
@@ -1961,18 +1895,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (limit >= 99) continue;
         const cnt = ds.filter(s => res[s.id][d] === k).length;
         if (cnt > limit) {
-          console.error(`[AG-v7] FINAL VIOLATION: day=${d} shift=${k} cnt=${cnt} limit=${limit}`);
           totalViolations++;
           _rf_maxViolations.push({ day: d, shift: k, cnt, limit }); // Phase4 Step1
         }
       }
     }
-    if (totalViolations === 0) console.log('[AG-v7] FINAL: 違反ゼロ ✓');
-    else console.error(`[AG-v7] FINAL: ${totalViolations}件の違反が残存！`);
     _rf_totalViolations = totalViolations; // Phase4 Step1
   }
 
-  // ★[Night-Sequence-Final] read-only: autoGenerate完了後の明け孤立数スキャン（診断のみ）
   {
     const _nf_cds   = dept.customShiftDefs || [];
     const _nf_nset  = new Set();
@@ -1995,9 +1925,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       }
     }
     if (_nf_orphans === 0) {
-      console.log('[Night-Sequence-Final] 明け孤立ゼロ ✓');
     } else {
-      console.warn(`[Night-Sequence-Final] 明け孤立=${_nf_orphans}件 ⚠`, _nf_list.join(' / '));
     }
   }
 
@@ -2024,7 +1952,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     }
   }
   // [DEBUG 最終出力] 公休スナップショット
-  { const _R=new Set(['休み','希望休','有休']); console.error('── 最終出力 ──'); console.table(ds.map(s=>({name:s.name,targetKyuko:s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,actualKyuko:Object.values(res[s.id]).filter(v=>_R.has(v)).length,diff:Object.values(res[s.id]).filter(v=>_R.has(v)).length-(s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8),休み:Object.values(res[s.id]).filter(v=>v==='休み').length,希望休:Object.values(res[s.id]).filter(v=>v==='希望休').length,有休:Object.values(res[s.id]).filter(v=>v==='有休').length,明け:Object.values(res[s.id]).filter(v=>v==='明け').length}))); }
   // Phase4 Step1: 最終スナップショット収集
   { const _R=new Set(['休み','希望休','有休']); ds.forEach(s=>{const tK=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,vals=Object.values(res[s.id]);const aK=vals.filter(v=>_R.has(v)).length;_rf_snapshot.push({name:s.name,targetKyuko:tK,actualKyuko:aK,diff:aK-tK,kyumi:vals.filter(v=>v==='休み').length,kibosyu:vals.filter(v=>v==='希望休').length,yuyuu:vals.filter(v=>v==='有休').length,ake:vals.filter(v=>v==='明け').length});}); }
   // ── DiagnosticEngine: Phase3 Step2 ──
@@ -2393,7 +2320,7 @@ function detectManualEditCells(baseline, current) {
 // 人手修正セルには EDIT_WEIGHT=1.5 を乗算して学習に強く反映させる。
 const EDIT_WEIGHT = 1.5;
 
-function computeLearnedTrend(allDBData, staffList, exceptionMonths = [], diagDeptId = null) {
+function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
   const counts = {}, totals = {}, monthSets = {};
   const transitions = {}, transitionTotals = {}; // 遷移確率集計: [staffId][prev][curr]
@@ -2534,41 +2461,6 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = [], diagDep
     });
     result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate };
     monthCounts[staff.name] = monthSets[staff.id].size;
-  }
-  // ── [診断] 学習信頼度 実測ログ（確認後に削除） ─────────────────────
-  if (diagDeptId) {
-    const DOW_NAMES = ['月','火','水','木','金','土','日'];
-    const diagStaff = staffList.filter(s => s.dept === diagDeptId);
-    console.error(`═══ [学習信頼度診断] dept=${diagDeptId} START ═══`);
-    const shiftKeys = Object.keys(allDBData).filter(k => k.startsWith('shifts_') && k.includes(diagDeptId));
-    console.error(`[診断1] ${diagDeptId}シフトキー(${shiftKeys.length}件): ${JSON.stringify(shiftKeys)}`);
-    console.error(`[診断2] diagStaff(${diagStaff.length}名):`);
-    for (const s of diagStaff) console.error(`[診断2]   name=${s.name} id=${s.id} dept=${s.dept}`);
-    const countsIds = Object.keys(counts);
-    console.error(`[診断3] counts staffId一覧(${countsIds.length}件): ${JSON.stringify(countsIds)}`);
-    const totalsIds = Object.keys(totals);
-    console.error(`[診断4] totals staffId一覧(${totalsIds.length}件): ${JSON.stringify(totalsIds)}`);
-    console.error(`[診断5] diagStaff × counts/totals 突合:`);
-    for (const staff of diagStaff) {
-      const c = counts[staff.id];
-      const t = totals[staff.id];
-      console.error(`[診断5]   ${staff.name} | id=${staff.id} | counts=${JSON.stringify(c ?? null)} | totals=${t ?? 'undefined'}`);
-    }
-    for (const staff of diagStaff) {
-      if (!counts[staff.id] || totals[staff.id] < 1) continue;
-      const shiftArr = dowShifts[staff.id] || [{},{},{},{},{},{},{}];
-      const totArr   = dowTotalsR[staff.id] || [0,0,0,0,0,0,0];
-      console.error(`[学習] ── ${staff.name} 学習月数=${monthSets[staff.id].size} 総重み=${totals[staff.id]} ──`);
-      for (let j = 0; j < 7; j++) {
-        const siIdx = (j + 1) % 7;
-        const wTot = Object.values(shiftArr[siIdx]).reduce((s,v)=>s+v,0);
-        const da   = Math.min(1, wTot / 2).toFixed(2);
-        const rTot = totArr[j];
-        const ra   = rTot === 0 ? '0.00' : Math.min(1, rTot / 3).toFixed(2);
-        console.error(`[学習]   ${DOW_NAMES[j]}曜: workTot=${String(wTot).padStart(3)} da=${da}  tot=${String(rTot).padStart(3)} ra=${ra}`);
-      }
-    }
-    console.error(`═══ [学習信頼度診断] dept=${diagDeptId} END ═══`);
   }
   result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
   return result;
