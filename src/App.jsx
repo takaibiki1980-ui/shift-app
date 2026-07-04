@@ -6269,14 +6269,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         // ══ [Temporal-Console-UI] ここまで ══
 
-        // ── 検証（警告のみ・保存は続行）──
+        // ── eiyo部署のみ: 公休数・maxConsec違反を自動修正 ──
+        repairHardConstraints(cd, result, _p1_ds, year, month);
+
+        // ── 検証（修復後の状態に対して警告のみ・保存は続行）──
         const _hardErrs = validateHardConstraints(cd, result, _p1_ds, year, month);
         if (_hardErrs.length > 0) {
           console.warn('[VALIDATION WARNING] 制約違反:\n' + _hardErrs.join('\n'));
         }
-
-        // ── eiyo部署のみ: 公休数・maxConsec違反を自動修正 ──
-        repairHardConstraints(cd, result, _p1_ds, year, month);
 
         dirtyDeptIdsRef.current.add(cd.id); // ★Fix S-1: 生成部署を明示dirty登録（active部署と異なる場合でも保存される）
         setAllShifts(prev => ({...prev, [cd.id]: result}));
