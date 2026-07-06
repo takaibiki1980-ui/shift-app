@@ -2565,9 +2565,8 @@ function repairHardConstraints(dept, res, ds, year, month) {
           if (alt) { res[s.id][c] = alt; used.add(c); placed = true; break; }
         }
         if (placed) continue;
-        // 3) 全候補が埋まっている場合のみ従来動作（違反はvalidateの警告に残す）
-        const d3 = candidates.find(c => !used.has(c));
-        if (d3 !== undefined) { res[s.id][d3] = work; used.add(d3); }
+        // 3) 全候補日で早番・遅番ともmaxStaff上限に達している場合は休みのまま残す
+        // maxStaff違反（同日2人）は公休+1日より実害が大きいため強制配置しない
       }
     }
     // 一致している場合は何もしない（既存配分をそのまま維持）

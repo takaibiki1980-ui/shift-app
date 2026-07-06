@@ -295,22 +295,79 @@ describe('e. 休み超過解除時のmaxStaff考慮', () => {
     }
   });
 
-  test('c. roleShiftTypesで制限されたスタッフは制限外の種別に配置されない', () => {
-    // s1: パート（早番のみ許可）。全候補日の早番が埋まっていても日勤には置かれない
-    const s1 = makeS1('パート');
-    const s2 = makeStaff({ id: 's2', role: '調理師' });
+  test('d. 全候補日でwork・alt両方埋まり → 強制配置せず公休超過のまま / maxStaff違反ゼロ', () => {
+    // 実機再現ケース: 常勤(work='早番', alt='遅番')が公休超過（11日・目標9）
+    // 均等アルゴリズムで選ばれる優先候補日（d11, d20）に
+    // s2=早番・s3=遅番を置いて両方ブロックする
+    // → Step1-超過-3（強制）廃止により休みのまま残る
+    const deptEiyo = {
+      id: 'eiyo',
+      shiftTypes: ['早番', '遅番', '日勤'],
+      minStaff: { 早番: 1, 遅番: 1, 日勤: 1 },
+      maxStaff: { 早番: 1, 遅番: 1, 日勤: 99 },
+      roleShiftTypes: { '常勤': ['早番', '遅番'] },
+      maxConsec: 31,
+    };
+    // s1（常勤）: 休み11日（目標9・超過2）。勤務は日勤（変換の邪魔にならない）
+    const s1 = makeStaff({ id: 's1', role: '常勤', kyukoDays: 9 });
+    // s2・s3: kyukoDays=0でStep1対象外。優先候補日に早番・遅番を置いてブロック
+    const s2 = makeStaff({ id: 's2', role: '常勤', kyukoDays: 0 });
+    const s3 = makeStaff({ id: 's3', role: '常勤', kyukoDays: 0 });
+
+    // s1: 休み11日 = [2,5,8,11,14,17,20,23,26,29,31]
+    // 均等アルゴリズム(step=11/3=3.67): preferred=[freeRestDays[3]=d11, freeRestDays[6]=d20]
+    const S1_REST11 = [2,5,8,11,14,17,20,23,26,29,31];
+    const raw1 = {};
+    for (let d = 1; d <= 31; d++) raw1[d] = '日勤';
+    S1_REST11.forEach(d => { raw1[d] = '休み'; });
+
+    // s2: 優先候補 d11・d20 を早番でブロック。それ以外は日勤・休みなし
     const raw2 = {};
-    for (let d = 1; d <= 31; d++) raw2[d] = '早番';
-    [1, 5, 11, 14, 20, 23, 29, 31].forEach(d => { raw2[d] = '休み'; });
+    for (let d = 1; d <= 31; d++) raw2[d] = '日勤';
+    raw2[11] = '早番'; raw2[20] = '早番';
+
+    // s3: 同日を遅番でブロック
+    const raw3 = {};
+    for (let d = 1; d <= 31; d++) raw3[d] = '日勤';
+    raw3[11] = '遅番'; raw3[20] = '遅番';
+
+    const res = { s1: raw1, s2: raw2, s3: raw3 };
+    repairHardConstraints(deptEiyo, res, [s1, s2, s3], YEAR, MONTH);
+
+    // 早番・遅番 maxStaff 違反が発生していないこと（廃止した強制配置がないため）
+    for (let d = 1; d <= 31; d++) {
+      expect(countOn(res, ['s1','s2','s3'], d, '早番')).toBeLessThanOrEqual(1);
+      expect(countOn(res, ['s1','s2','s3'], d, '遅番')).toBeLessThanOrEqual(1);
+    }
+    // s1 の公休は目標(9)以上（優先候補2日が解除できず超過のまま残る）
+    const restCount = Object.values(res.s1).filter(v => ['休み','希望休','有休'].includes(v)).length;
+    expect(restCount).toBeGreaterThanOrEqual(9);
+  });
+
+  test('c. パートの全候補日が埋まり → 強制配置せず公休超過のまま残る（maxStaff違反なし）', () => {
+    // s1: パート（早番のみ許可）、休み10日（目標8・超過2）、勤務は全て早番
+    // s2: s1の全休み候補日（S1_RESTS）のみ早番 → 全候補でブロック
+    //   （s1の勤務日はs2=日勤なので元データに早番2人の日は存在しない）
+    const s1 = makeS1('パート');
+    // s2: kyukoDays=0でStep1対象外。S1_RESTSの10日のみ早番
+    const s2 = makeStaff({ id: 's2', role: '調理師', kyukoDays: 0 });
+    const raw2 = {};
+    for (let d = 1; d <= 31; d++) raw2[d] = '日勤';
+    S1_RESTS.forEach(d => { raw2[d] = '早番'; }); // s1の休み日（候補日）だけ早番
 
     const res = { s1: makeS1Shifts(), s2: raw2 };
     // s1の勤務セルも早番にしておく（パートは日勤に入れないため）
     for (let d = 1; d <= 31; d++) { if (!S1_RESTS.includes(d)) res.s1[d] = '早番'; }
     repairHardConstraints(deptMax, res, [s1, s2], YEAR, MONTH);
 
+    // 全候補日の早番が埋まっているため解除できず、公休は目標より多いまま残る
     const restCount = Object.values(res.s1).filter(v => ['休み','希望休','有休'].includes(v)).length;
-    expect(restCount).toBe(8);
-    // 制限外の日勤が1セルもないこと（違反覚悟の配置でも許可種別の早番になる）
+    expect(restCount).toBeGreaterThanOrEqual(8); // 解除できない超過分はそのまま残る
+    // maxStaff違反（早番2人）が発生していないこと
+    for (let d = 1; d <= 31; d++) {
+      expect(countOn(res, ['s1', 's2'], d, '早番')).toBeLessThanOrEqual(1);
+    }
+    // 制限外の日勤が配置されていないこと
     expect(Object.values(res.s1).some(v => v === '日勤')).toBe(false);
   });
 });
