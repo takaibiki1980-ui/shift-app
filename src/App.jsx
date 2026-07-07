@@ -5512,11 +5512,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
         {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
           {innerTab==="shift"&&(
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{width:100,accentColor:"#6366F1",cursor:"pointer"}}/>
-              <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:36,textAlign:"right"}}>{tableZoom}%</span>
-              <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:11,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:500}}>フィット</button>
-              {!isLocked && undoCount > 0 && <button onClick={handleUndo} title={`元に戻す (Ctrl+Z) — ${undoCount}ステップ`} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}>↩ 戻す ×{undoCount}</button>}
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:11,padding:"4px 10px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:500}}>フィット</button>
+              <button onClick={()=>handleZoomChange(tableZoom-5)} title="縮小" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>−</button>
+              <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:40,textAlign:"center"}}>{tableZoom}%</span>
+              <button onClick={()=>handleZoomChange(tableZoom+5)} title="拡大" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>＋</button>
+              {!isLocked && undoCount > 0 && <button onClick={handleUndo} title={`元に戻す (Ctrl+Z) — ${undoCount}ステップ`} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap",marginLeft:4}}>↩ 戻す ×{undoCount}</button>}
             </div>
           )}
           <div style={{fontSize:11,color:"#9CA3AF",padding:"0 4px",whiteSpace:"nowrap"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>
@@ -5524,11 +5525,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       </div>
       {/* スマホ用ズームコントロール行 */}
       {isMobile&&innerTab==="shift"&&(
-        <div style={{background:"#F8F9FA",borderBottom:"1px solid #E4E4E7",display:"flex",alignItems:"center",gap:6,padding:"6px 10px"}}>
-          <input type="range" min={30} max={100} step={5} value={tableZoom} onChange={e=>handleZoomChange(Number(e.target.value))} style={{flex:1,accentColor:"#6366F1",cursor:"pointer"}}/>
-          <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:36,textAlign:"right"}}>{tableZoom}%</span>
-          <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:10,padding:"4px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>フィット</button>
-          {!isLocked && undoCount > 0 && <button onClick={handleUndo} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:600}}>↩×{undoCount}</button>}
+        <div style={{background:"#F8F9FA",borderBottom:"1px solid #E4E4E7",display:"flex",alignItems:"center",gap:4,padding:"6px 10px"}}>
+          <button onClick={()=>{const days=getDays(year,month);const ds=staffList.filter(s=>s.dept===activeDeptId).length;handleZoomChange(autoFitZoom(ds,days));}} style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:11,padding:"4px 10px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:500}}>フィット</button>
+          <button onClick={()=>handleZoomChange(tableZoom-5)} title="縮小" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>−</button>
+          <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:40,textAlign:"center"}}>{tableZoom}%</span>
+          <button onClick={()=>handleZoomChange(tableZoom+5)} title="拡大" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>＋</button>
+          {!isLocked && undoCount > 0 && <button onClick={handleUndo} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,marginLeft:4}}>↩ 戻す ×{undoCount}</button>}
         </div>
       )}
 
