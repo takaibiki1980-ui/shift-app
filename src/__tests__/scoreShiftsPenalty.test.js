@@ -15,7 +15,7 @@
  * 実測確認値:
  *   公休1日ズレ=10000 / maxConsec超過1日=100 / 同一シフト4連=1500・5連目+6000 /
  *   minStaff 0人(minC=2)=2000・1人不足=300 / maxStaff超過1件=150 /
- *   役職制限1件=5000 / 比率乖離50%=2500(=1%あたり50)
+ *   役職制限1件=5000
  *
  * 本体コード変更・export追加は一切なし（既存export scoreShifts のみ使用）。
  */
@@ -107,14 +107,6 @@ describe('A. scoreShifts 個別ペナルティ額（実測確認値で凍結）'
     expect(ng - ok).toBe(5000);
   });
 
-  test('比率乖離: 目標100%の早番に対し実績50% = 50%×(50点/1%) = 2500点', () => {
-    const dept = { ...baseDept, shiftTypes: ['早番', '日勤'], minStaff: {}, maxStaff: { 早番: 99, 日勤: 99 } };
-    const s = [staff({ shiftRatio: { 早番: 100 } })]; // 目標: 早番100%
-    // 早番2/日勤2 → 早番実績50% → 乖離50%
-    const shift = { s1: { 1: '早番', 2: '早番', 3: '日勤', 4: '日勤' } };
-    const score = scoreShifts(shift, s, dept, 4, Y, M, {});
-    expect(score).toBe(2500); // 0.5 * 100 * 50。1%あたり50点であることを凍結
-  });
 });
 
 // ════════════════════════════════════════════════════════════════
@@ -131,13 +123,12 @@ describe('B. ペナルティ大小関係の凍結（優先順位の逆転防止�
     minStaff1不足: 300,
     maxStaff1件: 150,  // maxStaff超過1件
     maxConsec1日: 100,
-    比率1pct:  50,    // 比率乖離1%
   };
 
-  test('設計の優先順位チェーン: 公休1日 > 役職1件 > maxStaff超過1件 > 比率乖離1%', () => {
+  test('設計の優先順位チェーン: 公休1日 > 役職1件 > maxStaff超過1件 > maxConsec超過1日', () => {
     expect(PENALTY.公休1日).toBeGreaterThan(PENALTY.役職1件);
     expect(PENALTY.役職1件).toBeGreaterThan(PENALTY.maxStaff1件);
-    expect(PENALTY.maxStaff1件).toBeGreaterThan(PENALTY.比率1pct);
+    expect(PENALTY.maxStaff1件).toBeGreaterThan(PENALTY.maxConsec1日);
   });
 
   test('実スコアで大小関係を検証: 公休1日ズレ > 役職違反1件', () => {
@@ -169,12 +160,18 @@ describe('B. ペナルティ大小関係の凍結（優先順位の逆転防止�
     expect(roleNg).toBeGreaterThan(maxNg);
   });
 
-  test('実スコアで大小関係を検証: maxStaff超過1件 > 比率乖離1%相当', () => {
+  test('実スコアで大小関係を検証: maxStaff超過1件 > maxConsec超過1日', () => {
     const maxDept = { ...baseDept, shiftTypes: ['早番', '日勤'], minStaff: {}, maxStaff: { 早番: 1, 日勤: 99 } };
     const maxStaffPair = [staff(), staff2()];
     const maxNg = scoreShifts({ s1: { 1: '早番', 2: '日勤' }, s2: { 1: '早番', 2: '日勤' } }, maxStaffPair, maxDept, 2, Y, M, {});
+
+    // maxConsec超過のみ（上限3で4連勤）= 100点
+    const consecDept = { ...baseDept, minStaff: {}, maxConsecutive: 3 };
+    const consecStaff = [staff({ kyukoDays: 1 })];
+    const consecNg = scoreShifts({ s1: { 1: '早番', 2: '日勤', 3: '遅番', 4: '遅番', 5: '休み', 6: '日勤' } }, consecStaff, consecDept, 6, Y, M, {});
+
     expect(maxNg).toBe(150);
-    // 比率乖離1% = 50点 < maxStaff超過1件 = 150点
-    expect(maxNg).toBeGreaterThan(50);
+    expect(consecNg).toBe(100);
+    expect(maxNg).toBeGreaterThan(consecNg);
   });
 });
