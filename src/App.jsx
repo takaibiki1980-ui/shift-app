@@ -1151,18 +1151,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const yukyuSelected = form.yukyuByMonth?.[mk] || [];
   const setYukyu = (days) => set("yukyuByMonth",{...(form.yukyuByMonth||{}),[mk]:days});
   const deptObj = depts.find(d => d.id === deptId);
-  const deptDayShiftTypes = (deptObj?.shiftTypes || ["早番","日勤","遅番"]).filter(k => k !== "夜勤" && k !== "明け");
-  const currentRatio = form.shiftRatio ?? null;
-  const getRatioPct = (k) => currentRatio ? Math.round((currentRatio[k] ?? 0) * 100) : "";
-  const [numpad, setNumpad] = useState(null); // { key, rect }
   const [kp, setKp] = useState(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const setRatioPct = (k, v) => {
-    const base = { ...(currentRatio || {}) };
-    if (v === "" || isNaN(+v)) { delete base[k]; } else { base[k] = Math.min(100, Math.max(0, +v)) / 100; }
-    set("shiftRatio", Object.keys(base).length > 0 ? base : null);
-  };
-  const ratioSum = deptDayShiftTypes.reduce((s, k) => s + (currentRatio?.[k] ?? 0) * 100, 0);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
@@ -1232,34 +1221,6 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
             </div>
           </div>
         )}
-        {/* ── 詳細設定（折りたたみ） ── */}
-        <div style={{marginBottom:14,borderTop:"1px solid #F1F5F9",paddingTop:12,marginTop:4}}>
-          <button onClick={()=>setShowAdvanced(a=>!a)} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",fontSize:11,fontWeight:600,color:"#6B7280",padding:"4px 0",width:"100%",textAlign:"left"}}>
-            <span style={{fontSize:9,color:"#9CA3AF",transition:"transform 0.15s",display:"inline-block",transform:showAdvanced?"rotate(90deg)":"rotate(0deg)"}}>▶</span>
-            詳細設定
-            {currentRatio&&<span style={{fontSize:9,background:"#FEF3C7",color:"#92400E",borderRadius:4,padding:"1px 6px",marginLeft:4,fontWeight:600}}>設定済</span>}
-          </button>
-          {showAdvanced&&(
-            <div style={{marginTop:10}}>
-              <div style={{fontSize:10,color:"#9CA3AF",marginBottom:12,padding:"8px 10px",background:"#F8FAFC",borderRadius:6,border:"1px solid #F1F5F9",lineHeight:1.5}}>通常は未設定で問題ありません。日勤偏重の抑制は自動生成の順序制御が担っています。</div>
-              <div style={{fontSize:11,color:"#B45309",fontWeight:700,marginBottom:8}}>勤務比率（上級者向け・任意）</div>
-              <div style={{background:"#FFF8E6",border:"1px solid #F0C040",borderRadius:8,padding:"10px 12px"}}>
-                <div style={{fontSize:10,color:"#A06010",marginBottom:8}}>一度設定すると月をまたいでも維持されます。変更は管理者が数値を書き換えてください。<span style={{marginLeft:6,fontWeight:700,color:Math.abs(ratioSum-100)<1?"#2a8a2a":ratioSum>0?"#c44b4b":"#aaa"}}>{ratioSum>0?`合計 ${Math.round(ratioSum)}%`:""}</span></div>
-                <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                  {deptDayShiftTypes.map(k=>(
-                    <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
-                      <span style={{fontSize:12,color:SHIFTS[k]?.color,fontWeight:700,minWidth:26}}>{k}</span>
-                      <div onClick={e=>setNumpad({key:k,rect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:58,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",background:numpad?.key===k?"#e0f7f7":"#fff",fontWeight:700,fontSize:14,color:"#18181B"}}>{getRatioPct(k)||"0"}</div>
-                      <span style={{fontSize:11,color:"#92400e"}}>%</span>
-                    </div>
-                  ))}
-                  {currentRatio&&<button onClick={()=>set("shiftRatio",null)} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-        {numpad&&<NumericKeypad value={getRatioPct(numpad.key)} anchorRect={numpad.rect} onConfirm={v=>{setRatioPct(numpad.key,v);setNumpad(null);}} onClose={()=>setNumpad(null)}/>}
         {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
         <div style={{fontSize:11,color:"#A1A1AA",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
         <div style={{background:"#F4F4F5",borderRadius:8,padding:12,border:"1px solid #D4D4D8"}}>
@@ -4935,9 +4896,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const genStack = undoStackRef.current[targetDept.id] || [];
     undoStackRef.current[targetDept.id] = [...genStack, genSnapshot].slice(-30);
     const _genResult = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
-    const {shifts:result, warnings, timelineWarnings, score, ratioFeedback, diagnosticReport} = _genResult;
+    const {shifts:result, warnings, timelineWarnings, score, diagnosticReport} = _genResult;
     lastAutoGenRef.current[targetDept.id] = result;
-    return { result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot, diagnosticReport };
+    return { result, warnings, timelineWarnings, score, genSnapshot, diagnosticReport };
   }, [year, month]);
 
   // repairHardConstraints は src/engine/core.js に移動・export済み（import行参照）
@@ -5060,7 +5021,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             };
           }
         }
-        const {result, warnings, timelineWarnings, score, ratioFeedback, genSnapshot} = _gen;
+        const {result, warnings, timelineWarnings, score, genSnapshot} = _gen;
         setUndoCount(undoStackRef.current[cd.id].length);
 
         const _p1_ds = cs.filter(s => s.dept === cd.id);
@@ -5348,14 +5309,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
         dirtyDeptIdsRef.current.add(cd.id); // ★Fix S-1: 生成部署を明示dirty登録（active部署と異なる場合でも保存される）
         setAllShifts(prev => ({...prev, [cd.id]: result}));
-        // 比率達成フィードバックをスタッフに書き戻す（次回生成の補正に利用）
-        if (ratioFeedback && Object.keys(ratioFeedback).length > 0) {
-          setStaffList(prev => prev.map(s => {
-            const fb = ratioFeedback[s.id];
-            if (!fb) return s;
-            return {...s, shiftRatioCorrection: fb};
-          }));
-        }
         setSaveStatus("unsaved");
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}

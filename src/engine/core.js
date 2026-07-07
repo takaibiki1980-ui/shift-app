@@ -434,15 +434,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   // │     5連続勤務超過を解消。                                                  │
   // │     → Tier1 slot を「休み」に変換して解消してはいけない。                  │
   // │                                                                         │
-  // │  c. 比率最適化（shiftRatio / ratio修復）                                  │
-  // │     スタッフの日勤/早番/遅番比率を目標に近づける。                          │
-  // │     → Tier1 slot を削減して ratio を達成してはいけない。                   │
-  // │                                                                         │
-  // │  d. trend最適化（localSearchImprove / scoreShifts）                      │
+  // │  c. trend最適化（localSearchImprove / scoreShifts）                      │
   // │     過去実績 trend に沿った swap 改善。                                    │
   // │     → swap は人数保存のため Tier1 への影響なし。                           │
   // │                                                                         │
-  // │  e. 最低配置補完（minStaff 保証）                                          │
+  // │  d. 最低配置補完（minStaff 保証）                                          │
   // │     日勤など非 slot シフトの最低人数補完。                                  │
   // │     → Tier1 slot を slide 元にしてはいけない。                             │
   // │                                                                         │
@@ -1074,9 +1070,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     return avg;
   })();
 
-  const getShiftRatioOf = (s) => s.shiftRatio || s.shiftRatioByMonth?.[mk] || null;
-  const targetShiftCounts = {};
-  const assignedShiftCounts = {};
 
   // ── DiagnosticEngine Phase4 Step2〜5: autoGenerate 収集変数 ────────────
   // Step4: passA
@@ -1308,114 +1301,46 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
 
     // ratioターゲット事前計算
     ds.forEach(s => {
-      assignedShiftCounts[s.id] = {};
-      dayTypes.forEach(k => { assignedShiftCounts[s.id][k] = 0; });
-      const ratio = getShiftRatioOf(s);
-      const workDayCount = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]).length;
-      targetShiftCounts[s.id] = {};
-      if (ratio) {
-        const dayShiftTypes = dayTypes.filter(k => k !== "夜勤");
-        const ratioTotal = dayShiftTypes.reduce((sum, k) => sum + (ratio[k] || 0), 0);
-        if (ratioTotal > 0) {
-          const corr = s.shiftRatioCorrection || {};
-          const adj = {};
-          dayShiftTypes.forEach(k => { adj[k] = Math.max(0, (ratio[k] || 0) - (corr[k] || 0) * 0.5); });
-          const adjTotal = dayShiftTypes.reduce((sum, k) => sum + adj[k], 0) || ratioTotal;
-          let alloc = 0;
-          dayShiftTypes.filter(k => k !== "日勤").forEach(k => {
-            const t = Math.round(workDayCount * adj[k] / adjTotal);
-            targetShiftCounts[s.id][k] = t; alloc += t;
-          });
-          targetShiftCounts[s.id]["日勤"] = Math.max(0, workDayCount - alloc);
-        } else {
-          dayTypes.forEach(k => { targetShiftCounts[s.id][k] = 0; });
-        }
-      } else {
-        dayTypes.forEach(k => { targetShiftCounts[s.id][k] = 0; });
-      }
-    });
-
-    ds.forEach(s => {
       const trend = getTrend(s);
-      const ratio = getShiftRatioOf(s);
       const workDays = Array.from({length: days}, (_, i) => i + 1).filter(d => !res[s.id][d]);
       const allowed = getAllowedTypes(s).filter(k => k !== '夜勤' && k !== '明け');
       if (!allowed.length) return;
 
-      // シフト確率テーブルを取得（trend×比率ブレンド or 比率単独 or 均等）
+      // シフト確率テーブルを取得（trend or 均等）
       const getShiftWeight = (d, k) => {
         const weekday = new Date(year, month, d).getDay();
-        const ratioTotal = ratio ? allowed.reduce((sum, j) => sum + (ratio[j] || 0), 0) : 0;
-        const ratioW = (ratio && ratioTotal > 0) ? Math.max(0.01, (ratio[k] || 0.01) / ratioTotal) : null;
         if (trend?.dowShiftRate?.[weekday]?.[k] != null) {
-          const trendW = Math.max(0.01, trend.dowShiftRate[weekday][k]);
-          return ratioW ? trendW * 0.6 + ratioW * 0.4 : trendW;
+          return Math.max(0.01, trend.dowShiftRate[weekday][k]);
         }
         if (trend && typeof trend[k] === 'number') {
-          const trendW = Math.max(0.01, trend[k]);
-          return ratioW ? trendW * 0.6 + ratioW * 0.4 : trendW;
+          return Math.max(0.01, trend[k]);
         }
-        if (ratioW) return ratioW;
         return 1 / allowed.length;
       };
 
-      if (ratio && Object.values(targetShiftCounts[s.id]).some(v => v > 0)) {
-        // ★ratio指定あり: 希少シフトを確率サンプリングで日付確保 → 残りは主力シフト
-        const remaining = new Set(workDays);
-        allowed.filter(k => k !== '日勤').forEach(shiftType => {
-          // slot-first 済み（role-slot）のシフトは Pass B では扱わない
-          if (_isSlotManaged(shiftType)) return;
-          const targetCount = targetShiftCounts[s.id][shiftType] || 0;
-          if (!targetCount) return;
-          const pool = [...remaining].filter(d => {
-            if (dept.id === 'eiyo' && _consecWork(s.id, d - 1) >= maxConsec) return false;
-            const cnt = ds.filter(sx => res[sx.id][d] === shiftType).length;
-            return cnt < (maxStaff[shiftType] ?? 99);
-          });
-          const weights = pool.map(d => getShiftWeight(d, shiftType));
-          // サンプリングにスロット上限ブースト: まだ余裕のある日に偏らせる（但しランダム性維持）
-          const picked = weightedSampleN(pool, weights, targetCount);
-          picked.forEach(d => {
-            res[s.id][d] = shiftType;
-            assignedShiftCounts[s.id][shiftType] = (assignedShiftCounts[s.id][shiftType] || 0) + 1;
-            remaining.delete(d);
-          });
+      // 各日を確率サンプリングで決定（trendのみ / trendなし）
+      workDays.forEach(d => {
+        if (dept.id === 'eiyo' && _consecWork(s.id, d - 1) >= maxConsec) {
+          res[s.id][d] = '休み';
+          return;
+        }
+        const probs = {};
+        allowed.forEach(k => { probs[k] = getShiftWeight(d, k); });
+        // minStaff 不足シフトにブースト（minStaff充足優先）
+        const dayCnts = {};
+        dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
+        allowed.forEach(k => {
+          const deficit = Math.max(0, (dept.minStaff[k] || 0) - (dayCnts[k] || 0));
+          if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
+          if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) probs[k] = 0;
         });
-        const nikkin = allowed.includes('日勤') ? '日勤' : (allowed.find(k => k !== '夜勤' && k !== '明け') || allowed[0]);
-        remaining.forEach(d => {
-          if (dept.id === 'eiyo' && _consecWork(s.id, d - 1) >= maxConsec) {
-            res[s.id][d] = '休み';
-            return;
-          }
-          res[s.id][d] = nikkin;
-          assignedShiftCounts[s.id][nikkin] = (assignedShiftCounts[s.id][nikkin] || 0) + 1;
-        });
-      } else {
-        // ★ratio指定なし / trendのみ / trendなし: 各日を確率サンプリングで決定
-        workDays.forEach(d => {
-          if (dept.id === 'eiyo' && _consecWork(s.id, d - 1) >= maxConsec) {
-            res[s.id][d] = '休み';
-            return;
-          }
-          const probs = {};
-          allowed.forEach(k => { probs[k] = getShiftWeight(d, k); });
-          // minStaff 不足シフトにブースト（minStaff充足優先）
-          const dayCnts = {};
-          dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
-          allowed.forEach(k => {
-            const deficit = Math.max(0, (dept.minStaff[k] || 0) - (dayCnts[k] || 0));
-            if (deficit > 0) probs[k] = (probs[k] || 0.01) * (1 + deficit * 2);
-            if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) probs[k] = 0;
-          });
-          if (d === 1) { const ps = prevShift(s.id); if (ps) allowed.forEach(k => { if (_isBadTransition(ps, k)) probs[k] = 0; }); }
-          const pick = sampleFromProbs(probs)
-            || allowed.find(k => !_isBadTransition(d === 1 ? prevShift(s.id) : null, k) && (dayCnts[k]||0) < (maxStaff[k]??99))
-            || allowed.find(k => k === '日勤')
-            || allowed[0];
-          res[s.id][d] = pick;
-          assignedShiftCounts[s.id][pick] = (assignedShiftCounts[s.id][pick] || 0) + 1;
-        });
-      }
+        if (d === 1) { const ps = prevShift(s.id); if (ps) allowed.forEach(k => { if (_isBadTransition(ps, k)) probs[k] = 0; }); }
+        const pick = sampleFromProbs(probs)
+          || allowed.find(k => !_isBadTransition(d === 1 ? prevShift(s.id) : null, k) && (dayCnts[k]||0) < (maxStaff[k]??99))
+          || allowed.find(k => k === '日勤')
+          || allowed[0];
+        res[s.id][d] = pick;
+      });
     });
     // [DEBUG PassB終了] 公休スナップショット
     // [DEBUG PassB-連続チェック] PassB後の実際の連続勤務違反（勤務シフト配置済み）
@@ -1672,13 +1597,6 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (_shouldProtectSlot(cur, fromActual)) return false;
           return true;
         }).sort((a, b) => {
-          // ★最小変更原則: 比率ターゲットのシフト中スタッフはスライドを最後に選ぶ
-          const aRatio = a.shiftRatio || a.shiftRatioByMonth?.[mk];
-          const bRatio = b.shiftRatio || b.shiftRatioByMonth?.[mk];
-          const aOnTarget = aRatio && (aRatio[res[a.id][d]] || 0) > 0;
-          const bOnTarget = bRatio && (bRatio[res[b.id][d]] || 0) > 0;
-          if (aOnTarget && !bOnTarget) return 1;
-          if (!aOnTarget && bOnTarget) return -1;
           const cntA = ds.filter(s => res[s.id][d] === res[a.id][d]).length;
           const cntB = ds.filter(s => res[s.id][d] === res[b.id][d]).length;
           const maxA = maxStaff[res[a.id][d]] ?? 99;
@@ -1825,60 +1743,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   // Phase4 Step2: restAdjustment afterExcessVal 収集
   { const _R=new Set(['休み','希望休','有休']); _ra_phases.afterExcessVal.rows=ds.map(s=>{const t=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8,a=Object.values(res[s.id]).filter(v=>_R.has(v)).length;return{name:s.name,target:t,actual:a,diff:a-t};}); }
 
-  // ratio 修復 ─ [Tier2 repair / fromShift削減は _shouldProtectSlot 保護済み]
-  // ★比率修復パス: minStaff保証後の比率乖離を実際のシフト変換で修正する
-  // minStaff slide 等で A1→A に崩れたスタッフのシフトを制約内で書き戻す
-  {
-    for (const s of ds) {
-      const sratio = s.shiftRatio || s.shiftRatioByMonth?.[mk];
-      if (!sratio) continue;
-      const ratioTotal = Object.values(sratio).reduce((sum, v) => sum + (v||0), 0);
-      if (ratioTotal <= 0) continue;
-      const allowed = getAllowedTypes(s);
-      const workDaysArr = Array.from({length:days},(_,i)=>i+1)
-        .filter(d => deptWork.has(res[s.id][d]) && res[s.id][d] !== '明け' && !lockedDays[s.id].has(d));
-      const totalWork = workDaysArr.length;
-      if (totalWork === 0) continue;
-      const targets = {}, actuals = {};
-      for (const [k, v] of Object.entries(sratio)) {
-        if (v > 0 && allowed.includes(k)) {
-          targets[k] = Math.round(totalWork * v / ratioTotal);
-          actuals[k] = workDaysArr.filter(d => res[s.id][d] === k).length;
-        }
-      }
-      // 過多シフト → 過少シフトへの変換（制約チェック付き）
-      const fromShifts = Object.keys(targets).filter(k => (actuals[k]||0) > targets[k])
-        .sort((a,b) => (actuals[b]||0)-targets[b] - ((actuals[a]||0)-targets[a]));
-      for (const fromShift of fromShifts) {
-        const fromDays = workDaysArr.filter(d => res[s.id][d] === fromShift);
-        const toShifts = Object.keys(targets).filter(k => k !== fromShift && targets[k] > (actuals[k]||0))
-          .sort((a,b) => targets[b]-(actuals[b]||0) - (targets[a]-(actuals[a]||0)));
-        for (const toShift of toShifts) {
-          const canConvert = Math.min((actuals[fromShift]||0)-targets[fromShift], targets[toShift]-(actuals[toShift]||0));
-          let converted = 0;
-          for (const d of fromDays) {
-            if (converted >= canConvert) break;
-            if (res[s.id][d] !== fromShift) continue;
-            const prev = res[s.id][d-1], next = res[s.id][d+1];
-            if (_isBadTransition(prev, toShift)) continue;
-            if (_isBadTransition(toShift, next)) continue;
-            const fromCnt = ds.filter(sx => res[sx.id][d] === fromShift).length;
-            if (fromCnt - 1 < (dept.minStaff?.[fromShift] ?? 0)) continue;
-            // ★Tier1保護: role-slot が上限以内なら ratio修復（Tier2）で削減しない
-            if (_shouldProtectSlot(fromShift, fromCnt)) continue;
-            const toCnt = ds.filter(sx => res[sx.id][d] === toShift).length;
-            if (toCnt >= (maxStaff[toShift] ?? 99)) continue;
-            res[s.id][d] = toShift;
-            actuals[fromShift]--;
-            actuals[toShift] = (actuals[toShift]||0) + 1;
-            converted++;
-          }
-        }
-      }
-    }
-  }
-
-  enforceMaxStaff(); // 4回目: 比率修復後の最終確認
+  enforceMaxStaff(); // 4回目: 最終確認
 
   // ── DiagnosticEngine Phase4 Step1: repair.final 収集変数 ──────────────
   const _rf_maxViolations = [];
@@ -2109,30 +1974,6 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
       }
     }
   }
-  // ★勤務比率乖離ペナルティ（1%乖離ごとに50点: 役職制限5000点より軽い誘導）
-  for (const s of ds) {
-    const ratio = s.shiftRatio || s.shiftRatioByMonth?.[mk];
-    if (!ratio) { continue; }
-    const ratioTotal = Object.values(ratio).reduce((sum, v) => sum + (v || 0), 0);
-    if (ratioTotal <= 0) { continue; }
-    const workCounts = {};
-    let totalWork = 0;
-    for (let d = 1; d <= days; d++) {
-      const sh = res[s.id]?.[d];
-      if (!sh || !WORK.has(sh) || sh === '明け') continue;
-      workCounts[sh] = (workCounts[sh] || 0) + 1;
-      totalWork++;
-    }
-    if (totalWork === 0) continue;
-    let ratioPenalty = 0;
-    Object.entries(ratio).forEach(([k, targetRate]) => {
-      if (!targetRate || targetRate <= 0) return;
-      const targetRatio = targetRate / ratioTotal;
-      const actualRatio = (workCounts[k] || 0) / totalWork;
-      ratioPenalty += Math.abs(actualRatio - targetRatio) * 100 * 50;
-    });
-    score += ratioPenalty;
-  }
   // ④⑤ 学習適合ペナルティ: 勤務日も休日も含む。1人1日あたり最大100点
   // ルール違反(10000点)を逆転しない範囲で公平性ペナルティ(2000点~)を上回るスケール
   const LEARN_TYPES = new Set(dept.shiftTypes.filter(k => k !== '夜勤' && k !== '明け'));
@@ -2264,25 +2105,6 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
     const improvedScore = scoreShifts(improved, ds, dept, days, year, month, shiftTrend);
     if (improvedScore < bestScore) { best.shifts = improved; best.score = improvedScore; }
   }
-  // 比率達成フィードバック: 実際の勤務比率 vs 目標比率の乖離を記録（次回補正用）
-  const mk2 = monthKey(year, month);
-  const ratioFeedback = {};
-  const dayShiftTypesForFb = dept.shiftTypes.filter(k => k !== '夜勤');
-  for (const s of ds) {
-    const ratio = s.shiftRatio || s.shiftRatioByMonth?.[mk2] || null;
-    if (!ratio || !best?.shifts[s.id]) continue;
-    const staffShifts = best.shifts[s.id];
-    const workDays = Object.values(staffShifts).filter(v => WORK_TYPES.has(v) && v !== '明け').length;
-    if (workDays === 0) continue;
-    const correction = {};
-    for (const k of dayShiftTypesForFb) {
-      const targetRate = ratio[k] ?? 0;
-      if (targetRate === 0) continue;
-      correction[k] = (Object.values(staffShifts).filter(v => v === k).length / workDays) - targetRate;
-    }
-    if (Object.keys(correction).length > 0) ratioFeedback[s.id] = correction;
-  }
-  if (best) best.ratioFeedback = ratioFeedback;
   return best;
 }
 
