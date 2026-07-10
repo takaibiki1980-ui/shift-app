@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
 import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
+import { computeEditRate } from './lib/editRate.js';
 
 const LOGO_CHARS = [
   { char: "し", color: "#F4847E" },
@@ -3445,6 +3446,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [eventEditDay, setEventEditDay] = useState(null);
 
   const [confirmedMonths, setConfirmedMonths] = useState({}); // { "YYYY_M_deptId": true|false }
+  const [editRates, setEditRates] = useState({}); // { "YYYY_M_deptId": number(%) } 修正率
 
   const [saveStatus, setSaveStatus] = useState("saved");
   const saveStatusRef = useRef("saved");
@@ -3517,10 +3519,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['exceptionMonths']) { exceptionMonthsSkipSave.current = true; setExceptionMonths(latestExceptionMonths); } // ★Fix W-1
         allDBDataRef.current = byKey; // DBキャッシュを初期化
         const confirmedInit = {};
+        const editRateInit = {};
         for (const [k, v] of Object.entries(byKey)) {
           if (k.startsWith('confirmed_')) confirmedInit[k.slice('confirmed_'.length)] = v;
+          else if (k.startsWith('editRate_')) editRateInit[k.slice('editRate_'.length)] = v;
         }
         if (Object.keys(confirmedInit).length > 0) setConfirmedMonths(confirmedInit);
+        if (Object.keys(editRateInit).length > 0) setEditRates(editRateInit);
         exceptionMonthsRef.current = latestExceptionMonths;
         const learned = computeLearnedTrend(byKey, latestStaffList, latestExceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
@@ -3615,10 +3620,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (byKey['exceptionMonths']) { exceptionMonthsSkipSave.current = true; setExceptionMonths(latestExcRT); } // ★Fix W-1
         allDBDataRef.current = {...allDBDataRef.current, ...byKey}; // DBキャッシュを更新
         const confirmedFromRT = {};
+        const editRateFromRT = {};
         for (const [k, v] of Object.entries(byKey)) {
           if (k.startsWith('confirmed_')) confirmedFromRT[k.slice('confirmed_'.length)] = v;
+          else if (k.startsWith('editRate_')) editRateFromRT[k.slice('editRate_'.length)] = v;
         }
         if (Object.keys(confirmedFromRT).length > 0) setConfirmedMonths(prev => ({...prev, ...confirmedFromRT}));
+        if (Object.keys(editRateFromRT).length > 0) setEditRates(prev => ({...prev, ...editRateFromRT}));
         exceptionMonthsRef.current = latestExcRT;
         const latestStaffListRT = byKey['staffList'] || staffList;
         const learnedRT = computeLearnedTrend(byKey, latestStaffListRT, latestExcRT);
@@ -4316,6 +4324,21 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           allDBDataRef.current[key] = true;
           setConfirmedMonths(prev => ({...prev, [`${year}_${month+1}_${activeDeptId}`]: true}));
         }
+        // ── 修正率の計測・保存（生成直後 vs 確定時。生成物でない月はnullで—表示）──
+        const baseline = lastAutoGenRef.current[activeDeptId] || null;
+        const current = allShiftsRef.current[activeDeptId] || {};
+        const rate = computeEditRate(baseline, current);
+        if (rate != null) {
+          const rateKey = `editRate_${year}_${month+1}_${activeDeptId}`;
+          const { error: rErr } = await supabase.from('shift_data').upsert(
+            { user_id: session.user.id, data_key: rateKey, data_value: rate, updated_at: new Date().toISOString() },
+            { onConflict: 'user_id,data_key' }
+          );
+          if (!rErr) {
+            allDBDataRef.current[rateKey] = rate;
+            setEditRates(prev => ({...prev, [`${year}_${month+1}_${activeDeptId}`]: rate}));
+          }
+        }
       }
     });
   }, [year, month, activeDeptId, dept, session]);
@@ -4521,7 +4544,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* CONTENT */}
       <div style={{padding:"8px 12px",minHeight:"calc(100vh - 180px)"}}>
-        {innerTab==="shift"&&(<><Legend/><div style={{position:"relative"}}>
+        {innerTab==="shift"&&(<><Legend/>
+          {isConfirmed&&(()=>{
+            const curRate = editRates[`${year}_${month+1}_${activeDeptId}`];
+            const trend = [];
+            for (let i=3;i>=0;i--){ let ty=year,tm=month-i; while(tm<0){tm+=12;ty--;} trend.push({label:`${tm+1}月`, rate:editRates[`${ty}_${tm+1}_${activeDeptId}`]}); }
+            return (
+              <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",fontSize:11,color:"#6B7280",background:"#F8FAFC",border:"1px solid #EEF2F7",borderRadius:8,padding:"5px 12px",margin:"2px 0 8px"}}>
+                <span>この月の修正率：<b style={{color:curRate!=null?"#2563EB":"#9CA3AF",fontSize:13,marginLeft:2}}>{curRate!=null?`${curRate}%`:"—"}</b></span>
+                <span style={{color:"#CBD5E1"}}>|</span>
+                <span style={{display:"flex",gap:8,alignItems:"center"}}>推移:{trend.map(t=><span key={t.label} style={{color:"#94A3B8"}}>{t.label}<b style={{color:t.rate!=null?"#475569":"#CBD5E1",marginLeft:1}}>{t.rate!=null?`${t.rate}%`:"—"}</b></span>)}</span>
+              </div>
+            );
+          })()}
+          <div style={{position:"relative"}}>
           {isMonthLoading&&<div style={{position:"absolute",inset:0,zIndex:50,background:"rgba(240,251,250,0.85)",display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,backdropFilter:"blur(2px)"}}>
             <div style={{background:"#fff",border:"1px solid #6366F1",borderRadius:12,padding:"18px 32px",fontWeight:800,fontSize:14,color:"#4F46E5",boxShadow:"0 4px 16px rgba(43,191,186,0.2)",display:"flex",alignItems:"center",gap:10}}>
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
