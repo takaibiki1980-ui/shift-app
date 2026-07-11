@@ -5,6 +5,7 @@ import HolidayJP from "@holiday-jp/holiday_jp";
 import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
+import { computeLearnedMatch } from './lib/learnedMatch.js';
 
 const LOGO_CHARS = [
   { char: "し", color: "#F4847E" },
@@ -4103,6 +4104,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     return computeSyncRate(deptShifts, staffList, dept, year, month, learnedTrend);
   }, [deptShifts, staffList, dept, year, month, learnedTrend, activeDeptId]);
 
+  // 学習一致度（生成シフトが学習済みの曜日別癖 dowShiftRate にどれだけ沿うか・平均%）
+  const learnedMatch = useMemo(() => {
+    if (!dept) return null;
+    return computeLearnedMatch(deptShifts, staffList, dept, year, month, learnedTrend);
+  }, [deptShifts, staffList, dept, year, month, learnedTrend, activeDeptId]);
+
   // ══════════════════════════════════════════════════════════════════════════
   // ── Phase S-1: keep innerTabRef in sync + fire lazy Temporal engines ────────
   useEffect(() => {
@@ -4545,15 +4552,21 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* CONTENT */}
       <div style={{padding:"8px 12px",minHeight:"calc(100vh - 180px)"}}>
         {innerTab==="shift"&&(<><Legend/>
-          {isConfirmed&&(()=>{
+          {(()=>{
+            const hasSchedule = Object.keys(deptShifts||{}).length > 0;
+            const hasLearning = Object.keys(learnedTrend||{}).filter(k=>k!=='_monthCounts'&&k!=='_months').length > 0;
+            const showMatch = hasSchedule && hasLearning;
+            if (!showMatch && !isConfirmed) return null;
             const curRate = editRates[`${year}_${month+1}_${activeDeptId}`];
             const trend = [];
             for (let i=3;i>=0;i--){ let ty=year,tm=month-i; while(tm<0){tm+=12;ty--;} trend.push({label:`${tm+1}月`, rate:editRates[`${ty}_${tm+1}_${activeDeptId}`]}); }
             return (
               <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap",fontSize:11,color:"#6B7280",background:"#F8FAFC",border:"1px solid #EEF2F7",borderRadius:8,padding:"5px 12px",margin:"2px 0 8px"}}>
-                <span>この月の修正率：<b style={{color:curRate!=null?"#2563EB":"#9CA3AF",fontSize:13,marginLeft:2}}>{curRate!=null?`${curRate}%`:"—"}</b></span>
-                <span style={{color:"#CBD5E1"}}>|</span>
-                <span style={{display:"flex",gap:8,alignItems:"center"}}>推移:{trend.map(t=><span key={t.label} style={{color:"#94A3B8"}}>{t.label}<b style={{color:t.rate!=null?"#475569":"#CBD5E1",marginLeft:1}}>{t.rate!=null?`${t.rate}%`:"—"}</b></span>)}</span>
+                {showMatch&&<span title="生成シフトが学習済みの曜日別の癖にどれだけ沿っているか（生成直後の先行指標）">学習一致度：{learnedMatch!=null?<b style={{color:"#16A34A",fontSize:13,marginLeft:2}}>{learnedMatch}%</b>:<span style={{color:"#9CA3AF",marginLeft:2}}>—（学習データ不足）</span>}</span>}
+                {showMatch&&isConfirmed&&<span style={{color:"#CBD5E1"}}>|</span>}
+                {isConfirmed&&<span>この月の修正率：<b style={{color:curRate!=null?"#2563EB":"#9CA3AF",fontSize:13,marginLeft:2}}>{curRate!=null?`${curRate}%`:"—"}</b></span>}
+                {isConfirmed&&<span style={{color:"#CBD5E1"}}>|</span>}
+                {isConfirmed&&<span style={{display:"flex",gap:8,alignItems:"center"}}>推移:{trend.map(t=><span key={t.label} style={{color:"#94A3B8"}}>{t.label}<b style={{color:t.rate!=null?"#475569":"#CBD5E1",marginLeft:1}}>{t.rate!=null?`${t.rate}%`:"—"}</b></span>)}</span>}
               </div>
             );
           })()}
