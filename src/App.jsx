@@ -2181,7 +2181,7 @@ function SummaryView({ staffList, shifts, dept, year, month }) {
 
 const ICON_BTN = (color) => ({ background:`${color}18`, border:`1px solid ${color}40`, borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:13 });
 
-function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
+function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd, onReorder }) {
   const ds = staffList.filter(s=>s.dept===dept.id);
   return (
     <div style={{maxWidth:680}}>
@@ -2190,7 +2190,7 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd }) {
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},55%,30%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}</div></div></div><div style={{display:"flex",gap:6}}><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
+        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},55%,30%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}</div></div></div><div style={{display:"flex",gap:6,alignItems:"center"}}><div style={{display:"flex",flexDirection:"column",gap:2,marginRight:2}}><button onClick={()=>onReorder&&onReorder(s.id,'up')} disabled={i===0} title="上へ" style={{background:i===0?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===0?"#D4D4D8":"#6B7280",cursor:i===0?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▲</button><button onClick={()=>onReorder&&onReorder(s.id,'down')} disabled={i===ds.length-1} title="下へ" style={{background:i===ds.length-1?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===ds.length-1?"#D4D4D8":"#6B7280",cursor:i===ds.length-1?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▼</button></div><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
         {ds.length===0&&<div style={{background:"#FAFAFA",border:"1px dashed #27272A",borderRadius:10,padding:32,textAlign:"center",color:"#A1A1AA",fontSize:13}}>スタッフが登録されていません</div>}
       </div>
     </div>
@@ -4393,6 +4393,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const saveStaff = (form) => { setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
   const deleteStaff = (id) => { const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
+  // 表示順の並べ替え（部署内で上下移動）。staff.id・シフト・生成・学習には非影響（配列順のみ変更）
+  const moveStaff = (id, dir) => { setStaffList(prev => {
+    const deptId = prev.find(s=>s.id===id)?.dept;
+    if (!deptId) return prev;
+    const deptIdxs = prev.map((s,i)=>s.dept===deptId?i:-1).filter(i=>i>=0); // 当部署の flat配列インデックス（表示順）
+    const posInDept = deptIdxs.findIndex(i=>prev[i].id===id);
+    const swapPos = dir==='up'?posInDept-1:posInDept+1;
+    if (swapPos<0 || swapPos>=deptIdxs.length) return prev; // 端は移動不可
+    const a = deptIdxs[posInDept], b = deptIdxs[swapPos];
+    const next = [...prev];
+    [next[a], next[b]] = [next[b], next[a]];
+    return next;
+  }); };
   const handleBulkKyuko = (days, mk) => { setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}}))); setBulkKyukoModal(false); };
 
   const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
@@ -4540,7 +4553,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
-        {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})}/>}
+        {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
