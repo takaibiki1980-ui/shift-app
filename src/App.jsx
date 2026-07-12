@@ -431,36 +431,6 @@ function filterExpiredExceptions(list) {
 
 // しふぽん蓄積データからスタッフごとのシフト傾向を学習する
 // computeLearnedTrend は src/engine/core.js に移動・export済み（import行参照）
-// 自動生成結果と学習データのシンクロ率を計算（0-100 or null）
-function computeSyncRate(shifts, staffList, dept, year, month, mergedTrend) {
-  const ds = staffList.filter(s => s.dept === dept.id);
-  const customSyncKeys = (dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean);
-  const WORK_KEYS = ['早番','日勤','遅番','夜勤', ...customSyncKeys];
-  const WORK_SET = new Set(WORK_KEYS);
-  let totalWork = 0, syncWork = 0;
-  for (const s of ds) {
-    const tKey = Object.keys(mergedTrend).find(k => k !== '_months' && k !== '_monthCounts' && nameMatch(k, s.name));
-    const trend = tKey ? mergedTrend[tKey] : null;
-    if (!trend) continue;
-    // 全体頻度データ（dowShiftRateがない旧データでも使える）
-    const freqRate = WORK_KEYS.some(k => (trend[k] || 0) > 0.01)
-      ? Object.fromEntries(WORK_KEYS.filter(k => (trend[k]||0) > 0.01).map(k => [k, trend[k]]))
-      : null;
-    if (!freqRate) continue;
-    for (let d = 1; d <= getDays(year, month); d++) {
-      const shift = shifts[s.id]?.[d];
-      if (!shift || !WORK_SET.has(shift)) continue;
-      const dow = new Date(year, month, d).getDay();
-      // dowShiftRateがあれば曜日別を優先、なければ全体頻度で代替
-      const useRate = trend.dowShiftRate?.[dow] || freqRate;
-      if (!useRate) continue;
-      totalWork++;
-      const predicted = Object.entries(useRate).sort((a,b)=>b[1]-a[1])[0]?.[0];
-      if (predicted === shift) syncWork++;
-    }
-  }
-  return totalWork >= 5 ? Math.round(syncWork / totalWork * 100) : null;
-}
 
 
 // 希望休の前々日に夜勤を手動配置したパターンを検出（アンカー学習用）
@@ -4098,12 +4068,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const dept = depts.find(d=>d.id===activeDeptId) || depts[0];
   const deptShifts = allShifts[activeDeptId]||{};
-  // 現在のシフト表から常時シンクロ率を計算（自動生成後だけでなく常に反映）
-  const syncRate = useMemo(() => {
-    if (!dept) return null;
-    return computeSyncRate(deptShifts, staffList, dept, year, month, learnedTrend);
-  }, [deptShifts, staffList, dept, year, month, learnedTrend, activeDeptId]);
-
   // 学習一致度（生成シフトが学習済みの曜日別癖 dowShiftRate にどれだけ沿うか・平均%）
   const learnedMatch = useMemo(() => {
     if (!dept) return null;
@@ -4487,15 +4451,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             {overflowOpen&&<>
               <div style={{position:"fixed",inset:0,zIndex:99}} onClick={()=>setOverflowOpen(false)}/>
               <div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#FFFFFF",border:"1px solid #E5E7EB",borderRadius:10,boxShadow:"0 8px 24px rgba(0,0,0,0.10)",zIndex:100,minWidth:180,overflow:"hidden",padding:"4px 0"}}>
-                {(()=>{const learnedCnt=Object.keys(learnedTrend).filter(k=>k!=='_monthCounts').length;const hasAny=learnedCnt>0;const pct=syncRate??0;const barColor=pct>=85?"#16A34A":pct>=70?"#D97706":"#2563EB";return(
-                  <div onClick={()=>{setExcelPasteModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151",borderBottom:"1px solid #F1F5F9"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <ClipboardList size={14} strokeWidth={2} style={{color:"#6B7280",flexShrink:0}}/>
-                    <div style={{flex:1}}>
-                      <div style={{fontWeight:500}}>貼付 / 傾向学習</div>
-                      {hasAny&&<div style={{display:"flex",alignItems:"center",gap:6,marginTop:3}}><div style={{width:56,height:3,background:"#E5E7EB",borderRadius:2}}><div style={{width:`${pct}%`,height:"100%",background:barColor,borderRadius:2}}/></div><span style={{fontSize:10,color:"#6B7280"}}>シンクロ率 {syncRate!=null?syncRate+'%':'--'}</span></div>}
-                    </div>
+                <div onClick={()=>{setExcelPasteModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151",borderBottom:"1px solid #F1F5F9"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <ClipboardList size={14} strokeWidth={2} style={{color:"#6B7280",flexShrink:0}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:500}}>貼付 / 傾向学習</div>
                   </div>
-                );})()}
+                </div>
                 <div onClick={()=>{setHistoryModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><History size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>履歴から復元</span></div>
                 <div onClick={()=>{setShareModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Share2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>共有</span></div>
                 {profile?.is_admin&&<div onClick={()=>{setAdminModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Building2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>管理</span></div>}
