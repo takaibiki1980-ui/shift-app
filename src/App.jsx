@@ -362,11 +362,11 @@ function getShiftDef(key, customDefs, dept) {
 }
 function minsToTimeStr(m) { const h=Math.floor(m/60)%24,mn=m%60; return `${String(h).padStart(2,"0")}:${String(mn).padStart(2,"0")}`; }
 const DEFAULT_DEPTS = [
-  { id:"kaigo1", label:"介護部 1階", icon:"🏠", shiftTypes:["早番","日勤","遅番","夜勤"], minStaff:{ 早番:1, 日勤:1, 遅番:1, 夜勤:1 }, maxStaff:{ 早番:1, 日勤:99, 遅番:1, 夜勤:1 }, defaultKyukoDays:8, maxConsecutive:5, roles:["介護福祉士","介護職員","介護補助","介護助手","特定技能"], roleShiftTypes:{ "介護補助":["日勤"], "介護助手":["日勤"] } },
-  { id:"kaigo2", label:"介護部 2階", icon:"🏢", shiftTypes:["早番","日勤","遅番","夜勤"], minStaff:{ 早番:1, 日勤:1, 遅番:1, 夜勤:1 }, maxStaff:{ 早番:1, 日勤:99, 遅番:1, 夜勤:1 }, defaultKyukoDays:8, maxConsecutive:5, roles:["介護福祉士","介護職員","介護補助","介護助手","特定技能"], roleShiftTypes:{ "介護補助":["日勤"], "介護助手":["日勤"] } },
-  { id:"jimu",   label:"事務所",     icon:"📋", shiftTypes:["日勤"], minStaff:{ 日勤:1 }, maxStaff:{ 日勤:99 }, defaultKyukoDays:8, maxConsecutive:5, roles:["事務員","主任"] },
-  { id:"kango",  label:"看護部",     icon:"💉", shiftTypes:["日勤"], minStaff:{ 日勤:1 }, maxStaff:{ 日勤:99 }, defaultKyukoDays:8, maxConsecutive:5, roles:["看護師","准看護師"] },
-  { id:"eiyo",   label:"栄養科",     icon:"🍱", shiftTypes:["早番","日勤"], minStaff:{ 早番:1, 日勤:1 }, maxStaff:{ 早番:1, 日勤:99 }, defaultKyukoDays:9, maxConsecutive:5, roles:["管理栄養士","栄養士","調理師"] },
+  { id:"kaigo1", label:"介護部 1階", shiftTypes:["早番","日勤","遅番","夜勤"], minStaff:{ 早番:1, 日勤:1, 遅番:1, 夜勤:1 }, maxStaff:{ 早番:1, 日勤:99, 遅番:1, 夜勤:1 }, defaultKyukoDays:8, maxConsecutive:5, roles:["介護福祉士","介護職員","介護補助","介護助手","特定技能"], roleShiftTypes:{ "介護補助":["日勤"], "介護助手":["日勤"] } },
+  { id:"kaigo2", label:"介護部 2階", shiftTypes:["早番","日勤","遅番","夜勤"], minStaff:{ 早番:1, 日勤:1, 遅番:1, 夜勤:1 }, maxStaff:{ 早番:1, 日勤:99, 遅番:1, 夜勤:1 }, defaultKyukoDays:8, maxConsecutive:5, roles:["介護福祉士","介護職員","介護補助","介護助手","特定技能"], roleShiftTypes:{ "介護補助":["日勤"], "介護助手":["日勤"] } },
+  { id:"jimu",   label:"事務所",     shiftTypes:["日勤"], minStaff:{ 日勤:1 }, maxStaff:{ 日勤:99 }, defaultKyukoDays:8, maxConsecutive:5, roles:["事務員","主任"] },
+  { id:"kango",  label:"看護部",     shiftTypes:["日勤"], minStaff:{ 日勤:1 }, maxStaff:{ 日勤:99 }, defaultKyukoDays:8, maxConsecutive:5, roles:["看護師","准看護師"] },
+  { id:"eiyo",   label:"栄養科",     shiftTypes:["早番","日勤"], minStaff:{ 早番:1, 日勤:1 }, maxStaff:{ 早番:1, 日勤:99 }, defaultKyukoDays:9, maxConsecutive:5, roles:["管理栄養士","栄養士","調理師"] },
 ];
 
 const getDeptRoles = (depts, deptId) => { const d = depts.find(x => x.id === deptId); return d?.roles || ["職員"]; };
@@ -909,11 +909,10 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
 }
 
 const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
-const DEPT_ICONS = ["🏠","🏢","🏥","💉","📋","🍱","🌸","⭐","🔵","🟢","🟡","🟠","🔴","💜"];
 function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
   const buildInitMaxStaff = (types, existing, customDefs) => { const d={}; (types||["日勤"]).forEach(k=>{const cd=(customDefs||[]).find(c=>c.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=existing?.[k];d[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def;}); return d; };
   const initShiftTypes = () => { const base=dept?.shiftTypes||["日勤"]; const ckeys=(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean); const missing=ckeys.filter(k=>!base.includes(k)); const all=missing.length>0?[...base,...missing]:base; return all.filter((k,i)=>all.indexOf(k)===i); };
-  const [label,setLabel]=useState(dept?.label||""), [icon,setIcon]=useState(dept?.icon||"🏠"), [shiftTypes,setShiftTypes]=useState(initShiftTypes), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(initShiftTypes(),dept?.maxStaff,dept?.customShiftDefs)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
+  const [label,setLabel]=useState(dept?.label||""), [shiftTypes,setShiftTypes]=useState(initShiftTypes), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(initShiftTypes(),dept?.maxStaff,dept?.customShiftDefs)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
   const [shiftMaxByType,setShiftMaxByType]=useState(()=>{const d={};initShiftTypes().filter(k=>k!=="夜勤").forEach(k=>{d[k]=dept?.shiftMaxByType?.[k]||0;});return d;});
   const [customShiftDefs, setCustomShiftDefs] = useState(dept?.customShiftDefs || []);
   const [crossFloorNightEnabled, setCrossFloorNightEnabled] = useState(!!dept?.crossFloorNightEnabled);
@@ -926,15 +925,13 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [maxStaffRelaxable, setMaxStaffRelaxable] = useState(dept?.maxStaffRelaxable !== false);
   const [engineType, setEngineType] = useState(dept?.engineType || 'kaigo');
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),icon,shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{isNew?"➕ 部署を追加":"✏️ 部署を編集"}</div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
-        <label style={LS}>アイコン</label>
-        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>{DEPT_ICONS.map(ic=><button key={ic} onClick={()=>setIcon(ic)} style={{width:36,height:36,borderRadius:8,fontSize:20,border:"none",cursor:"pointer",background:icon===ic?"#A1A1AA":"#F4F4F5",outline:icon===ic?"2px solid #6366F1":"none"}}>{ic}</button>)}</div>
         <label style={LS}>部署名</label>
         <input style={{...INPUT_STYLE,marginBottom:14}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="例：介護部 3階"/>
         <label style={LS}>シフト種別</label>
@@ -1534,7 +1531,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         .filter(s => selectedDepts.includes(s.dept))
         .map(s => ({ id: s.id, name: s.name, dept: s.dept }));
 
-      const dept_data = selectedDeptObjs.map(d => ({ id: d.id, label: d.label, icon: d.icon }));
+      const dept_data = selectedDeptObjs.map(d => ({ id: d.id, label: d.label }));
 
       // STEP3: shared_shifts へ INSERT（全部署を1レコードで保存）
       const { error } = await supabase.from('shared_shifts').insert({
@@ -2186,7 +2183,7 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd, onRe
   return (
     <div style={{maxWidth:680}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div style={{fontSize:13,color:"#6366F1",fontWeight:800}}>{dept.icon} {dept.label} — {ds.length}名</div>
+        <div style={{fontSize:13,color:"#6366F1",fontWeight:800}}>{dept.label} — {ds.length}名</div>
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
@@ -2590,7 +2587,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         const c = JSON.parse(json);
         const cfg = {
           facility_name: c.fn || '',
-          depts: [{ id: c.d.id, label: c.d.label, icon: c.d.icon, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null, targetYear: c.d.ty || null, targetMonth: c.d.tm || null }],
+          depts: [{ id: c.d.id, label: c.d.label, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null, targetYear: c.d.ty || null, targetMonth: c.d.tm || null }],
           staffList: (c.sl || []).map(s => ({ id: s.i ? shortToUuid(s.i) : s.id, name: s.n || s.name, dept: c.d.id }))
         };
         setConfig(cfg);
@@ -2759,7 +2756,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
             {(config.depts||[]).map(d=>(
               <button key={d.id} onClick={()=>{setSelDeptId(d.id);setSelStaffId(null);setMyDays([]);setMyYukyuDays([]);setSubmitted(false);}}
                 style={{background:selDeptId===d.id?"#6366F1":"#F4F4F5",color:selDeptId===d.id?"#fff":"#18181B",border:"none",borderRadius:9,padding:"9px 16px",cursor:"pointer",fontSize:13,fontWeight:selDeptId===d.id?800:400}}>
-                {d.icon} {d.label}
+                {d.label}
               </button>
             ))}
           </div>
@@ -2768,7 +2765,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
       {/* 固定部署の場合は部署名をヘッダーに表示 */}
       {fixedDeptId && selDept && (
         <div style={{background:"#6366F1",borderRadius:12,padding:"10px 16px",marginBottom:12,textAlign:"center"}}>
-          <span style={{color:"#fff",fontWeight:900,fontSize:14}}>{selDept.icon} {selDept.label}</span>
+          <span style={{color:"#fff",fontWeight:900,fontSize:14}}>{selDept.label}</span>
         </div>
       )}
 
@@ -3082,7 +3079,7 @@ function SharedShiftView({ token }) {
     <div style={{position:'fixed',inset:0,background:'#f0fbfa',zIndex:-1}} />
     <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:0,padding:'12px 8px',color:'#111',position:'relative',zIndex:0}}>
       {dept_ids.map(deptId => {
-        const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId, icon: '📋' };
+        const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId };
         const deptStaff = (staff_data || []).filter(s => s.dept === deptId);
         const deptShifts = (shift_data || {})[deptId] || {};
         return (
@@ -3391,7 +3388,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       facility_name: profile?.facility_name || '',
       depts: depts.map(d => {
         const ps = portalSettings[d.id] || {};
-        return { id: d.id, label: d.label, icon: d.icon, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null, targetYear: ps.targetYear || null, targetMonth: ps.targetMonth || null };
+        return { id: d.id, label: d.label, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null, targetYear: ps.targetYear || null, targetMonth: ps.targetMonth || null };
       }),
       staffList: staffList.map(s => ({ id: s.id, dept: s.dept, name: s.name, role: s.role }))
     };
@@ -4638,14 +4635,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const ps=portalSettings[d.id]||{};
               const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
-              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,icon:d.icon,kb:d.kiboLimit||3,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null},sl:deptSl};
+              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,kb:d.kiboLimit||3,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               const urlShort=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlShort).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlShort}`));}else{alert(`URLをコピーしてください:\n${urlShort}`);}};
               const doLine=()=>{const lineUrl=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label}の希望休入力はこちら\n${urlShort}`)}`;window.open(lineUrl,'_blank');};              const doSaveSettings=async()=>{
                 const newPs={...portalSettings,[d.id]:{deadline:ps.deadline||null,targetYear:ps.targetYear||null,targetMonth:ps.targetMonth||null}};
-                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,icon:dep.icon,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null,targetYear:p.targetYear||null,targetMonth:p.targetMonth||null};});
+                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null,targetYear:p.targetYear||null,targetMonth:p.targetMonth||null};});
                 const facilityVal={facility_name:profile?.facility_name||'',depts:deptsCfg,staffList:staffList.map(s=>({id:s.id,dept:s.dept,name:s.name,role:s.role}))};
                 const [r1,r2]=await Promise.all([
                   supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'portalSettings',data_value:newPs,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
@@ -4656,7 +4653,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               };
               return(
                 <div key={d.id} style={{background:"#fff",border:"1px solid #D4D4D8",borderRadius:10,padding:"12px 14px",marginBottom:10}}>
-                  <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:10}}>{d.icon} {d.label}</div>
+                  <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:10}}>{d.label}</div>
                   {/* 対象シフト月 */}
                   <div style={{marginBottom:12}}>
                     <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4}}>📅 対象シフト月</div>
