@@ -345,11 +345,18 @@ const SHIFTS = {
   "休/日": { short:"休日", color:"#991B1B", bg:"#F3E8E8", border:"transparent", time:"午前休／午後日勤" },
   "早/休": { short:"早休", color:"#D97706", bg:"#FFFFFF", border:"#FED7AA", time:"早番半日／午後休" },
   "休/遅": { short:"休遅", color:"#2563EB", bg:"#FFFFFF", border:"#DBEAFE", time:"午前休／遅番半日" },
+  "早/有": { short:"早有", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"早番半日／午後有給" },
+  "日/有": { short:"日有", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"午前日勤／午後有給" },
+  "有/日": { short:"有日", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"午前有給／午後日勤" },
+  "有/遅": { short:"有遅", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"午前有給／遅番半日" },
   "": { short:"－", color:"#9CA3AF", bg:"transparent", border:"transparent", time:"" },
 };
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
-const SHIFT_KEYS_MANUAL = ["早番","日勤","研修","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅",""];
-const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]);
+const SHIFT_KEYS_MANUAL = ["早番","日勤","研修","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅","早/有","日/有","有/日","有/遅",""];
+const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]); // 公休0.5としてカウントする半日休
+// 半日有給（勤務半分＋有給半分）。有給は公休に含めない設計のため公休カウント対象外（HALF_REST_TYPESには入れない）
+const HALF_PAID_TYPES = new Set(["早/有","日/有","有/日","有/遅"]);
+const HALF_ALL_TYPES = new Set([...HALF_REST_TYPES, ...HALF_PAID_TYPES]); // 希望勤務・手動選択で常時許可する半日8種
 function getShiftDef(key, customDefs, dept) {
   if (SHIFTS[key]) return SHIFTS[key];
   const cd = (customDefs || []).find(d => d.key === key);
@@ -591,7 +598,7 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, sele
   );
 }
 
-const SHIFT_REQ_TYPES = ["早番","日勤","研修","遅番","夜勤","明け","休み","有休"];
+const SHIFT_REQ_TYPES = ["早番","日勤","研修","遅番","夜勤","明け","休み","有休","日/休","休/日","早/休","休/遅","早/有","日/有","有/日","有/遅"];
 function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftRequests, deptId, depts, kiboCountByDay, kiboLimit }) {
   const days = getDays(year, month);
   const firstDow = new Date(year, month, 1).getDay();
@@ -601,7 +608,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
   const dept = (depts||DEFAULT_DEPTS).find(d=>d.id===deptId);
   const customDefs = dept?.customShiftDefs || [];
   const availableReqTypes = [
-    ...SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||k==="明け"||(dept?.shiftTypes||[]).includes(k)),
+    ...SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||k==="明け"||HALF_ALL_TYPES.has(k)||(dept?.shiftTypes||[]).includes(k)),
     ...(dept?.shiftTypes||[]).filter(k => !SHIFT_REQ_TYPES.includes(k) && customDefs.some(cd=>cd.key===k)),
   ];
   const [selectedDay, setSelectedDay] = useState(null);
@@ -4359,7 +4366,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (isConfirmedRef.current) return; // 確定済みは編集不可
     if (isMonthLoading) return; // 月ロード中は操作ブロック
     activeCellRef.current = { staffId, day, time: Date.now() }; // アクティブセル記録（Realtime上書き保護）
-    setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";const HALF=new Set(["日/休","休/日","早/休","休/遅"]);if(HALF.has(cur))return prev;const s=staffList.find(x=>x.id===staffId);const roleAllowed=s?dept?.roleShiftTypes?.[s.role]:null;const keys=roleAllowed?SHIFT_KEYS.filter(k=>!WORK_TYPES.has(k)||roleAllowed.includes(k)):SHIFT_KEYS;const idx=keys.indexOf(cur);const next=keys[(idx+1)%keys.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
+    setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";if(HALF_ALL_TYPES.has(cur))return prev;const s=staffList.find(x=>x.id===staffId);const roleAllowed=s?dept?.roleShiftTypes?.[s.role]:null;const keys=roleAllowed?SHIFT_KEYS.filter(k=>!WORK_TYPES.has(k)||roleAllowed.includes(k)):SHIFT_KEYS;const idx=keys.indexOf(cur);const next=keys[(idx+1)%keys.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
   }, [setDeptShifts, staffList, dept]);
 
   const handleRightClick = useCallback((staffId, day, e, selCells) => {
