@@ -357,6 +357,16 @@ const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]); // �
 // 半日有給（勤務半分＋有給半分）。有給は公休に含めない設計のため公休カウント対象外（HALF_REST_TYPESには入れない）
 const HALF_PAID_TYPES = new Set(["早/有","日/有","有/日","有/遅"]);
 const HALF_ALL_TYPES = new Set([...HALF_REST_TYPES, ...HALF_PAID_TYPES]); // 希望勤務・手動選択で常時許可する半日8種
+// 集計専用: 半日シフトを考慮した1日の勤務貢献度を返す（生成ロジックのWORK_TYPESは変更しない）
+//   通常勤務=1 / 半日休=0.5 / 半日有給=1（有給は出勤同等）/ カスタム勤務(deptWork指定時)=1 / その他=0
+function workDayValue(v, deptWork) {
+  if (!v) return 0;
+  if (HALF_REST_TYPES.has(v)) return 0.5; // 半日休 = 勤務0.5（＋公休0.5は別途）
+  if (HALF_PAID_TYPES.has(v)) return 1;   // 半日有給 = 勤務1（実勤務4h＋有給4h＝出勤扱い）
+  if (WORK_TYPES.has(v)) return 1;         // 通常勤務
+  if (deptWork && deptWork.has(v)) return 1; // カスタム勤務（呼び出し側がdeptWorkを渡した場合）
+  return 0;
+}
 function getShiftDef(key, customDefs, dept) {
   if (SHIFTS[key]) return SHIFTS[key];
   const cd = (customDefs || []).find(d => d.key === key);
@@ -509,7 +519,7 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
       const yukyudays = s.yukyuByMonth?.[mk] || [];
       const cells = [dept.label, s.name, s.role];
       let workCnt=0, nightCnt=0, restCnt=0;
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const out=v||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); if(WORK_TYPES.has(v)) workCnt++; if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") restCnt+=HALF_REST_TYPES.has(v)?0.5:1; }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const out=v||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); workCnt+=workDayValue(v); if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") restCnt+=HALF_REST_TYPES.has(v)?0.5:1; }
       cells.push(workCnt, nightCnt, restCnt);
       rows.push(cells.map(c=>`"${c}"`).join(","));
     });
@@ -539,7 +549,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+'<td class="name"><div class="name-inner">'+s.name+'</div></td>';
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); if(WORK_TYPES.has(v)) w++; if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||v==="希望休"||v==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':HALF_REST_TYPES.has(v)?v:(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}"`)+cellText+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const isKibo=!v&&kibodays.includes(d); const isYukyu2=!v&&!isKibo&&yukyudays2.includes(d); w+=workDayValue(v); if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||v==="希望休"||v==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':HALF_REST_TYPES.has(v)?v:(getShiftDef(v, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}"`)+cellText+CTAG('td'); }
       html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
@@ -2096,7 +2106,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
         <tbody>
           {ds.map((s,si)=>{
             const sShifts=shifts[s.id]||{}, kibodays=s.kiboByMonth?.[mk]||[], yukyudays=s.yukyuByMonth?.[mk]||[];
-            const workCnt=Object.values(sShifts).filter(v=>deptWork.has(v)).length;
+            const workCnt=Object.values(sShifts).reduce((a,v)=>a+workDayValue(v,deptWork),0);
             const nightCnt=Object.values(sShifts).filter(v=>v==="夜勤").length;
             const restCnt=Object.values(sShifts).reduce((acc,v)=>deptRest.has(v)&&v!=="明け"&&v!=="有休"?acc+(HALF_REST_TYPES.has(v)?0.5:1):acc,0);
             const nightOver=s.nightOk&&nightCnt>(s.nightMax||5);
@@ -3119,7 +3129,7 @@ function SharedShiftView({ token }) {
                         <td style={nameTdStyle}><div style={nameInnerStyle}>{s.name}</div></td>
                         {Array.from({length:days},(_,i)=>i+1).map(d=>{
                           const v=ss[d]||'';
-                          if(WORK_TYPES.has(v))w++;
+                          w+=workDayValue(v);
                           if(v==='夜勤')n++;
                           if(REST_TYPES.has(v)&&v!=='明け'&&v!=='有休')r+=HALF_REST_TYPES.has(v)?0.5:1;
                           const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()])||isJpHoliday(year,month-1,d);
