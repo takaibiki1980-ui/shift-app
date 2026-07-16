@@ -6,6 +6,7 @@ import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, 
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
+import { computePaidLeaveConsumed, applyConsumption } from './lib/paidLeave.js';
 
 const LOGO_CHARS = [
   { char: "し", color: "#F4847E" },
@@ -850,6 +851,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>目標勤務日数</div><div onClick={e=>setKp({value:form.targetWork,min:1,max:31,unit:"日",onConfirm:v=>set("targetWork",v===""?1:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.targetWork}</div></div>
           <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#6366F1",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>
+          <div><div style={{color:"#9b4db5",fontSize:11,marginBottom:4,fontWeight:700}}>有給残日数（0.5刻み可）</div><div onClick={e=>setKp({mode:"decimal",value:String(form.paidLeaveBalance??0),unit:"日",onConfirm:v=>set("paidLeaveBalance",v===""?0:Number(v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:(form.paidLeaveBalance??0)<0?"#dc2626":"#9b4db5",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{form.paidLeaveBalance??0}</div></div>
         </div>
         {deptObj?.shiftTypes?.includes("夜勤")&&(
           <div style={{marginBottom:14}}>
@@ -2204,7 +2206,7 @@ function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd, onRe
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},50%,78%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3F3F46",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}</div></div></div><div style={{display:"flex",gap:6,alignItems:"center"}}><div style={{display:"flex",flexDirection:"column",gap:2,marginRight:2}}><button onClick={()=>onReorder&&onReorder(s.id,'up')} disabled={i===0} title="上へ" style={{background:i===0?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===0?"#D4D4D8":"#6B7280",cursor:i===0?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▲</button><button onClick={()=>onReorder&&onReorder(s.id,'down')} disabled={i===ds.length-1} title="下へ" style={{background:i===ds.length-1?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===ds.length-1?"#D4D4D8":"#6B7280",cursor:i===ds.length-1?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▼</button></div><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
+        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},50%,78%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3F3F46",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}{s.paidLeaveBalance!=null&&<span style={{color:s.paidLeaveBalance<0?"#dc2626":"#9b4db5",fontWeight:s.paidLeaveBalance<0?800:400}}>有給残{s.paidLeaveBalance}日</span>}</div></div></div><div style={{display:"flex",gap:6,alignItems:"center"}}><div style={{display:"flex",flexDirection:"column",gap:2,marginRight:2}}><button onClick={()=>onReorder&&onReorder(s.id,'up')} disabled={i===0} title="上へ" style={{background:i===0?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===0?"#D4D4D8":"#6B7280",cursor:i===0?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▲</button><button onClick={()=>onReorder&&onReorder(s.id,'down')} disabled={i===ds.length-1} title="下へ" style={{background:i===ds.length-1?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===ds.length-1?"#D4D4D8":"#6B7280",cursor:i===ds.length-1?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▼</button></div><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
         {ds.length===0&&<div style={{background:"#FAFAFA",border:"1px dashed #27272A",borderRadius:10,padding:32,textAlign:"center",color:"#A1A1AA",fontSize:13}}>スタッフが登録されていません</div>}
       </div>
     </div>
@@ -4324,6 +4326,27 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             setEditRates(prev => ({...prev, [`${year}_${month+1}_${activeDeptId}`]: rate}));
           }
         }
+        // ── 有給残数の消費（確定時に減算・消費量を記録して解除時に復元）──
+        const consKey = `paidLeaveConsumed_${year}_${month+1}_${activeDeptId}`;
+        const prevConsumed = allDBDataRef.current[consKey] || null; // 二重減算防止: 既存記録があれば先に復元
+        const consumed = computePaidLeaveConsumed(current, staffListRef.current, activeDeptId, year, month);
+        // 消費後の残数とマイナス警告を算出（確定は止めない・見える化のみ）
+        const warns = [];
+        setStaffList(prev => prev.map(s => {
+          if (s.dept !== activeDeptId) return s;
+          const base = prevConsumed?.[s.id] ? (s.paidLeaveBalance ?? 0) + prevConsumed[s.id] : (s.paidLeaveBalance ?? 0);
+          const c = consumed[s.id] || 0;
+          if (c === 0 && !(prevConsumed?.[s.id])) return s;
+          const nextBal = base - c;
+          if (nextBal < 0) warns.push(`${s.name}：残${nextBal}日`);
+          return { ...s, paidLeaveBalance: nextBal };
+        }));
+        const { error: cErr } = await supabase.from('shift_data').upsert(
+          { user_id: session.user.id, data_key: consKey, data_value: consumed, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id,data_key' }
+        );
+        if (!cErr) allDBDataRef.current[consKey] = consumed;
+        if (warns.length > 0) alert(`次のスタッフの有給残がマイナスになります（確定は完了しています）：\n${warns.join('\n')}`);
       }
     });
   }, [year, month, activeDeptId, dept, session]);
@@ -4342,6 +4365,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           allDBDataRef.current[key] = false;
           setConfirmedMonths(prev => ({...prev, [`${year}_${month+1}_${activeDeptId}`]: false}));
         }
+        // ── 有給残数の復元（確定時に減算した分を戻す・記録を削除）──
+        const consKey = `paidLeaveConsumed_${year}_${month+1}_${activeDeptId}`;
+        const consumed = allDBDataRef.current[consKey] || null;
+        if (consumed && Object.keys(consumed).length > 0) {
+          setStaffList(prev => prev.map(s => (consumed[s.id] ? { ...s, paidLeaveBalance: (s.paidLeaveBalance ?? 0) + consumed[s.id] } : s)));
+        }
+        const { error: cErr } = await supabase.from('shift_data').upsert(
+          { user_id: session.user.id, data_key: consKey, data_value: {}, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id,data_key' }
+        );
+        if (!cErr) allDBDataRef.current[consKey] = {};
       }
     });
   }, [year, month, activeDeptId, dept, session]);
