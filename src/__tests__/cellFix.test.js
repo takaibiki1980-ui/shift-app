@@ -29,39 +29,43 @@ function makeStaff(n = 4) {
 }
 
 // ────────────────────────────────────────────────────────────────
-describe('applyCellFix（固定/解除の状態遷移）', () => {
-  test('固定: セル値を shiftRequestsByMonth に載せ fixedByMonth マーカーを立てる', () => {
-    const s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {}, fixedByMonth: {} };
+describe('applyCellFix（固定＝希望勤務の状態遷移・shiftRequestsByMonthで統一判定）', () => {
+  test('固定: セル値を shiftRequestsByMonth に載せる（fixedByMonthマーカーは廃止）', () => {
+    const s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {} };
     const shifts = { e0: { 10: '早番' } };
     const r = applyCellFix(s, [['e0', 10]], true, shifts, YEAR, MONTH);
     expect(r.shiftRequestsByMonth[mk][10]).toBe('早番');
-    expect(r.fixedByMonth[mk][10]).toBe(true);
+    expect(r.fixedByMonth).toBeUndefined(); // マーカーは作らない
   });
 
   test('空セルは固定しない', () => {
-    const s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {}, fixedByMonth: {} };
+    const s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {} };
     const r = applyCellFix(s, [['e0', 10]], true, { e0: {} }, YEAR, MONTH);
     expect(r.shiftRequestsByMonth[mk][10]).toBeUndefined();
-    expect(r.fixedByMonth[mk][10]).toBeUndefined();
   });
 
-  test('解除: shiftRequestsByMonth と fixedByMonth の両方から削除', () => {
-    const s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: { [mk]: { 10: '早番' } }, fixedByMonth: { [mk]: { 10: true } } };
+  test('解除: shiftRequestsByMonth から削除', () => {
+    const s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: { [mk]: { 10: '早番' } } };
     const r = applyCellFix(s, [['e0', 10]], false, { e0: { 10: '早番' } }, YEAR, MONTH);
     expect(r.shiftRequestsByMonth[mk][10]).toBeUndefined();
-    expect(r.fixedByMonth[mk][10]).toBeUndefined();
   });
 
   test('固定→解除で固定前の状態に戻る（希望勤務も残らない）', () => {
-    let s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {}, fixedByMonth: {} };
+    let s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {} };
     s = applyCellFix(s, [['e0', 5]], true, { e0: { 5: '遅番' } }, YEAR, MONTH);
     s = applyCellFix(s, [['e0', 5]], false, { e0: { 5: '遅番' } }, YEAR, MONTH);
     expect(s.shiftRequestsByMonth[mk][5]).toBeUndefined();
-    expect(s.fixedByMonth[mk][5]).toBeUndefined();
+  });
+
+  test('スタッフ設定の希望勤務も右クリック固定も同一（shiftRequestsByMonthで固定判定が一致）', () => {
+    // スタッフ設定で希望勤務を入れた状態 = 右クリック固定した状態 = 同じ
+    const viaStaffEdit = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: { [mk]: { 7: '日勤' } } };
+    const viaRightClick = applyCellFix({ id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {} }, [['e0', 7]], true, { e0: { 7: '日勤' } }, YEAR, MONTH);
+    expect(viaRightClick.shiftRequestsByMonth[mk][7]).toBe(viaStaffEdit.shiftRequestsByMonth[mk][7]);
   });
 
   test('対象外スタッフは変更しない（同一参照）', () => {
-    const s = { id: 'e1', dept: 'eiyo', shiftRequestsByMonth: {}, fixedByMonth: {} };
+    const s = { id: 'e1', dept: 'eiyo', shiftRequestsByMonth: {} };
     expect(applyCellFix(s, [['e0', 5]], true, { e0: { 5: '早番' } }, YEAR, MONTH)).toBe(s);
   });
 });
@@ -116,7 +120,7 @@ describe('有休固定と有給残数の二重減算防止', () => {
   });
 
   test('固定した有休（shiftRequests経由でセルが有休）は消費1.0で計上される', () => {
-    let s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {}, fixedByMonth: {}, yukyuByMonth: {} };
+    let s = { id: 'e0', dept: 'eiyo', shiftRequestsByMonth: {}, yukyuByMonth: {} };
     s = applyCellFix(s, [['e0', 15]], true, { e0: { 15: '有休' } }, YEAR, MONTH);
     // 生成後のセルは有休（shiftRequestsで固定）
     const { shifts } = autoGenerate([s, ...makeStaff().slice(1)], eiyoDept(), YEAR, MONTH, {}, {}, {});

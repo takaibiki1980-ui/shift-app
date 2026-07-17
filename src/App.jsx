@@ -603,10 +603,10 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, sele
       {roleAllowed&&<div style={{gridColumn:"1/-1",background:"#1c1917",border:"1px solid #78350F",borderRadius:6,padding:"3px 8px",marginBottom:2,fontSize:10,color:"#FEF3C7",textAlign:"center"}}>役職制限: {roleAllowed.join("・")}のみ</div>}
       {(isBulk||isFixed||cellValue)&&<>
         {isBulk
-          ? <><button onClick={onFix} style={{gridColumn:"1/-1",background:"#4c1d95",color:"#EDE9FE",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>選択セルを固定</button><button onClick={onUnfix} style={{gridColumn:"1/-1",background:"#27272A",color:"#C4B5FD",border:"1px solid #52525B",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>固定を解除</button></>
+          ? <><button onClick={onFix} style={{gridColumn:"1/-1",background:"#4c1d95",color:"#EDE9FE",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>選択セルを希望勤務にする</button><button onClick={onUnfix} style={{gridColumn:"1/-1",background:"#27272A",color:"#C4B5FD",border:"1px solid #52525B",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>希望勤務を解除</button></>
           : isFixed
-            ? <button onClick={onUnfix} style={{gridColumn:"1/-1",background:"#27272A",color:"#C4B5FD",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>固定を解除</button>
-            : <button onClick={onFix} style={{gridColumn:"1/-1",background:"#4c1d95",color:"#EDE9FE",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>このシフトを固定</button>}
+            ? <button onClick={onUnfix} style={{gridColumn:"1/-1",background:"#27272A",color:"#C4B5FD",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>希望勤務を解除</button>
+            : <button onClick={onFix} style={{gridColumn:"1/-1",background:"#4c1d95",color:"#EDE9FE",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>希望勤務にする</button>}
         <div style={{gridColumn:"1/-1",borderTop:"1px solid #27272A",margin:"2px 0"}}/>
       </>}
       {customWorkKeys.length>0&&<>
@@ -2142,7 +2142,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
                   const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&type&&deptWork.has(type)&&type!=="明け"&&!_ra.includes(type);
                   const cdow=new Date(year,month,d).getDay(); const cellWeekBg=cdow===0?"#FFF5F5":cdow===6?"#F5F5FF":undefined;
-                  const isFixed=!!s.fixedByMonth?.[mk]?.[d];
+                  const isFixed=!!s.shiftRequestsByMonth?.[mk]?.[d];
                   return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":isFixed?"#f5f3ff":cellWeekBg,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":isFixed?"2px solid #a78bfa":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol||isFixed?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#BE123C"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
@@ -4448,8 +4448,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }
     setCtxMenu(null);
   };
-  // セル固定/解除: shiftRequestsByMonth に値を載せて既存ロック機構でロックし、fixedByMonth をUIマーカーとする
-  //   （core.js未変更。有休固定も消費計算は v==='有休' 分岐で1回のみカウント＝二重減算なし）
+  // 希望勤務にする/解除: shiftRequestsByMonth に値を載せて既存ロック機構でロックする（固定＝希望勤務で統一）
+  //   （core.js未変更。有休も消費計算は v==='有休' 分岐で1回のみカウント＝二重減算なし）
   const applyFix = (fix) => {
     if (!ctxMenu) return;
     const { staffId, day, selCells } = ctxMenu;
@@ -4627,7 +4627,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
-      {ctxMenu&&(()=>{const _mk=monthKey(year,month);const _isBulk=!!(ctxMenu.selCells&&ctxMenu.selCells.size>1);const _st=staffList.find(s=>s.id===ctxMenu.staffId);const _cellVal=_isBulk?null:(allShifts[activeDeptId]?.[ctxMenu.staffId]?.[ctxMenu.day]||"");const _isFixed=_isBulk?false:!!_st?.fixedByMonth?.[_mk]?.[ctxMenu.day];return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null} isBulk={_isBulk} cellValue={_cellVal} isFixed={_isFixed} onFix={()=>applyFix(true)} onUnfix={()=>applyFix(false)}/>;})()}
+      {ctxMenu&&(()=>{const _mk=monthKey(year,month);const _isBulk=!!(ctxMenu.selCells&&ctxMenu.selCells.size>1);const _st=staffList.find(s=>s.id===ctxMenu.staffId);const _cellVal=_isBulk?null:(allShifts[activeDeptId]?.[ctxMenu.staffId]?.[ctxMenu.day]||"");const _isFixed=_isBulk?false:!!_st?.shiftRequestsByMonth?.[_mk]?.[ctxMenu.day];return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null} isBulk={_isBulk} cellValue={_cellVal} isFixed={_isFixed} onFix={()=>applyFix(true)} onUnfix={()=>applyFix(false)}/>;})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
