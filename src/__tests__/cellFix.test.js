@@ -72,14 +72,21 @@ describe('applyCellFix（固定＝希望勤務の状態遷移・shiftRequestsByM
 
 // ────────────────────────────────────────────────────────────────
 describe('固定セルが自動生成で変更されない（shiftRequestsByMonthロック）', () => {
-  test('固定した勤務シフト（役職許可内）が生成後も保持される', () => {
+  test('【本不具合の回帰】右クリック「希望勤務にする」→自動生成でそのセルが上書きされない', () => {
+    // シフト画面の右クリック相当: deptShifts の現在値(遅番)を applyCellFix で
+    // staffList の shiftRequestsByMonth に載せる（applyFixが実行する処理そのもの）
+    const deptShiftsNow = { e0: { 10: '遅番' } }; // 生成直後などにセルにある値
     const staff = makeStaff();
-    // e0 の d10 を「遅番」に固定
-    staff[0] = applyCellFix(staff[0], [['e0', 10]], true, { e0: { 10: '遅番' } }, YEAR, MONTH);
-    for (let i = 0; i < 15; i++) {
+    staff[0] = applyCellFix(staff[0], [['e0', 10]], true, deptShiftsNow, YEAR, MONTH);
+    // その staffList で再生成しても、右クリックした遅番が毎回ロックされ上書きされない
+    for (let i = 0; i < 20; i++) {
       const { shifts } = autoGenerate(staff, eiyoDept(), YEAR, MONTH, {}, {}, {});
       expect(shifts.e0[10]).toBe('遅番');
     }
+    // スタッフ設定経由(shiftRequestsByMonth直接設定)と同一状態であることも確認（データソース統一）
+    const viaStaffEdit = makeStaff();
+    viaStaffEdit[0] = { ...viaStaffEdit[0], shiftRequestsByMonth: { [mk]: { 10: '遅番' } } };
+    expect(staff[0].shiftRequestsByMonth[mk][10]).toBe(viaStaffEdit[0].shiftRequestsByMonth[mk][10]);
   });
 
   test('固定した休み・有休も生成後に保持される', () => {

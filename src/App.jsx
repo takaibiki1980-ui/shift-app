@@ -4457,6 +4457,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       ? [...selCells].map(k => { const i = k.lastIndexOf('|'); return [k.slice(0, i), +k.slice(i + 1)]; })
       : [[staffId, day]];
     const shiftsNow = allShiftsRef.current[activeDeptId] || {};
+    // ★編集保護: 他の編集経路(setDeptShifts)と同様にRealtime巻き戻しを防ぐフラグを立てる。
+    //   これがないと setStaffList した shiftRequestsByMonth が保存完了前にRealtimeでサーバー版へ
+    //   巻き戻され、生成が読むstaffListに反映されずロックが外れる（本不具合の原因）。
+    userEditSeq.current++;
+    saveStatusRef.current = "unsaved";
+    setSaveStatus("unsaved");
     setStaffList(prev => prev.map(s => applyCellFix(s, targets, fix, shiftsNow, year, month)));
     setCtxMenu(null);
   };
