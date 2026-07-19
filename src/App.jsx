@@ -589,7 +589,7 @@ function ShiftBadge({ type, defs }) {
   return <span style={{background:s.bg,color:s.color,border:`1px solid ${s.border||"transparent"}`,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700,display:"inline-block",minWidth:22,textAlign:"center",lineHeight:"18px",letterSpacing:"0.02em"}}>{s.short}</span>;
 }
 
-function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount, roleAllowed, cellValue, isFixed, onFix, onUnfix }) {
+function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount, roleAllowed }) {
   const ref = useRef();
   useEffect(() => { const h = (e) => { if(ref.current && !ref.current.contains(e.target)) onClose(); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [onClose]);
   const [pos, setPos] = useState({x,y});
@@ -601,14 +601,9 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, sele
     <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#18181B",border:"1px solid #27272A",borderRadius:8,padding:6,boxShadow:"0 8px 32px rgba(0,0,0,0.6)",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170,color:"#F4F4F5"}}>
       {isBulk&&<div style={{gridColumn:"1/-1",background:"#1e1b4b",border:"1px solid #4338CA",borderRadius:6,padding:"4px 8px",marginBottom:2,fontSize:11,color:"#C7D2FE",fontWeight:700,textAlign:"center"}}>{selectionCount}セルに一括適用</div>}
       {roleAllowed&&<div style={{gridColumn:"1/-1",background:"#1c1917",border:"1px solid #78350F",borderRadius:6,padding:"3px 8px",marginBottom:2,fontSize:10,color:"#FEF3C7",textAlign:"center"}}>役職制限: {roleAllowed.join("・")}のみ</div>}
-      {(isBulk||isFixed||cellValue)&&<>
-        {isBulk
-          ? <><button onClick={onFix} style={{gridColumn:"1/-1",background:"#4c1d95",color:"#EDE9FE",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>選択セルを希望勤務にする</button><button onClick={onUnfix} style={{gridColumn:"1/-1",background:"#27272A",color:"#C4B5FD",border:"1px solid #52525B",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>希望勤務を解除</button></>
-          : isFixed
-            ? <button onClick={onUnfix} style={{gridColumn:"1/-1",background:"#27272A",color:"#C4B5FD",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>希望勤務を解除</button>
-            : <button onClick={onFix} style={{gridColumn:"1/-1",background:"#4c1d95",color:"#EDE9FE",border:"1px solid #7c3aed",borderRadius:6,padding:"6px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>希望勤務にする</button>}
-        <div style={{gridColumn:"1/-1",borderTop:"1px solid #27272A",margin:"2px 0"}}/>
-      </>}
+      {/* 右クリックで勤務を入れた時点で希望勤務ロック（統一ルール）。専用の「希望勤務にする/解除」メニューは廃止し、
+          値の選択＝ロック、クリア＝解除で兼ねる（handleMenuSelect が shiftRequestsByMonth を更新する）。 */}
+      {isBulk&&<div style={{gridColumn:"1/-1",background:"#3b1d5e",border:"1px solid #7c3aed",borderRadius:6,padding:"4px 8px",marginBottom:2,fontSize:10,color:"#EDE9FE",textAlign:"center"}}>選択した勤務は希望勤務として固定されます</div>}
       {customWorkKeys.length>0&&<>
         {customWorkKeys.map(cd => { const s=getShiftDef(cd.key,customDefs); return <button key={cd.key} onClick={()=>onSelect(cd.key)} style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:s.bg,borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#A1A1AA"}}>{cd.key}</span></button>; })}
         <div style={{gridColumn:"1/-1",borderTop:"1px solid #27272A",margin:"2px 0"}}/>
@@ -1926,7 +1921,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
   );
 }
 
-function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit }) {
+function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
@@ -2138,12 +2133,19 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   <div style={{fontSize:10,color:"#94A3B8",display:"flex",gap:6,alignItems:"center",marginTop:2}}><span>{s.role}</span>{s.nightOk&&<span style={{color:nightOver?"#DC2626":"#64748B",fontSize:10,fontWeight:nightOver?600:400}}>N{nightCnt}/{s.nightMax}</span>}</div>
                 </td>
                 {Array.from({length:days},(_,i)=>i+1).map(d=>{
-                  const type=sShifts[d]||"", isKibo=kibodays.includes(d)&&!type, isYukyu=yukyudays.includes(d)&&!type&&!isKibo, consecViol=isConsecViolation(sShifts,d);
+                  const type=sShifts[d]||"";
+                  // 希望勤務(shiftRequestsByMonth)は希望休/有休と同じくstaffList側に残る。全体クリアで
+                  // deptShiftsが空になっても、値をオーバーレイ表示して勤務が消えないようにする（不整合(b)解消）。
+                  const fixedVal=s.shiftRequestsByMonth?.[mk]?.[d];
+                  const isFixed=!!fixedVal;
+                  const dispType=type||fixedVal||"";
+                  const isKibo=kibodays.includes(d)&&!dispType, isYukyu=yukyudays.includes(d)&&!dispType&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
-                  const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&type&&deptWork.has(type)&&type!=="明け"&&!_ra.includes(type);
+                  const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&dispType&&deptWork.has(dispType)&&dispType!=="明け"&&!_ra.includes(dispType);
                   const cdow=new Date(year,month,d).getDay(); const cellWeekBg=cdow===0?"#FFF5F5":cdow===6?"#F5F5FF":undefined;
-                  const isFixed=!!s.shiftRequestsByMonth?.[mk]?.[d];
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":isFixed?"#f5f3ff":cellWeekBg,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":isFixed?"2px solid #a78bfa":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol||isFixed?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#BE123C"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={type} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  // 青枠は下書き中(confirmed=false)のみ。確定後はデータ(shiftRequestsByMonth)は残し装飾だけ消す。
+                  const showFix=isFixed&&!confirmed;
+                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":showFix?"#f5f3ff":cellWeekBg,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showFix?"2px solid #a78bfa":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol||showFix?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#BE123C"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispType} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -4429,41 +4431,31 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (isMonthLoading) return; // 月ロード中は操作ブロック
     setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4,selCells:selCells||null});
   }, []);
+  // 右クリックメニューで値を選択 = その勤務を配置し、同時に希望勤務としてロック（shiftRequestsByMonth）。
+  //   「クリア」(空値)を選ぶとセルを消し、希望勤務ロックも解除する（専用の「希望勤務にする/解除」は廃止）。
+  //   保存先・形式は既存の applyCellFix と完全一致（選択値を shiftsNow 形に包んで渡す）。
+  //   ★編集保護フラグ(PR #117): setStaffList した shiftRequestsByMonth が保存完了前に Realtime で
+  //     巻き戻されないよう userEditSeq/saveStatusRef を立てる（立てないと生成前にロックが外れる）。
   const handleMenuSelect = (shiftKey) => {
     if (!ctxMenu) return;
     const {staffId, day, selCells} = ctxMenu;
-    if (selCells && selCells.size > 1) {
-      setDeptShifts(prev => {
-        const next = {...prev};
-        for (const cellKey of selCells) {
-          const lastPipe = cellKey.lastIndexOf('|');
-          const sid = cellKey.slice(0, lastPipe);
-          const d = parseInt(cellKey.slice(lastPipe + 1));
-          next[sid] = {...(next[sid] || {}), [d]: shiftKey};
-        }
-        return next;
-      });
-    } else {
-      setDeptShifts(prev=>({...prev,[staffId]:{...(prev[staffId]||{}),[day]:shiftKey}}));
-    }
-    setCtxMenu(null);
-  };
-  // 希望勤務にする/解除: shiftRequestsByMonth に値を載せて既存ロック機構でロックする（固定＝希望勤務で統一）
-  //   （core.js未変更。有休も消費計算は v==='有休' 分岐で1回のみカウント＝二重減算なし）
-  const applyFix = (fix) => {
-    if (!ctxMenu) return;
-    const { staffId, day, selCells } = ctxMenu;
     const targets = (selCells && selCells.size > 1)
       ? [...selCells].map(k => { const i = k.lastIndexOf('|'); return [k.slice(0, i), +k.slice(i + 1)]; })
       : [[staffId, day]];
-    const shiftsNow = allShiftsRef.current[activeDeptId] || {};
-    // ★編集保護: 他の編集経路(setDeptShifts)と同様にRealtime巻き戻しを防ぐフラグを立てる。
-    //   これがないと setStaffList した shiftRequestsByMonth が保存完了前にRealtimeでサーバー版へ
-    //   巻き戻され、生成が読むstaffListに反映されずロックが外れる（本不具合の原因）。
     userEditSeq.current++;
     saveStatusRef.current = "unsaved";
     setSaveStatus("unsaved");
-    setStaffList(prev => prev.map(s => applyCellFix(s, targets, fix, shiftsNow, year, month)));
+    // ① セルに値を配置（クリアなら空）
+    setDeptShifts(prev => {
+      const next = {...prev};
+      for (const [sid, d] of targets) next[sid] = {...(next[sid] || {}), [d]: shiftKey};
+      return next;
+    });
+    // ② 希望勤務ロックを更新: 値あり=登録(fix)、クリア=解除。選択値そのものを shiftsNow 形にして渡す。
+    const fix = !!shiftKey;
+    const synthNow = {};
+    for (const [sid, d] of targets) synthNow[sid] = {...(synthNow[sid] || {}), [d]: shiftKey};
+    setStaffList(prev => prev.map(s => applyCellFix(s, targets, fix, synthNow, year, month)));
     setCtxMenu(null);
   };
 
@@ -4626,14 +4618,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
             </div>
           </div>}
-          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)}/></ZoomWrapper>
+          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
       </div>
 
-      {ctxMenu&&(()=>{const _mk=monthKey(year,month);const _isBulk=!!(ctxMenu.selCells&&ctxMenu.selCells.size>1);const _st=staffList.find(s=>s.id===ctxMenu.staffId);const _cellVal=_isBulk?null:(allShifts[activeDeptId]?.[ctxMenu.staffId]?.[ctxMenu.day]||"");const _isFixed=_isBulk?false:!!_st?.shiftRequestsByMonth?.[_mk]?.[ctxMenu.day];return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null} isBulk={_isBulk} cellValue={_cellVal} isFixed={_isFixed} onFix={()=>applyFix(true)} onUnfix={()=>applyFix(false)}/>;})()}
+      {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
