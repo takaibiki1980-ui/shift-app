@@ -1107,6 +1107,136 @@ function ClearModal({ deptLabel, onClearDept, onClose }) {
   );
 }
 
+/* ★一時デバッグ用パネル: computeLearnedTrend が算出した学習値を画面で確認する（読み取り専用）。
+   生成・学習ロジックには一切関与しない。原因調査後に削除予定。
+   - 平滑後の値 = learnedTrend（生成が実際に使う値）
+   - 生データ   = allDBData から素直に集計した観測率（重み・平滑なし。目視確認との突き合わせ用） */
+function DebugLearnPanel({ learnedTrend, staffList, depts, allDBData, activeDeptId, year, month, onClose }) {
+  const DOW = ['日','月','火','水','木','金','土']; // getDay() 順（dowShiftRate と同じ並び）
+  const REST = new Set(['休み','希望休','有休']);
+  const deptStaff = (staffList || []).filter(s => s.dept === activeDeptId);
+  const [selId, setSelId] = useState(() => {
+    const chiba = deptStaff.find(s => (s.name || '').includes('千葉'));
+    return (chiba || deptStaff[0])?.id || null;
+  });
+  const sel = deptStaff.find(s => s.id === selId);
+  const dept = (depts || []).find(d => d.id === activeDeptId);
+
+  // 生データ観測（全月・重みなし）。曜日は getDay() 順（0=日）。
+  const rawOf = (staffId) => {
+    const tot = [0,0,0,0,0,0,0], rest = [0,0,0,0,0,0,0]; const months = new Set(); let days = 0;
+    for (const [key, shifts] of Object.entries(allDBData || {})) {
+      if (!key.startsWith('shifts_') || !shifts || typeof shifts !== 'object') continue;
+      const p = key.split('_'); if (p.length < 4) continue; const y = +p[1], mRaw = +p[2];
+      if (isNaN(y) || isNaN(mRaw)) continue; const ss = shifts[staffId]; if (!ss || typeof ss !== 'object') continue;
+      months.add(`${y}-${mRaw}`);
+      for (const [dStr, v] of Object.entries(ss)) { if (!v) continue; const d = +dStr; if (isNaN(d)) continue;
+        const dow = new Date(y, mRaw - 1, d).getDay(); tot[dow]++; if (REST.has(v)) rest[dow]++; days++; }
+    }
+    return { tot, rest, months: months.size, days };
+  };
+  // learnedTrend の dowRestRate は (getDay()+6)%7 の並び（月=0..日=6）。表示(0=日)へ変換。
+  const smRest = (t, dowSun) => t?.dowRestRate?.[(dowSun + 6) % 7];
+  const pct = (v) => v == null ? '—' : (v * 100).toFixed(1) + '%';
+
+  const t = sel ? learnedTrend?.[sel.name] : null;
+  const raw = sel ? rawOf(sel.id) : null;
+  const mk = monthKey(year, month);
+  const daysInMonth = getDays(year, month);
+  const sundays = []; for (let d = 1; d <= daysInMonth; d++) if (new Date(year, month, d).getDay() === 0) sundays.push(d);
+  const monthShifts = allDBData?.[`shifts_${year}_${month + 1}_${activeDeptId}`] || {};
+
+  const th = { padding: '4px 8px', fontSize: 11, color: '#334155', borderBottom: '1px solid #E2E8F0', textAlign: 'center', whiteSpace: 'nowrap' };
+  const td = { padding: '4px 8px', fontSize: 11, color: '#0F172A', borderBottom: '1px solid #F1F5F9', textAlign: 'center', whiteSpace: 'nowrap' };
+  const sunHi = { background: '#FFF1F2' };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, padding: 20, maxWidth: 720, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', margin: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: '#6366F1' }}>🔍 学習値デバッグ（一時表示）</div>
+          <button onClick={onClose} style={{ background: '#F4F4F5', border: '1px solid #D4D4D8', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>閉じる</button>
+        </div>
+        <div style={{ fontSize: 11, color: '#64748B', marginBottom: 12 }}>
+          部署「{dept?.label || activeDeptId}」／ 平滑後＝生成が実際に使う値（computeLearnedTrend）、生データ＝全月の実績を素直に集計した観測率（重み・平滑なし）。
+        </div>
+
+        {/* スタッフ選択 */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+          {deptStaff.map(s => (
+            <button key={s.id} onClick={() => setSelId(s.id)} style={{ background: s.id === selId ? '#6366F1' : '#F1F5F9', color: s.id === selId ? '#fff' : '#334155', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: s.id === selId ? 800 : 500 }}>{s.name}</button>
+          ))}
+        </div>
+
+        {!sel ? <div style={{ color: '#94A3B8', fontSize: 12 }}>スタッフがいません。</div> : !t ? (
+          <div style={{ color: '#DC2626', fontSize: 12, fontWeight: 700 }}>⚠ {sel.name} さんの学習データがありません（totals&lt;1／実績未保存の可能性）。生データ観測: {raw.days}日 / {raw.months}ヶ月</div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: '#0a7d34', fontWeight: 700, marginBottom: 10 }}>
+              {sel.name}（{sel.role || '-'}）｜学習月数: {learnedTrend._monthCounts?.[sel.name] ?? '?'}ヶ月 ／ 生データ観測: 全{raw.days}日・{raw.months}ヶ月
+            </div>
+
+            {/* ① 曜日別 休み率 */}
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#c0392b', margin: '6px 0' }}>① 曜日別 休み率（dowRestRate）</div>
+            <div style={{ overflowX: 'auto', marginBottom: 8 }}>
+              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <thead><tr><th style={th}></th>{DOW.map((w, i) => <th key={w} style={i === 0 ? { ...th, ...sunHi, color: '#c0392b', fontWeight: 800 } : th}>{w}</th>)}</tr></thead>
+                <tbody>
+                  <tr><td style={{ ...td, textAlign: 'left', color: '#475569' }}>休み率(平滑後・生成が使う)</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi, fontWeight: 800, color: '#c0392b' } : td}>{pct(smRest(t, i))}</td>)}</tr>
+                  <tr><td style={{ ...td, textAlign: 'left', color: '#475569' }}>休み率(生データ)</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi, fontWeight: 800, color: '#c0392b' } : td}>{raw.tot[i] ? ((raw.rest[i] / raw.tot[i]) * 100).toFixed(1) + '%' : '—'}</td>)}</tr>
+                  <tr><td style={{ ...td, textAlign: 'left', color: '#94A3B8' }}>観測(休み/全日)</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi } : td}>{raw.rest[i]}/{raw.tot[i]}</td>)}</tr>
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#c0392b', marginBottom: 14 }}>
+              ▶ 日曜の休み率: 生データ {raw.tot[0] ? ((raw.rest[0] / raw.tot[0]) * 100).toFixed(1) + '%' : '—'} → 平滑後(生成が使う) {pct(smRest(t, 0))}
+            </div>
+
+            {/* ② 曜日別 シフト種別 出現率 */}
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#2563EB', margin: '6px 0' }}>② 曜日別 シフト種別 出現率（dowShiftRate）</div>
+            {(() => {
+              const types = new Set(); (t.dowShiftRate || []).forEach(r => r && Object.keys(r).forEach(k => types.add(k)));
+              const typeArr = [...types];
+              if (typeArr.length === 0) return <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 12 }}>勤務データなし</div>;
+              return (
+                <div style={{ overflowX: 'auto', marginBottom: 14 }}>
+                  <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                    <thead><tr><th style={th}></th>{DOW.map((w, i) => <th key={w} style={i === 0 ? { ...th, ...sunHi, color: '#c0392b', fontWeight: 800 } : th}>{w}</th>)}</tr></thead>
+                    <tbody>{typeArr.map(k => (
+                      <tr key={k}><td style={{ ...td, textAlign: 'left', color: '#475569', fontWeight: 700 }}>{k}</td>{DOW.map((w, i) => { const v = t.dowShiftRate?.[i]?.[k]; return <td key={w} style={i === 0 ? { ...td, ...sunHi } : td}>{v != null ? (v * 100).toFixed(0) + '%' : '—'}</td>; })}</tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              );
+            })()}
+
+            {/* ③ 対象月(表示中の月)の日曜の状況 */}
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#9b4db5', margin: '6px 0' }}>③ {year}年{month + 1}月の日曜の状況（表示中の月）</div>
+            <div style={{ fontSize: 11, color: '#475569', marginBottom: 6 }}>minStaff: {JSON.stringify(dept?.minStaff || {})}</div>
+            {Object.keys(monthShifts).length === 0 ? <div style={{ fontSize: 11, color: '#94A3B8' }}>この月の生成結果は未保存です。</div> : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead><tr><th style={th}>日</th><th style={th}>{sel.name}の割当</th><th style={th}>出勤者数</th><th style={th}>休み者数</th><th style={{ ...th, textAlign: 'left' }}>出勤者</th></tr></thead>
+                  <tbody>{sundays.map(d => {
+                    const cs = monthShifts[sel.id]?.[d] || '(空)';
+                    const wk = deptStaff.filter(s => { const v = monthShifts[s.id]?.[d]; return v && !['休み', '希望休', '有休', '明け', ''].includes(v); });
+                    const rs = deptStaff.filter(s => REST.has(monthShifts[s.id]?.[d]));
+                    const isChibaWork = !REST.has(cs) && cs !== '(空)' && cs !== '明け';
+                    return <tr key={d}><td style={td}>{d}</td><td style={{ ...td, fontWeight: 800, color: isChibaWork ? '#DC2626' : '#0F172A' }}>{cs}</td><td style={td}>{wk.length}</td><td style={td}>{rs.length}</td><td style={{ ...td, textAlign: 'left', color: '#64748B' }}>{wk.map(s => `${s.name}:${monthShifts[s.id][d]}`).join(' / ')}</td></tr>;
+                  })}</tbody>
+                </table>
+              </div>
+            )}
+            <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 12 }}>
+              読み方: 生データの日曜が100%近いのに平滑後が下がっている場合は、部署平均とのスムージング等で薄まっている可能性。生データ自体が100%でない場合は、学習に入った実績が想定と違う（別月・下書き・別部署保存など）可能性。
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PinModal({ deptLabel, onVerify, onClose }) {
   const [digits, setDigits] = useState(['','','','']);
   const [error, setError] = useState(false);
@@ -4026,6 +4156,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const [excelPasteModal, setExcelPasteModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
+  const [debugLearn, setDebugLearn] = useState(false); // ★一時デバッグ: 学習値確認パネルの表示トグル
   const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [adminModal, setAdminModal] = useState(false);
@@ -4542,6 +4673,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 <div onClick={()=>{setShareModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Share2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>共有</span></div>
                 {profile?.is_admin&&<div onClick={()=>{setAdminModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Building2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>管理</span></div>}
                 <div onClick={()=>{setHelpModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><HelpCircle size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>ヘルプ</span></div>
+                {/* ★一時デバッグ: 学習値(computeLearnedTrendの結果)を画面で確認する。原因調査後に削除。 */}
+                <div onClick={()=>{setDebugLearn(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><span style={{fontSize:14}}>🔍</span><span>学習値デバッグ</span></div>
                 {!isLocked&&<><div style={{height:1,background:"#F1F5F9",margin:"4px 0"}}/>
                 <div onClick={()=>{setClearModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#DC2626"}} onMouseEnter={e=>e.currentTarget.style.background="#FEF2F2"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Trash2 size={14} strokeWidth={2}/><span>シフトをクリア</span></div></>}
               </div>
@@ -4629,6 +4762,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {debugLearn&&<DebugLearnPanel learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month} onClose={()=>setDebugLearn(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
             const snapshot=allShiftsRef.current[activeDeptId]||{};
