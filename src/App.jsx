@@ -1107,18 +1107,15 @@ function ClearModal({ deptLabel, onClearDept, onClose }) {
   );
 }
 
-/* ★一時デバッグ用パネル: computeLearnedTrend が算出した学習値を画面で確認する（読み取り専用）。
-   生成・学習ロジックには一切関与しない。原因調査後に削除予定。
-   - 平滑後の値 = learnedTrend（生成が実際に使う値）
-   - 生データ   = allDBData から素直に集計した観測率（重み・平滑なし。目視確認との突き合わせ用） */
-function DebugLearnPanel({ learnedTrend, staffList, depts, allDBData, activeDeptId, year, month, onClose }) {
-  const DOW = ['日','月','火','水','木','金','土']; // getDay() 順（dowShiftRate と同じ並び）
+/* 学習状況ビュー: 自動生成が学習した各スタッフの「曜日ごとの癖」を画面で確認する（読み取り専用）。
+   計算(computeLearnedTrend)・生成(core.js)には一切関与しない。表示のみ。
+   - 生成が使う値 = learnedTrend（生成が実際に参照する、平滑・重み付け後の値）
+   - 実績データ   = allDBData を素直に集計した観測率（重み・平滑なし＝実際の実績そのもの） */
+function LearnStatusView({ learnedTrend, staffList, depts, allDBData, activeDeptId, year, month }) {
+  const DOW = ['日','月','火','水','木','金','土']; // getDay() 順
   const REST = new Set(['休み','希望休','有休']);
   const deptStaff = (staffList || []).filter(s => s.dept === activeDeptId);
-  const [selId, setSelId] = useState(() => {
-    const chiba = deptStaff.find(s => (s.name || '').includes('千葉'));
-    return (chiba || deptStaff[0])?.id || null;
-  });
+  const [selId, setSelId] = useState(() => deptStaff[0]?.id || null);
   const sel = deptStaff.find(s => s.id === selId);
   const dept = (depts || []).find(d => d.id === activeDeptId);
 
@@ -1141,7 +1138,6 @@ function DebugLearnPanel({ learnedTrend, staffList, depts, allDBData, activeDept
 
   const t = sel ? learnedTrend?.[sel.name] : null;
   const raw = sel ? rawOf(sel.id) : null;
-  const mk = monthKey(year, month);
   const daysInMonth = getDays(year, month);
   const sundays = []; for (let d = 1; d <= daysInMonth; d++) if (new Date(year, month, d).getDay() === 0) sundays.push(d);
   const monthShifts = allDBData?.[`shifts_${year}_${month + 1}_${activeDeptId}`] || {};
@@ -1151,14 +1147,16 @@ function DebugLearnPanel({ learnedTrend, staffList, depts, allDBData, activeDept
   const sunHi = { background: '#FFF1F2' };
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: 20 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, padding: 20, maxWidth: 720, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', margin: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <div style={{ fontSize: 15, fontWeight: 900, color: '#6366F1' }}>🔍 学習値デバッグ（一時表示）</div>
-          <button onClick={onClose} style={{ background: '#F4F4F5', border: '1px solid #D4D4D8', borderRadius: 8, padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>閉じる</button>
+    <div style={{ maxWidth: 760, margin: '0 auto' }}>
+      <div style={{ background: '#fff', border: '1px solid #E4E4E7', borderRadius: 14, padding: 18 }}>
+        <div style={{ fontSize: 15, fontWeight: 900, color: '#4F46E5', marginBottom: 4 }}>📈 学習状況</div>
+        <div style={{ fontSize: 11.5, color: '#475569', marginBottom: 6, lineHeight: 1.6 }}>
+          自動生成が過去の実績から学習した「スタッフごと・曜日ごとの傾向」を表示します。部署「{dept?.label || activeDeptId}」。
         </div>
-        <div style={{ fontSize: 11, color: '#64748B', marginBottom: 12 }}>
-          部署「{dept?.label || activeDeptId}」／ 平滑後＝生成が実際に使う値（computeLearnedTrend）、生データ＝全月の実績を素直に集計した観測率（重み・平滑なし）。
+        <div style={{ fontSize: 11, color: '#64748B', background: '#F8FAFC', border: '1px solid #EEF2F7', borderRadius: 8, padding: '7px 11px', marginBottom: 14, lineHeight: 1.7 }}>
+          <b style={{ color: '#c0392b' }}>実績データ</b> ＝ 実際のシフト実績そのもの（そのまま集計）。<br />
+          <b style={{ color: '#2563EB' }}>生成が使う値</b> ＝ その実績を元に、直近月を重視・データの少なさを部署平均で補正して、生成が実際に参照する値。<br />
+          <span style={{ color: '#94A3B8' }}>※ 両者が大きく違う場合は、実績が少ない／下書きのまま／別部署に入っている等で学習が薄まっている可能性があります。</span>
         </div>
 
         {/* スタッフ選択 */}
@@ -1169,31 +1167,31 @@ function DebugLearnPanel({ learnedTrend, staffList, depts, allDBData, activeDept
         </div>
 
         {!sel ? <div style={{ color: '#94A3B8', fontSize: 12 }}>スタッフがいません。</div> : !t ? (
-          <div style={{ color: '#DC2626', fontSize: 12, fontWeight: 700 }}>⚠ {sel.name} さんの学習データがありません（totals&lt;1／実績未保存の可能性）。生データ観測: {raw.days}日 / {raw.months}ヶ月</div>
+          <div style={{ color: '#DC2626', fontSize: 12, fontWeight: 700 }}>⚠ {sel.name} さんの学習データがまだありません（実績が未保存の可能性）。実績データの観測: {raw.days}日 / {raw.months}ヶ月</div>
         ) : (
           <>
             <div style={{ fontSize: 12, color: '#0a7d34', fontWeight: 700, marginBottom: 10 }}>
-              {sel.name}（{sel.role || '-'}）｜学習月数: {learnedTrend._monthCounts?.[sel.name] ?? '?'}ヶ月 ／ 生データ観測: 全{raw.days}日・{raw.months}ヶ月
+              {sel.name}（{sel.role || '-'}）｜学習に使った月数: {learnedTrend._monthCounts?.[sel.name] ?? '?'}ヶ月 ／ 実績データの件数: 全{raw.days}日・{raw.months}ヶ月分
             </div>
 
-            {/* ① 曜日別 休み率 */}
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#c0392b', margin: '6px 0' }}>① 曜日別 休み率（dowRestRate）</div>
+            {/* ① 曜日別の休み率 */}
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#c0392b', margin: '6px 0' }}>① 曜日別の休み率</div>
             <div style={{ overflowX: 'auto', marginBottom: 8 }}>
               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                 <thead><tr><th style={th}></th>{DOW.map((w, i) => <th key={w} style={i === 0 ? { ...th, ...sunHi, color: '#c0392b', fontWeight: 800 } : th}>{w}</th>)}</tr></thead>
                 <tbody>
-                  <tr><td style={{ ...td, textAlign: 'left', color: '#475569' }}>休み率(平滑後・生成が使う)</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi, fontWeight: 800, color: '#c0392b' } : td}>{pct(smRest(t, i))}</td>)}</tr>
-                  <tr><td style={{ ...td, textAlign: 'left', color: '#475569' }}>休み率(生データ)</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi, fontWeight: 800, color: '#c0392b' } : td}>{raw.tot[i] ? ((raw.rest[i] / raw.tot[i]) * 100).toFixed(1) + '%' : '—'}</td>)}</tr>
-                  <tr><td style={{ ...td, textAlign: 'left', color: '#94A3B8' }}>観測(休み/全日)</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi } : td}>{raw.rest[i]}/{raw.tot[i]}</td>)}</tr>
+                  <tr><td style={{ ...td, textAlign: 'left', color: '#2563EB', fontWeight: 700 }}>生成が使う値</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi, fontWeight: 800, color: '#c0392b' } : td}>{pct(smRest(t, i))}</td>)}</tr>
+                  <tr><td style={{ ...td, textAlign: 'left', color: '#c0392b', fontWeight: 700 }}>実績データ</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi, fontWeight: 800, color: '#c0392b' } : td}>{raw.tot[i] ? ((raw.rest[i] / raw.tot[i]) * 100).toFixed(1) + '%' : '—'}</td>)}</tr>
+                  <tr><td style={{ ...td, textAlign: 'left', color: '#94A3B8' }}>実績（休み/全日数）</td>{DOW.map((w, i) => <td key={w} style={i === 0 ? { ...td, ...sunHi } : td}>{raw.rest[i]}/{raw.tot[i]}</td>)}</tr>
                 </tbody>
               </table>
             </div>
             <div style={{ fontSize: 12, fontWeight: 800, color: '#c0392b', marginBottom: 14 }}>
-              ▶ 日曜の休み率: 生データ {raw.tot[0] ? ((raw.rest[0] / raw.tot[0]) * 100).toFixed(1) + '%' : '—'} → 平滑後(生成が使う) {pct(smRest(t, 0))}
+              ▶ 日曜の休み率: 実績データ {raw.tot[0] ? ((raw.rest[0] / raw.tot[0]) * 100).toFixed(1) + '%' : '—'} → 生成が使う値 {pct(smRest(t, 0))}
             </div>
 
-            {/* ② 曜日別 シフト種別 出現率 */}
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#2563EB', margin: '6px 0' }}>② 曜日別 シフト種別 出現率（dowShiftRate）</div>
+            {/* ② 曜日別の勤務種別の割合 */}
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#2563EB', margin: '6px 0' }}>② 曜日別の勤務種別の割合（生成が使う値）</div>
             {(() => {
               const types = new Set(); (t.dowShiftRate || []).forEach(r => r && Object.keys(r).forEach(k => types.add(k)));
               const typeArr = [...types];
@@ -1210,10 +1208,10 @@ function DebugLearnPanel({ learnedTrend, staffList, depts, allDBData, activeDept
               );
             })()}
 
-            {/* ③ 対象月(表示中の月)の日曜の状況 */}
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#9b4db5', margin: '6px 0' }}>③ {year}年{month + 1}月の日曜の状況（表示中の月）</div>
-            <div style={{ fontSize: 11, color: '#475569', marginBottom: 6 }}>minStaff: {JSON.stringify(dept?.minStaff || {})}</div>
-            {Object.keys(monthShifts).length === 0 ? <div style={{ fontSize: 11, color: '#94A3B8' }}>この月の生成結果は未保存です。</div> : (
+            {/* ③ 表示中の月の日曜の状況 */}
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#9b4db5', margin: '6px 0' }}>③ {year}年{month + 1}月（表示中の月）の日曜の割り当て状況</div>
+            <div style={{ fontSize: 11, color: '#475569', marginBottom: 6 }}>この部署の最低配置人数：{Object.entries(dept?.minStaff || {}).map(([k, v]) => `${k}×${v}`).join(' / ') || '未設定'}</div>
+            {Object.keys(monthShifts).length === 0 ? <div style={{ fontSize: 11, color: '#94A3B8' }}>この月のシフトはまだ作成されていません。</div> : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                   <thead><tr><th style={th}>日</th><th style={th}>{sel.name}の割当</th><th style={th}>出勤者数</th><th style={th}>休み者数</th><th style={{ ...th, textAlign: 'left' }}>出勤者</th></tr></thead>
@@ -1221,14 +1219,14 @@ function DebugLearnPanel({ learnedTrend, staffList, depts, allDBData, activeDept
                     const cs = monthShifts[sel.id]?.[d] || '(空)';
                     const wk = deptStaff.filter(s => { const v = monthShifts[s.id]?.[d]; return v && !['休み', '希望休', '有休', '明け', ''].includes(v); });
                     const rs = deptStaff.filter(s => REST.has(monthShifts[s.id]?.[d]));
-                    const isChibaWork = !REST.has(cs) && cs !== '(空)' && cs !== '明け';
-                    return <tr key={d}><td style={td}>{d}</td><td style={{ ...td, fontWeight: 800, color: isChibaWork ? '#DC2626' : '#0F172A' }}>{cs}</td><td style={td}>{wk.length}</td><td style={td}>{rs.length}</td><td style={{ ...td, textAlign: 'left', color: '#64748B' }}>{wk.map(s => `${s.name}:${monthShifts[s.id][d]}`).join(' / ')}</td></tr>;
+                    const selWorking = !REST.has(cs) && cs !== '(空)' && cs !== '明け';
+                    return <tr key={d}><td style={td}>{d}</td><td style={{ ...td, fontWeight: 800, color: selWorking ? '#DC2626' : '#0F172A' }}>{cs}</td><td style={td}>{wk.length}</td><td style={td}>{rs.length}</td><td style={{ ...td, textAlign: 'left', color: '#64748B' }}>{wk.map(s => `${s.name}:${monthShifts[s.id][d]}`).join(' / ')}</td></tr>;
                   })}</tbody>
                 </table>
               </div>
             )}
-            <div style={{ fontSize: 10, color: '#94A3B8', marginTop: 12 }}>
-              読み方: 生データの日曜が100%近いのに平滑後が下がっている場合は、部署平均とのスムージング等で薄まっている可能性。生データ自体が100%でない場合は、学習に入った実績が想定と違う（別月・下書き・別部署保存など）可能性。
+            <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 12, lineHeight: 1.7 }}>
+              読み方: 実績データが100%近いのに「生成が使う値」が下がっている場合は、実績が少なく部署平均で補正されて薄まっている可能性。実績データ自体が100%でない場合は、学習に入った実績が想定と違う（別の月・下書きのまま・別部署に保存など）可能性があります。
             </div>
           </>
         )}
@@ -4156,7 +4154,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const [excelPasteModal, setExcelPasteModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
-  const [debugLearn, setDebugLearn] = useState(false); // ★一時デバッグ: 学習値確認パネルの表示トグル
   const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [adminModal, setAdminModal] = useState(false);
@@ -4673,8 +4670,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 <div onClick={()=>{setShareModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Share2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>共有</span></div>
                 {profile?.is_admin&&<div onClick={()=>{setAdminModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Building2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>管理</span></div>}
                 <div onClick={()=>{setHelpModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><HelpCircle size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>ヘルプ</span></div>
-                {/* ★一時デバッグ: 学習値(computeLearnedTrendの結果)を画面で確認する。原因調査後に削除。 */}
-                <div onClick={()=>{setDebugLearn(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><span style={{fontSize:14}}>🔍</span><span>学習値デバッグ</span></div>
                 {!isLocked&&<><div style={{height:1,background:"#F1F5F9",margin:"4px 0"}}/>
                 <div onClick={()=>{setClearModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#DC2626"}} onMouseEnter={e=>e.currentTarget.style.background="#FEF2F2"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Trash2 size={14} strokeWidth={2}/><span>シフトをクリア</span></div></>}
               </div>
@@ -4700,6 +4695,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           ? <button onClick={()=>alert("予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 予定表</button>
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#18181B":"#71717A",borderBottom:innerTab==="yotei"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
         }
+        <button onClick={()=>setInnerTab("learn")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="learn"?"#18181B":"#71717A",borderBottom:innerTab==="learn"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="learn"?700:500,whiteSpace:"nowrap",flexShrink:0}}>学習状況</button>
         {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
           {innerTab==="shift"&&(
             <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -4756,13 +4752,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
+        {innerTab==="learn"&&<LearnStatusView learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month}/>}
       </div>
 
       {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
-      {debugLearn&&<DebugLearnPanel learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month} onClose={()=>setDebugLearn(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
             const snapshot=allShiftsRef.current[activeDeptId]||{};
