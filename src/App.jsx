@@ -1139,7 +1139,8 @@ function LearnStatusView({ learnedTrend, staffList, depts, allDBData, activeDept
   const t = sel ? learnedTrend?.[sel.name] : null;
   const raw = sel ? rawOf(sel.id) : null;
   const daysInMonth = getDays(year, month);
-  const sundays = []; for (let d = 1; d <= daysInMonth; d++) if (new Date(year, month, d).getDay() === 0) sundays.push(d);
+  const [selDow, setSelDow] = useState(0); // ③で調べる曜日（0=日〜6=土）。初期は日曜。
+  const dowDays = []; for (let d = 1; d <= daysInMonth; d++) if (new Date(year, month, d).getDay() === selDow) dowDays.push(d);
   const monthShifts = allDBData?.[`shifts_${year}_${month + 1}_${activeDeptId}`] || {};
 
   const th = { padding: '4px 8px', fontSize: 11, color: '#334155', borderBottom: '1px solid #E2E8F0', textAlign: 'center', whiteSpace: 'nowrap' };
@@ -1208,14 +1209,19 @@ function LearnStatusView({ learnedTrend, staffList, depts, allDBData, activeDept
               );
             })()}
 
-            {/* ③ 表示中の月の日曜の状況 */}
-            <div style={{ fontSize: 12, fontWeight: 800, color: '#9b4db5', margin: '6px 0' }}>③ {year}年{month + 1}月（表示中の月）の日曜の割り当て状況</div>
+            {/* ③ 表示中の月の指定曜日の状況 */}
+            <div style={{ fontSize: 12, fontWeight: 800, color: '#9b4db5', margin: '6px 0' }}>③ {year}年{month + 1}月（表示中の月）の{DOW[selDow]}曜の割り当て状況</div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+              {DOW.map((w, i) => (
+                <button key={w} onClick={() => setSelDow(i)} style={{ background: i === selDow ? '#9b4db5' : '#F1F5F9', color: i === selDow ? '#fff' : (i === 0 ? '#c0392b' : i === 6 ? '#2563EB' : '#334155'), border: 'none', borderRadius: 7, padding: '5px 12px', cursor: 'pointer', fontSize: 12, fontWeight: i === selDow ? 800 : 600 }}>{w}</button>
+              ))}
+            </div>
             <div style={{ fontSize: 11, color: '#475569', marginBottom: 6 }}>この部署の最低配置人数：{Object.entries(dept?.minStaff || {}).map(([k, v]) => `${k}×${v}`).join(' / ') || '未設定'}</div>
             {Object.keys(monthShifts).length === 0 ? <div style={{ fontSize: 11, color: '#94A3B8' }}>この月のシフトはまだ作成されていません。</div> : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                   <thead><tr><th style={th}>日</th><th style={th}>{sel.name}の割当</th><th style={th}>出勤者数</th><th style={th}>休み者数</th><th style={{ ...th, textAlign: 'left' }}>出勤者</th></tr></thead>
-                  <tbody>{sundays.map(d => {
+                  <tbody>{dowDays.map(d => {
                     const cs = monthShifts[sel.id]?.[d] || '(空)';
                     const wk = deptStaff.filter(s => { const v = monthShifts[s.id]?.[d]; return v && !['休み', '希望休', '有休', '明け', ''].includes(v); });
                     const rs = deptStaff.filter(s => REST.has(monthShifts[s.id]?.[d]));
