@@ -2,12 +2,13 @@ import { useState, useCallback, useRef, useEffect, useMemo, Component } from "re
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal } from 'lucide-react';
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2 } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
 import { computePaidLeaveConsumed, applyConsumption } from './lib/paidLeave.js';
 import { applyCellFix } from './lib/cellFix.js';
+import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 
 const LOGO_CHARS = [
   { char: "し", color: "#F4847E" },
@@ -3776,9 +3777,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           if (willApplyRT) {
             for (const [k] of deptShiftEntries) {
               const dId = k.slice(shiftPrefix.length);
-              undoStackRef.current[dId] = []; // RT適用部署のundo履歴をリセット
+              undoStackRef.current[dId] = []; // RT適用部署のundo/redo履歴をリセット
+              redoStackRef.current[dId] = [];
             }
-            setUndoCount(0);
+            setUndoCount(0); setRedoCount(0);
           }
           setAllShifts(prev => {
             // updater実行時に再チェック（fetch後に編集があればキャンセル）
@@ -3966,8 +3968,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     isLoadingMonth.current = true;
     setIsMonthLoading(true); // UIロック開始
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
-    undoStackRef.current = {}; // 月切替でアンドゥ履歴をリセット
-    setUndoCount(0);
+    undoStackRef.current = {}; // 月切替でundo/redo履歴をリセット
+    redoStackRef.current = {};
+    setUndoCount(0); setRedoCount(0);
     // ロード完了処理（reqId一致時のみ適用）
     const applyLoaded = (data) => {
       if (reqId !== fetchReqIdRef.current) {
@@ -4149,8 +4152,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [generateWarnings, setGenerateWarnings] = useState(null);
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
-  const undoStackRef = useRef({}); // { [deptId]: deptShifts[] } — アンドゥ履歴（最大30ステップ）
+  const undoStackRef = useRef({}); // { [deptId]: snapshot[] } — アンドゥ履歴（最大30ステップ）。snapshot={shifts, sr}
+  const redoStackRef = useRef({}); // { [deptId]: snapshot[] } — リドゥ履歴（最大30ステップ）
   const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
+  const [redoCount, setRedoCount] = useState(0); // 現在部署のリドゥ可能ステップ数
   const isMobile = (window.innerWidth || document.documentElement.clientWidth) < 900;
   const [tableZoom, setTableZoom] = useState(() => { try { return Number(localStorage.getItem("shiftTableZoom")) || 100; } catch { return 100; } });
   const handleZoomChange = useCallback((v) => { const min=isMobile?30:40; const c=Math.min(100,Math.max(min,Math.round(v/5)*5)); setTableZoom(c); try{localStorage.setItem("shiftTableZoom",c);}catch{} }, [isMobile]);
@@ -4177,7 +4182,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // タブ切替で自動ロック
   useEffect(() => { setUnlockedDeptId(null); }, [activeDeptId]);
   // 部署切替時にアンドゥ可能数を現在部署のスタック長に合わせる
-  useEffect(() => { setUndoCount((undoStackRef.current[activeDeptId] || []).length); }, [activeDeptId]);
+  useEffect(() => { setUndoCount((undoStackRef.current[activeDeptId] || []).length); setRedoCount((redoStackRef.current[activeDeptId] || []).length); }, [activeDeptId]);
   const isLocked = !!(depts.find(d=>d.id===activeDeptId)?.pin && unlockedDeptId !== activeDeptId);
   const isLockedRef = useRef(isLocked);
   useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
@@ -4243,17 +4248,51 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [innerTab]);
 
 
-  const setDeptShifts = useCallback(updater => {
-    // アンドゥ用に変更前の状態を積む
-    const snapshot = allShiftsRef.current[activeDeptId] || {};
-    const stack = undoStackRef.current[activeDeptId] || [];
-    undoStackRef.current[activeDeptId] = [...stack, snapshot].slice(-30);
-    setUndoCount(undoStackRef.current[activeDeptId].length);
+  // ── undo/redo用スナップショット ────────────────────────────────────────
+  // 手編集は deptShifts に加え、希望勤務化(handleMenuSelect)が staffList の
+  // shiftRequestsByMonth[mk] も更新する（唯一の二重更新）。両方を1つのsnapshotに
+  // 収めて undo/redo で一緒に復元する（希望勤務のロックも正しく戻る=完全対応）。
+  const captureSR = useCallback((deptId) => {
+    const mk = monthKey(year, month); const out = {};
+    for (const s of staffListRef.current) if (s.dept === deptId) out[s.id] = s.shiftRequestsByMonth?.[mk] ?? null;
+    return out;
+  }, [year, month]);
+  const takeSnapshot = useCallback((deptId) => ({ shifts: allShiftsRef.current[deptId] || {}, sr: captureSR(deptId) }), [captureSR]);
+  const applySnapshot = useCallback((deptId, snap) => {
+    const mk = monthKey(year, month);
+    setAllShifts(prev => ({ ...prev, [deptId]: snap.shifts }));
+    // 希望勤務(shiftRequestsByMonth[mk]) は変化がある時のみ復元（左クリック等の無駄なstaffList更新を避ける）
+    const cur = captureSR(deptId); let changed = false;
+    for (const id of new Set([...Object.keys(cur), ...Object.keys(snap.sr || {})])) {
+      if (JSON.stringify(cur[id] ?? null) !== JSON.stringify(snap.sr?.[id] ?? null)) { changed = true; break; }
+    }
+    if (changed) setStaffList(prev => prev.map(st => {
+      if (st.dept !== deptId) return st;
+      const slice = snap.sr?.[st.id] ?? null; const nb = { ...(st.shiftRequestsByMonth || {}) };
+      if (slice == null) delete nb[mk]; else nb[mk] = slice;
+      return { ...st, shiftRequestsByMonth: nb };
+    }));
+  }, [year, month, captureSR]);
+
+  const setDeptShifts = useCallback((updater, opts = {}) => {
+    if (opts.resetHistory) {
+      // 自動生成・全体クリア・paste等の大操作: undo/redo対象にせず、履歴をリセット
+      undoStackRef.current[activeDeptId] = [];
+      redoStackRef.current[activeDeptId] = [];
+      setUndoCount(0); setRedoCount(0);
+    } else {
+      // 手編集: アンドゥ用に変更前の状態を積む。新規編集なのでリドゥは無効化。
+      const { undo, redo } = pushHistory(undoStackRef.current[activeDeptId], redoStackRef.current[activeDeptId], takeSnapshot(activeDeptId));
+      undoStackRef.current[activeDeptId] = undo;
+      redoStackRef.current[activeDeptId] = redo;
+      setUndoCount(undo.length);
+      setRedoCount(0);
+    }
     // ユーザー操作はRealtimeより常に優先: 編集前にシーケンス番号を上げてRealtimeをキャンセル
     userEditSeq.current++;
     saveStatusRef.current = "unsaved"; // Realtime簡易ガードを即時有効化
     setAllShifts(prev=>({...prev,[activeDeptId]:typeof updater==="function"?updater(prev[activeDeptId]||{}):updater}));
-  }, [activeDeptId]);
+  }, [activeDeptId, takeSnapshot]);
 
   const deptYotei = allYotei[activeDeptId]||{};
   const handleUpdateYotei = useCallback((day, assignments) => {
@@ -4289,8 +4328,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }
 
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
-    const genStack = undoStackRef.current[targetDept.id] || [];
-    undoStackRef.current[targetDept.id] = [...genStack, genSnapshot].slice(-30);
+    // 自動生成はundo/redo対象外: 履歴をリセット（redoも無効化）。
+    undoStackRef.current[targetDept.id] = [];
+    redoStackRef.current[targetDept.id] = [];
     const _genResult = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
     const {shifts:result, warnings, timelineWarnings, score, diagnosticReport} = _genResult;
     lastAutoGenRef.current[targetDept.id] = result;
@@ -4418,7 +4458,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         const {result, warnings, timelineWarnings, score, genSnapshot} = _gen;
-        setUndoCount(undoStackRef.current[cd.id].length);
+        setUndoCount(undoStackRef.current[cd.id].length); setRedoCount(0);
 
         const _p1_ds = cs.filter(s => s.dept === cd.id);
         applyMinimalChangePhase1(result, genSnapshot, _p1_ds, cd, year, month);
@@ -4529,27 +4569,45 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleUndo = useCallback(() => {
     if (isLockedRef.current) return;
     if (isConfirmedRef.current) return; // 確定済みは編集不可
-    const stack = undoStackRef.current[activeDeptId] || [];
-    if (stack.length === 0) return;
-    const previous = stack[stack.length - 1];
-    undoStackRef.current[activeDeptId] = stack.slice(0, -1);
-    setUndoCount(undoStackRef.current[activeDeptId].length);
+    const res = undoStep(undoStackRef.current[activeDeptId], redoStackRef.current[activeDeptId], takeSnapshot(activeDeptId));
+    if (!res) return;
+    undoStackRef.current[activeDeptId] = res.undo;
+    redoStackRef.current[activeDeptId] = res.redo;
+    setUndoCount(res.undo.length);
+    setRedoCount(res.redo.length);
+    // ★編集保護(PR #117): Realtime巻き戻し防止。undo/redoも編集の一種として必須。
     userEditSeq.current++;
     saveStatusRef.current = "unsaved";
-    setAllShifts(prev => ({...prev, [activeDeptId]: previous}));
-  }, [activeDeptId]);
+    setSaveStatus("unsaved");
+    applySnapshot(activeDeptId, res.restored);
+  }, [activeDeptId, takeSnapshot, applySnapshot]);
 
-  // Ctrl+Z / ⌘+Z でアンドゥ
+  const handleRedo = useCallback(() => {
+    if (isLockedRef.current) return;
+    if (isConfirmedRef.current) return; // 確定済みは編集不可
+    const res = redoStep(undoStackRef.current[activeDeptId], redoStackRef.current[activeDeptId], takeSnapshot(activeDeptId));
+    if (!res) return;
+    undoStackRef.current[activeDeptId] = res.undo;
+    redoStackRef.current[activeDeptId] = res.redo;
+    setUndoCount(res.undo.length);
+    setRedoCount(res.redo.length);
+    userEditSeq.current++;
+    saveStatusRef.current = "unsaved";
+    setSaveStatus("unsaved");
+    applySnapshot(activeDeptId, res.restored);
+  }, [activeDeptId, takeSnapshot, applySnapshot]);
+
+  // Ctrl+Z=戻る / Ctrl+Y・Ctrl+Shift+Z=進む（⌘も同様）
   useEffect(() => {
     const onKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        handleUndo();
-      }
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); handleUndo(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); handleRedo(); }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleUndo]);
+  }, [handleUndo, handleRedo]);
 
   const handleLeftClick = useCallback((staffId, day) => {
     if (isLockedRef.current) return;
@@ -4709,7 +4767,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <button onClick={()=>handleZoomChange(tableZoom-5)} title="縮小" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>−</button>
               <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:40,textAlign:"center"}}>{tableZoom}%</span>
               <button onClick={()=>handleZoomChange(tableZoom+5)} title="拡大" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>＋</button>
-              {!isLocked && undoCount > 0 && <button onClick={handleUndo} title={`元に戻す (Ctrl+Z) — ${undoCount}ステップ`} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap",marginLeft:4}}>↩ 戻す ×{undoCount}</button>}
+              {!isLocked && <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:4}}>
+                <button onClick={handleUndo} disabled={undoCount===0} title={`戻る (Ctrl+Z)${undoCount>0?` — ${undoCount}ステップ`:''}`} style={{background:undoCount===0?"#F8FAFC":"#EFF6FF",color:undoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${undoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:undoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}><Undo2 size={13} strokeWidth={2}/>戻る</button>
+                <button onClick={handleRedo} disabled={redoCount===0} title={`進む (Ctrl+Y)${redoCount>0?` — ${redoCount}ステップ`:''}`} style={{background:redoCount===0?"#F8FAFC":"#EFF6FF",color:redoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${redoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:redoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}><Redo2 size={13} strokeWidth={2}/>進む</button>
+              </div>}
             </div>
           )}
           <div style={{fontSize:11,color:"#9CA3AF",padding:"0 4px",whiteSpace:"nowrap"}}>最低配置：{Object.entries(dept.minStaff||{}).map(([k,v])=>`${k}×${v}`).join(" / ")}</div>
@@ -4722,7 +4783,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <button onClick={()=>handleZoomChange(tableZoom-5)} title="縮小" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>−</button>
           <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:40,textAlign:"center"}}>{tableZoom}%</span>
           <button onClick={()=>handleZoomChange(tableZoom+5)} title="拡大" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>＋</button>
-          {!isLocked && undoCount > 0 && <button onClick={handleUndo} style={{background:"#EFF6FF",color:"#3B82F6",border:"1px solid #BFDBFE",borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:600,marginLeft:4}}>↩ 戻す ×{undoCount}</button>}
+          {!isLocked && <>
+            <button onClick={handleUndo} disabled={undoCount===0} title="戻る (Ctrl+Z)" style={{background:undoCount===0?"#F8FAFC":"#EFF6FF",color:undoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${undoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:undoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,marginLeft:4}}><Undo2 size={13} strokeWidth={2}/>戻る</button>
+            <button onClick={handleRedo} disabled={redoCount===0} title="進む (Ctrl+Y)" style={{background:redoCount===0?"#F8FAFC":"#EFF6FF",color:redoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${redoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:redoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3}}><Redo2 size={13} strokeWidth={2}/>進む</button>
+          </>}
         </div>
       )}
 
@@ -4764,13 +4828,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
-      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({},{resetHistory:true});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
-            const snapshot=allShiftsRef.current[activeDeptId]||{};
-            const stack=undoStackRef.current[activeDeptId]||[];
-            undoStackRef.current[activeDeptId]=[...stack,snapshot].slice(-30);
-            setUndoCount(undoStackRef.current[activeDeptId].length);
+            // Excel貼付はundo/redo対象外: 履歴をリセット（redoも無効化）。
+            undoStackRef.current[activeDeptId]=[];
+            redoStackRef.current[activeDeptId]=[];
+            setUndoCount(0); setRedoCount(0);
             pasteTimestamp.current = Date.now(); // Realtime上書きを5秒ブロック
             userEditSeq.current++;
             seqAtLastRemoteLoad.current = userEditSeq.current - 1; // 保存スキップされないよう保証
@@ -4793,10 +4857,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         onRestore={(restoredData)=>{
           const restoreDeptId = activeDeptIdRef.current;
           setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
-          // ★Fix W-3: 復元後のundo履歴をリセット（復元前の状態へ戻るundoを防止）
+          // ★Fix W-3: 復元後のundo/redo履歴をリセット（復元前の状態へ戻るundoを防止）
           // 復元を「新しい基準状態」として扱う → 復元前への逆行undoを不可能にする
           undoStackRef.current[restoreDeptId] = [];
-          setUndoCount(0);
+          redoStackRef.current[restoreDeptId] = [];
+          setUndoCount(0); setRedoCount(0);
           setSaveStatus('saved');
         }}
       />}
