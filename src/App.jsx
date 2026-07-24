@@ -4724,18 +4724,18 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             {overflowOpen&&<>
               <div style={{position:"fixed",inset:0,zIndex:99}} onClick={()=>setOverflowOpen(false)}/>
               <div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#FFFFFF",border:"1px solid #E5E7EB",borderRadius:10,boxShadow:"0 8px 24px rgba(0,0,0,0.10)",zIndex:100,minWidth:180,overflow:"hidden",padding:"4px 0"}}>
-                <div onClick={()=>{setExcelPasteModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151",borderBottom:"1px solid #F1F5F9"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <ClipboardList size={14} strokeWidth={2} style={{color:"#6B7280",flexShrink:0}}/>
+                <div onClick={()=>{ if(isConfirmed){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setOverflowOpen(false);return;} setExcelPasteModal(true);setOverflowOpen(false);}} title={isConfirmed?"確定済みです。「編集」を押してから使用できます":undefined} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:isConfirmed?"not-allowed":"pointer",fontSize:12,color:isConfirmed?"#C4C4C4":"#374151",borderBottom:"1px solid #F1F5F9"}} onMouseEnter={e=>{if(!isConfirmed)e.currentTarget.style.background="#F8FAFC";}} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <ClipboardList size={14} strokeWidth={2} style={{color:isConfirmed?"#D4D4D8":"#6B7280",flexShrink:0}}/>
                   <div style={{flex:1}}>
                     <div style={{fontWeight:500}}>貼付 / 傾向学習</div>
                   </div>
                 </div>
-                <div onClick={()=>{setHistoryModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><History size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>履歴から復元</span></div>
+                <div onClick={()=>{ if(isConfirmed){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setOverflowOpen(false);return;} setHistoryModal(true);setOverflowOpen(false);}} title={isConfirmed?"確定済みです。「編集」を押してから使用できます":undefined} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:isConfirmed?"not-allowed":"pointer",fontSize:12,color:isConfirmed?"#C4C4C4":"#374151"}} onMouseEnter={e=>{if(!isConfirmed)e.currentTarget.style.background="#F8FAFC";}} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><History size={14} strokeWidth={2} style={{color:isConfirmed?"#D4D4D8":"#6B7280"}}/><span>履歴から復元</span></div>
                 <div onClick={()=>{setShareModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Share2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>共有</span></div>
                 {profile?.is_admin&&<div onClick={()=>{setAdminModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Building2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>管理</span></div>}
                 <div onClick={()=>{setHelpModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><HelpCircle size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>ヘルプ</span></div>
                 {!isLocked&&<><div style={{height:1,background:"#F1F5F9",margin:"4px 0"}}/>
-                <div onClick={()=>{setClearModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#DC2626"}} onMouseEnter={e=>e.currentTarget.style.background="#FEF2F2"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Trash2 size={14} strokeWidth={2}/><span>シフトをクリア</span></div></>}
+                <div onClick={()=>{ if(isConfirmed){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setOverflowOpen(false);return;} setClearModal(true);setOverflowOpen(false);}} title={isConfirmed?"確定済みです。「編集」を押してから使用できます":undefined} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:isConfirmed?"not-allowed":"pointer",fontSize:12,color:isConfirmed?"#E7B8B8":"#DC2626"}} onMouseEnter={e=>{if(!isConfirmed)e.currentTarget.style.background="#FEF2F2";}} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Trash2 size={14} strokeWidth={2}/><span>シフトをクリア</span></div></>}
               </div>
             </>}
           </div>
@@ -4828,9 +4828,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
-      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{setDeptShifts({},{resetHistory:true});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;} setDeptShifts({},{resetHistory:true});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
+            // ★確定済みガード（自動生成と同趣旨）: 確定月を貼り付けで上書きさせない
+            if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setExcelPasteModal(false);return;}
             // Excel貼付はundo/redo対象外: 履歴をリセット（redoも無効化）。
             undoStackRef.current[activeDeptId]=[];
             redoStackRef.current[activeDeptId]=[];
@@ -4856,6 +4858,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         onClose={()=>setHistoryModal(false)}
         onRestore={(restoredData)=>{
           const restoreDeptId = activeDeptIdRef.current;
+          // ★確定済みガード（自動生成・クリア・貼付と統一）: 確定月を復元で上書きさせない
+          if (isConfirmedRef.current) { alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`); setHistoryModal(false); return; }
+          // ★PIN: 破壊的な復元は実行直前に解錠を要求（既に解錠済みなら再入力不要／PIN未設定なら従来通り）
+          const rdept = depts.find(x=>x.id===restoreDeptId);
+          if (rdept?.pin && unlockedDeptId !== restoreDeptId) {
+            alert('この部署はロックされています。PINで解錠してから復元してください。');
+            setHistoryModal(false);
+            setPinModal(true);
+            return;
+          }
           setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
           // ★Fix W-3: 復元後のundo/redo履歴をリセット（復元前の状態へ戻るundoを防止）
           // 復元を「新しい基準状態」として扱う → 復元前への逆行undoを不可能にする
