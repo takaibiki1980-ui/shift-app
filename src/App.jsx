@@ -11,29 +11,11 @@ import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 
-// YEIX ワードマーク（画像版・リッチな立体グラデ）。大きく見せる場所で使う。
-// 小さい常時表示（ヘッダー）は潰れるため下の ShifuponLogo（CSS版）を使う。
+// YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
+// height でサイズ調整（ヘッダー=22px / ログイン=40px）。
 function YeixTextLogo({ height = 36 }) {
   return (
     <img src="/yeix-text.png" alt="YEIX" style={{ height, width: "auto", display: "inline-block", verticalAlign: "middle" }} />
-  );
-}
-
-// アプリ名ロゴ「YEIX」。ブランドカラー（紫→青）のグラデーション文字（小さい場所・ヘッダー用）。
-function ShifuponLogo({ size = 22 }) {
-  return (
-    <span style={{
-      fontFamily: "'M PLUS Rounded 1c', sans-serif",
-      fontWeight: 900,
-      fontSize: size,
-      letterSpacing: "0.08em",
-      lineHeight: 1,
-      background: "linear-gradient(90deg, #6D5EF7 0%, #4EA8FF 100%)",
-      WebkitBackgroundClip: "text",
-      backgroundClip: "text",
-      WebkitTextFillColor: "transparent",
-      color: "#6D5EF7",
-    }}>YEIX</span>
   );
 }
 
@@ -4663,8 +4645,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       <div style={{background:"#FFFFFF",borderBottom:"1px solid #E5E7EB",padding:"0 20px",height:52,position:"sticky",top:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
           <ShifuponIcon size={32} radius={8}/>
-          <div>
-            <ShifuponLogo size={16}/>
+          <div style={{display:"flex",alignItems:"center"}}>
+            <YeixTextLogo height={22}/>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
