@@ -11,7 +11,15 @@ import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 
-// アプリ名ロゴ「YEIX」。ブランドカラー（紫→青）のグラデーション文字。
+// YEIX ワードマーク（画像版・リッチな立体グラデ）。大きく見せる場所で使う。
+// 小さい常時表示（ヘッダー）は潰れるため下の ShifuponLogo（CSS版）を使う。
+function YeixTextLogo({ height = 36 }) {
+  return (
+    <img src="/yeix-text.png" alt="YEIX" style={{ height, width: "auto", display: "inline-block", verticalAlign: "middle" }} />
+  );
+}
+
+// アプリ名ロゴ「YEIX」。ブランドカラー（紫→青）のグラデーション文字（小さい場所・ヘッダー用）。
 function ShifuponLogo({ size = 22 }) {
   return (
     <span style={{
@@ -109,7 +117,7 @@ function LoginPage({ onLogin }) {
       }}>
         <div style={{textAlign:"center", marginBottom:28}}>
           <div style={{margin:"0 auto 12px", width:56, height:56}}><ShifuponIcon size={56} radius={14}/></div>
-          <ShifuponLogo size={28} />
+          <div style={{margin:"0 auto"}}><YeixTextLogo height={40} /></div>
           <div style={{fontSize:11, color:"#71717A", marginTop:6}}>介護施設シフト管理システム</div>
         </div>
 
