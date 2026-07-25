@@ -598,7 +598,8 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, sele
   useEffect(() => { setPos({ x: Math.min(x, window.innerWidth-200), y: Math.min(y, window.innerHeight-320) }); }, [x,y]);
   const customWorkKeys = (customDefs||[]).filter(cd=>cd.key&&deptShiftTypes?.includes(cd.key));
   const isBulk = selectionCount > 1;
-  const visibleKeys = roleAllowed ? SHIFT_KEYS_MANUAL.filter(k=>!WORK_TYPES.has(k)||roleAllowed.includes(k)) : SHIFT_KEYS_MANUAL;
+  // 研修は全職員が対象になりうるため、半日シフト同様に役職制限の対象外（常時選択可）
+  const visibleKeys = roleAllowed ? SHIFT_KEYS_MANUAL.filter(k=>k==="研修"||!WORK_TYPES.has(k)||roleAllowed.includes(k)) : SHIFT_KEYS_MANUAL;
   return (
     <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#18181B",border:"1px solid #27272A",borderRadius:8,padding:6,boxShadow:"0 8px 32px rgba(0,0,0,0.6)",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170,color:"#F4F4F5"}}>
       {isBulk&&<div style={{gridColumn:"1/-1",background:"#1e1b4b",border:"1px solid #4338CA",borderRadius:6,padding:"4px 8px",marginBottom:2,fontSize:11,color:"#C7D2FE",fontWeight:700,textAlign:"center"}}>{selectionCount}セルに一括適用</div>}
@@ -625,7 +626,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
   const dept = (depts||DEFAULT_DEPTS).find(d=>d.id===deptId);
   const customDefs = dept?.customShiftDefs || [];
   const availableReqTypes = [
-    ...SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||k==="明け"||HALF_ALL_TYPES.has(k)||(dept?.shiftTypes||[]).includes(k)),
+    ...SHIFT_REQ_TYPES.filter(k => k==="休み"||k==="有休"||k==="明け"||k==="研修"||HALF_ALL_TYPES.has(k)||(dept?.shiftTypes||[]).includes(k)),
     ...(dept?.shiftTypes||[]).filter(k => !SHIFT_REQ_TYPES.includes(k) && customDefs.some(cd=>cd.key===k)),
   ];
   const [selectedDay, setSelectedDay] = useState(null);
