@@ -11,67 +11,28 @@ import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 
-const LOGO_CHARS = [
-  { char: "し", color: "#F4847E" },
-  { char: "ふ", color: "#7BC8C0" },
-  { char: "ぽ", color: "#F5C355" },
-  { char: "ん", color: "#A48FD0" },
-];
-const LOGO_STYLE = {
-  fontFamily: "'M PLUS Rounded 1c', sans-serif",
-  fontWeight: 900,
-  textShadow: "-2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff, 2px 2px 0 #fff, 0 2px 0 #fff, 2px 0 0 #fff, 0 -2px 0 #fff, -2px 0 0 #fff",
-  letterSpacing: "0.05em",
-  lineHeight: 1,
-};
+// アプリ名ロゴ「YEIX」。ブランドカラー（紫→青）のグラデーション文字。
 function ShifuponLogo({ size = 22 }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
-      <span style={{ fontSize: size * 0.6, marginBottom: size * 0.3 }}>✦</span>
-      {LOGO_CHARS.map(({ char, color }) => (
-        <span key={char} style={{ ...LOGO_STYLE, fontSize: size, color }}>{char}</span>
-      ))}
-      <span style={{ fontSize: size * 0.5, marginBottom: -size * 0.1, color: "#F4A7B9" }}>✦</span>
-    </span>
+    <span style={{
+      fontFamily: "'M PLUS Rounded 1c', sans-serif",
+      fontWeight: 900,
+      fontSize: size,
+      letterSpacing: "0.08em",
+      lineHeight: 1,
+      background: "linear-gradient(90deg, #6D5EF7 0%, #4EA8FF 100%)",
+      WebkitBackgroundClip: "text",
+      backgroundClip: "text",
+      WebkitTextFillColor: "transparent",
+      color: "#6D5EF7",
+    }}>YEIX</span>
   );
 }
 
-function ShifuponIcon({ size = 48, radius = 12 }) {
-  const rx = Math.round((radius / size) * 100);
+// YEIX ロゴ（XマークのPNG・背景透過）。radius は互換のため受け取るが未使用。
+function ShifuponIcon({ size = 48, radius = 12 }) { // eslint-disable-line no-unused-vars
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <radialGradient id="sp-body" cx="38%" cy="30%" r="65%">
-          <stop offset="0%" stopColor="#ffffff"/>
-          <stop offset="60%" stopColor="#f8f4f0"/>
-          <stop offset="100%" stopColor="#F4F4F5"/>
-        </radialGradient>
-        <linearGradient id="sp-bg" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#F9D4C8"/>
-          <stop offset="50%" stopColor="#C9EAE7"/>
-          <stop offset="100%" stopColor="#D4C5F0"/>
-        </linearGradient>
-      </defs>
-      <rect width="100" height="100" rx={rx} fill="url(#sp-bg)"/>
-      <ellipse cx="20" cy="64" rx="11" ry="15" fill="url(#sp-body)" transform="rotate(-22 20 64)"/>
-      <ellipse cx="80" cy="64" rx="11" ry="15" fill="url(#sp-body)" transform="rotate(22 80 64)"/>
-      <ellipse cx="50" cy="50" rx="30" ry="33" fill="url(#sp-body)"/>
-      <ellipse cx="38" cy="83" rx="12" ry="8" fill="url(#sp-body)"/>
-      <ellipse cx="62" cy="83" rx="12" ry="8" fill="url(#sp-body)"/>
-      <ellipse cx="33" cy="55" rx="8" ry="5.5" fill="#F4A0A0" fillOpacity="0.38"/>
-      <ellipse cx="67" cy="55" rx="8" ry="5.5" fill="#F4A0A0" fillOpacity="0.38"/>
-      <circle cx="41" cy="44" r="3.8" fill="#1a1a1a"/>
-      <circle cx="59" cy="44" r="3.8" fill="#1a1a1a"/>
-      <path d="M 43 54 Q 50 62 57 54" stroke="#1a1a1a" strokeWidth="2.2" fill="none" strokeLinecap="round"/>
-      <rect x="35" y="60" width="30" height="23" rx="3.5" fill="white" fillOpacity="0.92" stroke="#ddd4cc" strokeWidth="0.8"/>
-      <rect x="35" y="60" width="30" height="5.5" rx="3.5" fill="#ede5da" fillOpacity="0.9"/>
-      <rect x="35" y="64" width="30" height="1.5" fill="#ede5da" fillOpacity="0.9"/>
-      <line x1="45" y1="65.5" x2="45" y2="83" stroke="#ddd4cc" strokeWidth="0.7"/>
-      <line x1="55" y1="65.5" x2="55" y2="83" stroke="#ddd4cc" strokeWidth="0.7"/>
-      <line x1="35" y1="71" x2="65" y2="71" stroke="#ddd4cc" strokeWidth="0.7"/>
-      <line x1="35" y1="77" x2="65" y2="77" stroke="#ddd4cc" strokeWidth="0.7"/>
-      <path d="M 48 69.5 L 51.5 73.5 L 59 66" stroke="#7BC8C0" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
+    <img src="/yeix-logo.png" alt="YEIX" width={size} height={size} style={{ objectFit: "contain", display: "block" }} />
   );
 }
 
@@ -276,7 +237,7 @@ function TermsModal({ onClose }) {
     <LegalModal title="📄 利用規約" onClose={onClose}>
       <p style={{color:"#71717A",marginBottom:16}}>最終更新日：2026年4月26日</p>
       <h3 style={{color:"#18181B",marginBottom:8}}>第1条（サービスの目的）</h3>
-      <p>しふぽん（以下「本サービス」）は、介護施設向けのシフト管理を支援するWebアプリケーションです。</p>
+      <p>YEIX（以下「本サービス」）は、介護施設向けのシフト管理を支援するWebアプリケーションです。</p>
       <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第2条（利用登録）</h3>
       <p>本サービスの利用にはメールアドレスによるアカウント登録が必要です。登録内容は正確な情報を入力してください。</p>
       <h3 style={{color:"#18181B",margin:"16px 0 8px"}}>第3条（プランと料金）</h3>
@@ -450,7 +411,7 @@ function filterExpiredExceptions(list) {
   });
 }
 
-// しふぽん蓄積データからスタッフごとのシフト傾向を学習する
+// YEIX蓄積データからスタッフごとのシフト傾向を学習する
 // computeLearnedTrend は src/engine/core.js に移動・export済み（import行参照）
 
 
@@ -1844,7 +1805,7 @@ const HELP_SECTIONS = [
     id: "ai", icon: "🧠", label: "傾向学習・AI",
     steps: [
       { title: "過去データの貼り付け学習（初回）", body: "「📊 傾向学習」ボタン→「シフトを貼り付け」で過去のシフト実績をコピー&ペーストして読み込みます。初回シフト作成の精度が上がります。" },
-      { title: "しふぽんで作成するほど精度UP", body: "しふぽんでシフトを作成・保存するたびに自動で学習が進みます。学習データはサーバーに蓄積され、次回の生成精度に活用されます。" },
+      { title: "YEIXで作成するほど精度UP", body: "YEIXでシフトを作成・保存するたびに自動で学習が進みます。学習データはサーバーに蓄積され、次回の生成精度に活用されます。" },
       { title: "例外月の除外", body: "コロナ・インフルエンザ等で通常のシフトが崩れた月は「例外月」に設定すると学習から除外できます。除外は18ヶ月後に自動解除されます。" },
       { title: "🤖 AI調整（フルプランのみ）", body: "「🤖 AI」ボタンをONにして指示を入力すると、AIがシフトを調整します（例：「〇〇さんを15日に休みにして」）。" },
     ],
@@ -2902,7 +2863,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <ShifuponIcon size={36} radius={8}/>
           <div>
-            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{config.facility_name || "しふぽん"}</div>
+            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{config.facility_name || "YEIX"}</div>
             <div style={{fontSize:10,color:"#52525B"}}>希望休・有休 入力ポータル</div>
           </div>
         </div>
@@ -3297,7 +3258,7 @@ function SharedShiftView({ token }) {
           </div>
         );
       })}
-      <div style={{marginTop:12,fontSize:10,color:'#9CA3AF',textAlign:'center'}}>しふぽん — シフト確定表</div>
+      <div style={{marginTop:12,fontSize:10,color:'#9CA3AF',textAlign:'center'}}>YEIX — シフト確定表</div>
     </div>
     </>
   );
@@ -4891,8 +4852,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
             {/* ── サイト全体QR（新規登録・ログイン用） ── */}
             <div style={{background:"#fff",border:"2px solid #6366F1",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
-              <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:4}}>🏠 しふぽん サイトQRコード</div>
-              <div style={{fontSize:10,color:"#52525B",marginBottom:10}}>自分のサイトに貼り付けると、スキャンしたらしふぽんのログイン・新規登録画面へ移動します。</div>
+              <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:4}}>🏠 YEIX サイトQRコード</div>
+              <div style={{fontSize:10,color:"#52525B",marginBottom:10}}>自分のサイトに貼り付けると、スキャンしたらYEIXのログイン・新規登録画面へ移動します。</div>
               <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
                   <div style={{padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
@@ -4905,7 +4866,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   <div style={{fontSize:11,color:"#52525B",lineHeight:1.8}}>
                     ① このQRコードを<strong>スクリーンショット</strong><br/>
                     ② 自分のサイトに画像として貼り付け<br/>
-                    ③ 読み取るとしふぽんに到達<br/>
+                    ③ 読み取るとYEIXに到達<br/>
                     ④ 「ログイン」または「新規登録」が表示されます
                   </div>
                   <div style={{marginTop:10,fontSize:10,background:"#fef3c7",border:"1px solid #fbbf24",borderRadius:6,padding:"6px 8px",color:"#92400e"}}>
