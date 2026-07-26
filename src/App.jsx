@@ -3969,121 +3969,94 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     return () => { emergencySave(); }; // cleanup: 月切替/アンマウント時に旧月を緊急保存
   }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── シフト変更: Supabase へ自動保存（1秒デバウンス）──
+  // ── 明示保存（Stage 1）: 自動保存は廃止し「保存」ボタン押下時のみ Supabase へ upsert ──
   const saveFailCountRef = useRef(0);
-  useEffect(() => {
-    // DB初期化完了前・ロード中は物理的に保存不可
-    console.log("[SAVE] START");
-    if (!dbInitialized.current) { console.log("[SAVE] STOP L7382 dbInitialized=false"); return; }
-    if (isLoadingMonth.current) { console.log("[SAVE] STOP L7383 isLoadingMonth=true"); return; }
-    // Realtime直後で userEditSeq が変化していない = ユーザー/生成の変更なし → 保存不要
-    // userEditSeq > seqAtLastRemoteLoad であれば編集・生成があった → 保存する
-    if (userEditSeq.current === seqAtLastRemoteLoad.current) {
-      console.log("[SAVE] STOP L7386 userEditSeq===seqAtLastRemoteLoad=" + userEditSeq.current);
-      setSaveStatus('saved');
-      return;
+  // dirty 部署（+アクティブ部署）を保存する。成功=true / 失敗=false / 保存対象なし=true。
+  const saveNow = useCallback(async () => {
+    if (!dbInitialized.current) return false;
+    if (isLoadingMonth.current) return false;
+    const y = yearRef.current, m = monthRef.current;
+    const deptIdsToSave = new Set(dirtyDeptIdsRef.current);
+    deptIdsToSave.add(activeDeptIdRef.current); // 安全網: アクティブ部署も必ず含める
+    let saveError = null;
+    for (const currentDeptId of deptIdsToSave) {
+      const key = `shifts_${y}_${m+1}_${currentDeptId}`;
+      const deptData = allShiftsRef.current[currentDeptId] || {};
+      try {
+        const { error } = await supabase.from('shift_data').upsert(
+          { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
+          { onConflict:'user_id,data_key' }
+        );
+        if (error) {
+          if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("token")) {
+            alert("セッションが切れました。再ログインしてください。");
+            await supabase.auth.signOut();
+            return false;
+          }
+          throw error;
+        }
+        dirtyDeptIdsRef.current.delete(currentDeptId); // 保存成功 → dirty解除
+        // DBキャッシュ更新 → learnedTrend 再計算（保存＝学習の節目）
+        allDBDataRef.current[key] = deptData;
+        {
+          const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current);
+          if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
+        }
+        const genRef = lastAutoGenRef.current[currentDeptId];
+        if (genRef) {
+          const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
+          const kiboPatterns = detectKiboNightPatterns(genRef, deptData, deptStaff, y, m);
+          if (Object.keys(kiboPatterns).length > 0) {
+            setStaffList(prev => prev.map(s => {
+              if (!kiboPatterns[s.id]) return s;
+              return { ...s, kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id]) };
+            }));
+          }
+          const editCells = detectManualEditCells(genRef, deptData);
+          if (Object.keys(editCells).length > 0) {
+            const editKey = `edits_${y}_${m+1}_${currentDeptId}`;
+            supabase.from('shift_data').upsert(
+              { user_id: session.user.id, data_key: editKey, data_value: editCells, updated_at: new Date().toISOString() },
+              { onConflict: 'user_id,data_key' }
+            ).then(() => { allDBDataRef.current[editKey] = editCells; });
+          }
+          lastAutoGenRef.current[currentDeptId] = {...deptData};
+        }
+      } catch(e) {
+        saveError = e;
+        console.log("[SAVE] UPSERT ERROR", e?.message || e);
+      }
     }
-    saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化（レンダー後のeffect待ち不要）
+    try { localStorage.setItem(SAVE_KEY(y,m),JSON.stringify(allShiftsRef.current)); } catch {}
+    if (!saveError) {
+      saveFailCountRef.current = 0;
+      lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
+      seqAtLastRemoteLoad.current = userEditSeq.current; // 保存済み＝現状を基準に（未保存判定のリセット）
+      saveStatusRef.current = "saved";
+      setSaveStatus("saved");
+      return true;
+    } else {
+      saveFailCountRef.current += 1;
+      setSaveStatus("error");
+      alert("クラウドへの保存に失敗しました。通信環境を確認してもう一度「保存」を押してください。\n（編集内容はこの端末に退避されています）");
+      return false;
+    }
+  }, [session]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 編集検知: 未保存マーク＋localStorage退避のみ（自動upsertはしない＝明示保存）。
+  // クラッシュ復旧用に localStorage へ随時退避（15世代バックアップ=Supabaseは消費しない）。
+  useEffect(() => {
+    if (!dbInitialized.current) return;
+    if (isLoadingMonth.current) return;
+    // Realtime直後で userEditSeq 変化なし = ユーザー編集ではない → 未保存にしない
+    if (userEditSeq.current === seqAtLastRemoteLoad.current) { setSaveStatus('saved'); return; }
+    saveStatusRef.current = "unsaved"; // Realtime巻き戻し保護（未保存中はRT取り込みをスキップ→undo保持）
     setSaveStatus("unsaved");
+    dirtyDeptIdsRef.current.add(activeDeptIdRef.current);
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    // ★防衛C: 部署IDをクロージャでキャプチャ（アクティブ部署を安全網として追加）
-    const closureDeptId = activeDeptIdRef.current;
-    dirtyDeptIdsRef.current.add(closureDeptId); // ★Fix W-2: dirty追跡
-    saveTimer.current = setTimeout(async () => {
-      if (isLoadingMonth.current) { console.log("[SAVE] STOP L7383(timer) isLoadingMonth=true"); return; }
-      // ★防衛3: 保存直前に年月一致検証（クロージャの年月 vs 現在の画面の年月）
-      if (year !== yearRef.current || month !== monthRef.current) {
-        console.warn('[save] 🚨 年月不一致を検出 - データ破壊を防ぐため保存を中断', {
-          closureYear: year, closureMonth: month + 1,
-          currentYear: yearRef.current, currentMonth: monthRef.current + 1
-        });
-        console.log("[SAVE] STOP L7399 year/month mismatch");
-        setSaveStatus('saved'); // 画面上のステータスは安全側に倒す
-        return;
-      }
-      // ★Fix S-1: dirty全部署を保存（生成部署とactive部署が違う場合でも漏れなく保存）
-      const deptIdsToSave = new Set(dirtyDeptIdsRef.current);
-      deptIdsToSave.add(closureDeptId); // 安全網: アクティブ部署も必ず含める
-      let saveError = null;
-      for (const currentDeptId of deptIdsToSave) {
-        const key = `shifts_${year}_${month+1}_${currentDeptId}`;
-        const deptData = allShifts[currentDeptId] || {};
-        try {
-          console.log("[SAVE] UPSERT", key, Object.keys(deptData).length);
-          const { error } = await supabase.from('shift_data').upsert(
-            { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
-            { onConflict:'user_id,data_key' }
-          );
-          if (error) {
-            // 認証エラー検知
-            if (error.code === "PGRST301" || error.message?.includes("JWT") || error.message?.includes("token")) {
-              console.error("[save] 認証トークン切れ:", error.message);
-              alert("セッションが切れました。再ログインしてください。");
-              await supabase.auth.signOut();
-              return;
-            }
-            throw error;
-          }
-          dirtyDeptIdsRef.current.delete(currentDeptId); // 保存成功 → dirty解除
-          console.log("[SAVE] UPSERT OK");
-          // 保存成功のたびにDBキャッシュを更新して learnedTrend を再計算
-          allDBDataRef.current[key] = deptData;
-          {
-            const relearned = computeLearnedTrend(allDBDataRef.current, staffListRef.current, exceptionMonthsRef.current);
-            if (Object.keys(relearned).length > 0) setLearnedTrend(relearned);
-          }
-          const genRef = lastAutoGenRef.current[currentDeptId];
-          if (genRef) {
-            const deptStaff = staffListRef.current.filter(s => s.dept === currentDeptId);
-            const kiboPatterns = detectKiboNightPatterns(genRef, deptData, deptStaff, year, month);
-            if (Object.keys(kiboPatterns).length > 0) {
-              setStaffList(prev => prev.map(s => {
-                if (!kiboPatterns[s.id]) return s;
-                return { ...s, kiboNightPreference: Math.min(20, (s.kiboNightPreference || 0) + kiboPatterns[s.id]) };
-              }));
-            }
-            // 人手修正セルを edits_* キーで保存（computeLearnedTrend での重み付けに使用）
-            const editCells = detectManualEditCells(genRef, deptData);
-            if (Object.keys(editCells).length > 0) {
-              const editKey = `edits_${year}_${month+1}_${currentDeptId}`;
-              supabase.from('shift_data').upsert(
-                { user_id: session.user.id, data_key: editKey, data_value: editCells, updated_at: new Date().toISOString() },
-                { onConflict: 'user_id,data_key' }
-              ).then(() => { allDBDataRef.current[editKey] = editCells; });
-            }
-            lastAutoGenRef.current[currentDeptId] = {...deptData};
-          }
-        } catch(e) {
-          saveError = e;
-          console.log("[SAVE] UPSERT ERROR", e?.message || e);
-        }
-      }
-      if (!saveError) {
-        try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
-        saveFailCountRef.current = 0;
-        lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
-        setSaveStatus("saved");
-      } else {
-        try { localStorage.setItem(SAVE_KEY(year,month),JSON.stringify(allShifts)); } catch {}
-        saveFailCountRef.current += 1;
-        setSaveStatus("unsaved");
-        if (saveFailCountRef.current >= 5) {
-          saveFailCountRef.current = 0;
-          setSaveStatus('error');
-          // 5回連続失敗 → 中途半端な状態のまま編集継続は危険のためロールバックを提案
-          const shouldRollback = window.confirm(
-            "【保存エラー】クラウドへの保存が5回連続で失敗しました。\n\n" +
-            "このまま編集を続けるとデータが正常に保存されない恐れがあります。\n\n" +
-            "「OK」→ 最後に正常保存された状態に安全に巻き戻す（推奨）\n" +
-            "「キャンセル」→ 現在の状態を維持（自己責任）"
-          );
-          if (shouldRollback && reloadFromRemoteRef.current) {
-            setSaveStatus('saved'); // reloadFromRemoteのunsaved skipガードを外す
-            reloadFromRemoteRef.current();
-          }
-        }
-      }
-    }, 1000);
+    saveTimer.current = setTimeout(() => {
+      try { localStorage.setItem(SAVE_KEY(yearRef.current, monthRef.current), JSON.stringify(allShiftsRef.current)); } catch {}
+    }, 500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -4661,15 +4634,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             {saveStatus==="unsaved"&&<><Loader size={11} strokeWidth={2}/>{!isMobile&&<span>未保存</span>}</>}
             {saveStatus==="error"&&<><span style={{color:"#EF4444"}}>!</span><span>保存失敗</span></>}
           </div>
+          {!isLocked && <button onClick={saveNow} disabled={saveStatus!=="unsaved"&&saveStatus!=="error"} title={saveStatus==="unsaved"?"編集内容をクラウドに保存します":"保存済みです"} style={{background:(saveStatus==="unsaved"||saveStatus==="error")?"#F59E0B":"#F3F4F6",color:(saveStatus==="unsaved"||saveStatus==="error")?"#fff":"#9CA3AF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(saveStatus==="unsaved"||saveStatus==="error")?"pointer":"default",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>💾{!isMobile&&" 保存"}</button>}
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Lock size={14} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
-            : <button onClick={handleGenerate} disabled={generating||saveStatus==="unsaved"||isMonthLoading||isConfirmed} title={isConfirmed?"確定済みです。「編集」ボタンで解除してください":isMonthLoading?"データ読み込み中です":saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:(generating||saveStatus==="unsaved"||isMonthLoading||isConfirmed)?"#E5E7EB":"#2563EB",color:(generating||saveStatus==="unsaved"||isMonthLoading||isConfirmed)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||saveStatus==="unsaved"||isMonthLoading||isConfirmed)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(saveStatus==="unsaved"||isMonthLoading||isConfirmed)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
+            : <button onClick={handleGenerate} disabled={generating||isMonthLoading||isConfirmed} title={isConfirmed?"確定済みです。「編集」ボタンで解除してください":isMonthLoading?"データ読み込み中です":undefined} style={{background:(generating||isMonthLoading||isConfirmed)?"#E5E7EB":"#2563EB",color:(generating||isMonthLoading||isConfirmed)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||isMonthLoading||isConfirmed)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(isMonthLoading||isConfirmed)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
           }
           {isConfirmed
             ? <button onClick={handleUnconfirm} style={{background:"#F59E0B",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}>✏️{!isMobile&&" 編集"}</button>
-            : <button onClick={handleConfirm} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に確定できます":undefined} style={{background:saveStatus==="unsaved"?"#E5E7EB":"#10B981",color:saveStatus==="unsaved"?"#9CA3AF":"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:saveStatus==="unsaved"?0.6:1}}>✓{!isMobile&&" 確定"}</button>
+            : <button onClick={async()=>{ const ok=await saveNow(); if(ok) handleConfirm(); }} title="保存してから確定します" style={{background:"#10B981",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}>✓{!isMobile&&" 確定"}</button>
           }
-          <button onClick={()=>setDownloadModal(true)} disabled={saveStatus==="unsaved"} title={saveStatus==="unsaved"?"同期完了後に使用できます":undefined} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:saveStatus==="unsaved"?"not-allowed":"pointer",fontSize:12,fontWeight:500,opacity:saveStatus==="unsaved"?0.5:1,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
+          <button onClick={()=>setDownloadModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
           {/* Overflow [•••] */}
           <div style={{position:"relative"}}>
