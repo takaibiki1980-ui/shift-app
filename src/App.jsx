@@ -3379,6 +3379,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const staffUpsertInProgress = useRef(false); // staffList保存中にreloadFromRemoteが旧データで上書くのを防止
   const lastSavedStaffListRef = useRef(null); // Supabaseへの最終保存済みstaffList（null=DB未読込→保存ブロック）
   const staffListSkipSave = useRef(false); // Supabase/Realtimeからのsetを識別してupsertをスキップ
+  const shiftReqDeferSave = useRef(false); // 右クリック希望勤務/undo-redo由来のstaffList変更→自動保存せず明示保存に回す
+  const staffListDirtyRef = useRef(false); // 上記で保留中のstaffList未保存フラグ（saveNowで一緒にupsert）
   const exceptionMonthsSkipSave = useRef(false); // ★Fix W-1: reloadFromRemote起因 echo loop 防止
   const portalSettingsSkipSave = useRef(false);   // ★Fix W-1: reloadFromRemote起因 echo loop 防止
   const allFloorSettingsSkipSave = useRef(false);  // ★Fix W-1: 初期load起因 echo loop 防止
@@ -3445,6 +3447,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       // Supabase/Realtimeから来た変更 → 保存不要・保存済みとしてマーク
       staffListSkipSave.current = false;
       lastSavedStaffListRef.current = staffList;
+    } else if (shiftReqDeferSave.current) {
+      // 右クリック希望勤務/undo-redo由来 → 自動保存せず「保存」ボタンまで保留（明示保存）。
+      // localStorage退避は冒頭で実施済み。lastSavedStaffListRefは更新しない
+      // （reloadFromRemoteのhasLocalChanges保護で未保存の希望勤務が巻き戻らない）。
+      shiftReqDeferSave.current = false;
+      staffListDirtyRef.current = true;
+      saveStatusRef.current = "unsaved";
+      setSaveStatus("unsaved");
     } else if (lastSavedStaffListRef.current !== null && dbInitialized.current) {
       // 二重保護: null = DB未読込 OR dbInitialized=false → デフォルト値でSupabaseを上書きしない
       if (staffUpsertInProgress.current) {
@@ -4027,6 +4037,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         console.log("[SAVE] UPSERT ERROR", e?.message || e);
       }
     }
+    // 保留中の希望勤務(staffList)も同じ「保存」操作で一緒に永続化する
+    if (!saveError && staffListDirtyRef.current) {
+      try {
+        const listToSave = staffListRef.current;
+        const { error } = await supabase.from('shift_data').upsert(
+          { user_id:session.user.id, data_key:'staffList', data_value:listToSave, updated_at:new Date().toISOString() },
+          { onConflict:'user_id,data_key' }
+        );
+        if (error) throw error;
+        lastSavedStaffListRef.current = listToSave; // reloadFromRemoteのhasLocalChanges基準を更新
+        staffListDirtyRef.current = false;
+      } catch(e) { saveError = e; console.log("[SAVE] staffList UPSERT ERROR", e?.message || e); }
+    }
     try { localStorage.setItem(SAVE_KEY(y,m),JSON.stringify(allShiftsRef.current)); } catch {}
     if (!saveError) {
       saveFailCountRef.current = 0;
@@ -4192,12 +4215,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     for (const id of new Set([...Object.keys(cur), ...Object.keys(snap.sr || {})])) {
       if (JSON.stringify(cur[id] ?? null) !== JSON.stringify(snap.sr?.[id] ?? null)) { changed = true; break; }
     }
-    if (changed) setStaffList(prev => prev.map(st => {
+    if (changed) { shiftReqDeferSave.current = true; setStaffList(prev => prev.map(st => {
       if (st.dept !== deptId) return st;
       const slice = snap.sr?.[st.id] ?? null; const nb = { ...(st.shiftRequestsByMonth || {}) };
       if (slice == null) delete nb[mk]; else nb[mk] = slice;
       return { ...st, shiftRequestsByMonth: nb };
-    }));
+    })); }
   }, [year, month, captureSR]);
 
   const setDeptShifts = useCallback((updater, opts = {}) => {
@@ -4573,6 +4596,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const fix = !!shiftKey;
     const synthNow = {};
     for (const [sid, d] of targets) synthNow[sid] = {...(synthNow[sid] || {}), [d]: shiftKey};
+    shiftReqDeferSave.current = true; // 右クリック希望勤務のstaffList変更は自動保存せず「保存」まで保留
     setStaffList(prev => prev.map(s => applyCellFix(s, targets, fix, synthNow, year, month)));
     setCtxMenu(null);
   };
