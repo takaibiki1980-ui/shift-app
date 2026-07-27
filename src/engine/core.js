@@ -2,6 +2,12 @@ const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","�
 
 const WORK_TYPES  = new Set(["早番","日勤","研修","遅番","夜勤"]);
 
+// scoreShifts の学習(dowShiftRate/dowRestRate)ペナルティの重み（1セルあたり最大 = この値）。
+// 大小関係の設計: 公休10000 > 役職5000 > 公平性2000 > 同一4連1500 > maxStaff超過150 ≧ 学習。
+// 段階的に引き上げて「学習が効き始める／他制約が崩れ始める」境目を実測で見極めるため定数化。
+// 第1段階: 30 → 150（公平性2000の約1/13）。※150はmaxStaff超過(150)と同値＝境界（報告参照）。
+const LEARN_WEIGHT = 150;
+
 // カスタムシフト種別のstyling定義を取得（標準SHIFTSに無い場合はbaseTypeの色を継承）
 
 function buildDeptWorkTypes(customDefs) {
@@ -1994,11 +2000,11 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
             const predictedProb = dowRate
               ? (dowRate[shift] ?? 0)
               : (typeof trend[shift] === 'number' ? trend[shift] : 0);
-            score += (1 - predictedProb) * 30; // Excel学習はSoft: 傾向補正として軽く
+            score += (1 - predictedProb) * LEARN_WEIGHT; // 学習(勤務種別): dowShiftRate 傾向補正
           } else if (LEARN_REST.has(shift)) {
             const dow6 = (dow + 6) % 7; // dowRestRateは月曜=0インデックスで格納
             const restProb = trend.dowRestRate?.[dow6] ?? null;
-            if (restProb != null) score += (1 - restProb) * 30;
+            if (restProb != null) score += (1 - restProb) * LEARN_WEIGHT; // 学習(休み): dowRestRate 傾向補正
           }
         }
       }
