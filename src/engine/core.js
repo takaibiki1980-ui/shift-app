@@ -8,6 +8,11 @@ const WORK_TYPES  = new Set(["早番","日勤","研修","遅番","夜勤"]);
 // 第1段階: 30 → 150（公平性2000の約1/13）。※150はmaxStaff超過(150)と同値＝境界（報告参照）。
 const LEARN_WEIGHT = 150;
 
+// 夜勤候補選び(_nightCandSort)に学習(dowShiftRate['夜勤'][dow])を二次キーとして加えるか。
+// 一次キー=夜勤回数(公平性)は不変。同回数の候補内で「普段その曜日に夜勤する人」を優先する。
+// must-fill(夜勤最低人数)は不変。false にすると従来のローテーション公平性のみの挙動へ即戻る。
+const NIGHT_LEARN_ENABLED = true;
+
 // カスタムシフト種別のstyling定義を取得（標準SHIFTSに無い場合はbaseTypeの色を継承）
 
 function buildDeptWorkTypes(customDefs) {
@@ -671,11 +676,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
 
     // 比較関数（評価スコアを使わない純粋な優先順位型）
     const _nightCandSort = (a, b, d) => {
-      // ① 夜勤回数: 少ない順（count equity を絶対優先）
+      // ① 夜勤回数: 少ない順（count equity を絶対優先・従来のまま）
       const cntA = Object.values(res[a.id]).filter(v => v === '夜勤').length;
       const cntB = Object.values(res[b.id]).filter(v => v === '夜勤').length;
       if (cntA !== cntB) return cntA - cntB;
-      // ② 前半/後半カウント: 当日の半月内夜勤数少ない順
+      // ②(案B) 学習: 夜勤回数が同じ候補内で、その曜日に普段夜勤する人(dowShiftRate['夜勤'][dow]大)を優先。
+      //   一次キー(公平性)は不変・must-fillも不変（候補の並び替えのみ）。NIGHT_LEARN_ENABLED=false で無効化。
+      if (NIGHT_LEARN_ENABLED) {
+        const _dow = new Date(year, month, d).getDay();
+        const nrA = getTrend(a)?.dowShiftRate?.[_dow]?.['夜勤'] ?? 0;
+        const nrB = getTrend(b)?.dowShiftRate?.[_dow]?.['夜勤'] ?? 0;
+        if (nrA !== nrB) return nrB - nrA; // 高い方（普段その曜日に夜勤）を優先
+      }
+      // ③ 前半/後半カウント: 当日の半月内夜勤数少ない順
       const half = d <= Math.floor(days / 2);
       const halfCnt = s => Object.entries(res[s.id])
         .filter(([dd, v]) => (half ? Number(dd) <= Math.floor(days / 2) : Number(dd) > Math.floor(days / 2)) && v === '夜勤').length;
