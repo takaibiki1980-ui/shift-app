@@ -15,6 +15,12 @@ const LEARN_WEIGHT = 250;
 // must-fill(夜勤最低人数)は不変。false にすると従来のローテーション公平性のみの挙動へ即戻る。
 const NIGHT_LEARN_ENABLED = true;
 
+// 休みの「帳尻合わせ」で“どの日を休みにするか／どの休みを勤務に戻すか”の選択に学習を注入するか。
+// 公休の枚数・must-fill・役割席(Tier1)は不変。同じ枚数の中で dowRestRate/dowShiftRate を優先し、
+// 「普段その曜日に休む人・日」を休みに、「普段勤務する日」を勤務に戻す（高出勤者の調整弁化を防ぐ）。
+// false で従来の「均等間隔・日順」の挙動へ即戻る。
+const REST_LEARN_ENABLED = true;
+
 // カスタムシフト種別のstyling定義を取得（標準SHIFTSに無い場合はbaseTypeの色を継承）
 
 function buildDeptWorkTypes(customDefs) {
@@ -1005,9 +1011,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       for (const [shiftKey, limit] of Object.entries(maxStaff)) {
         const overStaff = ds.filter(s => res[s.id][d] === shiftKey);
         if (overStaff.length <= limit) continue;
+        // 学習: 超過を外す(=休み等に振替)対象は「普段その曜日にそのシフトをしない人」を優先。
+        //   dowShiftRate[dow][shiftKey] が低い順 → 柳のような習慣的担当者を残す。公平性/枚数は不変。
+        const _emDow = new Date(year, month, d).getDay();
+        const _emRate = (s) => getTrend(s)?.dowShiftRate?.[_emDow]?.[shiftKey] ?? 0;
+        const _emSort = (a, b) => REST_LEARN_ENABLED ? (_emRate(a) - _emRate(b)) : 0; // 低い順に先に外す
         const toFix = [
-          ...overStaff.filter(s => !lockedDays[s.id].has(d)),
-          ...overStaff.filter(s =>  lockedDays[s.id].has(d)),
+          ...overStaff.filter(s => !lockedDays[s.id].has(d)).sort(_emSort),
+          ...overStaff.filter(s =>  lockedDays[s.id].has(d)).sort(_emSort),
         ];
         let excess = overStaff.length - limit;
         // ★[Fix-NightSeq] 夜勤系列整合性: shiftKey が夜勤ベースか事前判定
@@ -1453,7 +1464,16 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       const kiboCount = Object.values(res[s.id]).filter(v => v === "希望休").length;
       const target = Math.max(0, totalTarget - kiboCount);
       {
-        const restDays = Object.entries(res[s.id]).filter(([, v]) => v === "休み").map(([d]) => +d).sort((a, b) => a - b);
+        let restDays = Object.entries(res[s.id]).filter(([, v]) => v === "休み").map(([d]) => +d).sort((a, b) => a - b);
+        // 学習: 余分な休みを勤務に戻す際、dowRestRate が低い日(=普段勤務する日)を先に戻す。
+        //   高い日(普段休む日)は休みのまま残す。休みの枚数(target)は不変・日順は tie-break。
+        if (REST_LEARN_ENABLED) {
+          const _trS = getTrend(s);
+          if (_trS?.dowRestRate) {
+            const _rr = (d) => _trS.dowRestRate[(new Date(year, month, d).getDay() + 6) % 7] ?? 0;
+            restDays = [...restDays].sort((a, b) => (_rr(a) - _rr(b)) || (a - b)); // 低restRate順→勤務へ
+          }
+        }
         let excess = restDays.length - target;
         for (const d of restDays) {
           if (excess <= 0) break;
@@ -2321,8 +2341,9 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
  *
  * 注意: 呼び出し元(_runGenerateCore等)への配線は別作業で行う。現状どこからも呼ばれていない。
  */
-function repairHardConstraints(dept, res, ds, year, month) {
+function repairHardConstraints(dept, res, ds, year, month, shiftTrend = {}) {
   if (dept.id !== 'eiyo') return;
+  const _rTrend = (s) => { const ks = Object.keys(shiftTrend || {}).filter(k => k !== '_months' && k !== '_monthCounts'); const k = ks.find(x => nameMatch(x, s.name)); return k ? shiftTrend[k] : null; };
   const mk = monthKey(year, month);
   const days = getDays(year, month);
   const REST = new Set(['休み', '希望休', '有休']);
@@ -2360,14 +2381,23 @@ function repairHardConstraints(dept, res, ds, year, month) {
     const curRestCount  = freeRestDays.length;
 
     if (curRestCount < restBudget) {
-      // 不足: 自由勤務日から均等間隔で休みに変換
       const deficit = restBudget - curRestCount;
-      const step = freeWorkDays.length / (deficit + 1);
-      const used = new Set();
-      for (let i = 0; i < deficit; i++) {
-        const idx = Math.round((i + 1) * step) - 1;
-        const d = freeWorkDays[Math.max(0, Math.min(idx, freeWorkDays.length - 1))];
-        if (d !== undefined && !used.has(d)) { res[s.id][d] = '休み'; used.add(d); }
+      const _tr = REST_LEARN_ENABLED ? _rTrend(s) : null;
+      if (_tr?.dowRestRate) {
+        // 学習: 不足分を「dowRestRateが高い自由勤務日(=普段その曜日に休みがち)」優先で休みに変換。
+        //   公休の枚数(deficit)は不変・どの日にするかだけを誘導。日順は tie-break。
+        const rr = (d) => _tr.dowRestRate[(new Date(year, month, d).getDay() + 6) % 7] ?? 0;
+        const ranked = [...freeWorkDays].sort((a, b) => (rr(b) - rr(a)) || (a - b));
+        for (let i = 0; i < deficit && i < ranked.length; i++) res[s.id][ranked[i]] = '休み';
+      } else {
+        // 従来: 自由勤務日から均等間隔で休みに変換
+        const step = freeWorkDays.length / (deficit + 1);
+        const used = new Set();
+        for (let i = 0; i < deficit; i++) {
+          const idx = Math.round((i + 1) * step) - 1;
+          const d = freeWorkDays[Math.max(0, Math.min(idx, freeWorkDays.length - 1))];
+          if (d !== undefined && !used.has(d)) { res[s.id][d] = '休み'; used.add(d); }
+        }
       }
     } else if (curRestCount > restBudget) {
       // 超過: 自由休みセルから勤務に変換（maxStaffの空きを考慮）

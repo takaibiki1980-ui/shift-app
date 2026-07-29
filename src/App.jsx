@@ -4415,7 +4415,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
 
         // ── eiyo部署のみ: 公休数・maxConsec違反を自動修正 ──
-        repairHardConstraints(cd, result, _p1_ds, year, month);
+        repairHardConstraints(cd, result, _p1_ds, year, month, learnedTrend);
 
         // ── 検証（修復後の状態に対して警告のみ・保存は続行）──
         const _hardErrs = validateHardConstraints(cd, result, _p1_ds, year, month);
