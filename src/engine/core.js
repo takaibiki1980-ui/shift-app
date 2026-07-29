@@ -15,6 +15,17 @@ const LEARN_WEIGHT = 250;
 // must-fill(夜勤最低人数)は不変。false にすると従来のローテーション公平性のみの挙動へ即戻る。
 const NIGHT_LEARN_ENABLED = true;
 
+// 学習「閾値ボーナス」: 会議・行事由来の“強い曜日の癖”(50%超)を、%と観測量に応じて強く再現する。
+//   P_top = max(その曜日の最頻勤務率, その曜日の休み率)。50%未満は増幅なし（弱い傾向は従来のまま）。
+//   strength = clamp((P_top−T)/(1−T),0,1) / W_eff = min(LEARN_WEIGHT*(1+SLOPE*strength), LEARN_MAX)
+//   conf = min(1, 観測月数/CONF_MONTHS)（過学習防止のゲート。基本項は据え置き、ボーナス分だけスケール）
+// LEARN_MAXは1500(公平性2000未満)厳守＝公休/役職/maxStaffを侵さない。false で従来挙動へ即復帰。
+const LEARN_THRESHOLD     = 0.5;
+const BONUS_SLOPE         = 3.0;
+const LEARN_MAX           = 1500;
+const CONF_MONTHS         = 4;
+const LEARN_BONUS_ENABLED = true;
+
 // カスタムシフト種別のstyling定義を取得（標準SHIFTSに無い場合はbaseTypeの色を継承）
 
 function buildDeptWorkTypes(customDefs) {
@@ -2006,6 +2017,21 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
         const tKey = trendKeys.find(k => nameMatch(k, s.name));
         const trend = tKey ? shiftTrend[tKey] : null;
         if (!trend) continue;
+        // 閾値ボーナス: (スタッフ,曜日)ごとの有効重み effW[dow] を事前計算（曜日=getDay()順 0..6）。
+        //   基本項 LEARN_WEIGHT は据え置き、ボーナス分だけ「強さ(P_top)×観測量(conf)」でスケール。
+        const monthCnt = shiftTrend._monthCounts?.[tKey] ?? 0;
+        const conf = Math.min(1, monthCnt / CONF_MONTHS);
+        const effW = new Array(7);
+        for (let dw = 0; dw < 7; dw++) {
+          if (!LEARN_BONUS_ENABLED) { effW[dw] = LEARN_WEIGHT; continue; }
+          const wr = trend.dowShiftRate?.[dw];
+          let pWork = 0; if (wr) for (const k in wr) { if (wr[k] > pWork) pWork = wr[k]; }
+          const rRate = trend.dowRestRate?.[(dw + 6) % 7] ?? 0;
+          const pTop = Math.max(pWork, rRate);
+          const strength = Math.max(0, Math.min(1, (pTop - LEARN_THRESHOLD) / (1 - LEARN_THRESHOLD)));
+          const wEff = Math.min(LEARN_WEIGHT * (1 + BONUS_SLOPE * strength), LEARN_MAX);
+          effW[dw] = LEARN_WEIGHT + (wEff - LEARN_WEIGHT) * conf; // 基本項+ボーナス×conf
+        }
         for (let d = 1; d <= days; d++) {
           const shift = res[s.id]?.[d];
           if (!shift) continue;
@@ -2015,11 +2041,11 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
             const predictedProb = dowRate
               ? (dowRate[shift] ?? 0)
               : (typeof trend[shift] === 'number' ? trend[shift] : 0);
-            score += (1 - predictedProb) * LEARN_WEIGHT; // 学習(勤務種別): dowShiftRate 傾向補正
+            score += (1 - predictedProb) * effW[dow]; // 学習(勤務種別): dowShiftRate 傾向補正
           } else if (LEARN_REST.has(shift)) {
             const dow6 = (dow + 6) % 7; // dowRestRateは月曜=0インデックスで格納
             const restProb = trend.dowRestRate?.[dow6] ?? null;
-            if (restProb != null) score += (1 - restProb) * LEARN_WEIGHT; // 学習(休み): dowRestRate 傾向補正
+            if (restProb != null) score += (1 - restProb) * effW[dow]; // 学習(休み): dowRestRate 傾向補正
           }
         }
       }
