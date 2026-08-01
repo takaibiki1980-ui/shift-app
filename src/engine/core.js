@@ -15,6 +15,16 @@ const LEARN_WEIGHT = 250;
 // must-fill(夜勤最低人数)は不変。false にすると従来のローテーション公平性のみの挙動へ即戻る。
 const NIGHT_LEARN_ENABLED = true;
 
+// 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
+// 従来は一次キーが「そのシフトの総回数」の公平性(dow非依存)のため、他曜日でも同シフトを
+// 多くこなす人は総数が増えて特定曜日で後回しになり、例: 火曜遅番55%のような強い曜日癖が
+// 生成に体感レベルで出なかった。ONにすると、strong判定を満たす候補だけ公平性を飛び越えて
+// 優先する（候補の並べ替えのみ。席の数・適格性・must-fill・maxStaff・役職・公休数は不変）。
+// DOW_STRONG_ENABLED=false で従来挙動へ即復帰。
+const DOW_STRONG_ENABLED = true;
+const STRONG_RATE = 0.5;    // 強い癖と見なす dowShiftRate のしきい値
+const STRONG_MONTHS = 2;    // 観測ゲート: monthCounts≥2（各曜日≈8回以上）で癖を信頼
+
 // カスタムシフト種別のstyling定義を取得（標準SHIFTSに無い場合はbaseTypeの色を継承）
 
 function buildDeptWorkTypes(customDefs) {
@@ -495,6 +505,22 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     if (!shiftTrend || Object.keys(shiftTrend).length === 0) return null;
     const key = Object.keys(shiftTrend).filter(k => k !== '_months').find(k => nameMatch(k, s.name));
     return key ? shiftTrend[key] : null;
+  };
+
+  // 学習の観測ゲート用: そのスタッフが登場した月数(monthCounts)。名前一致で引く。
+  const getMonthCount = (s) => {
+    const mc = shiftTrend?._monthCounts;
+    if (!mc) return 0;
+    const key = Object.keys(mc).find(k => nameMatch(k, s.name));
+    return key ? (mc[key] || 0) : 0;
+  };
+  // その曜日・そのシフトの「強い癖」判定: dowShiftRate>=STRONG_RATE かつ 観測月数>=STRONG_MONTHS。
+  const isStrongHabit = (s, weekday, shift) => {
+    if (!DOW_STRONG_ENABLED) return false;
+    const t = getTrend(s);
+    const r = t?.dowShiftRate?.[weekday]?.[shift];
+    if (r == null || r < STRONG_RATE) return false;
+    return getMonthCount(s) >= STRONG_MONTHS;
   };
 
   const pickWithTrend = (s, available, cnts) => {
@@ -1285,10 +1311,22 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (prevConsec + 1 + fwdConsec > maxConsec) { _slotMaxConsecExcluded++; return false; }
             return true;
           }).sort((a, b) => {
+            const weekday = new Date(year, month, d).getDay();
+            // 案A: 「その曜日の強い癖」を持つ候補を、総回数公平性を飛び越えて優先する。
+            const sA = isStrongHabit(a, weekday, shiftType);
+            const sB = isStrongHabit(b, weekday, shiftType);
+            if (sA !== sB) return sA ? -1 : 1;            // 片方だけstrong → strong優先
+            if (sA && sB) {                                 // 両方strong → 率が高い順→乱数
+              const tA = getTrend(a), tB = getTrend(b);
+              const rA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? 0;
+              const rB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? 0;
+              if (Math.abs(rA - rB) > 0.05) return rB - rA;
+              return Math.random() - 0.5;
+            }
+            // 両方non-strong → 従来どおり（総回数公平性 → dowShiftRate二次キー → 乱数）
             const ua = Object.values(res[a.id]).filter(v => v === shiftType).length;
             const ub = Object.values(res[b.id]).filter(v => v === shiftType).length;
             if (ua !== ub) return ua - ub;
-            const weekday = new Date(year, month, d).getDay();
             const tA = getTrend(a), tB = getTrend(b);
             const wA = tA?.dowShiftRate?.[weekday]?.[shiftType] ?? tA?.[shiftType] ?? 0.5;
             const wB = tB?.dowShiftRate?.[weekday]?.[shiftType] ?? tB?.[shiftType] ?? 0.5;
