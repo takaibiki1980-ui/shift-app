@@ -15,6 +15,13 @@ const LEARN_WEIGHT = 250;
 // must-fill(夜勤最低人数)は不変。false にすると従来のローテーション公平性のみの挙動へ即戻る。
 const NIGHT_LEARN_ENABLED = true;
 
+// 夜勤配置(_nightCandSort)に「その曜日の強い癖」プリエンプションを入れるか（早番/遅番の案Aと同型）。
+// isStrongNight(s,dow)=dowShiftRate['夜勤'][dow]>=STRONG_RATE かつ monthCount>=STRONG_MONTHS の候補を
+// 夜勤"総"回数の公平性(一次キー)より優先する。並べ替えのみで候補プール・救済弁は不変のため
+// must-fill(夜勤最低人数)は絶対に侵さない。NIGHT_LEARN_ENABLED(二次キー)とは両立（層構造）。
+// NIGHT_STRONG_ENABLED=false で従来挙動へ即復帰。STRONG_RATE/STRONG_MONTHS は早番遅番と共有。
+const NIGHT_STRONG_ENABLED = true;
+
 // 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
 // 従来は一次キーが「そのシフトの総回数」の公平性(dow非依存)のため、他曜日でも同シフトを
 // 多くこなす人は総数が増えて特定曜日で後回しになり、例: 火曜遅番55%のような強い曜日癖が
@@ -703,7 +710,24 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     });
 
     // 比較関数（評価スコアを使わない純粋な優先順位型）
+    // 夜勤の「その曜日の強い癖」判定（早番/遅番の案Aと同型・NIGHT_STRONG_ENABLEDで戻せる）。
+    const _isStrongNight = (s, dow) => {
+      if (!NIGHT_STRONG_ENABLED) return false;
+      const r = getTrend(s)?.dowShiftRate?.[dow]?.['夜勤'];
+      if (r == null || r < STRONG_RATE) return false;
+      return getMonthCount(s) >= STRONG_MONTHS;
+    };
     const _nightCandSort = (a, b, d) => {
+      const _dowd = new Date(year, month, d).getDay();
+      // ⓪(案A同型) 強い曜日癖のプリエンプション: その曜日に普段夜勤する強い癖を持つ人を、
+      //   夜勤総回数の公平性(一次キー)より優先。並べ替えのみで候補プール・救済弁は不変＝must-fill厳守。
+      const stA = _isStrongNight(a, _dowd), stB = _isStrongNight(b, _dowd);
+      if (stA !== stB) return stA ? -1 : 1;          // 片方だけstrong → strong優先
+      if (stA && stB) {                                // 両方strong → 率が高い順 → 既存キーへ
+        const rA = getTrend(a)?.dowShiftRate?.[_dowd]?.['夜勤'] ?? 0;
+        const rB = getTrend(b)?.dowShiftRate?.[_dowd]?.['夜勤'] ?? 0;
+        if (Math.abs(rA - rB) > 0.05) return rB - rA;
+      }
       // ① 夜勤回数: 少ない順（count equity を絶対優先・従来のまま）
       const cntA = Object.values(res[a.id]).filter(v => v === '夜勤').length;
       const cntB = Object.values(res[b.id]).filter(v => v === '夜勤').length;
