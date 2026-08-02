@@ -1149,7 +1149,12 @@ function LearnStatusView({ learnedTrend, staffList, depts, allDBData, activeDept
             <div style={{ fontSize: 12, fontWeight: 800, color: '#2563EB', margin: '6px 0' }}>② 曜日別の勤務種別の割合（生成が使う値）</div>
             {(() => {
               const types = new Set(); (t.dowShiftRate || []).forEach(r => r && Object.keys(r).forEach(k => types.add(k)));
-              const typeArr = [...types];
+              // 勤務種別(行)の並びをスタッフ間で固定化する（標準の並び順 SHIFT_KEYS_MANUAL 準拠・未知種別は末尾）。
+              const typeArr = [...types].sort((a, b) => {
+                const ia = SHIFT_KEYS_MANUAL.indexOf(a), ib = SHIFT_KEYS_MANUAL.indexOf(b);
+                const oa = ia === -1 ? Infinity : ia, ob = ib === -1 ? Infinity : ib;
+                return oa !== ob ? oa - ob : a.localeCompare(b);
+              });
               if (typeArr.length === 0) return <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 12 }}>勤務データなし</div>;
               return (
                 <div style={{ overflowX: 'auto', marginBottom: 14 }}>
