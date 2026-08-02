@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo, Component } from "re
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2 } from 'lucide-react';
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -1696,7 +1696,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📤 書き出し</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><Upload size={16} strokeWidth={2}/>書き出し</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
         <div style={{fontSize:11,color:"#52525B",fontWeight:700,marginBottom:7}}>対象部署</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
           {depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#4F46E5":"#fff",color:sel?"#fff":"#52525B",border:`1.5px solid ${sel?"#4F46E5":"#D4D4D8"}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:sel?700:400,letterSpacing:"0.01em",transition:"background 0.12s,color 0.12s,border-color 0.12s"}}>{d.label}</button>;})}
@@ -1704,13 +1704,13 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         <div style={{fontSize:11,marginBottom:12,minHeight:18,color:noSelection?"#A1A1AA":"#4F46E5",fontWeight:noSelection?400:500}}>
           {noSelection ? "共有する部署を選択してください" : `共有対象（${selectedDepts.length}部署）: ${depts.filter(d=>selectedDepts.includes(d.id)).map(d=>d.label).join(' · ')}`}
         </div>
-        <button onClick={doPrint} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#6366F1",border:"none",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>🖨️</span><div><div style={{fontSize:13,fontWeight:800,color:"#fff"}}>今すぐ印刷</div><div style={{fontSize:11,color:"#d5f5f5",marginTop:2}}>印刷ダイアログがすぐに開きます</div></div></button>
-        <button onClick={()=>doDownload("csv")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#e8f5ee",border:"1px solid #2d8a52",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>📊</span><div><div style={{fontSize:13,fontWeight:800,color:"#34d399"}}>CSV（Excel・スプレッドシート）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>Excel・Googleスプレッドシートで開けます</div></div></button>
-        <button onClick={()=>doDownload("html")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#F4F4F5",border:"1px solid #A1A1AA",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><span style={{fontSize:24}}>💾</span><div><div style={{fontSize:13,fontWeight:800,color:"#6366F1"}}>HTMLで保存（USB用）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>他のPCやUSBで印刷する場合に使用</div></div></button>
+        <button onClick={doPrint} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#6366F1",border:"none",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><Printer size={24} strokeWidth={2} style={{color:"#fff",flexShrink:0}}/><div><div style={{fontSize:13,fontWeight:800,color:"#fff"}}>今すぐ印刷</div><div style={{fontSize:11,color:"#d5f5f5",marginTop:2}}>印刷ダイアログがすぐに開きます</div></div></button>
+        <button onClick={()=>doDownload("csv")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#e8f5ee",border:"1px solid #2d8a52",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><FileSpreadsheet size={24} strokeWidth={2} style={{color:"#34d399",flexShrink:0}}/><div><div style={{fontSize:13,fontWeight:800,color:"#34d399"}}>CSV（Excel・スプレッドシート）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>Excel・Googleスプレッドシートで開けます</div></div></button>
+        <button onClick={()=>doDownload("html")} disabled={noSelection} style={{width:"100%",background:noSelection?"#F4F4F5":"#F4F4F5",border:"1px solid #A1A1AA",borderRadius:10,padding:"13px 16px",cursor:noSelection?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:12,textAlign:"left",opacity:noSelection?0.4:1,marginBottom:8}}><FileCode size={24} strokeWidth={2} style={{color:"#6366F1",flexShrink:0}}/><div><div style={{fontSize:13,fontWeight:800,color:"#6366F1"}}>HTMLで保存（USB用）</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>他のPCやUSBで印刷する場合に使用</div></div></button>
 
         {/* ── 共有セクション ── */}
         <div style={{marginTop:16,paddingTop:16,borderTop:"2px solid #E4E4E7"}}>
-          <div style={{fontSize:13,fontWeight:900,color:"#18181B",marginBottom:4}}>📲 共有</div>
+          <div style={{fontSize:13,fontWeight:900,color:"#18181B",marginBottom:4,display:"flex",alignItems:"center",gap:6}}><Share2 size={14} strokeWidth={2}/>共有</div>
           <div style={{fontSize:11,color:"#52525B",marginBottom:12}}>
             選択中の部署をまとめて1つのURLで共有します。スタッフは全部署のシフトを1画面で確認できます。
           </div>
@@ -1730,8 +1730,8 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
                     </div>
                   </div>
                   <div style={{display:"flex",gap:8,marginBottom:8}}>
-                    <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
-                    <button onClick={doCopy} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 URLコピー</button>
+                    <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><MessageCircle size={14} strokeWidth={2}/>LINEで送る</button>
+                    <button onClick={doCopy} style={{background:"#eff6ff",color:"#2563EB",border:"1px solid #93c5fd",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>URLコピー</button>
                   </div>
                   <button onClick={doShare} disabled={isSharing} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #E4E4E7",borderRadius:8,padding:"7px 0",cursor:isSharing?"not-allowed":"pointer",fontSize:11}}>
                     {isSharing ? "保存中..." : "↩ 再発行（シフト変更後）"}
@@ -4857,14 +4857,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&setShareModal(false)}>
           <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-              <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>🔗 スタッフ共有URL</div>
+              <div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><Link2 size={16} strokeWidth={2}/>スタッフ共有URL</div>
               <button onClick={()=>setShareModal(false)} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
             </div>
             <div style={{fontSize:11,color:"#52525B",marginBottom:16,background:"#F4F4F5",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
 
             {/* ── サイト全体QR（新規登録・ログイン用） ── */}
             <div style={{background:"#fff",border:"2px solid #6366F1",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
-              <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:4}}>🏠 YEIX サイトQRコード</div>
+              <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:4,display:"flex",alignItems:"center",gap:6}}><Home size={14} strokeWidth={2}/>YEIX サイトQRコード</div>
               <div style={{fontSize:10,color:"#52525B",marginBottom:10}}>自分のサイトに貼り付けると、スキャンしたらYEIXのログイン・新規登録画面へ移動します。</div>
               <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
@@ -4882,7 +4882,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                     ④ 「ログイン」または「新規登録」が表示されます
                   </div>
                   <div style={{marginTop:10,fontSize:10,background:"#fef3c7",border:"1px solid #fbbf24",borderRadius:6,padding:"6px 8px",color:"#92400e"}}>
-                    💡 URLもリンクとして貼れます<br/>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:4}}><Lightbulb size={12} strokeWidth={2}/>URLもリンクとして貼れます</span><br/>
                     <span style={{wordBreak:"break-all",fontWeight:700}}>{window.location.origin}</span>
                   </div>
                 </div>
@@ -4915,7 +4915,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   <div style={{fontWeight:800,fontSize:13,color:"#18181B",marginBottom:10}}>{d.label}</div>
                   {/* 対象シフト月 */}
                   <div style={{marginBottom:12}}>
-                    <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4}}>📅 対象シフト月</div>
+                    <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4,display:"flex",alignItems:"center",gap:5}}><Calendar size={13} strokeWidth={2}/>対象シフト月</div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <input type="month" value={(ps.targetYear&&ps.targetMonth)?`${ps.targetYear}-${String(ps.targetMonth).padStart(2,'0')}`:""} onChange={e=>{const v=e.target.value;if(!v){setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:null,targetMonth:null}}));}else{const[ty,tm]=v.split('-').map(Number);setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:ty,targetMonth:tm}}));}}} style={{border:"1px solid #D4D4D8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#18181B",outline:"none",background:"#FAFAFA"}}/>
                       {(ps.targetYear||ps.targetMonth)&&<button onClick={()=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:null,targetMonth:null}}))} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}>✕ クリア</button>}
@@ -4925,25 +4925,25 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   </div>
                   {/* 締め切り */}
                   <div style={{marginBottom:12}}>
-                    <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4}}>⏰ 締め切り日</div>
+                    <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4,display:"flex",alignItems:"center",gap:5}}><Clock size={13} strokeWidth={2}/>締め切り日</div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <input type="date" value={ps.deadline||""} onChange={e=>setPsDept('deadline',e.target.value||null)} style={{border:"1px solid #D4D4D8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#18181B",outline:"none",background:"#FAFAFA"}}/>
                       {ps.deadline&&<button onClick={()=>setPsDept('deadline',null)} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}>✕ クリア</button>}
                     </div>
-                    {ps.deadline&&<div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>⚠ {ps.deadline} 以降は送信不可になります</div>}
+                    {ps.deadline&&<div style={{fontSize:10,color:"#c44b4b",marginTop:3,display:"flex",alignItems:"center",gap:4}}><AlertTriangle size={11} strokeWidth={2}/>{ps.deadline} 以降は送信不可になります</div>}
                   </div>
                   {/* 保存ボタン */}
-                  <button onClick={doSaveSettings} style={{width:"100%",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12}}>💾 この設定を保存する</button>
+                  <button onClick={doSaveSettings} style={{width:"100%",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Save size={14} strokeWidth={2}/>この設定を保存する</button>
                   <div style={{textAlign:"center",marginBottom:6}}>
-                    <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700}}>📷 カメラで読み取り</div>
+                    <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Camera size={12} strokeWidth={2}/>カメラで読み取り</div>
                     <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8}}>
                       <QRCodeSVG value={urlShort} size={140} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
                     </div>
                   </div>
                   <div style={{fontSize:11,fontWeight:700,color:"#52525B",marginBottom:4}}>希望休入力リンク</div>
                   <div style={{display:"flex",gap:8,marginTop:4,marginBottom:12}}>
-                    <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>💬 LINEで送る</button>
-                    <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1}}>📋 コピー</button>
+                    <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><MessageCircle size={14} strokeWidth={2}/>LINEで送る</button>
+                    <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>コピー</button>
                   </div>
                 </div>
               );
