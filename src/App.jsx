@@ -889,7 +889,7 @@ const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
 function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
   const buildInitMaxStaff = (types, existing, customDefs) => { const d={}; (types||["日勤"]).forEach(k=>{const cd=(customDefs||[]).find(c=>c.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=existing?.[k];d[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def;}); return d; };
   const initShiftTypes = () => { const base=dept?.shiftTypes||["日勤"]; const ckeys=(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean); const missing=ckeys.filter(k=>!base.includes(k)); const all=missing.length>0?[...base,...missing]:base; return all.filter((k,i)=>all.indexOf(k)===i); };
-  const [label,setLabel]=useState(dept?.label||""), [shiftTypes,setShiftTypes]=useState(initShiftTypes), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(initShiftTypes(),dept?.maxStaff,dept?.customShiftDefs)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
+  const [label,setLabel]=useState(dept?.label||""), [shiftTypes,setShiftTypes]=useState(initShiftTypes), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(initShiftTypes(),dept?.maxStaff,dept?.customShiftDefs)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [kiboDayLimit,setKiboDayLimit]=useState(dept?.kiboDayLimit||0), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
   const [shiftMaxByType,setShiftMaxByType]=useState(()=>{const d={};initShiftTypes().filter(k=>k!=="夜勤").forEach(k=>{d[k]=dept?.shiftMaxByType?.[k]||0;});return d;});
   const [customShiftDefs, setCustomShiftDefs] = useState(dept?.customShiftDefs || []);
   const [crossFloorNightEnabled, setCrossFloorNightEnabled] = useState(!!dept?.crossFloorNightEnabled);
@@ -902,7 +902,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [maxStaffRelaxable, setMaxStaffRelaxable] = useState(dept?.maxStaffRelaxable !== false);
   const [engineType, setEngineType] = useState(dept?.engineType || 'kaigo');
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -956,7 +956,8 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:maxConsec,min:3,max:7,unit:"日",onConfirm:v=>setMaxConsec(v===""?5:Math.max(3,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{maxConsec}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div></div>
           <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:defKyuko,min:4,max:15,unit:"日",onConfirm:v=>setDefKyuko(v===""?8:Math.max(4,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{defKyuko}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div></div>
-          <div><label style={LS}>希望休 上限人数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:kiboLimit,min:1,max:10,unit:"名",onConfirm:v=>setKiboLimit(v===""?3:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{kiboLimit}</div><span style={{fontSize:12,color:"#3F3F46"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同日に達すると⚠警告表示</div></div>
+          <div><label style={LS}>希望休 上限人数（同日）</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:kiboLimit,min:1,max:10,unit:"名",onConfirm:v=>setKiboLimit(v===""?3:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{kiboLimit}</div><span style={{fontSize:12,color:"#3F3F46"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同じ日に何名まで希望休を取れるか（同日に達すると⚠警告）</div></div>
+          <div><label style={LS}>希望休 上限日数（1人あたり）</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:kiboDayLimit,min:0,max:31,unit:"日",onConfirm:v=>setKiboDayLimit(v===""?0:Math.max(0,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{kiboDayLimit===0?"制限なし":kiboDayLimit}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div><div style={{fontSize:10,color:"#2563EB",marginTop:3}}>1人が1ヶ月に何日まで希望休を出せるか（0=制限なし・超過はポータルで入力不可）</div></div>
         </div>
         <label style={LS}>役職一覧（1行に1つ）</label>
         <textarea value={rolesText} onChange={e=>setRolesText(e.target.value)} rows={4} placeholder={"介護福祉士\n介護職員\n介護補助"} style={{...INPUT_STYLE,resize:"vertical",lineHeight:1.7,marginBottom:14}}/>
@@ -2618,7 +2619,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
 // ─────────────────────────────────────────────
 //  スタッフポータル
 // ─────────────────────────────────────────────
-function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChange, type = 'kibo', disabledDays = [] }) {
+function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChange, type = 'kibo', disabledDays = [], dayLimit = 0 }) {
   const isYukyu = type === 'yukyu';
   const activeColor = isYukyu ? '#9b4db5' : '#ef4444';
   const activeBg = isYukyu ? '#faf0ff' : '#fff0f0';
@@ -2631,6 +2632,9 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
   for (let i = 0; i < firstDow; i++) cells.push(null);
   for (let d = 1; d <= days; d++) cells.push(d);
   const lim = kiboLimit || 3;
+  // 1人あたりの希望休 上限日数（0=無制限）。希望休のみ対象・有休は常に無制限。
+  const dayLim = (!isYukyu && dayLimit > 0) ? dayLimit : 0;
+  const atDayLimit = dayLim > 0 && myDays.length >= dayLim;
 
   const toggle = (d) => {
     if (!d) return;
@@ -2638,6 +2642,8 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
     if (!isYukyu) {
       const cnt = otherCounts?.[d] || 0;
       if (!myDays.includes(d) && cnt >= lim) return;
+      // 上限日数に達していたら、未選択日はハードに止める（選択解除は可）
+      if (!myDays.includes(d) && atDayLimit) return;
     }
     onChange(myDays.includes(d) ? myDays.filter(x => x !== d) : [...myDays, d]);
   };
@@ -2656,7 +2662,7 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
           const over = !isYukyu && cnt >= lim;
           const warn = !isYukyu && cnt === lim - 1;
           const dow = (firstDow+d-1)%7, we = dow===0||dow===6;
-          const blocked = isDisabled || (!isMe && over);
+          const blocked = isDisabled || (!isMe && over) || (!isMe && atDayLimit);
           return (
             <button key={d} onClick={()=>toggle(d)} disabled={blocked}
               style={{background:isMe?activeBg:blocked?"#f5f5f5":"transparent",border:isMe?`2px solid ${activeBorder}`:blocked?"1px solid #e5e5e5":"1px solid #27272A",borderRadius:6,padding:"4px 2px",cursor:blocked?"not-allowed":"pointer",color:isMe?activeColor:blocked?"#aaa":we?"#6366F1":"#18181B",fontSize:11,fontWeight:isMe?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:38,position:"relative",opacity:blocked?0.5:1}}>
@@ -2711,7 +2717,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         const c = JSON.parse(json);
         const cfg = {
           facility_name: c.fn || '',
-          depts: [{ id: c.d.id, label: c.d.label, kiboLimit: c.d.kb || 3, deadline: c.d.dl || null, targetYear: c.d.ty || null, targetMonth: c.d.tm || null }],
+          depts: [{ id: c.d.id, label: c.d.label, kiboLimit: c.d.kb || 3, kiboDayLimit: c.d.kd || 0, deadline: c.d.dl || null, targetYear: c.d.ty || null, targetMonth: c.d.tm || null }],
           staffList: (c.sl || []).map(s => ({ id: s.i ? shortToUuid(s.i) : s.id, name: s.n || s.name, dept: c.d.id }))
         };
         setConfig(cfg);
@@ -2768,6 +2774,8 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   const deptStaff = (config?.staffList || []).filter(s => s.dept === selDeptId);
   const selStaff = deptStaff.find(s => s.id === selStaffId);
   const lim = selDept?.kiboLimit || 3;
+  const dayLim = selDept?.kiboDayLimit || 0; // 1人あたりの希望休 上限日数（0=無制限）
+  const overDayLimit = dayLim > 0 && myDays.length > dayLim; // 上限超過（既存データが超えている場合など）
 
   // 締め切りチェック・月固定
   const isPastDeadline = selDept?.deadline ? new Date() > new Date(selDept.deadline + 'T23:59:59') : false;
@@ -2808,6 +2816,11 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
       );
       if (overDays.length > 0) {
         alert(`${overDays.sort((a,b)=>a-b).join('日・')}日は希望休の上限に達しました。別の日を選んでください。`);
+        return;
+      }
+      // 1人あたりの上限日数チェック（保存直前の保険・0=無制限）
+      if (dayLim > 0 && myDays.length > dayLim) {
+        alert(`希望休は${dayLim}日までです。現在${myDays.length}日選択されています。${myDays.length - dayLim}日減らしてください。`);
         return;
       }
       const { error } = await supabase.from('staff_kibo').upsert({
@@ -2924,13 +2937,19 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
           {/* 希望休 */}
           <div style={{background:"#fff",borderRadius:12,padding:"14px 16px",marginBottom:12,boxShadow:"0 1px 6px #27272A15"}}>
             <div style={{fontSize:11,fontWeight:700,color:"#52525B",marginBottom:4}}>▍ {selStaff.name}さんの希望休（{year}年{month+1}月）</div>
-            <div style={{fontSize:10,color:"#c44b4b",marginBottom:10}}>※ 同じ日は上限{lim}名まで。上限に達した日は選択できません。</div>
+            <div style={{fontSize:10,color:"#c44b4b",marginBottom:4}}>※ 同じ日は上限{lim}名まで。上限に達した日は選択できません。</div>
+            {dayLim > 0 && (
+              <div style={{fontSize:10,color:"#2563EB",marginBottom:10,fontWeight:700}}>※ 希望休は1人{dayLim}日まで（残り {Math.max(0, dayLim - myDays.length)}日）</div>
+            )}
+            {overDayLimit && (
+              <div style={{fontSize:11,color:"#b45309",background:"#fff8e1",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 10px",marginBottom:10,fontWeight:700}}>⚠️ 現在{myDays.length}日で上限{dayLim}日を超えています。{myDays.length - dayLim}日減らしてから送信してください。</div>
+            )}
             {kiboLoading ? (
               <div style={{textAlign:"center",color:"#71717A",padding:20}}>読み込み中…</div>
             ) : (
-              <StaffKiboCalendar year={year} month={month} myDays={myDays} otherCounts={otherCounts} kiboLimit={lim} onChange={setMyDays} type="kibo" disabledDays={myYukyuDays}/>
+              <StaffKiboCalendar year={year} month={month} myDays={myDays} otherCounts={otherCounts} kiboLimit={lim} onChange={setMyDays} type="kibo" disabledDays={myYukyuDays} dayLimit={dayLim}/>
             )}
-            <div style={{marginTop:10,fontSize:12,color:"#ef4444",fontWeight:700}}>選択中: {myDays.length}日</div>
+            <div style={{marginTop:10,fontSize:12,color:"#ef4444",fontWeight:700}}>選択中: {myDays.length}日{dayLim > 0 ? ` ／ 上限${dayLim}日` : ""}</div>
           </div>
 
           {/* 有休 */}
@@ -3522,7 +3541,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       facility_name: profile?.facility_name || '',
       depts: depts.map(d => {
         const ps = portalSettings[d.id] || {};
-        return { id: d.id, label: d.label, kiboLimit: d.kiboLimit || 3, deadline: ps.deadline || null, targetYear: ps.targetYear || null, targetMonth: ps.targetMonth || null };
+        return { id: d.id, label: d.label, kiboLimit: d.kiboLimit || 3, kiboDayLimit: d.kiboDayLimit || 0, deadline: ps.deadline || null, targetYear: ps.targetYear || null, targetMonth: ps.targetMonth || null };
       }),
       staffList: staffList.map(s => ({ id: s.id, dept: s.dept, name: s.name, role: s.role }))
     };
@@ -4875,14 +4894,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const ps=portalSettings[d.id]||{};
               const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
-              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,kb:d.kiboLimit||3,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null},sl:deptSl};
+              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,kb:d.kiboLimit||3,kd:d.kiboDayLimit||0,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               const urlShort=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlShort).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlShort}`));}else{alert(`URLをコピーしてください:\n${urlShort}`);}};
-              const doLine=()=>{const lineUrl=`https://line.me/R/msg/text/?${encodeURIComponent(`${d.label}の希望休入力はこちら\n${urlShort}`)}`;window.open(lineUrl,'_blank');};              const doSaveSettings=async()=>{
+              const doLine=()=>{const dl=d.kiboDayLimit||0;const body=`${d.label}の希望休入力はこちら${dl>0?`\n※希望休は${dl}日までです`:''}\n${urlShort}`;const lineUrl=`https://line.me/R/msg/text/?${encodeURIComponent(body)}`;window.open(lineUrl,'_blank');};              const doSaveSettings=async()=>{
                 const newPs={...portalSettings,[d.id]:{deadline:ps.deadline||null,targetYear:ps.targetYear||null,targetMonth:ps.targetMonth||null}};
-                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,kiboLimit:dep.kiboLimit||3,deadline:p.deadline||null,targetYear:p.targetYear||null,targetMonth:p.targetMonth||null};});
+                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,kiboLimit:dep.kiboLimit||3,kiboDayLimit:dep.kiboDayLimit||0,deadline:p.deadline||null,targetYear:p.targetYear||null,targetMonth:p.targetMonth||null};});
                 const facilityVal={facility_name:profile?.facility_name||'',depts:deptsCfg,staffList:staffList.map(s=>({id:s.id,dept:s.dept,name:s.name,role:s.role}))};
                 const [r1,r2]=await Promise.all([
                   supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'portalSettings',data_value:newPs,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
