@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo, Component } from "re
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save } from 'lucide-react';
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -1005,7 +1005,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
             </div>
           );
         })()}
-        <label style={LS}>🔒 編集PINコード（4桁・任意）</label>
+        <label style={{...LS,display:"inline-flex",alignItems:"center",gap:5}}><Lock size={13} strokeWidth={2}/>編集PINコード（4桁・任意）</label>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
           <input type="text" inputMode="numeric" maxLength={4} value={pinCode} onChange={e=>setPinCode(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="例：1234（空欄でPINなし）" style={{...INPUT_STYLE,width:180,letterSpacing:6,textAlign:"center",marginBottom:0}}/>
           {pinCode&&<button onClick={()=>setPinCode("")} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11}}>✕ 解除</button>}
@@ -1225,7 +1225,7 @@ function PinModal({ deptLabel, onVerify, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"2px solid #6366F1",borderRadius:16,padding:28,width:"100%",maxWidth:320,boxShadow:"0 30px 80px #000",textAlign:"center"}}>
-        <div style={{fontSize:32,marginBottom:8}}>🔒</div>
+        <div style={{marginBottom:8,display:"flex",justifyContent:"center"}}><Lock size={32} strokeWidth={2} style={{color:"#6366F1"}}/></div>
         <div style={{fontSize:15,fontWeight:900,color:"#18181B",marginBottom:4}}>{deptLabel} 編集ロック</div>
         <div style={{fontSize:12,color:"#52525B",marginBottom:24}}>4桁のPINを入力してください</div>
         <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:16}}>
@@ -1237,7 +1237,7 @@ function PinModal({ deptLabel, onVerify, onClose }) {
           ))}
         </div>
         {error && <div style={{color:"#ef4444",fontSize:12,marginBottom:12,fontWeight:700}}>PINが違います。もう一度お試しください。</div>}
-        <button onClick={handleVerify} disabled={!filled} style={{width:"100%",background:filled?"#6366F1":"#F4F4F5",color:filled?"#fff":"#71717A",border:"none",borderRadius:9,padding:"12px 0",cursor:filled?"pointer":"not-allowed",fontSize:14,fontWeight:800,marginBottom:10}}>🔓 解錠する</button>
+        <button onClick={handleVerify} disabled={!filled} style={{width:"100%",background:filled?"#6366F1":"#F4F4F5",color:filled?"#fff":"#71717A",border:"none",borderRadius:9,padding:"12px 0",cursor:filled?"pointer":"not-allowed",fontSize:14,fontWeight:800,marginBottom:10,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Unlock size={15} strokeWidth={2}/>解錠する</button>
         <button onClick={onClose} style={{width:"100%",background:"none",border:"none",color:"#9ca3af",cursor:"pointer",fontSize:13}}>キャンセル</button>
       </div>
     </div>
@@ -2925,7 +2925,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
       {/* 締め切り超過メッセージ */}
       {isPastDeadline && (
         <div style={{background:"#fff5f5",border:"2px solid #ef4444",borderRadius:12,padding:20,textAlign:"center",marginBottom:12}}>
-          <div style={{fontSize:28,marginBottom:6}}>🔒</div>
+          <div style={{marginBottom:6,display:"flex",justifyContent:"center"}}><Lock size={28} strokeWidth={2} style={{color:"#ef4444"}}/></div>
           <div style={{fontSize:15,fontWeight:900,color:"#ef4444",marginBottom:4}}>受付を終了しました</div>
           <div style={{fontSize:12,color:"#6b7280"}}>締め切り日（{selDept?.deadline}）を過ぎています。<br/>管理者にお問い合わせください。</div>
         </div>
@@ -4682,14 +4682,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             {saveStatus==="unsaved"&&<><Loader size={11} strokeWidth={2}/>{!isMobile&&<span>未保存</span>}</>}
             {saveStatus==="error"&&<><span style={{color:"#EF4444"}}>!</span><span>保存失敗</span></>}
           </div>
-          {!isLocked && <button onClick={saveNow} disabled={saveStatus!=="unsaved"&&saveStatus!=="error"} title={saveStatus==="unsaved"?"編集内容をクラウドに保存します":"保存済みです"} style={{background:(saveStatus==="unsaved"||saveStatus==="error")?"#F59E0B":"#F3F4F6",color:(saveStatus==="unsaved"||saveStatus==="error")?"#fff":"#9CA3AF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(saveStatus==="unsaved"||saveStatus==="error")?"pointer":"default",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:4}}>💾{!isMobile&&" 保存"}</button>}
+          {!isLocked && <button onClick={saveNow} disabled={saveStatus!=="unsaved"&&saveStatus!=="error"} title={saveStatus==="unsaved"?"編集内容をクラウドに保存します":"保存済みです"} style={{background:(saveStatus==="unsaved"||saveStatus==="error")?"#F59E0B":"#F3F4F6",color:(saveStatus==="unsaved"||saveStatus==="error")?"#fff":"#9CA3AF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(saveStatus==="unsaved"||saveStatus==="error")?"pointer":"default",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Save size={14} strokeWidth={2}/>{!isMobile&&" 保存"}</button>}
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Lock size={14} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
             : <button onClick={handleGenerate} disabled={generating||isMonthLoading||isConfirmed} title={isConfirmed?"確定済みです。「編集」ボタンで解除してください":isMonthLoading?"データ読み込み中です":undefined} style={{background:(generating||isMonthLoading||isConfirmed)?"#E5E7EB":"#2563EB",color:(generating||isMonthLoading||isConfirmed)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||isMonthLoading||isConfirmed)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(isMonthLoading||isConfirmed)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
           }
           {isConfirmed
-            ? <button onClick={handleUnconfirm} style={{background:"#F59E0B",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}>✏️{!isMobile&&" 編集"}</button>
-            : <button onClick={async()=>{ const ok=await saveNow(); if(ok) handleConfirm(); }} title="保存してから確定します" style={{background:"#10B981",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}>✓{!isMobile&&" 確定"}</button>
+            ? <button onClick={handleUnconfirm} style={{background:"#F59E0B",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Pencil size={14} strokeWidth={2}/>{!isMobile&&" 編集"}</button>
+            : <button onClick={async()=>{ const ok=await saveNow(); if(ok) handleConfirm(); }} title="保存してから確定します" style={{background:"#10B981",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Check size={14} strokeWidth={2}/>{!isMobile&&" 確定"}</button>
           }
           <button onClick={()=>setDownloadModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
           <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
