@@ -1005,12 +1005,8 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
             </div>
           );
         })()}
-        <label style={{...LS,display:"inline-flex",alignItems:"center",gap:5}}><Lock size={13} strokeWidth={2}/>編集PINコード（4桁・任意）</label>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-          <input type="text" inputMode="numeric" maxLength={4} value={pinCode} onChange={e=>setPinCode(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="例：1234（空欄でPINなし）" style={{...INPUT_STYLE,width:180,letterSpacing:6,textAlign:"center",marginBottom:0}}/>
-          {pinCode&&<button onClick={()=>setPinCode("")} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11}}><X size={12} strokeWidth={2} style={{verticalAlign:"middle",marginRight:3}}/>解除</button>}
-        </div>
-        <div style={{fontSize:10,color:"#52525B",marginBottom:18}}>設定すると部署タブ切替後に編集前にPINが必要になります</div>
+        {/* 編集PINは「編集PIN設定」専用欄（メニュー→編集PIN設定）へ分離。ここでは既存値を保持のみ。 */}
+        <div style={{fontSize:10,color:"#52525B",marginBottom:18,display:"flex",alignItems:"center",gap:5}}><Lock size={12} strokeWidth={2}/>編集PINは「メニュー ＞ 編集PIN設定」から設定・変更できます。</div>
         {shiftTypes.includes("夜勤") && (
           <div style={{marginBottom:16}}>
             <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"8px 10px",background:"#eef2ff",borderRadius:8,border:"1px solid #a5b4fc"}}>
@@ -1057,6 +1053,45 @@ function ClearModal({ deptLabel, onClearDept, onClose }) {
         <div style={{fontSize:12,color:"#52525B",marginBottom:20}}>「{deptLabel}」のシフトと実績を削除します。この操作は元に戻せません。</div>
         <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🗑</span><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトと実績をクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトと実績をすべて削除します</div></div></button>
         <button onClick={onClose} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
+      </div>
+    </div>
+  );
+}
+
+/* 編集PIN設定モーダル: 各部署の編集PIN(dept.pin・4桁)を一覧でまとめて設定・変更・解除する専用欄。
+   PINの形式・保存先(dept.pin)は不変。ロック中でも開ける（PIN忘れ時の復旧口を兼ねる）。 */
+function PinSettingsModal({ depts, onSave, onClose }) {
+  const [pins, setPins] = useState(() => Object.fromEntries((depts||[]).map(d => [d.id, d.pin || ""])));
+  const setPin = (id, v) => setPins(p => ({ ...p, [id]: v.replace(/\D/g, '').slice(0, 4) }));
+  const save = () => {
+    for (const d of depts) {
+      const v = pins[d.id] || "";
+      if (v && v.length !== 4) { alert(`「${d.label}」のPINは4桁で入力してください`); return; }
+    }
+    onSave(pins);
+    onClose();
+  };
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:420,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><Lock size={16} strokeWidth={2}/>編集PIN設定</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button>
+        </div>
+        <div style={{fontSize:11,color:"#52525B",marginBottom:16}}>各部署の編集PIN（4桁）を設定します。PINを設定すると、その部署はロックされ、編集にはPIN解錠が必要になります。空欄で保存するとPINを解除できます。</div>
+        <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:18}}>
+          {(depts||[]).map(d => (
+            <div key={d.id} style={{display:"flex",alignItems:"center",gap:10,background:"#fff",border:"1px solid #D4D4D8",borderRadius:9,padding:"10px 12px"}}>
+              <div style={{flex:1,fontSize:13,fontWeight:700,color:"#18181B"}}>{d.label}</div>
+              <input type="text" inputMode="numeric" maxLength={4} value={pins[d.id]||""} onChange={e=>setPin(d.id,e.target.value)} placeholder="4桁（空=なし）" style={{...INPUT_STYLE,width:130,letterSpacing:4,textAlign:"center",marginBottom:0}}/>
+              {(pins[d.id]||"")&&<button onClick={()=>setPin(d.id,"")} title="このPINを解除" style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11,display:"inline-flex",alignItems:"center",gap:2}}><X size={12} strokeWidth={2}/>解除</button>}
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={save} style={{flex:1,background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Save size={14} strokeWidth={2}/>保存する</button>
+          <button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
+        </div>
       </div>
     </div>
   );
@@ -4138,6 +4173,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const [excelPasteModal, setExcelPasteModal] = useState(false);
   const [clearModal, setClearModal] = useState(false);
+  const [pinSettingsModal, setPinSettingsModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [adminModal, setAdminModal] = useState(false);
@@ -4709,6 +4745,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 <div onClick={()=>{setShareModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Share2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>共有</span></div>
                 {profile?.is_admin&&<div onClick={()=>{setAdminModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Building2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>管理</span></div>}
                 <div onClick={()=>{setHelpModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><HelpCircle size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>ヘルプ</span></div>
+                {/* 編集PIN設定: ロック中でも開ける（PIN忘れ時の復旧口を兼ねる） */}
+                <div onClick={()=>{setPinSettingsModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Lock size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>編集PIN設定</span></div>
                 {!isLocked&&<><div style={{height:1,background:"#F1F5F9",margin:"4px 0"}}/>
                 <div onClick={()=>{ if(isConfirmed){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setOverflowOpen(false);return;} setClearModal(true);setOverflowOpen(false);}} title={isConfirmed?"確定済みです。「編集」を押してから使用できます":undefined} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:isConfirmed?"not-allowed":"pointer",fontSize:12,color:isConfirmed?"#E7B8B8":"#DC2626"}} onMouseEnter={e=>{if(!isConfirmed)e.currentTarget.style.background="#FEF2F2";}} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Trash2 size={14} strokeWidth={2}/><span>シフトをクリア</span></div></>}
               </div>
@@ -4804,6 +4842,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;} setDeptShifts({},{resetHistory:true});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {pinSettingsModal&&<PinSettingsModal depts={depts} onSave={(pins)=>{ setDepts(prev=>prev.map(d=>({...d, pin:(pins[d.id]||"")||undefined}))); }} onClose={()=>setPinSettingsModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
             // ★確定済みガード（自動生成と同趣旨）: 確定月を貼り付けで上書きさせない
