@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo, Component } from "re
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi } from 'lucide-react';
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2 } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -162,13 +162,13 @@ function LoginPage({ onLogin }) {
           <div style={{
             background:"#fff0f0", border:"1px solid #fca5a5", borderRadius:8,
             padding:"9px 12px", fontSize:12, color:"#dc2626", marginBottom:14,
-          }}>⚠ {error}</div>
+          }}><AlertTriangle size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>{error}</div>
         )}
         {msg && (
           <div style={{
             background:"#e8f5ee", border:"1px solid #5cb87a", borderRadius:8,
             padding:"9px 12px", fontSize:12, color:"#166534", marginBottom:14,
-          }}>✅ {msg}</div>
+          }}><CheckCircle2 size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>{msg}</div>
         )}
 
         {mode==="signup"&&(
@@ -802,7 +802,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <h3 style={{color:"#18181B",fontSize:15,fontWeight:900}}>{isNew?"スタッフ追加":"スタッフ編集"}</h3>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button>
         </div>
         <div style={{marginBottom:12}}><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>氏名</div><input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={INPUT_STYLE} placeholder="例：田中 花子"/></div>
         <div style={{marginBottom:12}}><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>役職</div><select value={form.role} onChange={e=>set("role",e.target.value)} style={INPUT_STYLE}>{(deptRoles.includes(form.role)?deptRoles:[...deptRoles,form.role]).map(r=><option key={r}>{r}</option>)}</select></div>
@@ -908,7 +908,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{isNew?"➕ 部署を追加":"✏️ 部署を編集"}</div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{isNew?"➕ 部署を追加":"✏️ 部署を編集"}</div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
         <label style={LS}>部署名</label>
         <input style={{...INPUT_STYLE,marginBottom:14}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="例：介護部 3階"/>
         <label style={LS}>シフト種別</label>
@@ -1008,7 +1008,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         <label style={{...LS,display:"inline-flex",alignItems:"center",gap:5}}><Lock size={13} strokeWidth={2}/>編集PINコード（4桁・任意）</label>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
           <input type="text" inputMode="numeric" maxLength={4} value={pinCode} onChange={e=>setPinCode(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="例：1234（空欄でPINなし）" style={{...INPUT_STYLE,width:180,letterSpacing:6,textAlign:"center",marginBottom:0}}/>
-          {pinCode&&<button onClick={()=>setPinCode("")} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11}}>✕ 解除</button>}
+          {pinCode&&<button onClick={()=>setPinCode("")} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:11}}><X size={12} strokeWidth={2} style={{verticalAlign:"middle",marginRight:3}}/>解除</button>}
         </div>
         <div style={{fontSize:10,color:"#52525B",marginBottom:18}}>設定すると部署タブ切替後に編集前にPINが必要になります</div>
         {shiftTypes.includes("夜勤") && (
@@ -1123,7 +1123,7 @@ function LearnStatusView({ learnedTrend, staffList, depts, allDBData, activeDept
         </div>
 
         {!sel ? <div style={{ color: '#94A3B8', fontSize: 12 }}>スタッフがいません。</div> : !t ? (
-          <div style={{ color: '#DC2626', fontSize: 12, fontWeight: 700 }}>⚠ {sel.name} さんの学習データがまだありません（実績が未保存の可能性）。実績データの観測: {raw.days}日 / {raw.months}ヶ月</div>
+          <div style={{ color: '#DC2626', fontSize: 12, fontWeight: 700 }}><AlertTriangle size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>{sel.name} さんの学習データがまだありません（実績が未保存の可能性）。実績データの観測: {raw.days}日 / {raw.months}ヶ月</div>
         ) : (
           <>
             <div style={{ fontSize: 12, color: '#0a7d34', fontWeight: 700, marginBottom: 10 }}>
@@ -1468,17 +1468,17 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
             <div style={{fontSize:15,fontWeight:900,color:'#18181B'}}>📋 シフト貼り付けグリッド</div>
             <div style={{fontSize:11,color:'#52525B',marginTop:2}}>{year}年{month+1}月 ／ Ctrl+Vで読み込み・セルをクリックでシフト変更</div>
           </div>
-          <button onClick={onClose} style={{background:'none',border:'none',color:'#52525B',cursor:'pointer',fontSize:20,lineHeight:1}}>✕</button>
+          <button onClick={onClose} style={{background:'none',border:'none',color:'#52525B',cursor:'pointer',fontSize:20,lineHeight:1}}><X size={18} strokeWidth={2}/></button>
         </div>
 
         {/* Step guide */}
         <div style={{background:'#e8f5f4',border:'1px solid #D4D4D8',borderRadius:8,padding:'8px 12px',fontSize:11,color:'#1a5a57'}}>
           {lastPasteType === 'names'
-            ? <span style={{color:'#16a34a',fontWeight:700}}>✅ ステップ1完了: {namedOrder?.length||0}名の名前を確認しました。次に先月末を除いた <b>シフト列だけ</b>（D〜AH等）をCtrl+Cして貼り付けてください。</span>
+            ? <span style={{color:'#16a34a',fontWeight:700}}><CheckCircle2 size={13} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>ステップ1完了: {namedOrder?.length||0}名の名前を確認しました。次に先月末を除いた <b>シフト列だけ</b>（D〜AH等）をCtrl+Cして貼り付けてください。</span>
             : lastPasteType === 'shifts'
-            ? <span style={{color:'#2563eb',fontWeight:700}}>✅ ステップ2完了: シフトをグリッドに反映しました。確認して「適用」してください。</span>
+            ? <span style={{color:'#2563eb',fontWeight:700}}><CheckCircle2 size={13} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>ステップ2完了: シフトをグリッドに反映しました。確認して「適用」してください。</span>
             : lastPasteType === 'full'
-            ? <span style={{color:'#18181B'}}>✅ 名前＋シフトを一括読み込みしました。</span>
+            ? <span style={{color:'#18181B'}}><CheckCircle2 size={13} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>名前＋シフトを一括読み込みしました。</span>
             : <span><b>方法①</b> 名前列だけコピーして貼り付け → ②先月末を除くシフト列をコピーして貼り付け　　<b>方法②</b> 名前＋シフト（先月末含まず）をまとめてコピーして貼り付け</span>
           }
         </div>
@@ -1500,7 +1500,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
           )}
           {unmatchedNames.length > 0 && (
             <div style={{background:'#fff8e1',border:'1px solid #f59e0b',borderRadius:8,padding:'3px 10px',fontSize:11,color:'#b45309',fontWeight:700}}>
-              ⚠️ 未マッチ: {unmatchedNames.join('、')}
+              <AlertTriangle size={12} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>未マッチ: {unmatchedNames.join('、')}
             </div>
           )}
         </div>
@@ -1575,7 +1575,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
         <div style={{display:'flex',gap:10}}>
           <button onClick={handleApply} disabled={totalCells === 0}
             style={{flex:2,background:totalCells>0?'linear-gradient(135deg,#2d8a52,#2a7a6e)':'#b0cece',color:'#fff',border:'none',borderRadius:8,padding:'11px 0',cursor:totalCells>0?'pointer':'default',fontSize:14,fontWeight:800}}>
-            ✅ このシフトを適用する{totalCells>0?` (${totalCells}件)`:''}
+            <CheckCircle2 size={15} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5,color:"#fff"}}/>このシフトを適用する{totalCells>0?` (${totalCells}件)`:''}
           </button>
           <button onClick={onClose}
             style={{flex:1,background:'#F4F4F5',color:'#52525B',border:'1px solid #D4D4D8',borderRadius:8,padding:'11px 0',cursor:'pointer',fontSize:14}}>
@@ -1597,7 +1597,7 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📅 休み日数 一括設定</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📅 休み日数 一括設定</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
         <div style={{fontSize:11,color:"#3F3F46",marginBottom:20,marginTop:8,background:"#F4F4F5",borderRadius:7,padding:"8px 12px",border:"1px solid #27272A"}}>💡 施設全体の休み日数を設定します。全部署・全スタッフ（{totalStaff}名）に一括適用されます。</div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:28,background:"#F4F4F5",borderRadius:12,padding:"18px 20px",border:"1px solid #D4D4D8"}}>
           <button onClick={()=>setVal(days-1)} style={{background:"#E4E4E7",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
@@ -1607,7 +1607,7 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
           </div>
           <button onClick={()=>setVal(days+1)} style={{background:"#E4E4E7",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>＋</button>
         </div>
-        <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(days,mk)} style={{flex:1,background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>✅ 適用する</button><button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
+        <div style={{display:"flex",gap:10}}><button onClick={()=>onApply(days,mk)} style={{flex:1,background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}><CheckCircle2 size={15} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5,color:"#fff"}}/>適用する</button><button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button></div>
       </div>
       {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
     </div>
@@ -1696,7 +1696,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><Upload size={16} strokeWidth={2}/>書き出し</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><Upload size={16} strokeWidth={2}/>書き出し</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
         <div style={{fontSize:11,color:"#52525B",fontWeight:700,marginBottom:7}}>対象部署</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
           {depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#4F46E5":"#fff",color:sel?"#fff":"#52525B",border:`1.5px solid ${sel?"#4F46E5":"#D4D4D8"}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:sel?700:400,letterSpacing:"0.01em",transition:"background 0.12s,color 0.12s,border-color 0.12s"}}>{d.label}</button>;})}
@@ -1818,7 +1818,7 @@ function HelpModal({ onClose }) {
         {/* ヘッダー */}
         <div style={{background:"#6366F1",color:"#fff",padding:"16px 20px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
           <div style={{fontWeight:900,fontSize:16}}>❓ 使い方ガイド</div>
-          <button onClick={onClose} style={{background:"rgba(255,255,255,0.25)",border:"none",color:"#fff",cursor:"pointer",fontSize:18,width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>✕</button>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,0.25)",border:"none",color:"#fff",cursor:"pointer",fontSize:18,width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}><X size={18} strokeWidth={2}/></button>
         </div>
         {/* タブ */}
         <div style={{display:"flex",overflowX:"auto",borderBottom:"2px solid #F4F4F5",background:"#eaf8f6",flexShrink:0}}>
@@ -1842,7 +1842,7 @@ function HelpModal({ onClose }) {
           ))}
           {sec.warn&&(
             <div style={{background:"#fff3e0",borderLeft:"4px solid #FB8C00",borderRadius:"0 8px 8px 0",padding:"10px 14px",margin:"8px 0",fontSize:12,color:"#18181B"}}>
-              <div style={{fontWeight:800,color:"#FB8C00",marginBottom:3}}>⚠ 注意</div>
+              <div style={{fontWeight:800,color:"#FB8C00",marginBottom:3}}><AlertTriangle size={13} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5,color:"#FB8C00"}}/>注意</div>
               {sec.warn}
             </div>
           )}
@@ -1884,7 +1884,7 @@ function GenerateWarningModal({ warnings, deptLabel, year, month, score, timelin
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⚠️</div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>自動生成の警告</div><div style={{fontSize:12,color:"#52525B"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
+        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:10}}><div style={{width:44,height:44,borderRadius:10,flexShrink:0,background:"#fff0f0",border:"1px solid #ef4444",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}><AlertTriangle size={24} strokeWidth={2} style={{color:"#ef4444"}}/></div><div><div style={{fontSize:15,fontWeight:900,color:"#fca5a5",marginBottom:4}}>自動生成の警告</div><div style={{fontSize:12,color:"#52525B"}}>{deptLabel} ／ {year}年{month+1}月</div></div></div>
         {score!=null&&<div style={{background:"#fffbeb",border:"1px solid #f59e0b",borderRadius:7,padding:"6px 12px",marginBottom:14,fontSize:11,color:"#92400e"}}>30回試行して最もスコアが低い結果を採用しました（違反スコア: <span style={{fontWeight:800}}>{score}</span>）。残る警告は手動で調整してください。</div>}
         {entries.length>0&&<><div style={{background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:8,padding:"10px 14px",marginBottom:10,fontSize:12,color:"#fca5a5",lineHeight:1.7}}>以下のシフト種別で、設定した最低配置人数を達成できない日が発生しました。</div>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>{entries.map(([shiftKey,info])=>{const s=SHIFTS[shiftKey]||{},pct=Math.round(info.days/days*100);return(<div key={shiftKey} style={{background:"#FAFAFA",border:`1px solid ${s.border||"#3F3F46"}`,borderRadius:9,padding:"10px 14px",display:"flex",alignItems:"center",gap:12}}><ShiftBadge type={shiftKey}/><div style={{flex:1}}><div style={{fontSize:13,fontWeight:800,color:s.color||"#71717A"}}>{shiftKey}</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>不足日数：<span style={{color:"#f87171",fontWeight:700}}>{info.days}日</span>　最大 <span style={{color:"#f87171",fontWeight:700}}>−{info.maxShort}名</span></div></div><div style={{width:80}}><div style={{height:6,background:"#E4E4E7",borderRadius:3,overflow:"hidden"}}><div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pct>50?"#ef4444":pct>20?"#f59e0b":"#f87171"}}/></div><div style={{fontSize:10,color:"#52525B",marginTop:3,textAlign:"right"}}>{pct}%</div></div></div>);})}</div></>}
@@ -1985,7 +1985,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
       <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:420,maxHeight:"85vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,0.25)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div style={{fontWeight:800,fontSize:16,color:"#18181B"}}>🕐 変更履歴から復元</div>
-          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#888",lineHeight:1}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#888",lineHeight:1}}><X size={18} strokeWidth={2}/></button>
         </div>
         <div style={{fontSize:12,color:"#71717A",marginBottom:16,fontWeight:600}}>{deptLabel} — {year}年{month+1}月シフト</div>
         {loading && <div style={{textAlign:"center",color:"#aaa",padding:32}}>読み込み中…</div>}
@@ -2854,7 +2854,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   if (loadError) return (
     <div style={{...BASE,display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{textAlign:"center",color:"#ef4444"}}>
-        <div style={{fontSize:40,marginBottom:12}}>⚠️</div>
+        <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><AlertTriangle size={40} strokeWidth={2} style={{color:"#ef4444"}}/></div>
         <div style={{fontSize:14,fontWeight:700}}>施設情報を読み込めませんでした</div>
         <div style={{fontSize:12,color:"#6b7280",marginTop:8}}>URLが正しいか確認してください</div>
         <button onClick={loadConfig} style={{marginTop:16,background:"#6366F1",color:"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
@@ -2942,7 +2942,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
               <div style={{fontSize:10,color:"#2563EB",marginBottom:10,fontWeight:700}}>※ 希望休は1人{dayLim}日まで（残り {Math.max(0, dayLim - myDays.length)}日）</div>
             )}
             {overDayLimit && (
-              <div style={{fontSize:11,color:"#b45309",background:"#fff8e1",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 10px",marginBottom:10,fontWeight:700}}>⚠️ 現在{myDays.length}日で上限{dayLim}日を超えています。{myDays.length - dayLim}日減らしてから送信してください。</div>
+              <div style={{fontSize:11,color:"#b45309",background:"#fff8e1",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 10px",marginBottom:10,fontWeight:700}}><AlertTriangle size={12} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5,color:"#b45309"}}/>現在{myDays.length}日で上限{dayLim}日を超えています。{myDays.length - dayLim}日減らしてから送信してください。</div>
             )}
             {kiboLoading ? (
               <div style={{textAlign:"center",color:"#71717A",padding:20}}>読み込み中…</div>
@@ -2977,7 +2977,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
       {/* 送信完了 */}
       {submitted && (
         <div style={{background:"#f0fff4",border:"2px solid #86efac",borderRadius:12,padding:24,textAlign:"center",marginBottom:12}}>
-          <div style={{fontSize:36,marginBottom:8}}>✅</div>
+          <div style={{marginBottom:8,display:"flex",justifyContent:"center"}}><CheckCircle2 size={36} strokeWidth={2} style={{color:"#16a34a"}}/></div>
           <div style={{fontSize:16,fontWeight:900,color:"#16a34a",marginBottom:4}}>送信しました！</div>
           {myDays.length > 0 && (
             <div style={{fontSize:12,color:"#c44b4b",marginBottom:4}}>希望休：{myDays.sort((a,b)=>a-b).join("日・")}日</div>
@@ -3007,7 +3007,7 @@ class ErrorBoundary extends Component {
     return (
       <div style={{minHeight:"100vh",background:"#fff0f0",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"sans-serif",padding:24}}>
         <div style={{background:"#fff",border:"2px solid #ef4444",borderRadius:12,padding:24,maxWidth:500,width:"100%"}}>
-          <div style={{fontSize:32,marginBottom:8}}>⚠️</div>
+          <div style={{marginBottom:8,display:"flex",justifyContent:"center"}}><AlertTriangle size={32} strokeWidth={2} style={{color:"#ef4444"}}/></div>
           <div style={{fontSize:16,fontWeight:700,color:"#dc2626",marginBottom:8}}>エラーが発生しました</div>
           <div style={{fontSize:12,color:"#374151",marginBottom:16}}>以下のエラー内容を開発者にお伝えください：</div>
           <pre style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:6,padding:12,fontSize:11,color:"#991b1b",overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all"}}>
@@ -3363,7 +3363,7 @@ function AdminPanel({ onClose }) {
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,padding:24,width:"100%",maxWidth:680,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
           <div style={{fontSize:16,fontWeight:900,color:"#18181B"}}>🏢 施設管理（管理者）</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:22}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:22}}><X size={18} strokeWidth={2}/></button>
         </div>
         {loading ? <div style={{textAlign:"center",color:"#71717A",padding:40}}>読み込み中…</div> : (
           <>
@@ -4858,7 +4858,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
               <div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><Link2 size={16} strokeWidth={2}/>スタッフ共有URL</div>
-              <button onClick={()=>setShareModal(false)} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
+              <button onClick={()=>setShareModal(false)} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button>
             </div>
             <div style={{fontSize:11,color:"#52525B",marginBottom:16,background:"#F4F4F5",borderRadius:8,padding:"8px 12px"}}>部署ごとのURLをスタッフに送ってください。各部署のスタッフは自分の部署だけ表示されます。</div>
 
@@ -4918,7 +4918,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                     <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4,display:"flex",alignItems:"center",gap:5}}><Calendar size={13} strokeWidth={2}/>対象シフト月</div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <input type="month" value={(ps.targetYear&&ps.targetMonth)?`${ps.targetYear}-${String(ps.targetMonth).padStart(2,'0')}`:""} onChange={e=>{const v=e.target.value;if(!v){setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:null,targetMonth:null}}));}else{const[ty,tm]=v.split('-').map(Number);setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:ty,targetMonth:tm}}));}}} style={{border:"1px solid #D4D4D8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#18181B",outline:"none",background:"#FAFAFA"}}/>
-                      {(ps.targetYear||ps.targetMonth)&&<button onClick={()=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:null,targetMonth:null}}))} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}>✕ クリア</button>}
+                      {(ps.targetYear||ps.targetMonth)&&<button onClick={()=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),targetYear:null,targetMonth:null}}))} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}><X size={12} strokeWidth={2} style={{verticalAlign:"middle",marginRight:3}}/>クリア</button>}
                     </div>
                     {(ps.targetYear&&ps.targetMonth)&&<div style={{fontSize:10,color:"#2563EB",marginTop:3}}>スタッフ画面に「{ps.targetYear}年{ps.targetMonth}月の希望休入力」と表示されます</div>}
                     {!(ps.targetYear&&ps.targetMonth)&&<div style={{fontSize:10,color:"#9CA3AF",marginTop:3}}>未設定の場合は従来動作（締切日の月または当月）</div>}
@@ -4928,7 +4928,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                     <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:4,display:"flex",alignItems:"center",gap:5}}><Clock size={13} strokeWidth={2}/>締め切り日</div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <input type="date" value={ps.deadline||""} onChange={e=>setPsDept('deadline',e.target.value||null)} style={{border:"1px solid #D4D4D8",borderRadius:6,padding:"5px 8px",fontSize:12,color:"#18181B",outline:"none",background:"#FAFAFA"}}/>
-                      {ps.deadline&&<button onClick={()=>setPsDept('deadline',null)} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}>✕ クリア</button>}
+                      {ps.deadline&&<button onClick={()=>setPsDept('deadline',null)} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:12}}><X size={12} strokeWidth={2} style={{verticalAlign:"middle",marginRight:3}}/>クリア</button>}
                     </div>
                     {ps.deadline&&<div style={{fontSize:10,color:"#c44b4b",marginTop:3,display:"flex",alignItems:"center",gap:4}}><AlertTriangle size={11} strokeWidth={2}/>{ps.deadline} 以降は送信不可になります</div>}
                   </div>
