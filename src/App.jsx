@@ -2338,10 +2338,13 @@ function SummaryView({ staffList, shifts, dept, year, month }) {
 
 const ICON_BTN = (color) => ({ background:`${color}18`, border:`1px solid ${color}40`, borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:13 });
 
-function StaffList({ staffList, dept, year, month, onEdit, onDelete, onAdd, onReorder }) {
+function StaffList({ locked, staffList, dept, year, month, onEdit:pEdit, onDelete:pDelete, onAdd:pAdd, onReorder:pReorder }) {
+  // ロック中は編集系を無効化（二重防御・親側の関数ガードと併せて閲覧のみにする）
+  const onEdit=locked?()=>{}:pEdit, onDelete=locked?()=>{}:pDelete, onAdd=locked?()=>{}:pAdd, onReorder=locked?null:pReorder;
   const ds = staffList.filter(s=>s.dept===dept.id);
   return (
     <div style={{maxWidth:680}}>
+      {locked&&<div style={{background:"#F3F4F6",border:"1px solid #E5E7EB",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:"#6B7280",display:"flex",alignItems:"center",gap:6}}><Lock size={13} strokeWidth={2}/>ロック中は閲覧のみです。編集するには解錠してください。</div>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
         <div style={{fontSize:13,color:"#6366F1",fontWeight:800}}>{dept.label} — {ds.length}名</div>
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
@@ -4410,6 +4413,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   };
 
   const handleGenerate = useCallback(() => {
+    if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
     if (isConfirmedRef.current) { alert(`${dept?.label} は確定済みです。「編集」ボタンで編集状態に戻してから生成してください。`); return; }
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
@@ -4493,6 +4497,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [staffList,dept,year,month,learnedTrend,_runGenerateCore]);
 
   const handleConfirm = useCallback(() => {
+    if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
     setConfirmDialog({
       message: `${year}年${month+1}月 ${dept?.label} のシフトを確定しますか？\n確定後は編集・自動生成ができなくなります。`,
       okLabel: '確定する',
@@ -4547,6 +4552,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [year, month, activeDeptId, dept, session]);
 
   const handleUnconfirm = useCallback(() => {
+    if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
     setConfirmDialog({
       message: `${year}年${month+1}月 ${dept?.label} のシフトを編集状態に戻しますか？`,
       okLabel: '編集する',
@@ -4661,10 +4667,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setCtxMenu(null);
   };
 
-  const saveStaff = (form) => { setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
-  const deleteStaff = (id) => { const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
+  const saveStaff = (form) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
+  const deleteStaff = (id) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
   // 表示順の並べ替え（部署内で上下移動）。staff.id・シフト・生成・学習には非影響（配列順のみ変更）
-  const moveStaff = (id, dir) => { setStaffList(prev => {
+  const moveStaff = (id, dir) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} setStaffList(prev => {
     const deptId = prev.find(s=>s.id===id)?.dept;
     if (!deptId) return prev;
     const deptIdxs = prev.map((s,i)=>s.dept===deptId?i:-1).filter(i=>i>=0); // 当部署の flat配列インデックス（表示順）
@@ -4676,13 +4682,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     [next[a], next[b]] = [next[b], next[a]];
     return next;
   }); };
-  const handleBulkKyuko = (days, mk) => { setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}}))); setBulkKyukoModal(false); };
+  const handleBulkKyuko = (days, mk) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}}))); setBulkKyukoModal(false); };
 
   const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
 
-  const handleSaveDept = (deptData) => { const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
-  const handleDeleteDept = (deptId) => { if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
+  const handleSaveDept = (deptData) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
+  const handleDeleteDept = (deptId) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
   if (dbLoading) return (
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#FAFAFA,#F4F4F5)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",userSelect:"none",pointerEvents:"none"}}>
@@ -4723,19 +4729,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Lock size={14} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
             : <button onClick={handleGenerate} disabled={generating||isMonthLoading||isConfirmed} title={isConfirmed?"確定済みです。「編集」ボタンで解除してください":isMonthLoading?"データ読み込み中です":undefined} style={{background:(generating||isMonthLoading||isConfirmed)?"#E5E7EB":"#2563EB",color:(generating||isMonthLoading||isConfirmed)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||isMonthLoading||isConfirmed)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(isMonthLoading||isConfirmed)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
           }
-          {isConfirmed
+          {!isLocked && (isConfirmed
             ? <button onClick={handleUnconfirm} style={{background:"#F59E0B",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Pencil size={14} strokeWidth={2}/>{!isMobile&&" 編集"}</button>
             : <button onClick={async()=>{ const ok=await saveNow(); if(ok) handleConfirm(); }} title="保存してから確定します" style={{background:"#10B981",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Check size={14} strokeWidth={2}/>{!isMobile&&" 確定"}</button>
-          }
+          )}
           <button onClick={()=>setDownloadModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
-          <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>
+          {!isLocked && <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>}
           {/* Overflow [•••] */}
           <div style={{position:"relative"}}>
             <button onClick={()=>setOverflowOpen(o=>!o)} style={{background:overflowOpen?"#F1F5F9":"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}} title="その他のメニュー"><MoreHorizontal size={16} strokeWidth={2}/></button>
             {overflowOpen&&<>
               <div style={{position:"fixed",inset:0,zIndex:99}} onClick={()=>setOverflowOpen(false)}/>
               <div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#FFFFFF",border:"1px solid #E5E7EB",borderRadius:10,boxShadow:"0 8px 24px rgba(0,0,0,0.10)",zIndex:100,minWidth:180,overflow:"hidden",padding:"4px 0"}}>
-                <div onClick={()=>{ if(isConfirmed){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setOverflowOpen(false);return;} setExcelPasteModal(true);setOverflowOpen(false);}} title={isConfirmed?"確定済みです。「編集」を押してから使用できます":undefined} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:isConfirmed?"not-allowed":"pointer",fontSize:12,color:isConfirmed?"#C4C4C4":"#374151",borderBottom:"1px solid #F1F5F9"}} onMouseEnter={e=>{if(!isConfirmed)e.currentTarget.style.background="#F8FAFC";}} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <div onClick={()=>{ if(isLocked){alert("この部署はロックされています。編集するには解錠してください。");setOverflowOpen(false);return;} if(isConfirmed){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setOverflowOpen(false);return;} setExcelPasteModal(true);setOverflowOpen(false);}} title={isConfirmed?"確定済みです。「編集」を押してから使用できます":undefined} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:isConfirmed?"not-allowed":"pointer",fontSize:12,color:isConfirmed?"#C4C4C4":"#374151",borderBottom:"1px solid #F1F5F9"}} onMouseEnter={e=>{if(!isConfirmed)e.currentTarget.style.background="#F8FAFC";}} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                   <ClipboardList size={14} strokeWidth={2} style={{color:isConfirmed?"#D4D4D8":"#6B7280",flexShrink:0}}/>
                   <div style={{flex:1}}>
                     <div style={{fontWeight:500}}>貼付 / 傾向学習</div>
@@ -4761,8 +4767,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* DEPT TABS */}
       <div style={{background:"#F8FAFC",borderBottom:"1px solid #E5E7EB",display:"flex",overflowX:"auto",padding:"0 16px",alignItems:"center"}}>
-        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:act?"2px solid #2563EB":"2px solid transparent",color:act?"#111827":"#6B7280",borderRadius:0,cursor:"pointer",fontSize:12,fontWeight:act?600:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"0 1px"}}><span>{d.label}</span><span style={{background:act?"#EFF6FF":"#F1F5F9",color:act?"#2563EB":"#9CA3AF",borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",padding:"3px 6px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={13} strokeWidth={2}/></button>}</div>);})}
-        <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",fontSize:11,padding:"5px 11px",marginLeft:8,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>
+        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:act?"2px solid #2563EB":"2px solid transparent",color:act?"#111827":"#6B7280",borderRadius:0,cursor:"pointer",fontSize:12,fontWeight:act?600:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"0 1px"}}><span>{d.label}</span><span style={{background:act?"#EFF6FF":"#F1F5F9",color:act?"#2563EB":"#9CA3AF",borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&!isLocked&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",padding:"3px 6px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={13} strokeWidth={2}/></button>}</div>);})}
+        {!isLocked && <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",fontSize:11,padding:"5px 11px",marginLeft:8,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>}
       </div>
 
       {/* INNER TABS */}
@@ -4833,7 +4839,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
-        {innerTab==="staff"&&<StaffList staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
+        {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
         {innerTab==="learn"&&<LearnStatusView learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month}/>}
       </div>
@@ -4845,6 +4851,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {pinSettingsModal&&<PinSettingsModal depts={depts} onSave={(pins)=>{ setDepts(prev=>prev.map(d=>({...d, pin:(pins[d.id]||"")||undefined}))); }} onClose={()=>setPinSettingsModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
+            // ★PINロックガード: ロック中は貼り付けで上書きさせない
+            if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");setExcelPasteModal(false);return;}
             // ★確定済みガード（自動生成と同趣旨）: 確定月を貼り付けで上書きさせない
             if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setExcelPasteModal(false);return;}
             // Excel貼付はundo/redo対象外: 履歴をリセット（redoも無効化）。
