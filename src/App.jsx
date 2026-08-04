@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo, Component } from "re
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check } from 'lucide-react';
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -2564,13 +2564,13 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
     <div style={{maxWidth:960}}>
       {/* ツールバー */}
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-        <span style={{fontSize:12,fontWeight:800,color:"#6366F1",whiteSpace:"nowrap"}}>🏠 フロア</span>
+        <span style={{fontSize:12,fontWeight:800,color:"#6366F1",whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:5}}><Home size={13} strokeWidth={2}/>フロア</span>
         {(floorSettings.duties||[]).map((d,i)=><span key={i} style={{background:"#F4F4F5",borderRadius:6,padding:"3px 9px",fontSize:11,color:"#18181B",fontWeight:700}}>{d.name}</span>)}
-        <button onClick={()=>setSettingsOpen(true)} style={{background:"#6366F1",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚙️ 設定</button>
-        <button onClick={handleAutoAssign} style={{background:"linear-gradient(135deg,#f5b942,#e07b30)",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>⚡ 自動配置</button>
-        <button onClick={handleClearAssign} style={{background:"#fff0f0",color:"#c44b4b",border:"1px solid #e07070",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🗑 配置クリア</button>
-        <button onClick={handlePrint} style={{marginLeft:"auto",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap"}}>🖨️ 印刷</button>
-        <button onClick={handleDownloadYotei} style={{background:"#ffffff",color:"#6366F1",border:"1px solid #D4D4D8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>📥 USB保存</button>
+        <button onClick={()=>setSettingsOpen(true)} style={{background:"#6366F1",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:5}}><Settings size={13} strokeWidth={2}/>設定</button>
+        <button onClick={handleAutoAssign} style={{background:"linear-gradient(135deg,#f5b942,#e07b30)",color:"#fff",border:"none",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:5}}><Zap size={13} strokeWidth={2}/>自動配置</button>
+        <button onClick={handleClearAssign} style={{background:"#fff0f0",color:"#c44b4b",border:"1px solid #e07070",borderRadius:7,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:5}}><Trash2 size={13} strokeWidth={2}/>配置クリア</button>
+        <button onClick={handlePrint} style={{marginLeft:"auto",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:11,fontWeight:800,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:5}}><Printer size={13} strokeWidth={2}/>印刷</button>
+        <button onClick={handleDownloadYotei} style={{background:"#ffffff",color:"#6366F1",border:"1px solid #D4D4D8",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:5}}><Download size={13} strokeWidth={2}/>USB保存</button>
       </div>
       {/* 月カレンダー */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(148px,1fr))",gap:7}}>
@@ -4675,7 +4675,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <div style={{fontSize:14,fontWeight:600,color:"#111827",minWidth:110,textAlign:"center",background:"#F8FAFC",border:"1px solid #E5E7EB",borderRadius:8,padding:"6px 12px",letterSpacing:"0.01em"}}>{year}年 {month+1}月</div>
           <button onClick={nextMonth} style={MNAV}><ChevronRight size={18} strokeWidth={2}/></button>
         </div>
-        {conflictBanner&&<span title="他の端末でデータが更新されました。保存完了後に自動反映されます。" style={{fontSize:15,cursor:"default",animation:"pulse 1.2s infinite",lineHeight:1,flexShrink:0}}>📡</span>}
+        {conflictBanner&&<span title="他の端末でデータが更新されました。保存完了後に自動反映されます。" style={{cursor:"default",animation:"pulse 1.2s infinite",lineHeight:1,flexShrink:0,display:"inline-flex",color:"#6366F1"}}><Wifi size={16} strokeWidth={2}/></span>}
         <div style={{display:"flex",gap:6,alignItems:"center",marginLeft:"auto"}}>
           <div style={{fontSize:11,fontWeight:600,color:saveStatus==="saved"?"#22C55E":saveStatus==="error"?"#EF4444":"#F59E0B",display:"flex",alignItems:"center",gap:3,minWidth:isMobile?0:52}}>
             {saveStatus==="saved"&&<><RefreshCw size={11} strokeWidth={2}/>{!isMobile&&<span>保存済</span>}</>}
