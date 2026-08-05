@@ -895,6 +895,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [crossFloorNightEnabled, setCrossFloorNightEnabled] = useState(!!dept?.crossFloorNightEnabled);
   const [shiftTimes, setShiftTimes] = useState(dept?.shiftTimes || {});
   const [intervalEnabled, setIntervalEnabled] = useState(!!dept?.intervalEnabled);
+  const [allowLateToEarly, setAllowLateToEarly] = useState(!!dept?.allowLateToEarly);
   const [intervalHours, setIntervalHours] = useState(dept?.intervalHours ?? 11);
   const [intervalTargetShifts, setIntervalTargetShifts] = useState(dept?.intervalTargetShifts || []);
   const [requiredStart, setRequiredStart] = useState(dept?.requiredStart || "");
@@ -902,7 +903,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [maxStaffRelaxable, setMaxStaffRelaxable] = useState(dept?.maxStaffRelaxable !== false);
   const [engineType, setEngineType] = useState(dept?.engineType || 'kaigo');
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,allowLateToEarly:allowLateToEarly||undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -931,6 +932,15 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
             <div style={{fontSize:11,color:"#3a6a87",fontWeight:700,marginBottom:4}}>判定対象シフト</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{shiftTypes.map(k=>{const checked=intervalTargetShifts.includes(k);const sd=getShiftDef(k,customShiftDefs);return(<button key={k} onClick={()=>setIntervalTargetShifts(p=>checked?p.filter(x=>x!==k):[...p,k])} style={{background:checked?"#dbeafe":"#F4F4F5",border:`1px solid ${checked?"#93c5fd":"#E4E4E7"}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12,fontWeight:checked?700:400,color:checked?(sd?.color||"#1d4ed8"):"#3F3F46"}}>{k}</button>);})}</div>
           </>}
+          <div style={{borderTop:"1px dashed #90c4e0",marginTop:10,paddingTop:10}}>
+            <label style={{display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer"}}>
+              <input type="checkbox" checked={allowLateToEarly} onChange={e=>setAllowLateToEarly(e.target.checked)} style={{width:14,height:14,accentColor:"#6366F1",marginTop:2}}/>
+              <span>
+                <span style={{fontSize:12,fontWeight:700,color:"#1a5a87"}}>遅番→早番を許可</span>
+                <span style={{display:"block",fontSize:10,color:"#52525B",marginTop:2}}>遅番の翌日に早番・日勤を許可します（日勤→早番も許可）。夜勤のない部署（栄養科など）向け。<b>介護部署はOFF推奨</b>（労務上、遅番→早番は禁止のまま）。</span>
+              </span>
+            </label>
+          </div>
         </div>
         {/* 勤務時間設定 */}
         <div style={{background:"#f0fff8",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>

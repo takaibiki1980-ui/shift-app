@@ -158,6 +158,9 @@ function isBadTransition(prev, curr, dept, nightSet) {
     return shiftIntervalHours(prev, curr, dept) < (dept.intervalHours ?? 11);
   }
   if (curr === '明け' && !nightSet.has(prev)) return true;
+  // 遅番→早番/日勤・日勤→早番タブー（労務上の休息確保・全部署既定ON）。
+  // dept.allowLateToEarly=true の部署（夜勤なしの栄養科など）のみ、このタブーを外す。
+  if (dept.allowLateToEarly) return false;
   return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
 }
 // Step6: isSlotManaged - シフトキーが role-slot（Tier1絶対制約）対象かを判定
@@ -1990,7 +1993,7 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
     // 遅番→早番/日勤、日勤→早番 違反
     for (let d = 2; d <= days; d++) {
       const prev = res[s.id]?.[d-1], curr = res[s.id]?.[d];
-      { const bad=dept.intervalEnabled&&dept.intervalTargetShifts?.includes(curr)?shiftIntervalHours(prev,curr,dept)<(dept.intervalHours??11):((prev==="遅番"&&(curr==="早番"||curr==="日勤"))||(prev==="日勤"&&curr==="早番")); if(bad) score+=100; }
+      { const bad=dept.intervalEnabled&&dept.intervalTargetShifts?.includes(curr)?shiftIntervalHours(prev,curr,dept)<(dept.intervalHours??11):(dept.allowLateToEarly?false:((prev==="遅番"&&(curr==="早番"||curr==="日勤"))||(prev==="日勤"&&curr==="早番"))); if(bad) score+=100; }
     }
     // 同一シフト連続ペナルティ（×3強化: 4連=1500, 5連以上=6000/日）
     for (const t of workShiftTypes) {
