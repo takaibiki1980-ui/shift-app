@@ -11,6 +11,11 @@ import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 
+// 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
+// false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
+// ※生成ロジック・遅番→早番許可(allowLateToEarly)には非接触。
+const TIME_FEATURES_ENABLED = false;
+
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
 function YeixTextLogo({ height = 36 }) {
@@ -917,8 +922,18 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         {shiftTypes.length>0&&<div style={{background:"#F4F4F5",border:"1px solid #27272A",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#52525B",marginBottom:8}}>最低配置人数 <span style={{fontSize:10,color:"#52525B",fontWeight:400}}>（この人数を下回ると警告）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:minStaff[k]||0,min:0,max:20,unit:"名",onConfirm:v=>setMinStaff(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{minStaff[k]||0}</div><span style={{fontSize:11,color:"#3F3F46"}}>名</span></div>)}</div></div>}
         {shiftTypes.length>0&&<div style={{background:"#fff3e0",border:"1px solid #e0a000",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#b45309",marginBottom:8}}>最大配置人数 <span style={{fontSize:10,color:"#a06010",fontWeight:400}}>（自動生成でこの人数を超えない・--=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=>{const mv=maxStaff[k]!=null?maxStaff[k]:((customShiftDefs.find(c=>c.key===k)?.baseType||k)==="日勤"?99:1);const isUnlim=mv>=99;return(<div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:mv,min:1,max:99,unit:"名",onConfirm:v=>setMaxStaff(p=>({...p,[k]:v===""?99:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:isUnlim?400:700,color:isUnlim?"#b0cece":"inherit"}}>{isUnlim?"--":mv}</div>{!isUnlim&&<span style={{fontSize:11,color:"#92400e"}}>名</span>}</div>);})}</div></div>}
         {shiftTypes.filter(k=>k!=="夜勤").length>0&&<div style={{background:"#f0f0ff",border:"1px solid #a0a0e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}><div style={{fontSize:11,color:"#5050b0",marginBottom:8}}>職員の月間上限回数 <span style={{fontSize:10,color:"#7070a0",fontWeight:400}}>（超過すると集計欄が赤表示・0=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.filter(k=>k!=="夜勤").map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:shiftMaxByType[k]||0,min:0,max:31,unit:"回",onConfirm:v=>setShiftMaxByType(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{shiftMaxByType[k]||0}</div><span style={{fontSize:11,color:"#5050b0"}}>回</span></div>)}</div></div>}
-        {/* インターバル設定 */}
+        {/* 遅番→早番を許可（allowLateToEarly）: 時間帯系フラグとは独立して常時表示 */}
         <div style={{background:"#f0f8ff",border:"1px solid #90c4e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <label style={{display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer"}}>
+            <input type="checkbox" checked={allowLateToEarly} onChange={e=>setAllowLateToEarly(e.target.checked)} style={{width:14,height:14,accentColor:"#6366F1",marginTop:2}}/>
+            <span>
+              <span style={{fontSize:12,fontWeight:700,color:"#1a5a87"}}>遅番→早番を許可</span>
+              <span style={{display:"block",fontSize:10,color:"#52525B",marginTop:2}}>遅番の翌日に早番・日勤を許可します（日勤→早番も許可）。夜勤のない部署（栄養科など）向け。<b>介護部署はOFF推奨</b>（労務上、遅番→早番は禁止のまま）。</span>
+            </span>
+          </label>
+        </div>
+        {/* インターバル設定（時間帯系・TIME_FEATURES_ENABLEDで凍結／復活） */}
+        {TIME_FEATURES_ENABLED && <div style={{background:"#f0f8ff",border:"1px solid #90c4e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:8}}>
             <input type="checkbox" checked={intervalEnabled} onChange={e=>setIntervalEnabled(e.target.checked)} style={{width:14,height:14,accentColor:"#6366F1"}}/>
             <span style={{fontSize:12,fontWeight:700,color:"#1a5a87"}}>インターバル制限を有効化</span>
@@ -932,22 +947,13 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
             <div style={{fontSize:11,color:"#3a6a87",fontWeight:700,marginBottom:4}}>判定対象シフト</div>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{shiftTypes.map(k=>{const checked=intervalTargetShifts.includes(k);const sd=getShiftDef(k,customShiftDefs);return(<button key={k} onClick={()=>setIntervalTargetShifts(p=>checked?p.filter(x=>x!==k):[...p,k])} style={{background:checked?"#dbeafe":"#F4F4F5",border:`1px solid ${checked?"#93c5fd":"#E4E4E7"}`,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12,fontWeight:checked?700:400,color:checked?(sd?.color||"#1d4ed8"):"#3F3F46"}}>{k}</button>);})}</div>
           </>}
-          <div style={{borderTop:"1px dashed #90c4e0",marginTop:10,paddingTop:10}}>
-            <label style={{display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer"}}>
-              <input type="checkbox" checked={allowLateToEarly} onChange={e=>setAllowLateToEarly(e.target.checked)} style={{width:14,height:14,accentColor:"#6366F1",marginTop:2}}/>
-              <span>
-                <span style={{fontSize:12,fontWeight:700,color:"#1a5a87"}}>遅番→早番を許可</span>
-                <span style={{display:"block",fontSize:10,color:"#52525B",marginTop:2}}>遅番の翌日に早番・日勤を許可します（日勤→早番も許可）。夜勤のない部署（栄養科など）向け。<b>介護部署はOFF推奨</b>（労務上、遅番→早番は禁止のまま）。</span>
-              </span>
-            </label>
-          </div>
-        </div>
-        {/* 勤務時間設定 */}
-        <div style={{background:"#f0fff8",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+        </div>}
+        {/* 勤務時間設定・必須運営時間（時間帯系・TIME_FEATURES_ENABLEDで凍結／復活） */}
+        {TIME_FEATURES_ENABLED && <div style={{background:"#f0fff8",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:11,color:"#166534",fontWeight:700,marginBottom:4}}>勤務時間設定 <span style={{fontSize:10,fontWeight:400,color:"#52525B"}}>（インターバル判定に使用）</span></div>
           <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>{shiftTypes.filter(k=>k!=="明け").map(k=>{const def=DEFAULT_SHIFT_TIMES[k]||{};const sd=getShiftDef(k,customShiftDefs);const mkp=(field,cur)=>e=>setKp({mode:"time",value:cur||"",unit:"",onConfirm:v=>setShiftTimes(p=>({...p,[k]:{...(p[k]||{}),[field]:v||undefined}})),anchorRect:e.currentTarget.getBoundingClientRect()});return(<div key={k} style={{display:"flex",alignItems:"center",gap:4,background:"#ffffff",border:"1px solid #E4E4E7",borderRadius:6,padding:"4px 8px"}}><span style={{fontSize:11,color:sd?.color,fontWeight:700,minWidth:36}}>{k}</span><div onClick={mkp("start",shiftTimes[k]?.start)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.start?"#18181B":"#A1A1AA"}}>{shiftTimes[k]?.start||def.start||"--:--"}</div><span style={{fontSize:10,color:"#D4D4D8"}}>〜</span><div onClick={mkp("end",shiftTimes[k]?.end)} style={{...INPUT_STYLE,width:60,padding:"2px 4px",marginBottom:0,fontSize:12,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:shiftTimes[k]?.end?"#18181B":"#A1A1AA"}}>{shiftTimes[k]?.end||def.end||"--:--"}</div></div>);})}</div>
           <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:8}}><span style={{fontSize:11,color:"#166534",fontWeight:700}}>必須運営時間</span><div onClick={e=>setKp({mode:"time",value:requiredStart||"",unit:"",onConfirm:v=>setRequiredStart(v||""),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:70,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:requiredStart?"#18181B":"#A1A1AA"}}>{requiredStart||"--:--"}</div><span style={{fontSize:10,color:"#D4D4D8"}}>〜</span><div onClick={e=>setKp({mode:"time",value:requiredEnd||"",unit:"",onConfirm:v=>setRequiredEnd(v||""),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:70,padding:"3px 6px",marginBottom:0,textAlign:"center",cursor:"pointer",userSelect:"none",fontWeight:700,color:requiredEnd?"#18181B":"#A1A1AA"}}>{requiredEnd||"--:--"}</div>{(requiredStart||requiredEnd)&&<button onClick={()=>{setRequiredStart("");setRequiredEnd("");}} style={{fontSize:10,color:"#dc2626",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>クリア</button>}</div>
-        </div>
+        </div>}
         {/* カスタムシフト種別 */}
         <div style={{background:"#f0fff4",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:11,color:"#166534",fontWeight:700,marginBottom:6}}>カスタムシフト種別 <span style={{fontSize:10,fontWeight:400,color:"#4ade80"}}>（独自の勤務形態）</span></div>
@@ -1924,8 +1930,9 @@ function EventEditModal({ day, month, year, currentText, onSave, onClose }) {
 function GenerateWarningModal({ warnings, deptLabel, year, month, score, timelineWarnings, coverageWarnings, onClose }) {
   const entries = Object.entries(warnings);
   const days = new Date(year, month + 1, 0).getDate();
-  const hasTimeline = timelineWarnings && timelineWarnings.length > 0;
-  const hasCoverage = coverageWarnings && coverageWarnings.length > 0;
+  // 時間帯系（必須運営時間の未カバー・時間帯別不足）警告は TIME_FEATURES_ENABLED=false のとき非表示（凍結）。
+  const hasTimeline = TIME_FEATURES_ENABLED && timelineWarnings && timelineWarnings.length > 0;
+  const hasCoverage = TIME_FEATURES_ENABLED && coverageWarnings && coverageWarnings.length > 0;
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff5f5",border:"1px solid #7f1d1d",borderRadius:14,padding:28,width:"100%",maxWidth:440,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
