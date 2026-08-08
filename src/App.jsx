@@ -310,18 +310,23 @@ const SHIFTS = {
   "日/有": { short:"日有", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"午前日勤／午後有給" },
   "有/日": { short:"有日", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"午前有給／午後日勤" },
   "有/遅": { short:"有遅", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"午前有給／遅番半日" },
+  "有/休": { short:"有休半", color:"#9b4db5", bg:"#faf0ff", border:"#c07ad5", time:"午前有給／午後公休" },
   "": { short:"－", color:"#9CA3AF", bg:"transparent", border:"transparent", time:"" },
 };
 const SHIFT_KEYS = ["早番","日勤","遅番","夜勤","明け","休み","希望休","有休",""];
-const SHIFT_KEYS_MANUAL = ["早番","日勤","研修","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅","早/有","日/有","有/日","有/遅",""];
+const SHIFT_KEYS_MANUAL = ["早番","日勤","研修","遅番","夜勤","明け","休み","希望休","有休","日/休","休/日","早/休","休/遅","早/有","日/有","有/日","有/遅","有/休",""];
 const HALF_REST_TYPES = new Set(["日/休","休/日","早/休","休/遅"]); // 公休0.5としてカウントする半日休
 // 半日有給（勤務半分＋有給半分）。有給は公休に含めない設計のため公休カウント対象外（HALF_REST_TYPESには入れない）
 const HALF_PAID_TYPES = new Set(["早/有","日/有","有/日","有/遅"]);
-const HALF_ALL_TYPES = new Set([...HALF_REST_TYPES, ...HALF_PAID_TYPES]); // 希望勤務・手動選択で常時許可する半日8種
+// 有/休 = 午前有給(4h)＋午後公休(4h)。勤務0・公休0.5・有給消費0.5。
+// ※早有(早/有=勤務1・公休0・有給0.5)とは集計が異なる（早有は出勤扱い、有/休は勤務なし）。
+const HALF_PAIDREST_TYPES = new Set(["有/休"]);
+const HALF_ALL_TYPES = new Set([...HALF_REST_TYPES, ...HALF_PAID_TYPES, ...HALF_PAIDREST_TYPES]); // 手動選択で常時許可する半日シフト
 // 集計専用: 半日シフトを考慮した1日の勤務貢献度を返す（生成ロジックのWORK_TYPESは変更しない）
 //   通常勤務=1 / 半日休=0.5 / 半日有給=1（有給は出勤同等）/ カスタム勤務(deptWork指定時)=1 / その他=0
 function workDayValue(v, deptWork) {
   if (!v) return 0;
+  if (HALF_PAIDREST_TYPES.has(v)) return 0; // 有/休 = 勤務0（有給4h＋公休4h・出勤なし）
   if (HALF_REST_TYPES.has(v)) return 0.5; // 半日休 = 勤務0.5（＋公休0.5は別途）
   if (HALF_PAID_TYPES.has(v)) return 1;   // 半日有給 = 勤務1（実勤務4h＋有給4h＝出勤扱い）
   if (WORK_TYPES.has(v)) return 1;         // 通常勤務
@@ -480,7 +485,7 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
       const yukyudays = s.yukyuByMonth?.[mk] || [];
       const cells = [dept.label, s.name, s.role];
       let workCnt=0, nightCnt=0, restCnt=0;
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const out=dispV||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); workCnt+=workDayValue(v); if(v==="夜勤") nightCnt++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") restCnt+=HALF_REST_TYPES.has(v)?0.5:1; }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const out=dispV||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); workCnt+=workDayValue(v); if(v==="夜勤") nightCnt++; if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休") restCnt+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1; }
       cells.push(workCnt, nightCnt, restCnt);
       rows.push(cells.map(c=>`"${c}"`).join(","));
     });
@@ -510,7 +515,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+'<td class="name"><div class="name-inner">'+s.name+'</div></td>';
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const isKibo=!dispV&&kibodays.includes(d); const isYukyu2=!dispV&&!isKibo&&yukyudays2.includes(d); w+=workDayValue(v); if(v==="夜勤") n++; if(REST_TYPES.has(v)&&v!=="明け"&&v!=="有休") r+=HALF_REST_TYPES.has(v)?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||dispV==="希望休"||dispV==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':HALF_REST_TYPES.has(dispV)?dispV:(getShiftDef(dispV, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}"`)+cellText+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const isKibo=!dispV&&kibodays.includes(d); const isYukyu2=!dispV&&!isKibo&&yukyudays2.includes(d); w+=workDayValue(v); if(v==="夜勤") n++; if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休") r+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||dispV==="希望休"||dispV==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(HALF_REST_TYPES.has(dispV)||HALF_PAIDREST_TYPES.has(dispV))?dispV:(getShiftDef(dispV, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}"`)+cellText+CTAG('td'); }
       html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+r+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
@@ -573,7 +578,7 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, sele
   );
 }
 
-const SHIFT_REQ_TYPES = ["早番","日勤","研修","遅番","夜勤","明け","休み","有休","日/休","休/日","早/休","休/遅","早/有","日/有","有/日","有/遅"];
+const SHIFT_REQ_TYPES = ["早番","日勤","研修","遅番","夜勤","明け","休み","有休","日/休","休/日","早/休","休/遅","早/有","日/有","有/日","有/遅","有/休"];
 function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftRequests, deptId, depts, kiboCountByDay, kiboLimit }) {
   const days = getDays(year, month);
   const firstDow = new Date(year, month, 1).getDay();
@@ -2467,7 +2472,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             const sShifts=shifts[s.id]||{}, kibodays=s.kiboByMonth?.[mk]||[], yukyudays=s.yukyuByMonth?.[mk]||[];
             const workCnt=Object.values(sShifts).reduce((a,v)=>a+workDayValue(v,deptWork),0);
             const nightCnt=Object.values(sShifts).filter(v=>v==="夜勤").length;
-            const restCnt=Object.values(sShifts).reduce((acc,v)=>deptRest.has(v)&&v!=="明け"&&v!=="有休"?acc+(HALF_REST_TYPES.has(v)?0.5:1):acc,0);
+            const restCnt=Object.values(sShifts).reduce((acc,v)=>(deptRest.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休"?acc+((HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1):acc,0);
             const nightOver=s.nightOk&&nightCnt>(s.nightMax||5);
             const typeCnts={};
             dept.shiftTypes.forEach(t=>{typeCnts[t]=Object.values(sShifts).filter(v=>v===t).length;});
@@ -3462,7 +3467,7 @@ function SharedShiftView({ token }) {
   const cellText = (v) => {
     if (!v) return '－';
     if (v === '希望休' || v === '希') return '休';
-    if (HALF_REST_TYPES.has(v)) return v; // 日/休, 休/日, 早/休, 休/遅 → スラッシュ付きで表示
+    if (HALF_REST_TYPES.has(v) || HALF_PAIDREST_TYPES.has(v)) return v; // 日/休,休/日,早/休,休/遅,有/休 → スラッシュ付きで表示
     return SHIFTS[v]?.short || v.slice(0, 1) || '－';
   };
 
@@ -3519,7 +3524,7 @@ function SharedShiftView({ token }) {
                           const v=ss[d]||'';
                           w+=workDayValue(v);
                           if(v==='夜勤')n++;
-                          if(REST_TYPES.has(v)&&v!=='明け'&&v!=='有休')r+=HALF_REST_TYPES.has(v)?0.5:1;
+                          if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=='明け'&&v!=='有休')r+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1;
                           const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()])||isJpHoliday(year,month-1,d);
                           return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{cellText(v)}</td>;
                         })}

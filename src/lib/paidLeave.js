@@ -10,7 +10,7 @@
  */
 import { getDays, monthKey } from '../engine/core.js';
 
-const HALF_PAID_TYPES = new Set(['早/有', '日/有', '有/日', '有/遅']);
+const HALF_PAID_TYPES = new Set(['早/有', '日/有', '有/日', '有/遅', '有/休']); // 有/休=午前有給(0.5消費)＋午後公休
 
 /**
  * その月・その部署の有給消費量をスタッフごとに集計する。
