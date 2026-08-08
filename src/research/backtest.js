@@ -10,7 +10,7 @@
  *  - runs:   生成結果の配列（5回分）各要素 { [staffId]: { [day]: shift } }
  *  - fixed:  希望休/有休セル（入力）。A/B/C の分母から除外する
  */
-import { getDays, nameMatch } from '../engine/core.js';
+import { getDays, nameMatch, wilsonLower } from '../engine/core.js';
 
 const REST_INPUT = new Set(['希望休', '有休']);       // 入力（申請）＝答え合わせ対象外
 const REST_ANY   = new Set(['休み', '希望休', '有休']); // 休み系（指標F用）
@@ -127,9 +127,14 @@ export function computeBacktestMetrics({ actual, runs, staffList, dept, trend, y
           const hit = dowDays.filter(d => cell(run, s.id, d) === shift).length;
           return den > 0 ? hit / den : null;
         }).filter(v => v != null);
+        // Wilson下限（重みなし生カウントから算出・判定と同じ指標）
+        const kObs = t.dowShiftObs?.[dow]?.[shift] ?? 0;
+        const nObs = t.dowWorkObs?.[dow] ?? 0;
+        const wilson = nObs > 0 ? wilsonLower(kObs, nObs) : null;
         const row = {
           name: s.name, dow: DOW_JA[dow], shift,
           learnRate, monthCount: mc,
+          wilson, obs: `${kObs}/${nObs}`,
           actualRate, gen: stat(genPer),
         };
         (isStrong ? strongRows : midRows).push(row);
