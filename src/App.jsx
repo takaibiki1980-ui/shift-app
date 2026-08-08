@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
+import { computeBacktestMetrics, formatPct } from './research/backtest.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
@@ -1248,6 +1249,212 @@ function LearnStatusView({ learnedTrend, staffList, depts, allDBData, activeDept
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* 学習バックテスト（答え合わせ）ビュー — 研究用・読み取り専用。
+   直近月を正解として隠し、それ以前で学習→生成→実績と突合して一致率を出す。
+   ★シフトデータ(shifts_/edits_/confirmed_)への書き込みは一切しない。生成結果はこの画面内表示のみ。 */
+function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDeptId, year, month }) {
+  const [deptId, setDeptId] = useState(activeDeptId);
+  const dept = depts.find(d => d.id === deptId) || depts[0];
+  const monthsAvail = useMemo(() => {
+    const arr = [];
+    for (const k of Object.keys(allDBData || {})) {
+      if (!k.startsWith('shifts_')) continue;
+      const p = k.split('_'); if (p.length < 4) continue;
+      if (p.slice(3).join('_') !== deptId) continue;
+      const y = +p[1], m = +p[2];
+      const obj = allDBData[k];
+      if (!isNaN(y) && !isNaN(m) && obj && Object.keys(obj).length > 0) arr.push({ y, m });
+    }
+    arr.sort((a, b) => (b.y * 12 + b.m) - (a.y * 12 + a.m));
+    return arr;
+  }, [allDBData, deptId]);
+  const [targetSel, setTargetSel] = useState(null);
+  const tgt = targetSel || monthsAvail[0] || null;
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [metrics, setMetrics] = useState(null);
+  const [runsData, setRunsData] = useState(null);
+  const [viewRun, setViewRun] = useState(0);
+  const [notes, setNotes] = useState([]);
+  const [error, setError] = useState('');
+
+  const run = async () => {
+    setError(''); setMetrics(null); setRunsData(null); setNotes([]);
+    if (!tgt) { setError('この部署の実績月がありません。'); return; }
+    const targetKey = `shifts_${tgt.y}_${tgt.m}_${deptId}`;
+    const actual = allDBData[targetKey];
+    if (!actual || Object.keys(actual).length === 0) { setError('対象月の実績(shifts)が見つかりません。'); return; }
+    setRunning(true); setProgress(0);
+    try {
+      const nts = [];
+      // Step2: 対象月の shifts/edits/confirmed を除いた学習データ
+      const drop = new Set([targetKey, `edits_${tgt.y}_${tgt.m}_${deptId}`, `confirmed_${tgt.y}_${tgt.m}_${deptId}`]);
+      const filtered = {};
+      for (const [k, v] of Object.entries(allDBData)) if (!drop.has(k)) filtered[k] = v;
+      const trend = computeLearnedTrend(filtered, staffList, exceptionMonths || []);
+      nts.push('学習の直近重み(recency)は「現在」基準のまま計算しています（core.js非改変のため）。対象月が過去でも重みは現在起点でズレる可能性があります。');
+      const remain = new Set();
+      for (const k of Object.keys(filtered)) if (k.startsWith('shifts_') && k.split('_').slice(3).join('_') === deptId) { const p = k.split('_'); remain.add(`${p[1]}-${p[2]}`); }
+      if (remain.size <= 2) nts.push(`学習に使える月が${remain.size}ヶ月しかありません。STRONG_MONTHS=2ギリギリで強癖がほぼ発動しない可能性があります（これ自体がデータ量と精度の関係の測定結果です）。`);
+      // Step3: 入力再現（希望休・有休を実績から固定・希望勤務はクリアして答えを漏らさない）
+      const yIdx = tgt.y, mIdx = tgt.m - 1;
+      const mk = `${tgt.y}-${tgt.m}`;
+      const curIds = new Set(staffList.filter(s => s.dept === deptId).map(s => s.id));
+      const missing = Object.keys(actual).filter(id => !curIds.has(id));
+      if (missing.length > 0) nts.push(`対象月の実績に居るが現在の「${dept.label}」に居ないID が${missing.length}件あります（現在のスタッフ構成・設定で生成します）。`);
+      const btStaff = staffList.map(s => {
+        if (s.dept !== deptId) return s;
+        const kibo = [], yuk = [];
+        for (const [dStr, v] of Object.entries(actual[s.id] || {})) { const d = Number(dStr); if (v === '希望休') kibo.push(d); else if (v === '有休') yuk.push(d); }
+        return { ...s, kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: kibo }, yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: yuk }, shiftRequestsByMonth: { ...(s.shiftRequestsByMonth || {}), [mk]: {} } };
+      });
+      // prevTail（前月実績の末尾5日）
+      const pY = mIdx === 0 ? yIdx - 1 : yIdx, pM = mIdx === 0 ? 11 : mIdx - 1;
+      const prevRaw = allDBData[`shifts_${pY}_${pM + 1}_${deptId}`];
+      const prevTail = {};
+      if (prevRaw) { const pd = getDays(pY, pM); const ts = Math.max(1, pd - 4); for (const [sid, dm] of Object.entries(prevRaw)) { const t = {}; for (let d = ts; d <= pd; d++) { const v = dm[String(d)]; if (v) t[d] = v; } if (Object.keys(t).length) prevTail[sid] = t; } }
+      // Step4: bestOfN 5回（UIに制御を返しながら）
+      const runs = [];
+      for (let i = 0; i < 5; i++) {
+        await new Promise(r => setTimeout(r, 20));
+        const { shifts } = bestOfN(btStaff, dept, yIdx, mIdx, {}, trend, 30, prevTail);
+        runs.push(shifts);
+        setProgress(i + 1);
+      }
+      // Step5: 指標計算
+      const m = computeBacktestMetrics({ actual, runs, staffList: btStaff, dept, trend, year: yIdx, month: mIdx });
+      setMetrics(m); setRunsData({ actual, runs, ds: btStaff.filter(s => s.dept === deptId), year: yIdx, month: mIdx }); setViewRun(0); setNotes(nts);
+    } catch (e) {
+      setError('バックテスト実行エラー: ' + (e?.message || e));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const box = { background: '#fff', border: '1px solid #E4E4E7', borderRadius: 10, padding: '12px 14px', marginBottom: 12 };
+  const th = { fontSize: 10, color: '#64748B', fontWeight: 700, padding: '4px 6px', textAlign: 'center', borderBottom: '1px solid #E4E4E7', whiteSpace: 'nowrap' };
+  const td = { fontSize: 11, padding: '3px 6px', textAlign: 'center', borderBottom: '1px solid #F1F5F9' };
+  const rng = (s) => s == null || s.avg == null ? '—' : `${formatPct(s.avg)}（${formatPct(s.min)}〜${formatPct(s.max)}）`;
+
+  return (
+    <div style={{ maxWidth: 900 }}>
+      <div style={{ fontSize: 15, fontWeight: 900, color: '#4F46E5', marginBottom: 4 }}>学習バックテスト（答え合わせ）</div>
+      <div style={{ fontSize: 11, color: '#64748B', marginBottom: 12 }}>直近月を「正解」として隠し、それ以前だけで学習→自動生成→実績と突合して再現度を測る研究用ビュー。<b>シフトデータへの書き込みは行いません（表示のみ）。</b></div>
+
+      <div style={{ ...box, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 10, color: '#64748B', fontWeight: 700, marginBottom: 4 }}>部署</div>
+          <select value={deptId} onChange={e => { setDeptId(e.target.value); setTargetSel(null); setMetrics(null); setRunsData(null); }} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #D4D4D8', fontSize: 13 }}>
+            {depts.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: '#64748B', fontWeight: 700, marginBottom: 4 }}>対象月（正解として隠す月）</div>
+          <select value={tgt ? `${tgt.y}-${tgt.m}` : ''} onChange={e => { const [y, m] = e.target.value.split('-').map(Number); setTargetSel({ y, m }); setMetrics(null); setRunsData(null); }} style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #D4D4D8', fontSize: 13 }}>
+            {monthsAvail.length === 0 && <option value="">実績なし</option>}
+            {monthsAvail.map(o => <option key={`${o.y}-${o.m}`} value={`${o.y}-${o.m}`}>{o.y}年{o.m}月</option>)}
+          </select>
+        </div>
+        <button onClick={run} disabled={running || !tgt} style={{ background: running || !tgt ? '#E5E7EB' : '#6366F1', color: running || !tgt ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 8, padding: '9px 18px', cursor: running || !tgt ? 'default' : 'pointer', fontSize: 13, fontWeight: 800 }}>
+          {running ? `生成中… ${progress}/5` : '▶ バックテスト実行（5回生成）'}
+        </button>
+      </div>
+
+      {error && <div style={{ ...box, background: '#fff0f0', border: '1px solid #ef4444', color: '#dc2626', fontSize: 12, fontWeight: 700 }}>{error}</div>}
+      {notes.length > 0 && <div style={{ ...box, background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontSize: 11, lineHeight: 1.7 }}>{notes.map((n, i) => <div key={i}>※ {n}</div>)}</div>}
+
+      {metrics && <>
+        {/* サマリー A/F */}
+        <div style={box}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#18181B', marginBottom: 8 }}>サマリー（5回の平均（最小〜最大））</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 8, fontSize: 12 }}>
+            <div><b>A. セル一致率（全体）</b>：{rng(metrics.A)}</div>
+            <div><b>F. 休み曜日 平均絶対差</b>：{metrics.fMeanAbsDiff == null ? '—' : (metrics.fMeanAbsDiff * 100).toFixed(1) + 'pt'}</div>
+            <div style={{ color: '#64748B' }}>固定セル（希望休/有休・分母除外）：{metrics.fixedCount}</div>
+          </div>
+        </div>
+
+        {/* C: シフト種別別 */}
+        <div style={box}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>C. シフト種別ごとの再現率（実績=その種別のセルを生成が当てた率）</div>
+          <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
+            <thead><tr><th style={th}>種別</th><th style={th}>再現率（平均）</th><th style={th}>最小〜最大</th></tr></thead>
+            <tbody>{metrics.C.map(r => <tr key={r.type}><td style={{ ...td, fontWeight: 700 }}>{r.type}</td><td style={td}>{formatPct(r.avg)}</td><td style={td}>{formatPct(r.min)}〜{formatPct(r.max)}</td></tr>)}</tbody>
+          </table></div>
+        </div>
+
+        {/* B: スタッフ別 */}
+        <div style={box}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>B. スタッフ別一致率</div>
+          <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
+            <thead><tr><th style={{ ...th, textAlign: 'left' }}>スタッフ</th><th style={th}>一致率（平均）</th><th style={th}>最小〜最大</th></tr></thead>
+            <tbody>{metrics.B.map(r => <tr key={r.id}><td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{r.name}</td><td style={td}>{formatPct(r.avg)}</td><td style={td}>{r.avg == null ? '—' : `${formatPct(r.min)}〜${formatPct(r.max)}`}</td></tr>)}</tbody>
+          </table></div>
+        </div>
+
+        {/* D/E: 強癖・中癖 */}
+        {[['D. 強癖セルの再現率（dowShiftRate≥0.5 かつ 観測≥2ヶ月）', metrics.strongRows], ['E. 中癖セルの再現率（dowShiftRate 0.3〜0.5）', metrics.midRows]].map(([title, rows]) => (
+          <div style={box} key={title}>
+            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>{title}</div>
+            {rows.length === 0 ? <div style={{ fontSize: 11, color: '#94A3B8' }}>該当なし</div> :
+              <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <thead><tr><th style={{ ...th, textAlign: 'left' }}>スタッフ</th><th style={th}>曜日</th><th style={th}>種別</th><th style={th}>学習率</th><th style={th}>実績出現率</th><th style={th}>生成出現率(平均)</th></tr></thead>
+                <tbody>{rows.map((r, i) => <tr key={i}><td style={{ ...td, textAlign: 'left' }}>{r.name}</td><td style={td}>{r.dow}</td><td style={{ ...td, fontWeight: 700 }}>{r.shift}</td><td style={td}>{formatPct(r.learnRate)}</td><td style={td}>{formatPct(r.actualRate)}</td><td style={td}>{formatPct(r.gen.avg)}</td></tr>)}</tbody>
+              </table></div>}
+          </div>
+        ))}
+
+        {/* F: 休み曜日 */}
+        <div style={box}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>F. 休み曜日の一致（曜日別 休み率：実績 vs 生成平均）</div>
+          <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
+            <thead><tr><th style={th}>曜日</th>{metrics.F.map(r => <th key={r.dow} style={th}>{r.dow}</th>)}</tr></thead>
+            <tbody>
+              <tr><td style={{ ...td, fontWeight: 700, textAlign: 'left' }}>実績</td>{metrics.F.map(r => <td key={r.dow} style={td}>{formatPct(r.actualRate)}</td>)}</tr>
+              <tr><td style={{ ...td, fontWeight: 700, textAlign: 'left' }}>生成</td>{metrics.F.map(r => <td key={r.dow} style={td}>{formatPct(r.gen.avg)}</td>)}</tr>
+            </tbody>
+          </table></div>
+        </div>
+
+        {/* Step6: 実績 vs 生成 並列（不一致ハイライト） */}
+        {runsData && <div style={box}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 800 }}>実績 vs 生成（不一致セルを赤表示）</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button onClick={() => setViewRun(v => (v + runsData.runs.length - 1) % runsData.runs.length)} style={{ border: '1px solid #E4E4E7', background: '#fff', borderRadius: 6, cursor: 'pointer', padding: '2px 8px' }}>◀</button>
+              <span style={{ fontSize: 12, fontWeight: 700 }}>生成 {viewRun + 1}/{runsData.runs.length}</span>
+              <button onClick={() => setViewRun(v => (v + 1) % runsData.runs.length)} style={{ border: '1px solid #E4E4E7', background: '#fff', borderRadius: 6, cursor: 'pointer', padding: '2px 8px' }}>▶</button>
+            </div>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            {(() => {
+              const days = getDays(runsData.year, runsData.month);
+              const run = runsData.runs[viewRun];
+              const c = (o, sid, d) => o?.[sid]?.[d] ?? '';
+              const fixed = (sid, d) => ['希望休', '有休'].includes(c(runsData.actual, sid, d));
+              return <table style={{ borderCollapse: 'collapse' }}>
+                <thead><tr><th style={{ ...th, textAlign: 'left', position: 'sticky', left: 0, background: '#fff' }}>スタッフ</th>{Array.from({ length: days }, (_, i) => <th key={i} style={th}>{i + 1}</th>)}</tr></thead>
+                <tbody>{runsData.ds.map(s => <tr key={s.id}>
+                  <td style={{ ...td, textAlign: 'left', fontWeight: 700, position: 'sticky', left: 0, background: '#fff', whiteSpace: 'nowrap' }}>{s.name}</td>
+                  {Array.from({ length: days }, (_, i) => {
+                    const d = i + 1; const av = c(runsData.actual, s.id, d); const gv = c(run, s.id, d);
+                    const fx = fixed(s.id, d); const mism = !fx && av !== '' && av !== gv;
+                    return <td key={d} style={{ ...td, padding: '2px 4px', background: fx ? '#eef2ff' : mism ? '#fee2e2' : undefined, color: mism ? '#b91c1c' : '#334155' }}>
+                      <div style={{ fontSize: 9, lineHeight: 1.2 }}>{av || '・'}</div>
+                      <div style={{ fontSize: 9, lineHeight: 1.2, color: mism ? '#b91c1c' : '#94A3B8' }}>{gv || '・'}</div>
+                    </td>;
+                  })}
+                </tr>)}</tbody>
+              </table>;
+            })()}
+          </div>
+          <div style={{ fontSize: 10, color: '#64748B', marginTop: 6 }}>各セル上段=実績／下段=生成。青=入力(希望休/有休・突合対象外)、赤=不一致。</div>
+        </div>}
+      </>}
     </div>
   );
 }
@@ -4796,6 +5003,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#18181B":"#71717A",borderBottom:innerTab==="yotei"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
         }
         <button onClick={()=>setInnerTab("learn")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="learn"?"#18181B":"#71717A",borderBottom:innerTab==="learn"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="learn"?700:500,whiteSpace:"nowrap",flexShrink:0}}>学習状況</button>
+        <button onClick={()=>setInnerTab("backtest")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="backtest"?"#18181B":"#71717A",borderBottom:innerTab==="backtest"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="backtest"?700:500,whiteSpace:"nowrap",flexShrink:0}}>バックテスト</button>
         {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
           {innerTab==="shift"&&(
             <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -4859,6 +5067,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
         {innerTab==="learn"&&<LearnStatusView learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month}/>}
+        {innerTab==="backtest"&&<BacktestView staffList={staffList} depts={depts} allDBData={allDBDataRef.current} exceptionMonths={exceptionMonths} activeDeptId={activeDeptId} year={year} month={month}/>}
       </div>
 
       {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
