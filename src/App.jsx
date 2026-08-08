@@ -1407,8 +1407,8 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
             <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>{title}</div>
             {rows.length === 0 ? <div style={{ fontSize: 11, color: '#94A3B8' }}>該当なし</div> :
               <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
-                <thead><tr><th style={{ ...th, textAlign: 'left' }}>スタッフ</th><th style={th}>曜日</th><th style={th}>種別</th><th style={th}>学習率</th><th style={th}>実績出現率</th><th style={th}>生成出現率(平均)</th></tr></thead>
-                <tbody>{rows.map((r, i) => <tr key={i}><td style={{ ...td, textAlign: 'left' }}>{r.name}</td><td style={td}>{r.dow}</td><td style={{ ...td, fontWeight: 700 }}>{r.shift}</td><td style={td}>{formatPct(r.learnRate)}</td><td style={td}>{formatPct(r.actualRate)}</td><td style={td}>{formatPct(r.gen.avg)}</td></tr>)}</tbody>
+                <thead><tr><th style={{ ...th, textAlign: 'left' }}>スタッフ</th><th style={th}>曜日</th><th style={th}>種別</th><th style={th}>学習率</th><th style={th}>Wilson下限</th><th style={th}>観測(k/n)</th><th style={th}>実績出現率</th><th style={th}>生成出現率(平均)</th></tr></thead>
+                <tbody>{rows.map((r, i) => <tr key={i}><td style={{ ...td, textAlign: 'left' }}>{r.name}</td><td style={td}>{r.dow}</td><td style={{ ...td, fontWeight: 700 }}>{r.shift}</td><td style={td}>{formatPct(r.learnRate)}</td><td style={{ ...td, fontWeight: 700, color: r.wilson != null && r.wilson >= 0.5 ? '#16a34a' : '#94A3B8' }}>{r.wilson == null ? '—' : formatPct(r.wilson)}</td><td style={td}>{r.obs}</td><td style={td}>{formatPct(r.actualRate)}</td><td style={td}>{formatPct(r.gen.avg)}</td></tr>)}</tbody>
               </table></div>}
           </div>
         ))}

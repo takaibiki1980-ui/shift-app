@@ -32,6 +32,22 @@ const DOW_STRONG_ENABLED = true;
 const STRONG_RATE = 0.5;    // 強い癖と見なす dowShiftRate のしきい値
 const STRONG_MONTHS = 2;    // 観測ゲート: monthCounts≥2（各曜日≈8回以上）で癖を信頼
 
+// 強癖判定を「生率≥STRONG_RATE」からWilson score下限≥STRONG_RATEに切替える。
+// 観測回数が少ないほど下限が低く出るため、偶然の偏り(例:8回中8回=100%)が強癖として
+// 発動しにくくなる。WILSON_STRONG_ENABLED=false で従来の生率判定へ即復帰。
+const WILSON_STRONG_ENABLED = true;
+const WILSON_Z = 1.28;      // 80%信頼水準。大きいほど判定が厳しくなる（1.28→1.645→1.96）
+// k=該当シフトの観測回数, n=その曜日の勤務観測回数（どちらも重みなしの生カウント）
+function wilsonLower(k, n, z = WILSON_Z) {
+  if (n === 0) return 0;
+  const p = k / n;
+  const z2 = z * z;
+  const denom = 1 + z2 / n;
+  const center = p + z2 / (2 * n);
+  const margin = z * Math.sqrt((p * (1 - p) + z2 / (4 * n)) / n);
+  return (center - margin) / denom;
+}
+
 // カスタムシフト種別のstyling定義を取得（標準SHIFTSに無い場合はbaseTypeの色を継承）
 
 function buildDeptWorkTypes(customDefs) {
@@ -527,10 +543,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   // その曜日・そのシフトの「強い癖」判定: dowShiftRate>=STRONG_RATE かつ 観測月数>=STRONG_MONTHS。
   const isStrongHabit = (s, weekday, shift) => {
     if (!DOW_STRONG_ENABLED) return false;
+    if (getMonthCount(s) < STRONG_MONTHS) return false;
     const t = getTrend(s);
+    if (WILSON_STRONG_ENABLED) {
+      const k = t?.dowShiftObs?.[weekday]?.[shift] ?? 0;
+      const n = t?.dowWorkObs?.[weekday] ?? 0;
+      return wilsonLower(k, n) >= STRONG_RATE;
+    }
     const r = t?.dowShiftRate?.[weekday]?.[shift];
-    if (r == null || r < STRONG_RATE) return false;
-    return getMonthCount(s) >= STRONG_MONTHS;
+    return r != null && r >= STRONG_RATE;
   };
 
   const pickWithTrend = (s, available, cnts) => {
@@ -716,9 +737,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     // 夜勤の「その曜日の強い癖」判定（早番/遅番の案Aと同型・NIGHT_STRONG_ENABLEDで戻せる）。
     const _isStrongNight = (s, dow) => {
       if (!NIGHT_STRONG_ENABLED) return false;
-      const r = getTrend(s)?.dowShiftRate?.[dow]?.['夜勤'];
-      if (r == null || r < STRONG_RATE) return false;
-      return getMonthCount(s) >= STRONG_MONTHS;
+      if (getMonthCount(s) < STRONG_MONTHS) return false;
+      const t = getTrend(s);
+      if (WILSON_STRONG_ENABLED) {
+        const k = t?.dowShiftObs?.[dow]?.['夜勤'] ?? 0;
+        const n = t?.dowWorkObs?.[dow] ?? 0;
+        return wilsonLower(k, n) >= STRONG_RATE;
+      }
+      const r = t?.dowShiftRate?.[dow]?.['夜勤'];
+      return r != null && r >= STRONG_RATE;
     };
     const _nightCandSort = (a, b, d) => {
       const _dowd = new Date(year, month, d).getDay();
@@ -2235,6 +2262,8 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const dowShifts = {}; // 曜日別シフト集計: [staffId][dow][shiftType]
   const dowRests = {};   // 曜日別休み集計: [staffId][dow] 重み付きカウント (+6%7: 月=0,日=6)
   const dowTotalsR = {}; // 曜日別総日数:   [staffId][dow] 重み付きカウント (+6%7: 月=0,日=6)
+  const dowShiftObs = {}; // Wilson用・重みなし生カウント: [staffId][dow(0=日..6=土)][shift] = 観測回数
+  const dowWorkObs = {};   // Wilson用・重みなし生カウント: [staffId][dow] = その曜日の勤務日観測回数
   const REST_DOW_SET = new Set(['休み','希望休','有休']);
   const now = new Date();
   const nowYM = now.getFullYear() * 12 + now.getMonth();
@@ -2280,6 +2309,8 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
       if (!dowShifts[staffId]) dowShifts[staffId] = [{},{},{},{},{},{},{}];
       if (!dowTotalsR[staffId]) dowTotalsR[staffId] = [0,0,0,0,0,0,0];
       if (!dowRests[staffId]) dowRests[staffId] = [0,0,0,0,0,0,0];
+      if (!dowShiftObs[staffId]) dowShiftObs[staffId] = [{},{},{},{},{},{},{}];
+      if (!dowWorkObs[staffId]) dowWorkObs[staffId] = [0,0,0,0,0,0,0];
       monthSets[staffId].add(`${keyYear}-${keyMonth}`);
       for (const [dayStr, shift] of Object.entries(staffShifts)) {
         // dowRestRate用: スキップ前に全シフトを曜日別集計
@@ -2302,6 +2333,9 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
           if (!isNaN(d)) {
             const dow = new Date(keyYear, keyMonth, d).getDay();
             dowShifts[staffId][dow][shift] = (dowShifts[staffId][dow][shift] || 0) + ew;
+            // Wilson用・重みなし生カウント（+1）。既存の重み付き集計には影響しない。
+            dowShiftObs[staffId][dow][shift] = (dowShiftObs[staffId][dow][shift] || 0) + 1;
+            dowWorkObs[staffId][dow] += 1;
           }
         }
       }
@@ -2367,7 +2401,10 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
       const raw = (dowRests[staff.id]?.[i]||0)/tot, ra = Math.min(1, tot/3);
       return raw * ra + (deptAvgRestL[i] ?? raw) * (1 - ra);
     });
-    result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate };
+    result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate,
+      dowShiftObs: dowShiftObs[staff.id] || [{},{},{},{},{},{},{}], // Wilson用・重みなし観測回数[dow][shift]
+      dowWorkObs: dowWorkObs[staff.id] || [0,0,0,0,0,0,0] };        // Wilson用・重みなし観測回数[dow]
+
     monthCounts[staff.name] = monthSets[staff.id].size;
   }
   result._monthCounts = monthCounts; // 動的ブレンド比率の計算用
@@ -2534,5 +2571,6 @@ export {
   detectManualEditCells,
   computeLearnedTrend,
   EDIT_WEIGHT,
-  repairHardConstraints
+  repairHardConstraints,
+  wilsonLower
 };
