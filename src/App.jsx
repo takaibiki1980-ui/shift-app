@@ -2608,18 +2608,23 @@ const MNAV = { background:"#F4F4F5", color:"#18181B", border:"1px solid #E4E4E7"
 // ─────────────────────────────────────────────
 //  YOTEI (職員予定表)
 // ─────────────────────────────────────────────
-const YOTEI_SHIFT_ORDER = ["明け","早番","日勤","遅番","夜勤","日/休","休/日","早/休","休/遅"];
+// 予定表の勤務種別表示順。半日シフトは HALF_ALL_TYPES から一元的に取り込む
+// （半日休4種＋半日有給4種＋有/休）。今後の半日シフト追加も予定表に自動反映される。
+const YOTEI_SHIFT_ORDER = ["明け","早番","日勤","遅番","夜勤", ...HALF_ALL_TYPES];
 const YOTEI_SHIFT_COLORS = { 明け:"#9e8d80", 早番:"#c45c35", 日勤:"#3b6eea", 遅番:"#8b5cc4", 夜勤:"#2a7a9a", "日/休":"#3b6eea", "休/日":"#3a9659", "早/休":"#c45c35", "休/遅":"#8b5cc4" };
 
 function buildYoteiHTML(dept, staffList, shifts, year, month, yoteiDeptData, floorSettings) {
   const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
+  const mk = monthKey(year, month);
+  // シフト表と同じく希望勤務オーバーレイを重ねてセル値を決める（生セルが空でも希望勤務を表示）。
+  const effShift = (s, d) => effectiveCellShift(shifts[s.id]?.[d]||"", s.shiftRequestsByMonth?.[mk]?.[d]);
   const WD_NAMES = ["日","月","火","水","木","金","土"];
   const getDayGroups = (d) => {
     const assign = (yoteiDeptData || {})[String(d)] || {};
     return YOTEI_SHIFT_ORDER.map(st => ({
-      st, color: YOTEI_SHIFT_COLORS[st]||'#333',
-      staff: ds.filter(s=>(shifts[s.id]?.[d]||"")===st).map(s=>({ name:s.name, assignment:assign[s.id]||"" }))
+      st, color: YOTEI_SHIFT_COLORS[st]||SHIFTS[st]?.color||'#333',
+      staff: ds.filter(s=>effShift(s,d)===st).map(s=>({ name:s.name, assignment:assign[s.id]||"" }))
     })).filter(g=>g.staff.length>0);
   };
   const dayCards = Array.from({length:days},(_,i)=>i+1).map(d => {
@@ -2636,13 +2641,14 @@ function buildYoteiHTML(dept, staffList, shifts, year, month, yoteiDeptData, flo
   return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>職員予定表 ${year}年${month+1}月 ${dept.label}</title><style>@media print{@page{size:A4 portrait;margin:10mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}body{font-family:'Noto Sans JP','ヒラギノ角ゴ ProN',Meiryo,sans-serif;margin:0;padding:10px;}h2{font-size:14px;border-bottom:2px solid #6366F1;padding-bottom:6px;margin:0 0 10px;color:#18181B;}.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}</style></head><body><h2>📋 職員予定表　${year}年${month+1}月　${dept.label}</h2><div class="grid">${dayCards.join('')}</div></body></html>`;
 }
 
-function autoAssignDay(d, dept, staffList, shifts, rules, floorSettings) {
+function autoAssignDay(d, dept, staffList, shifts, rules, floorSettings, mk) {
   const ds = staffList.filter(s => s.dept === dept.id);
+  const effShift = (s) => effectiveCellShift(shifts[s.id]?.[d]||"", mk ? s.shiftRequestsByMonth?.[mk]?.[d] : undefined);
   const assign = {};
   YOTEI_SHIFT_ORDER.forEach(shiftType => {
     const rule = (rules||[]).find(r => r.shiftType === shiftType);
     if (!rule || !rule.assignment) return;
-    const staff = ds.filter(s => (shifts[s.id]?.[d]||"") === shiftType);
+    const staff = ds.filter(s => effShift(s) === shiftType);
     if (staff.length === 0) return;
     if (rule.assignment === "auto") {
       const floors = floorSettings.floors;
@@ -2740,7 +2746,9 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
 function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments, floorSettings, onSave, onClose }) {
   const wd = getWD(year, month, day);
   const ds = staffList.filter(s => s.dept === dept.id);
-  const workingGroups = YOTEI_SHIFT_ORDER.map(st=>({ st, staff:ds.filter(s=>(shifts[s.id]?.[day]||"")===st) })).filter(g=>g.staff.length>0);
+  const mk = monthKey(year, month);
+  const effShift = (s) => effectiveCellShift(shifts[s.id]?.[day]||"", s.shiftRequestsByMonth?.[mk]?.[day]);
+  const workingGroups = YOTEI_SHIFT_ORDER.map(st=>({ st, staff:ds.filter(s=>effShift(s)===st) })).filter(g=>g.staff.length>0);
   const floorOptions = ["", ...(floorSettings.floors||[]).map(f=>f.name), ...(floorSettings.duties||[]).map(d=>d.name)];
   const [local, setLocal] = useState(() => ({...assignments}));
   const [memo, setMemo] = useState(() => assignments["_memo"]||"");
@@ -2788,6 +2796,9 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
 function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpdateYotei, onBatchUpdateYotei, floorSettings, onUpdateFloorSettings }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s => s.dept === dept.id);
+  const mk = monthKey(year, month);
+  // シフト表と同じ希望勤務オーバーレイでセル値を決める（生セルが空でも希望勤務を反映）。
+  const effShift = (s, d) => effectiveCellShift(shifts[s.id]?.[d]||"", s.shiftRequestsByMonth?.[mk]?.[d]);
   const [editDay, setEditDay] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const getDayAssignments = (d) => (yoteiDeptData||{})[String(d)]||{};
@@ -2808,7 +2819,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
     if(!window.confirm(`${month+1}月の全日程に自動配置ルールを適用します。\n既存の配置は上書きされます（メモは保持）。\nよろしいですか？`))return;
     const dayMap = {};
     for(let d=1;d<=days;d++){
-      const auto = autoAssignDay(d,dept,staffList,shifts,rules,floorSettings);
+      const auto = autoAssignDay(d,dept,staffList,shifts,rules,floorSettings,mk);
       const existing = getDayAssignments(d);
       dayMap[String(d)] = {...existing, ...auto};
     }
@@ -2846,7 +2857,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
           const assign=getDayAssignments(d);
           const assignedCnt=Object.keys(assign).filter(k=>k!=="_memo"&&assign[k]).length;
           const memo=assign["_memo"]||"";
-          const workCount=YOTEI_SHIFT_ORDER.reduce((acc,st)=>acc+ds.filter(s=>(shifts[s.id]?.[d]||"")===st).length,0);
+          const workCount=YOTEI_SHIFT_ORDER.reduce((acc,st)=>acc+ds.filter(s=>effShift(s,d)===st).length,0);
           return(
             <div key={d} onClick={()=>setEditDay(d)} style={{background:"#ffffff",border:`1px solid ${we?"#fca5a5":"#D4D4D8"}`,borderRadius:9,padding:"8px 10px",cursor:"pointer",boxShadow:"0 1px 4px #0001"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
@@ -2857,7 +2868,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
                 </div>
               </div>
               {YOTEI_SHIFT_ORDER.map(st=>{
-                const group=ds.filter(s=>(shifts[s.id]?.[d]||"")===st);
+                const group=ds.filter(s=>effShift(s,d)===st);
                 if(group.length===0)return null;
                 const sh=SHIFTS[st];
                 return(
