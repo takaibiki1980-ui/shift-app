@@ -2572,5 +2572,8 @@ export {
   computeLearnedTrend,
   EDIT_WEIGHT,
   repairHardConstraints,
-  wilsonLower
+  wilsonLower,
+  STRONG_RATE,
+  STRONG_MONTHS,
+  WILSON_Z
 };
