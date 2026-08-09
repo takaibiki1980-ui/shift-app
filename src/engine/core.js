@@ -36,7 +36,7 @@ const STRONG_MONTHS = 2;    // 観測ゲート: monthCounts≥2（各曜日≈8�
 // 観測回数が少ないほど下限が低く出るため、偶然の偏り(例:8回中8回=100%)が強癖として
 // 発動しにくくなる。WILSON_STRONG_ENABLED=false で従来の生率判定へ即復帰。
 const WILSON_STRONG_ENABLED = true;
-const WILSON_Z = 1.28;      // 80%信頼水準。大きいほど判定が厳しくなる（1.28→1.645→1.96）
+const WILSON_Z = 1.645;     // 90%信頼水準。大きいほど判定が厳しくなる（1.28→1.645→1.96）
 // k=該当シフトの観測回数, n=その曜日の勤務観測回数（どちらも重みなしの生カウント）
 function wilsonLower(k, n, z = WILSON_Z) {
   if (n === 0) return 0;
