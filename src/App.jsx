@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
 import { computeBacktestMetrics, formatPct } from './research/backtest.js';
+import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
@@ -2279,10 +2280,11 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
   );
 }
 
-function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed }) {
+function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed, warnings }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
+  const [warnPop, setWarnPop] = useState(null); // 生成警告の根拠ポップオーバー {reason,x,y}
   const maxConsec = dept.maxConsecutive || 5;
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
@@ -2448,6 +2450,8 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
 
   return (
     <div>
+    {warnPop && (<><div onClick={()=>setWarnPop(null)} style={{position:"fixed",inset:0,zIndex:399}}/>
+      <div style={{position:"fixed",left:Math.min(warnPop.x,(typeof window!=="undefined"?window.innerWidth:400)-250),top:warnPop.y+10,zIndex:400,maxWidth:240,background:"#18181B",color:"#fff",borderRadius:8,padding:"8px 12px",fontSize:11,lineHeight:1.6,boxShadow:"0 8px 24px rgba(0,0,0,0.3)"}} onClick={()=>setWarnPop(null)}>{warnPop.reason}</div></>)}
     {roleViolationCount > 0 && (
       <div style={{background:"#FFF1F2",border:"1px solid #FECDD3",borderRadius:6,padding:"6px 12px",marginBottom:6,color:"#BE123C",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
         <span>役職制限: {roleViolationCount}件</span>
@@ -2503,7 +2507,10 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const cdow=new Date(year,month,d).getDay(); const cellWeekBg=cdow===0?"#FFF5F5":cdow===6?"#F5F5FF":undefined;
                   // 青枠は下書き中(confirmed=false)のみ。確定後はデータ(shiftRequestsByMonth)は残し装飾だけ消す。
                   const showFix=isFixed&&!confirmed;
-                  return <td key={d} style={{padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":isKibo?"#fff5f5":isYukyu?"#faf0ff":showFix?"#f5f3ff":cellWeekBg,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showFix?"2px solid #a78bfa":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol||showFix?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#BE123C"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispType} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}</td>;
+                  const warn=warnings?warnings[`${s.id}:${d}`]:null;
+                  const warnBg=warn?(warn.level===1?"#fee2e2":"#fef9c3"):undefined;
+                  const warnOutline=warn?(warn.level===1?"2px dashed #ef4444":"1px dashed #f59e0b"):undefined;
+                  return <td key={d} title={warn?warn.reason:undefined} style={{position:"relative",padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":warnBg||(isKibo?"#fff5f5":isYukyu?"#faf0ff":showFix?"#f5f3ff":cellWeekBg),cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showFix?"2px solid #a78bfa":warnOutline||(consecViol?"1px solid #e0707060":undefined),outlineOffset:isSelected||isRoleViol||showFix||warn?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?<span style={{fontSize:9,color:"#BE123C"}}>希</span>:isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispType} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{warn&&<span onClick={(e)=>{e.stopPropagation();setWarnPop({reason:warn.reason,x:e.clientX,y:e.clientY});}} title={warn.reason} style={{position:"absolute",top:0,right:1,fontSize:8,fontWeight:900,lineHeight:1,color:warn.level===1?"#dc2626":"#b45309",cursor:"pointer"}}>{warn.level===1?"⚠":"!"}</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -4359,6 +4366,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       seqAtLastRemoteLoad.current = userEditSeq.current; // 保存済み＝現状を基準に（未保存判定のリセット）
       saveStatusRef.current = "saved";
       setSaveStatus("saved");
+      setWarningsScope(null); // 保存後は生成警告をクリア（レビュー支援は生成直後のみ）
       return true;
     } else {
       saveFailCountRef.current += 1;
@@ -4401,6 +4409,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
+  // 生成直後の「直されそうなセル」警告（表示のみ・保存しない）。scopeが一致する間だけ表示。
+  const [genWarnings, setGenWarnings] = useState([]);
+  const [warningsOn, setWarningsOn] = useState(true);
+  const [warningsScope, setWarningsScope] = useState(null); // {deptId, year, month}
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
   const undoStackRef = useRef({}); // { [deptId]: snapshot[] } — アンドゥ履歴（最大30ステップ）。snapshot={shifts, sr}
@@ -4423,6 +4435,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
   const [learnedTrend, setLearnedTrend] = useState({});
+  // 生成警告の派生: scope(生成した部署・月)が現在と一致する間だけ算出。
+  // deptShifts変化で自動再判定＝手修正で癖に合えば警告消灯。scope不一致(部署/月切替)や
+  // 保存後(scope=null)は非表示。表示のみで保存・生成には非干渉。
+  useEffect(() => {
+    if (!warningsOn || !warningsScope || warningsScope.deptId !== activeDeptId || warningsScope.year !== year || warningsScope.month !== month) {
+      setGenWarnings(prev => (prev.length ? [] : prev));
+      return;
+    }
+    const dp = depts.find(d => d.id === activeDeptId);
+    if (!dp) return;
+    try {
+      setGenWarnings(computeWarnings({ shifts: allShifts[activeDeptId] || {}, staffList, dept: dp, trend: learnedTrend, year, month }));
+    } catch { /* 表示専用のため失敗時は無視 */ }
+  }, [allShifts, warningsScope, warningsOn, activeDeptId, year, month, learnedTrend, staffList, depts]);
   const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
@@ -4487,6 +4513,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const dept = depts.find(d=>d.id===activeDeptId) || depts[0];
   const deptShifts = allShifts[activeDeptId]||{};
+  const warnMap = useMemo(()=>{const m={};for(const w of genWarnings)m[`${w.staffId}:${w.day}`]=w;return m;},[genWarnings]);
+  const warnCounts = useMemo(()=>({l1:genWarnings.filter(w=>w.level===1).length,l2:genWarnings.filter(w=>w.level===2).length}),[genWarnings]);
   // 学習一致度（生成シフトが学習済みの曜日別癖 dowShiftRate にどれだけ沿うか・平均%）
   const learnedMatch = useMemo(() => {
     if (!dept) return null;
@@ -4716,6 +4744,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const _p1_ds = cs.filter(s => s.dept === cd.id);
         applyMinimalChangePhase1(result, genSnapshot, _p1_ds, cd, year, month);
         recomputeGenerateWarnings(result, _p1_ds, cd, year, month, warnings, score, timelineWarnings, setGenerateWarnings);
+        // 生成した部署・月を警告scopeに設定（派生useEffectがハイライトを算出）。表示のみ。
+        setWarningsScope({ deptId: cd.id, year, month });
 
 
         // ── eiyo部署のみ: 公休数・maxConsec違反を自動修正 ──
@@ -5052,6 +5082,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* CONTENT */}
       <div style={{padding:"8px 12px",minHeight:"calc(100vh - 180px)"}}>
+        {innerTab==="shift"&&warningsScope&&warningsScope.deptId===activeDeptId&&warningsScope.year===year&&warningsScope.month===month&&(
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"6px 12px",marginBottom:8,fontSize:12}}>
+            <span style={{fontWeight:800,color:"#92400E",display:"inline-flex",alignItems:"center",gap:5}}><AlertTriangle size={14} strokeWidth={2}/>生成レビュー</span>
+            <span style={{color:"#dc2626",fontWeight:700}}>癖違反 {warnCounts.l1}件</span>
+            <span style={{color:"#b45309",fontWeight:700}}>異例配置 {warnCounts.l2}件</span>
+            <span style={{color:"#64748B",fontSize:10}}>セルの⚠/!をタップで根拠。直すと消灯・保存でクリア。</span>
+            <label style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",color:"#374151"}}>
+              <input type="checkbox" checked={warningsOn} onChange={e=>setWarningsOn(e.target.checked)} style={{accentColor:"#6366F1"}}/>警告表示
+            </label>
+          </div>
+        )}
         {innerTab==="shift"&&(<><Legend/>
           {(()=>{
             const hasSchedule = Object.keys(deptShifts||{}).length > 0;
@@ -5077,7 +5118,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
             </div>
           </div>}
-          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed}/></ZoomWrapper>
+          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
