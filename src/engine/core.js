@@ -22,6 +22,12 @@ const NIGHT_LEARN_ENABLED = true;
 // NIGHT_STRONG_ENABLED=false で従来挙動へ即復帰。STRONG_RATE/STRONG_MONTHS は早番遅番と共有。
 const NIGHT_STRONG_ENABLED = true;
 
+// 夜勤ソートに「翌日確定癖ガード」を加えるか。夜勤を渡すと翌日が明けで確定するため、
+// 翌日にその人の確定勤務癖(例:火曜日勤80%)があると癖が潰れる。片方だけ翌日確定癖を持つ場合、
+// 持たない方を先へ寄せる（持つ方を後ろへ）。⓪強い夜勤癖の後・①回数公平性の前に入れる。
+// 候補プール・nightMax救済・明け従属は不変＝must-fill厳守。false で従来の夜勤ソートへ即復帰。
+const NEXT_DAY_HABIT_GUARD = true;
+
 // 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
 // 従来は一次キーが「そのシフトの総回数」の公平性(dow非依存)のため、他曜日でも同シフトを
 // 多くこなす人は総数が増えて特定曜日で後回しになり、例: 火曜遅番55%のような強い曜日癖が
@@ -540,9 +546,10 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     const key = Object.keys(mc).find(k => nameMatch(k, s.name));
     return key ? (mc[key] || 0) : 0;
   };
-  // その曜日・そのシフトの「強い癖」判定: dowShiftRate>=STRONG_RATE かつ 観測月数>=STRONG_MONTHS。
-  const isStrongHabit = (s, weekday, shift) => {
-    if (!DOW_STRONG_ENABLED) return false;
+  // 確定癖の共通判定（フラグ非依存の中核）: その曜日・そのシフトが
+  // wilsonLower(k,n)>=STRONG_RATE かつ 観測月数>=STRONG_MONTHS か。
+  // isStrongHabit(早番/遅番)・_isStrongNight(夜勤)・翌日確定癖ガードで共用し、判定基準を二重定義しない。
+  const _isStrongWork = (s, weekday, shift) => {
     if (getMonthCount(s) < STRONG_MONTHS) return false;
     const t = getTrend(s);
     if (WILSON_STRONG_ENABLED) {
@@ -553,6 +560,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     const r = t?.dowShiftRate?.[weekday]?.[shift];
     return r != null && r >= STRONG_RATE;
   };
+  // 早番/遅番プリエンプション用（DOW_STRONG_ENABLEDで戻せる）。
+  const isStrongHabit = (s, weekday, shift) => DOW_STRONG_ENABLED && _isStrongWork(s, weekday, shift);
 
   const pickWithTrend = (s, available, cnts) => {
     const trend = getTrend(s);
@@ -735,18 +744,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
 
     // 比較関数（評価スコアを使わない純粋な優先順位型）
     // 夜勤の「その曜日の強い癖」判定（早番/遅番の案Aと同型・NIGHT_STRONG_ENABLEDで戻せる）。
-    const _isStrongNight = (s, dow) => {
-      if (!NIGHT_STRONG_ENABLED) return false;
-      if (getMonthCount(s) < STRONG_MONTHS) return false;
-      const t = getTrend(s);
-      if (WILSON_STRONG_ENABLED) {
-        const k = t?.dowShiftObs?.[dow]?.['夜勤'] ?? 0;
-        const n = t?.dowWorkObs?.[dow] ?? 0;
-        return wilsonLower(k, n) >= STRONG_RATE;
-      }
-      const r = t?.dowShiftRate?.[dow]?.['夜勤'];
-      return r != null && r >= STRONG_RATE;
-    };
+    const _isStrongNight = (s, dow) => NIGHT_STRONG_ENABLED && _isStrongWork(s, dow, '夜勤');
+    // 翌日確定癖ガード用: 翌日の曜日 nextDow に「勤務種別(夜勤・明け以外)」の確定癖があるか。
+    // 判定は _isStrongWork 共用（二重定義しない）。
+    const _hasNextDayWorkHabit = (s, nextDow) =>
+      dept.shiftTypes.some(k => k !== '夜勤' && k !== '明け' && _isStrongWork(s, nextDow, k));
     const _nightCandSort = (a, b, d) => {
       const _dowd = new Date(year, month, d).getDay();
       // ⓪(案A同型) 強い曜日癖のプリエンプション: その曜日に普段夜勤する強い癖を持つ人を、
@@ -757,6 +759,14 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         const rA = getTrend(a)?.dowShiftRate?.[_dowd]?.['夜勤'] ?? 0;
         const rB = getTrend(b)?.dowShiftRate?.[_dowd]?.['夜勤'] ?? 0;
         if (Math.abs(rA - rB) > 0.05) return rB - rA;
+      }
+      // ⓪.5 翌日確定癖ガード: 夜勤→翌日明けで翌日の確定勤務癖が潰れるのを避ける。
+      //   片方だけ翌日に確定癖 → 持たない方を先へ（持つ方を後ろへ）。両方持つ/持たないは次キーへ。
+      //   月末は翌月1日の曜日で判定（Dateが月跨ぎを自動処理）。①回数公平性の前に効かせる。
+      if (NEXT_DAY_HABIT_GUARD) {
+        const _nd = new Date(year, month, d + 1).getDay();
+        const gA = _hasNextDayWorkHabit(a, _nd), gB = _hasNextDayWorkHabit(b, _nd);
+        if (gA !== gB) return gA ? 1 : -1;
       }
       // ① 夜勤回数: 少ない順（count equity を絶対優先・従来のまま）
       const cntA = Object.values(res[a.id]).filter(v => v === '夜勤').length;
