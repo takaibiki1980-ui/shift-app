@@ -26,7 +26,7 @@ const NIGHT_STRONG_ENABLED = true;
 // 翌日にその人の確定勤務癖(例:火曜日勤80%)があると癖が潰れる。片方だけ翌日確定癖を持つ場合、
 // 持たない方を先へ寄せる（持つ方を後ろへ）。⓪強い夜勤癖の後・①回数公平性の前に入れる。
 // 候補プール・nightMax救済・明け従属は不変＝must-fill厳守。false で従来の夜勤ソートへ即復帰。
-const NEXT_DAY_HABIT_GUARD = true;
+const NEXT_DAY_HABIT_GUARD = false;
 
 // 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
 // 従来は一次キーが「そのシフトの総回数」の公平性(dow非依存)のため、他曜日でも同シフトを
@@ -2585,5 +2585,6 @@ export {
   wilsonLower,
   STRONG_RATE,
   STRONG_MONTHS,
-  WILSON_Z
+  WILSON_Z,
+  NEXT_DAY_HABIT_GUARD
 };

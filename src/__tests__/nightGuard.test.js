@@ -5,7 +5,7 @@
  * 「土曜に夜勤を渡すと翌日=日曜が明けで確定」→ 日曜に確定勤務癖があると潰れる、という構図。
  */
 import { describe, test, expect } from 'vitest';
-import { autoGenerate } from '../engine/core.js';
+import { autoGenerate, NEXT_DAY_HABIT_GUARD } from '../engine/core.js';
 
 const dept = { id: 'k', shiftTypes: ['早番', '日勤', '遅番', '夜勤'],
   minStaff: { 日勤: 2, 夜勤: 1 }, maxStaff: { 早番: 1, 遅番: 1, 夜勤: 1 }, maxConsecutive: 5, roleShiftTypes: {} };
@@ -27,7 +27,8 @@ function mkStaff(specs) {
 const fillers = Array.from({ length: 4 }, (_, i) => ({ id: 'f' + i, nightOk: false }));
 
 describe('夜勤 翌日確定癖ガード', () => {
-  test('翌日(日)に確定癖を持つ s0 は土曜夜勤を避け、癖なし s1 が取る（20回とも s0=0）', () => {
+  // ガードON前提の検証。NEXT_DAY_HABIT_GUARD=false の間はスキップ（ロジック・テストは温存＝将来ONで自動再検証）。
+  test.skipIf(!NEXT_DAY_HABIT_GUARD)('翌日(日)に確定癖を持つ s0 は土曜夜勤を避け、癖なし s1 が取る（20回とも s0=0）', () => {
     const staff = mkStaff([{ id: 's0', nightOk: true }, { id: 's1', nightOk: true }, ...fillers]);
     const trend = mkTrendBase(['s0', 's1']);
     trend['s0'].dowShiftObs[0] = { 日勤: 8 }; trend['s0'].dowWorkObs[0] = 8; // 日曜=日勤 8/8 確定癖
