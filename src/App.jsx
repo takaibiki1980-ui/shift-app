@@ -3307,7 +3307,15 @@ class ErrorBoundary extends Component {
   }
 }
 
-function applyMinimalChangePhase1(result, genSnapshot, ds, cd, year, month) {
+// 最小変更フェーズが「公休(休み+希望休)を目標から遠ざける巻き戻し」を却下するガード。
+// 生成エンジンが揃えた公休を、前回結果への巻き戻しで崩さないための保険。false で従来動作へ即復帰。
+const MINCHANGE_KYUKO_GUARD = true;
+// 巻き戻し後に公休が崩れ、かつ巻き戻し前は一致していた場合、巻き戻し前(公休正解)へ戻すフォールバック。
+// 全部署対象（従来 eiyo のみ repairHardConstraints で救済していたのを介護等にも拡張）。false で無効。
+const KYUKO_FALLBACK_ALL_DEPT = true;
+const MINCHANGE_KYUKO_REST = new Set(['休み', '希望休']);
+
+export function applyMinimalChangePhase1(result, genSnapshot, ds, cd, year, month) {
   const days     = getDays(year, month);
   const cds      = cd.customShiftDefs || [];
   const work     = buildDeptWorkTypes(cds);
@@ -3323,6 +3331,16 @@ function applyMinimalChangePhase1(result, genSnapshot, ds, cd, year, month) {
     maxS[k] = ms;
     if (base === '夜勤') nightSet.add(k);
   });
+  // 公休ガード用: スタッフ別の公休目標と現在の公休(休み+希望休)数。
+  const _mk = monthKey(year, month);
+  const _staffById = {};
+  ds.forEach(s => { _staffById[s.id] = s; });
+  const _kyukoTarget = (s) => s?.kyukoDaysByMonth?.[_mk] ?? s?.kyukoDays ?? 8;
+  const _restCountOf = (sid) => {
+    let c = 0;
+    for (const v of Object.values(result[sid] || {})) if (MINCHANGE_KYUKO_REST.has(v)) c++;
+    return c;
+  };
   const bad = (prev, curr) => {
     if (!prev || !curr) return false;
     if (cd.intervalEnabled && cd.intervalTargetShifts?.includes(curr)) {
@@ -3384,6 +3402,20 @@ function applyMinimalChangePhase1(result, genSnapshot, ds, cd, year, month) {
   cands.sort((a, b) => a.day - b.day || a.name.localeCompare(b.name));
   for (const { sid, day, revVal } of cands) {
     if ((result[sid]?.[day] ?? '') === (revVal ?? '')) continue;
+    // guard⓪(公休): 巻き戻しが対象スタッフの公休(休み+希望休)を目標から遠ざけるなら却下。
+    if (MINCHANGE_KYUKO_GUARD) {
+      const curV = result[sid]?.[day] ?? '';
+      const revV = revVal ?? '';
+      const wasRest = MINCHANGE_KYUKO_REST.has(curV);
+      const willRest = MINCHANGE_KYUKO_REST.has(revV);
+      if (wasRest !== willRest) {
+        const s = _staffById[sid];
+        const tgt = _kyukoTarget(s);
+        const cur = _restCountOf(sid);
+        const next = cur + (willRest ? 1 : -1);
+        if (Math.abs(next - tgt) > Math.abs(cur - tgt)) continue; // 公休が目標から遠ざかる巻き戻しは行わない
+      }
+    }
     // guard①: revVal∉nightSet かつ 翌日=明け
     if (day < days && (result[sid]?.[day+1] ?? '') === '明け' && !nightSet.has(revVal ?? '')) continue;
     // guard②: revVal=明け かつ 前日∉nightSet
@@ -4742,7 +4774,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         setUndoCount(undoStackRef.current[cd.id].length); setRedoCount(0);
 
         const _p1_ds = cs.filter(s => s.dept === cd.id);
+        // 方針B: 最小変更フェーズ前の結果(公休正解の可能性)を退避しておく。
+        const _preMin = KYUKO_FALLBACK_ALL_DEPT
+          ? Object.fromEntries(_p1_ds.map(s => [s.id, { ...(result[s.id] || {}) }]))
+          : null;
         applyMinimalChangePhase1(result, genSnapshot, _p1_ds, cd, year, month);
+        // 方針B: 巻き戻しで公休が崩れ、かつ巻き戻し前は一致していたら、巻き戻し前へ復帰（全部署）。
+        if (KYUKO_FALLBACK_ALL_DEPT && _preMin && _kyukoAllMatch(_preMin) && !_kyukoAllMatch(result)) {
+          _p1_ds.forEach(s => { result[s.id] = _preMin[s.id]; });
+        }
         recomputeGenerateWarnings(result, _p1_ds, cd, year, month, warnings, score, timelineWarnings, setGenerateWarnings);
         // 生成した部署・月を警告scopeに設定（派生useEffectがハイライトを算出）。表示のみ。
         setWarningsScope({ deptId: cd.id, year, month });
