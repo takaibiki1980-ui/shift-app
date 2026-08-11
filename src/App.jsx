@@ -4,7 +4,7 @@ import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2 } from 'lucide-react';
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2, Plus, TrendingUp, Inbox, MapPin, Target, Shield, Moon, FileText } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -221,7 +221,7 @@ function LegalModal({ title, onClose, children }) {
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,padding:24,width:"100%",maxWidth:560,maxHeight:"80vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,position:"sticky",top:0,background:"#FAFAFA",paddingBottom:12,borderBottom:"1px solid #F4F4F5"}}>
           <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{title}</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:22}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:22}}><X size={18} strokeWidth={2}/></button>
         </div>
         <div style={{fontSize:12,color:"#3F3F46",lineHeight:2}}>{children}</div>
       </div>
@@ -231,7 +231,7 @@ function LegalModal({ title, onClose, children }) {
 
 function TermsModal({ onClose }) {
   return (
-    <LegalModal title="📄 利用規約" onClose={onClose}>
+    <LegalModal title={<span style={{display:"inline-flex",alignItems:"center",gap:6}}><FileText size={16} strokeWidth={2}/>利用規約</span>} onClose={onClose}>
       <p style={{color:"#71717A",marginBottom:16}}>最終更新日：2026年4月26日</p>
       <h3 style={{color:"#18181B",marginBottom:8}}>第1条（サービスの目的）</h3>
       <p>YEIX（以下「本サービス」）は、介護施設向けのシフト管理を支援するWebアプリケーションです。</p>
@@ -261,7 +261,7 @@ function TermsModal({ onClose }) {
 
 function PrivacyModal({ onClose }) {
   return (
-    <LegalModal title="🔒 プライバシーポリシー" onClose={onClose}>
+    <LegalModal title={<span style={{display:"inline-flex",alignItems:"center",gap:6}}><Shield size={16} strokeWidth={2}/>プライバシーポリシー</span>} onClose={onClose}>
       <p style={{color:"#71717A",marginBottom:16}}>最終更新日：2026年4月26日</p>
       <h3 style={{color:"#18181B",marginBottom:8}}>1. 収集する情報</h3>
       <p>本サービスでは以下の情報を収集します。</p>
@@ -630,7 +630,7 @@ function KiboCalendar({ year, month, selected, onChange, shiftRequests, onShiftR
           const othersKibo = kiboCountByDay?.[d] || 0;
           const limit = kiboLimit || 3;
           const kiboOver = othersKibo >= limit, kiboWarn = othersKibo === limit - 1;
-          return <button key={d} onClick={()=>{ if(reqShift){setSelectedDay(isSelected?null:d);}else if(isKibo){toggleKibo(d);}else{setSelectedDay(isSelected?null:d);} }} style={{background:isSelected?"#ffe0b2":isKibo?"#fff0f0":reqShift?s.bg:"transparent",border:isSelected?"2px solid #6366F1":isKibo?"1px solid #dc2626":reqShift?`1px solid ${s.border}`:"1px solid #27272A",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isKibo?"#f87171":reqShift?s.color:we?"#6366F1":"#52525B",fontSize:10,fontWeight:(isKibo||reqShift||isSelected)?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32,position:"relative"}}>{kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#ef4444",fontWeight:900,lineHeight:1}}>⚠</span>}{kiboWarn&&!kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#f59e0b",fontWeight:900,lineHeight:1}}>!</span>}<span>{d}</span>{isKibo&&<span style={{fontSize:8,lineHeight:1}}>希休</span>}{reqShift&&<span style={{fontSize:8,lineHeight:1}}>{s?.short||reqShift}</span>}{!isKibo&&!reqShift&&isSelected&&<span style={{fontSize:7,lineHeight:1}}>選択</span>}{othersKibo>0&&<span style={{fontSize:7,lineHeight:1,color:kiboOver?"#ef4444":kiboWarn?"#f59e0b":"#c44b4b"}}>{othersKibo}人</span>}</button>;
+          return <button key={d} onClick={()=>{ if(reqShift){setSelectedDay(isSelected?null:d);}else if(isKibo){toggleKibo(d);}else{setSelectedDay(isSelected?null:d);} }} style={{background:isSelected?"#ffe0b2":isKibo?"#fff0f0":reqShift?s.bg:"transparent",border:isSelected?"2px solid #6366F1":isKibo?"1px solid #dc2626":reqShift?`1px solid ${s.border}`:"1px solid #27272A",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isKibo?"#f87171":reqShift?s.color:we?"#6366F1":"#52525B",fontSize:10,fontWeight:(isKibo||reqShift||isSelected)?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32,position:"relative"}}>{kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#ef4444",fontWeight:900,lineHeight:1}}><AlertTriangle size={11} strokeWidth={2}/></span>}{kiboWarn&&!kiboOver&&<span style={{position:"absolute",top:1,right:2,fontSize:7,color:"#f59e0b",fontWeight:900,lineHeight:1}}>!</span>}<span>{d}</span>{isKibo&&<span style={{fontSize:8,lineHeight:1}}>希休</span>}{reqShift&&<span style={{fontSize:8,lineHeight:1}}>{s?.short||reqShift}</span>}{!isKibo&&!reqShift&&isSelected&&<span style={{fontSize:7,lineHeight:1}}>選択</span>}{othersKibo>0&&<span style={{fontSize:7,lineHeight:1,color:kiboOver?"#ef4444":kiboWarn?"#f59e0b":"#c44b4b"}}>{othersKibo}人</span>}</button>;
         })}
       </div>
       {/* 選択中の日のシフト指定UI */}
@@ -921,11 +921,11 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{isNew?"➕ 部署を追加":"✏️ 部署を編集"}</div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{isNew?<span style={{display:"inline-flex",alignItems:"center",gap:5}}><Plus size={15} strokeWidth={2}/>部署を追加</span>:<span style={{display:"inline-flex",alignItems:"center",gap:5}}><Pencil size={15} strokeWidth={2}/>部署を編集</span>}</div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
         <label style={LS}>部署名</label>
         <input style={{...INPUT_STYLE,marginBottom:14}} value={label} onChange={e=>setLabel(e.target.value)} placeholder="例：介護部 3階"/>
         <label style={LS}>シフト種別</label>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>{SHIFT_TYPE_OPTIONS.map(k=>{const s=SHIFTS[k],checked=shiftTypes.includes(k);return <button key={k} onClick={()=>toggleShiftType(k)} style={{background:checked?s.bg:"#F4F4F5",border:`1px solid ${checked?s.border:"#E4E4E7"}`,borderRadius:8,padding:"7px 14px",cursor:"pointer",color:checked?s.color:"#3F3F46",fontSize:13,fontWeight:checked?700:400,display:"flex",alignItems:"center",gap:6}}><span>{checked?"✅":"○"}</span>{k}</button>;})}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>{SHIFT_TYPE_OPTIONS.map(k=>{const s=SHIFTS[k],checked=shiftTypes.includes(k);return <button key={k} onClick={()=>toggleShiftType(k)} style={{background:checked?s.bg:"#F4F4F5",border:`1px solid ${checked?s.border:"#E4E4E7"}`,borderRadius:8,padding:"7px 14px",cursor:"pointer",color:checked?s.color:"#3F3F46",fontSize:13,fontWeight:checked?700:400,display:"flex",alignItems:"center",gap:6}}><span>{checked?<Check size={12} strokeWidth={2} style={{verticalAlign:"middle"}}/>:"○"}</span>{k}</button>;})}</div>
         {shiftTypes.length>0&&<div style={{background:"#F4F4F5",border:"1px solid #27272A",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#52525B",marginBottom:8}}>最低配置人数 <span style={{fontSize:10,color:"#52525B",fontWeight:400}}>（この人数を下回ると警告）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:minStaff[k]||0,min:0,max:20,unit:"名",onConfirm:v=>setMinStaff(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{minStaff[k]||0}</div><span style={{fontSize:11,color:"#3F3F46"}}>名</span></div>)}</div></div>}
         {shiftTypes.length>0&&<div style={{background:"#fff3e0",border:"1px solid #e0a000",borderRadius:8,padding:"10px 12px",marginBottom:8}}><div style={{fontSize:11,color:"#b45309",marginBottom:8}}>最大配置人数 <span style={{fontSize:10,color:"#a06010",fontWeight:400}}>（自動生成でこの人数を超えない・--=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.map(k=>{const mv=maxStaff[k]!=null?maxStaff[k]:((customShiftDefs.find(c=>c.key===k)?.baseType||k)==="日勤"?99:1);const isUnlim=mv>=99;return(<div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:mv,min:1,max:99,unit:"名",onConfirm:v=>setMaxStaff(p=>({...p,[k]:v===""?99:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:isUnlim?400:700,color:isUnlim?"#b0cece":"inherit"}}>{isUnlim?"--":mv}</div>{!isUnlim&&<span style={{fontSize:11,color:"#92400e"}}>名</span>}</div>);})}</div></div>}
         {shiftTypes.filter(k=>k!=="夜勤").length>0&&<div style={{background:"#f0f0ff",border:"1px solid #a0a0e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}><div style={{fontSize:11,color:"#5050b0",marginBottom:8}}>職員の月間上限回数 <span style={{fontSize:10,color:"#7070a0",fontWeight:400}}>（超過すると集計欄が赤表示・0=制限なし）</span></div><div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{shiftTypes.filter(k=>k!=="夜勤").map(k=><div key={k} style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:12,color:getShiftDef(k,customShiftDefs)?.color,fontWeight:700}}>{k}</span><div onClick={e=>setKp({value:shiftMaxByType[k]||0,min:0,max:31,unit:"回",onConfirm:v=>setShiftMaxByType(p=>({...p,[k]:v===""?0:+v})),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:52,padding:"4px 8px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{shiftMaxByType[k]||0}</div><span style={{fontSize:11,color:"#5050b0"}}>回</span></div>)}</div></div>}
@@ -1044,8 +1044,8 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
           </div>
         )}
         <div style={{display:"flex",gap:10}}>
-          <button onClick={handleSave} style={{flex:1,background:"#6366F1",color:"#fff",border:"none",borderRadius:9,padding:"12px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>{isNew?"➕ 追加する":"💾 保存する"}</button>
-          {!isNew&&onDelete&&<button onClick={()=>onConfirm(`「${label}」を削除します。この部署のスタッフとシフトデータもすべて削除されます。`,()=>onDelete(dept.id),"削除する")} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:9,padding:"12px 14px",cursor:"pointer",color:"#c44b4b",fontSize:12,fontWeight:700}}>🗑 削除</button>}
+          <button onClick={handleSave} style={{flex:1,background:"#6366F1",color:"#fff",border:"none",borderRadius:9,padding:"12px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>{isNew?<span style={{display:"inline-flex",alignItems:"center",gap:5}}><Plus size={15} strokeWidth={2}/>追加する</span>:<span style={{display:"inline-flex",alignItems:"center",gap:5}}><Save size={15} strokeWidth={2}/>保存する</span>}</button>
+          {!isNew&&onDelete&&<button onClick={()=>onConfirm(`「${label}」を削除します。この部署のスタッフとシフトデータもすべて削除されます。`,()=>onDelete(dept.id),"削除する")} style={{background:"#fff0f0",border:"1px solid #e07070",borderRadius:9,padding:"12px 14px",cursor:"pointer",color:"#c44b4b",fontSize:12,fontWeight:700}}><Trash2 size={13} strokeWidth={2} style={{verticalAlign:"middle",marginRight:3}}/>削除</button>}
           <button onClick={onClose} style={{background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:9,padding:"12px 16px",cursor:"pointer",fontSize:13}}>キャンセル</button>
         </div>
       </div>
@@ -1072,9 +1072,9 @@ function ClearModal({ deptLabel, onClearDept, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #450a0a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
-        <div style={{fontSize:15,fontWeight:900,color:"#f87171",marginBottom:6}}>🗑 シフトのクリア</div>
+        <div style={{fontSize:15,fontWeight:900,color:"#f87171",marginBottom:6}}><Trash2 size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>シフトのクリア</div>
         <div style={{fontSize:12,color:"#52525B",marginBottom:20}}>「{deptLabel}」のシフトと実績を削除します。この操作は元に戻せません。</div>
-        <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><span style={{fontSize:22}}>🗑</span><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトと実績をクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトと実績をすべて削除します</div></div></button>
+        <button onClick={onClearDept} style={{width:"100%",background:"#fff0f0",border:"1px solid #7f1d1d",borderRadius:9,padding:"14px 16px",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",gap:12,textAlign:"left"}}><Trash2 size={22} strokeWidth={2} style={{color:"#c44b4b",flexShrink:0}}/><div><div style={{fontSize:13,fontWeight:800,color:"#f87171"}}>{deptLabel} のシフトと実績をクリア</div><div style={{fontSize:11,color:"#7f1d1d",marginTop:2}}>この部署のシフトと実績をすべて削除します</div></div></button>
         <button onClick={onClose} style={{width:"100%",background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13}}>キャンセル</button>
       </div>
     </div>
@@ -1163,7 +1163,7 @@ function LearnStatusView({ learnedTrend, staffList, depts, allDBData, activeDept
   return (
     <div style={{ maxWidth: 760, margin: '0 auto' }}>
       <div style={{ background: '#fff', border: '1px solid #E4E4E7', borderRadius: 14, padding: 18 }}>
-        <div style={{ fontSize: 15, fontWeight: 900, color: '#4F46E5', marginBottom: 4 }}>📈 学習状況</div>
+        <div style={{ fontSize: 15, fontWeight: 900, color: '#4F46E5', marginBottom: 4 }}><TrendingUp size={16} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>学習状況</div>
         <div style={{ fontSize: 11.5, color: '#475569', marginBottom: 6, lineHeight: 1.6 }}>
           自動生成が過去の実績から学習した「スタッフごと・曜日ごとの傾向」を表示します。部署「{dept?.label || activeDeptId}」。
         </div>
@@ -1729,7 +1729,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
       <div style={{background:'#FAFAFA',border:'1px solid #D4D4D8',borderRadius:14,padding:'16px 18px',width:'100%',maxWidth:960,maxHeight:'95vh',boxShadow:'0 30px 80px #000',display:'flex',flexDirection:'column',gap:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:'#18181B'}}>📋 シフト貼り付けグリッド</div>
+            <div style={{fontSize:15,fontWeight:900,color:'#18181B'}}><ClipboardList size={16} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>シフト貼り付けグリッド</div>
             <div style={{fontSize:11,color:'#52525B',marginTop:2}}>{year}年{month+1}月 ／ Ctrl+Vで読み込み・セルをクリックでシフト変更</div>
           </div>
           <button onClick={onClose} style={{background:'none',border:'none',color:'#52525B',cursor:'pointer',fontSize:20,lineHeight:1}}><X size={18} strokeWidth={2}/></button>
@@ -1861,8 +1861,8 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📅 休み日数 一括設定</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
-        <div style={{fontSize:11,color:"#3F3F46",marginBottom:20,marginTop:8,background:"#F4F4F5",borderRadius:7,padding:"8px 12px",border:"1px solid #27272A"}}>💡 施設全体の休み日数を設定します。全部署・全スタッフ（{totalStaff}名）に一括適用されます。</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}><Calendar size={15} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>休み日数 一括設定</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
+        <div style={{fontSize:11,color:"#3F3F46",marginBottom:20,marginTop:8,background:"#F4F4F5",borderRadius:7,padding:"8px 12px",border:"1px solid #27272A"}}><Lightbulb size={13} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>施設全体の休み日数を設定します。全部署・全スタッフ（{totalStaff}名）に一括適用されます。</div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:28,background:"#F4F4F5",borderRadius:12,padding:"18px 20px",border:"1px solid #D4D4D8"}}>
           <button onClick={()=>setVal(days-1)} style={{background:"#E4E4E7",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
           <div style={{textAlign:"center"}}>
@@ -2081,7 +2081,7 @@ function HelpModal({ onClose }) {
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,width:"100%",maxWidth:600,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 30px 80px #000"}}>
         {/* ヘッダー */}
         <div style={{background:"#6366F1",color:"#fff",padding:"16px 20px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-          <div style={{fontWeight:900,fontSize:16}}>❓ 使い方ガイド</div>
+          <div style={{fontWeight:900,fontSize:16}}><HelpCircle size={16} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>使い方ガイド</div>
           <button onClick={onClose} style={{background:"rgba(255,255,255,0.25)",border:"none",color:"#fff",cursor:"pointer",fontSize:18,width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}><X size={18} strokeWidth={2}/></button>
         </div>
         {/* タブ */}
@@ -2112,7 +2112,7 @@ function HelpModal({ onClose }) {
           )}
           {sec.tips&&sec.tips.length>0&&(
             <div style={{background:"#e8f5ee",borderLeft:"4px solid #2d8a52",borderRadius:"0 8px 8px 0",padding:"10px 14px",margin:"8px 0"}}>
-              <div style={{fontWeight:800,color:"#2d8a52",fontSize:12,marginBottom:6}}>💡 ポイント</div>
+              <div style={{fontWeight:800,color:"#2d8a52",fontSize:12,marginBottom:6}}><Lightbulb size={13} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>ポイント</div>
               {sec.tips.map((t,i)=><div key={i} style={{fontSize:12,color:"#18181B",lineHeight:1.8}}>・{t}</div>)}
             </div>
           )}
@@ -2128,7 +2128,7 @@ function EventEditModal({ day, month, year, currentText, onSave, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#fff",border:"1px solid #fde68a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 20px 60px #0004"}}>
-        <div style={{fontSize:14,fontWeight:900,color:"#92400e",marginBottom:14}}>📅 {month+1}月{day}日（{wd}）の行事</div>
+        <div style={{fontSize:14,fontWeight:900,color:"#92400e",marginBottom:14}}><Calendar size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>{month+1}月{day}日（{wd}）の行事</div>
         <input autoFocus value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")onSave(text.trim());if(e.key==="Escape")onClose();}} placeholder="例：運営会議、研修" maxLength={12} style={{width:"100%",fontSize:14,padding:"9px 12px",border:"1px solid #fde68a",borderRadius:8,outline:"none",boxSizing:"border-box",marginBottom:12}} />
         <div style={{display:"flex",gap:8}}>
           <button onClick={()=>onSave(text.trim())} style={{flex:1,background:"linear-gradient(135deg,#f59e0b,#d97706)",color:"#fff",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontSize:13,fontWeight:800}}>保存</button>
@@ -2249,14 +2249,14 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:420,maxHeight:"85vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,0.25)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-          <div style={{fontWeight:800,fontSize:16,color:"#18181B"}}>🕐 変更履歴から復元</div>
+          <div style={{fontWeight:800,fontSize:16,color:"#18181B"}}><Clock size={16} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>変更履歴から復元</div>
           <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#888",lineHeight:1}}><X size={18} strokeWidth={2}/></button>
         </div>
         <div style={{fontSize:12,color:"#71717A",marginBottom:16,fontWeight:600}}>{deptLabel} — {year}年{month+1}月シフト</div>
         {loading && <div style={{textAlign:"center",color:"#aaa",padding:32}}>読み込み中…</div>}
         {!loading && histories.length === 0 && (
           <div style={{textAlign:"center",padding:32}}>
-            <div style={{fontSize:32,marginBottom:8}}>📭</div>
+            <div style={{marginBottom:8,display:"flex",justifyContent:"center"}}><Inbox size={32} strokeWidth={2} style={{color:"#999"}}/></div>
             <div style={{color:"#999",fontSize:13}}>まだ履歴がありません</div>
             <div style={{color:"#bbb",fontSize:11,marginTop:6}}>今後の保存から自動的に記録されます</div>
           </div>
@@ -2547,7 +2547,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
               const cnt=ds.reduce((acc,s)=>acc+((s.kiboByMonth?.[mk]||[]).includes(d)?1:0),0);
               const limit=dept.kiboLimit||3;
               const over=cnt>=limit, warn=cnt===limit-1;
-              return <td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:over?"#EF4444":warn?"#F59E0B":cnt>0?"#BE123C":"#A1A1AA",background:over?"#ffe4e4":warn?"#fffbeb":undefined,borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9"}}>{over?"⚠":cnt>0?cnt:""}</td>;
+              return <td key={d} style={{textAlign:"center",fontSize:11,fontWeight:800,padding:"3px 0",color:over?"#EF4444":warn?"#F59E0B":cnt>0?"#BE123C":"#A1A1AA",background:over?"#ffe4e4":warn?"#fffbeb":undefined,borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9"}}>{over?<AlertTriangle size={11} strokeWidth={2} style={{verticalAlign:"middle"}}/>:cnt>0?cnt:""}</td>;
             })}
             <td colSpan={rightColCount} style={{borderBottom:"1px solid #F1F5F9"}}/>
           </tr>
@@ -2586,7 +2586,7 @@ function StaffList({ locked, staffList, dept, year, month, onEdit:pEdit, onDelet
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},50%,78%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3F3F46",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}{s.paidLeaveBalance!=null&&<span style={{color:s.paidLeaveBalance<0?"#dc2626":"#9b4db5",fontWeight:s.paidLeaveBalance<0?800:400}}>有給残{s.paidLeaveBalance}日</span>}</div></div></div><div style={{display:"flex",gap:6,alignItems:"center"}}><div style={{display:"flex",flexDirection:"column",gap:2,marginRight:2}}><button onClick={()=>onReorder&&onReorder(s.id,'up')} disabled={i===0} title="上へ" style={{background:i===0?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===0?"#D4D4D8":"#6B7280",cursor:i===0?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▲</button><button onClick={()=>onReorder&&onReorder(s.id,'down')} disabled={i===ds.length-1} title="下へ" style={{background:i===ds.length-1?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===ds.length-1?"#D4D4D8":"#6B7280",cursor:i===ds.length-1?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▼</button></div><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
+        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},50%,78%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3F3F46",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}><Moon size={11} strokeWidth={2} style={{verticalAlign:"middle",marginRight:2}}/>夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}{s.paidLeaveBalance!=null&&<span style={{color:s.paidLeaveBalance<0?"#dc2626":"#9b4db5",fontWeight:s.paidLeaveBalance<0?800:400}}>有給残{s.paidLeaveBalance}日</span>}</div></div></div><div style={{display:"flex",gap:6,alignItems:"center"}}><div style={{display:"flex",flexDirection:"column",gap:2,marginRight:2}}><button onClick={()=>onReorder&&onReorder(s.id,'up')} disabled={i===0} title="上へ" style={{background:i===0?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===0?"#D4D4D8":"#6B7280",cursor:i===0?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▲</button><button onClick={()=>onReorder&&onReorder(s.id,'down')} disabled={i===ds.length-1} title="下へ" style={{background:i===ds.length-1?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===ds.length-1?"#D4D4D8":"#6B7280",cursor:i===ds.length-1?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▼</button></div><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}><Pencil size={14} strokeWidth={2}/></button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}><Trash2 size={14} strokeWidth={2}/></button></div></div>);})}
         {ds.length===0&&<div style={{background:"#FAFAFA",border:"1px dashed #27272A",borderRadius:10,padding:32,textAlign:"center",color:"#A1A1AA",fontSize:13}}>スタッフが登録されていません</div>}
       </div>
     </div>
@@ -2700,32 +2700,32 @@ function FloorSettingsModal({ floorSettings, onSave, onClose }) {
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>⚙️ 予定表 設定</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
+          <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}><Settings size={15} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>予定表 設定</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button>
         </div>
-        <label style={LS}>📍 配置グループ（均等分配用）</label>
+        <label style={LS}><MapPin size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>配置グループ（均等分配用）</label>
         <div style={{fontSize:10,color:"#71717A",marginBottom:8}}>例：1階・2階など。自動配置で均等に振り分けたい場合に設定します。</div>
         <div style={{background:"#F4F4F5",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #D4D4D8"}}>
           {groups.map((name,i)=>(
             <div key={i} style={rowStyle}>
               <input value={name} onChange={e=>updateGroup(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`グループ${i+1}（例：1階）`}/>
-              <button onClick={()=>deleteGroup(i)} style={delBtn()}>✕</button>
+              <button onClick={()=>deleteGroup(i)} style={delBtn()}><X size={12} strokeWidth={2}/></button>
             </div>
           ))}
           <button onClick={()=>setGroups(p=>[...p,""])} style={addBtn}>＋ グループを追加</button>
         </div>
-        <label style={LS}>🎯 役割・業務</label>
+        <label style={LS}><Target size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>役割・業務</label>
         <div style={{fontSize:10,color:"#71717A",marginBottom:8}}>入浴・フリーなどの業務担当を自由に追加できます。</div>
         <div style={{background:"#F4F4F5",borderRadius:9,padding:"10px 12px",marginBottom:18,border:"1px solid #D4D4D8"}}>
           {duties.map((name,i)=>(
             <div key={i} style={rowStyle}>
               <input value={name} onChange={e=>updateDuty(i,e.target.value)} style={{...INPUT_STYLE,flex:1,marginBottom:0,padding:"6px 10px"}} placeholder={`役割${i+1}`}/>
-              <button onClick={()=>deleteDuty(i)} style={delBtn()}>✕</button>
+              <button onClick={()=>deleteDuty(i)} style={delBtn()}><X size={12} strokeWidth={2}/></button>
             </div>
           ))}
           <button onClick={()=>setDuties(p=>[...p,""])} style={addBtn}>＋ 役割を追加</button>
         </div>
-        <label style={LS}>⚡ 自動配置ルール</label>
+        <label style={LS}><Zap size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>自動配置ルール</label>
         <div style={{fontSize:10,color:"#71717A",marginBottom:10}}>「自動配置」ボタンで全日程に一括適用されるルールです。</div>
         <div style={{display:"flex",flexDirection:"column",gap:7,marginBottom:20}}>
           {rules.map(({shiftType,assignment})=>{
@@ -2766,7 +2766,7 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:460,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
           <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>{month+1}月{day}日（{wd}）担当配置</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button>
         </div>
         {workingGroups.length===0&&<div style={{color:"#A1A1AA",fontSize:13,textAlign:"center",padding:"16px 0"}}>この日の勤務者がいません</div>}
         {workingGroups.map(({st,staff})=>{
@@ -2786,7 +2786,7 @@ function DayYoteiModal({ day, year, month, dept, staffList, shifts, assignments,
           );
         })}
         <div style={{marginTop:14}}>
-          <div style={{fontSize:11,color:"#52525B",marginBottom:5,fontWeight:700}}>📝 メモ・追加記入</div>
+          <div style={{fontSize:11,color:"#52525B",marginBottom:5,fontWeight:700}}><FileText size={13} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>メモ・追加記入</div>
           <textarea value={memo} onChange={e=>setMemo(e.target.value)}
             placeholder="例）午後から外部研修あり、浴室清掃担当あり"
             style={{...INPUT_STYLE,minHeight:56,resize:"vertical",fontFamily:"inherit"}}/>
@@ -2871,7 +2871,7 @@ function YoteiView({ dept, staffList, shifts, year, month, yoteiDeptData, onUpda
                 <span style={{fontSize:13,fontWeight:800,color:we?"#e53e3e":"#18181B"}}>{d}<span style={{fontSize:10,marginLeft:3,fontWeight:400,color:we?"#e53e3e":"#52525B"}}>({wd})</span></span>
                 <div style={{display:"flex",gap:3,alignItems:"center"}}>
                   {assignedCnt>0&&<span style={{fontSize:9,background:"#F4F4F5",color:"#6366F1",borderRadius:8,padding:"1px 5px",fontWeight:700}}>{assignedCnt}</span>}
-                  {memo&&<span style={{fontSize:9}}>📝</span>}
+                  {memo&&<span style={{fontSize:9,display:"inline-flex"}}><FileText size={10} strokeWidth={2}/></span>}
                 </div>
               </div>
               {YOTEI_SHIFT_ORDER.map(st=>{
@@ -2951,7 +2951,7 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
           return (
             <button key={d} onClick={()=>toggle(d)} disabled={blocked}
               style={{background:isMe?activeBg:blocked?"#f5f5f5":"transparent",border:isMe?`2px solid ${activeBorder}`:blocked?"1px solid #e5e5e5":"1px solid #27272A",borderRadius:6,padding:"4px 2px",cursor:blocked?"not-allowed":"pointer",color:isMe?activeColor:blocked?"#aaa":we?"#6366F1":"#18181B",fontSize:11,fontWeight:isMe?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:38,position:"relative",opacity:blocked?0.5:1}}>
-              {over&&!isMe&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#ef4444"}}>⚠</span>}
+              {over&&!isMe&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#ef4444"}}><AlertTriangle size={9} strokeWidth={2}/></span>}
               {!over&&warn&&<span style={{position:"absolute",top:1,right:2,fontSize:8,color:"#f59e0b"}}>!</span>}
               <span style={{fontSize:12}}>{d}</span>
               {isMe&&<span style={{fontSize:8,lineHeight:1,color:activeColor}}>{badgeLabel}</span>}
@@ -3143,7 +3143,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         <div style={{fontSize:14,fontWeight:700}}>施設情報を読み込めませんでした</div>
         <div style={{fontSize:12,color:"#6b7280",marginTop:8}}>URLが正しいか確認してください</div>
         <button onClick={loadConfig} style={{marginTop:16,background:"#6366F1",color:"#fff",border:"none",borderRadius:10,padding:"10px 24px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
-          🔄 再読込
+          <RefreshCw size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>再読込
         </button>
       </div>
     </div>
@@ -3274,7 +3274,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
             <div style={{fontSize:12,color:"#52525B",marginBottom:4}}>{year}年{month+1}月の申請を送信しました。</div>
           )}
           <div style={{fontSize:11,color:"#6b7280",margin:"8px 0 16px"}}>管理者に自動で反映されます。</div>
-          <button onClick={()=>setSubmitted(false)} style={{background:"#F4F4F5",color:"#18181B",border:"none",borderRadius:8,padding:"9px 20px",cursor:"pointer",fontSize:12,fontWeight:700}}>✏️ 修正する</button>
+          <button onClick={()=>setSubmitted(false)} style={{background:"#F4F4F5",color:"#18181B",border:"none",borderRadius:8,padding:"9px 20px",cursor:"pointer",fontSize:12,fontWeight:700}}><Pencil size={12} strokeWidth={2} style={{verticalAlign:"middle",marginRight:4}}/>修正する</button>
         </div>
       )}
     </div>
@@ -3299,7 +3299,7 @@ class ErrorBoundary extends Component {
             {this.state.error?.message || String(this.state.error)}
           </pre>
           <button onClick={()=>window.location.reload()} style={{marginTop:16,background:"#dc2626",color:"#fff",border:"none",borderRadius:8,padding:"10px 20px",cursor:"pointer",fontSize:13,fontWeight:700}}>
-            🔄 ページを再読み込み
+            <RefreshCw size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>ページを再読み込み
           </button>
         </div>
       </div>
@@ -3495,10 +3495,10 @@ function SharedShiftView({ token }) {
     };
   }, [row]);
 
-  if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
+  if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}><ClipboardList size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>シフト表を読み込み中...</div>;
   if (notFound || !row) return (
     <div style={{padding:48,textAlign:'center'}}>
-      <div style={{fontSize:32,marginBottom:12}}>🔗</div>
+      <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><Link2 size={32} strokeWidth={2} style={{color:"#6366F1"}}/></div>
       <div style={{color:'#c44b4b',fontWeight:700,fontSize:15,marginBottom:8}}>共有リンクが無効です</div>
       <div style={{color:'#52525B',fontSize:12}}>URLを確認するか、管理者に再発行を依頼してください。</div>
     </div>
@@ -3679,7 +3679,7 @@ function AdminPanel({ onClose }) {
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,padding:24,width:"100%",maxWidth:680,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <div style={{fontSize:16,fontWeight:900,color:"#18181B"}}>🏢 施設管理（管理者）</div>
+          <div style={{fontSize:16,fontWeight:900,color:"#18181B"}}><Building2 size={16} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>施設管理（管理者）</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:22}}><X size={18} strokeWidth={2}/></button>
         </div>
         {loading ? <div style={{textAlign:"center",color:"#71717A",padding:40}}>読み込み中…</div> : (
@@ -5155,7 +5155,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <div style={{position:"relative"}}>
           {isMonthLoading&&<div style={{position:"absolute",inset:0,zIndex:50,background:"rgba(240,251,250,0.85)",display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,backdropFilter:"blur(2px)"}}>
             <div style={{background:"#fff",border:"1px solid #6366F1",borderRadius:12,padding:"18px 32px",fontWeight:800,fontSize:14,color:"#4F46E5",boxShadow:"0 4px 16px rgba(43,191,186,0.2)",display:"flex",alignItems:"center",gap:10}}>
-              <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
+              <span style={{display:"inline-flex",animation:"spin 1s linear infinite"}}><Loader size={20} strokeWidth={2}/></span>シフトデータを読み込んでいます…
             </div>
           </div>}
           <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null}/></ZoomWrapper>
