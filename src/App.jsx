@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
-import { computeBacktestMetrics, formatPct } from './research/backtest.js';
+import { computeBacktestMetrics, computeDriftMetric, formatPct } from './research/backtest.js';
 import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
@@ -1333,6 +1333,19 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
       }
       // Step5: 指標計算
       const m = computeBacktestMetrics({ actual, runs, staffList: btStaff, dept, trend, year: yIdx, month: mIdx });
+      // 指標G（変化追随率）: 対象月を除いた月別実績を前半/後半に分けて漂流追随を測る（A〜Fに影響なし）
+      const excSet = new Set((exceptionMonths || []).map(x => String(x)));
+      const monthlyShifts = [];
+      for (const [k, v] of Object.entries(filtered)) {
+        if (!k.startsWith('shifts_')) continue;
+        const p = k.split('_'); if (p.length < 4) continue;
+        if (p.slice(3).join('_') !== deptId) continue;
+        const yy = +p[1], mm = +p[2];
+        if (isNaN(yy) || isNaN(mm) || !v || Object.keys(v).length === 0) continue;
+        if (excSet.has(`${yy}-${mm}`)) continue;
+        monthlyShifts.push({ y: yy, m0: mm - 1, shifts: v });
+      }
+      m.G = computeDriftMetric({ actual, runs, staffList: btStaff, dept, monthlyShifts, year: yIdx, month: mIdx });
       setMetrics(m); setRunsData({ actual, runs, ds: btStaff.filter(s => s.dept === deptId), year: yIdx, month: mIdx }); setViewRun(0); setNotes(nts);
     } catch (e) {
       setError('バックテスト実行エラー: ' + (e?.message || e));
@@ -1413,6 +1426,25 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
               </table></div>}
           </div>
         ))}
+
+        {/* G: 変化追随率（概念漂流） */}
+        <div style={box}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>G. 変化追随率（役割変更への追随：前半old→後半newに入れ替わったセル）</div>
+          {!metrics.G?.available ? <div style={{ fontSize: 11, color: '#94A3B8' }}>測定不能：{metrics.G?.reason || '変化を検出できるデータがありません'}</div> :
+            metrics.G.changeCells === 0 ? <div style={{ fontSize: 11, color: '#94A3B8' }}>変化セルは0件です（前半{metrics.G.olderMonths}ヶ月／後半{metrics.G.recentMonths}ヶ月で最頻種別の入れ替わりが検出されませんでした。データが少ない/変化が無いことも結果として意味があります）。</div> :
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 8, fontSize: 12, marginBottom: 8 }}>
+                <div><b>変化セル件数</b>：{metrics.G.changeCells}件（前半{metrics.G.olderMonths}／後半{metrics.G.recentMonths}ヶ月）</div>
+                <div><b>変化追随率（生成=new）</b>：<span style={{ color: '#16a34a', fontWeight: 800 }}>{formatPct(metrics.G.followNew)}</span></div>
+                <div><b>old留まり率（生成=old）</b>：{formatPct(metrics.G.stayOld)}</div>
+                <div><b>実績newだった率</b>：{formatPct(metrics.G.actualNew)}</div>
+              </div>
+              <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <thead><tr><th style={{ ...th, textAlign: 'left' }}>スタッフ</th><th style={th}>曜日</th><th style={th}>old</th><th style={th}>new</th><th style={th}>前半(k/n)</th><th style={th}>後半(k/n)</th><th style={th}>実績new率</th><th style={th}>生成new率(追随)</th><th style={th}>生成old率</th></tr></thead>
+                <tbody>{metrics.G.rows.map((r, i) => <tr key={i}><td style={{ ...td, textAlign: 'left' }}>{r.name}</td><td style={td}>{r.dow}</td><td style={td}>{r.old}</td><td style={{ ...td, fontWeight: 700 }}>{r.new}</td><td style={td}>{r.oldObs}</td><td style={td}>{r.newObs}</td><td style={td}>{formatPct(r.actualNewRate)}</td><td style={{ ...td, fontWeight: 700, color: r.genNewRate != null && r.genOldRate != null && r.genNewRate >= r.genOldRate ? '#16a34a' : '#dc2626' }}>{formatPct(r.genNewRate)}</td><td style={td}>{formatPct(r.genOldRate)}</td></tr>)}</tbody>
+              </table></div>
+            </>}
+        </div>
 
         {/* F: 休み曜日 */}
         <div style={box}>

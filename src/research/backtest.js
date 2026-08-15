@@ -175,4 +175,78 @@ export function computeBacktestMetrics({ actual, runs, staffList, dept, trend, y
   };
 }
 
+/**
+ * 指標G「変化追随率」— 概念漂流（役割変更）への追随を測る。研究用・読み取り専用。
+ * A〜Fの計算とは独立（既存指標に一切影響しない・追加のみ）。
+ *
+ * 学習ウィンドウ（対象月を除く月別実績）を前半(old)/後半(直近recentCount月, new)に分け、
+ * スタッフ×曜日ごとに最頻種別が old≠new に入れ替わった「変化セル」を抽出し、
+ * 生成が new/old のどちらに従ったか、実績(対象月)が new だったかを並べる。
+ *
+ * @param {{actual, runs, staffList, dept, monthlyShifts, year, month, recentCount?, minNewObs?}} p
+ *   monthlyShifts: [{ y, m0(0始まり月), shifts:{[sid]:{[day]:shift}} }] （対象月・例外月は除外済み）
+ *   year/month: 対象月（month は 0始まり）
+ * @returns {{available, reason?, changeCells, followNew, stayOld, actualNew, rows, olderMonths, recentMonths}}
+ */
+export function computeDriftMetric({ actual, runs, staffList, dept, monthlyShifts, year, month, recentCount = 2, minNewObs = 2 }) {
+  const days = getDays(year, month);
+  const ds = staffList.filter(s => s.dept === dept.id);
+  const cell = (obj, sid, d) => obj?.[sid]?.[d] ?? obj?.[sid]?.[String(d)] ?? '';
+  // 入力(申請)・派生は除外。役割変更は勤務種別/休みの最頻遷移で捉える。
+  const EXCLUDE = new Set(['', '明け', '希望休', '有休']);
+  const months = [...(monthlyShifts || [])].sort((a, b) => (a.y * 12 + a.m0) - (b.y * 12 + b.m0));
+  if (months.length < 2) return { available: false, reason: `学習に使える月が${months.length}ヶ月（前半/後半に分けられません）`, changeCells: 0, followNew: null, stayOld: null, actualNew: null, rows: [], olderMonths: months.length, recentMonths: 0 };
+  const recent = months.slice(-recentCount);
+  const older = months.slice(0, months.length - recent.length);
+  if (older.length === 0 || recent.length === 0) return { available: false, reason: '前半または後半の月が不足しています', changeCells: 0, followNew: null, stayOld: null, actualNew: null, rows: [], olderMonths: older.length, recentMonths: recent.length };
+
+  const collect = (arr, sid, dow) => {
+    const cnt = {}; let n = 0;
+    for (const { y, m0, shifts } of arr) {
+      const dim = getDays(y, m0);
+      for (let d = 1; d <= dim; d++) {
+        if (new Date(y, m0, d).getDay() !== dow) continue;
+        const v = shifts?.[sid]?.[d] ?? shifts?.[sid]?.[String(d)] ?? '';
+        if (EXCLUDE.has(v)) continue;
+        cnt[v] = (cnt[v] || 0) + 1; n++;
+      }
+    }
+    return { cnt, n };
+  };
+  const topOf = (cnt) => { let best = null, bc = -1; for (const [k, c] of Object.entries(cnt)) if (c > bc) { bc = c; best = k; } return best; };
+  const mean = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
+  const rows = [];
+  for (const s of ds) {
+    for (let dow = 0; dow < 7; dow++) {
+      const dowDays = [];
+      for (let d = 1; d <= days; d++) if (new Date(year, month, d).getDay() === dow) dowDays.push(d);
+      if (dowDays.length === 0) continue;
+      const O = collect(older, s.id, dow), N = collect(recent, s.id, dow);
+      if (O.n === 0 || N.n === 0) continue;
+      const old = topOf(O.cnt), nw = topOf(N.cnt);
+      if (!old || !nw || old === nw) continue;
+      if ((N.cnt[nw] || 0) < minNewObs) continue; // 後半で new が minNewObs 回以上
+      const actDen = dowDays.filter(d => cell(actual, s.id, d) !== '').length;
+      const actualNewRate = actDen > 0 ? dowDays.filter(d => cell(actual, s.id, d) === nw).length / actDen : null;
+      const genRate = (target) => mean(runs.map(run => {
+        const den = dowDays.filter(d => cell(run, s.id, d) !== '').length;
+        return den > 0 ? dowDays.filter(d => cell(run, s.id, d) === target).length / den : null;
+      }).filter(v => v != null));
+      rows.push({
+        name: s.name, dow: DOW_JA[dow], old, new: nw,
+        oldObs: `${O.cnt[old] || 0}/${O.n}`, newObs: `${N.cnt[nw] || 0}/${N.n}`,
+        actualNewRate, genNewRate: genRate(nw), genOldRate: genRate(old),
+      });
+    }
+  }
+  return {
+    available: true, changeCells: rows.length,
+    followNew: mean(rows.map(r => r.genNewRate).filter(v => v != null)),
+    stayOld: mean(rows.map(r => r.genOldRate).filter(v => v != null)),
+    actualNew: mean(rows.map(r => r.actualNewRate).filter(v => v != null)),
+    rows, olderMonths: older.length, recentMonths: recent.length,
+  };
+}
+
 export { pct as formatPct, DOW_JA };

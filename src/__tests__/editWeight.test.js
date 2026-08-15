@@ -7,7 +7,7 @@
  *   c. 編集なしセルには editWeight が乗算されない
  */
 import { describe, test, expect } from 'vitest';
-import { detectManualEditCells, computeLearnedTrend, EDIT_WEIGHT } from '../engine/core.js';
+import { detectManualEditCells, computeLearnedTrend, EDIT_WEIGHT, EDIT_WEIGHT_BOOST_ENABLED } from '../engine/core.js';
 
 // ─── a. detectManualEditCells ─────────────────────────────────────────────
 
@@ -72,8 +72,8 @@ describe('computeLearnedTrend editWeight', () => {
     return db;
   }
 
-  test('editWeight定数が1.5であること', () => {
-    expect(EDIT_WEIGHT).toBe(1.5);
+  test('editWeight定数（ブーストON=3.0 / OFF=1.5）', () => {
+    expect(EDIT_WEIGHT).toBe(EDIT_WEIGHT_BOOST_ENABLED ? 3.0 : 1.5);
   });
 
   test('編集ありセルは freq が高くなる', () => {
@@ -106,7 +106,7 @@ describe('computeLearnedTrend editWeight', () => {
     const trendWithEdit = computeLearnedTrend(dbWithEdit, staffList);
 
     // 早番の freq: 編集なしでは 5/10=0.5
-    // 編集ありでは 日勤の重みが1件分1.5倍 → 日勤:4+1.5=5.5, 早番:5 → 早番比率=5/10.5≈0.476 < 0.5
+    // 編集ありでは 日勤の重みが1件分 EDIT_WEIGHT 倍（ブーストON=3.0）→ 早番比率が 0.5 未満に下がる
     const hayaNoEdit   = trendNoEdit['スタッフA']?.['早番'] ?? 0;
     const hayaWithEdit = trendWithEdit['スタッフA']?.['早番'] ?? 0;
     expect(hayaWithEdit).toBeLessThan(hayaNoEdit);
