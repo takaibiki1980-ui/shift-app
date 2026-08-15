@@ -2262,8 +2262,12 @@ function detectManualEditCells(baseline, current) {
 
 // ── 学習トレンド計算 ─────────────────────────────────────────────────────────
 // editData は allDBData の edits_YYYY_M_deptId キーから自動読み取り。
-// 人手修正セルには EDIT_WEIGHT=1.5 を乗算して学習に強く反映させる。
-const EDIT_WEIGHT = 1.5;
+// 人手修正セルには EDIT_WEIGHT を乗算して学習に強く反映させる。
+// 概念漂流(役割変更)への追随強化: 手修正は「今はこれが正しい」最新情報のため重みと
+// Wilson生カウントを強める。EDIT_WEIGHT_BOOST_ENABLED=false で従来(重み1.5・生カウント1回)へ即復帰。
+const EDIT_WEIGHT_BOOST_ENABLED = true;
+const EDIT_WEIGHT = EDIT_WEIGHT_BOOST_ENABLED ? 3.0 : 1.5; // 従来1.5
+const EDIT_OBS_COUNT = 3;   // Wilson用の重みなし生カウントで手修正セルを何回分と数えるか（OFF時は1）
 
 function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
@@ -2343,9 +2347,11 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
           if (!isNaN(d)) {
             const dow = new Date(keyYear, keyMonth, d).getDay();
             dowShifts[staffId][dow][shift] = (dowShifts[staffId][dow][shift] || 0) + ew;
-            // Wilson用・重みなし生カウント（+1）。既存の重み付き集計には影響しない。
-            dowShiftObs[staffId][dow][shift] = (dowShiftObs[staffId][dow][shift] || 0) + 1;
-            dowWorkObs[staffId][dow] += 1;
+            // Wilson用・重みなし生カウント。手修正セルは EDIT_OBS_COUNT 回分として数え、
+            // 体制変更後の新しい癖が早く確定癖になり古い癖が早く外れるようにする（フラグOFFで1回）。
+            const obsInc = (EDIT_WEIGHT_BOOST_ENABLED && editedSet.has(`${staffId}:${d}`)) ? EDIT_OBS_COUNT : 1;
+            dowShiftObs[staffId][dow][shift] = (dowShiftObs[staffId][dow][shift] || 0) + obsInc;
+            dowWorkObs[staffId][dow] += obsInc;
           }
         }
       }
@@ -2581,6 +2587,8 @@ export {
   detectManualEditCells,
   computeLearnedTrend,
   EDIT_WEIGHT,
+  EDIT_WEIGHT_BOOST_ENABLED,
+  EDIT_OBS_COUNT,
   repairHardConstraints,
   wilsonLower,
   STRONG_RATE,
