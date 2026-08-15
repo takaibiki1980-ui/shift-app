@@ -74,3 +74,37 @@ describe('指標G 変化追随率', () => {
     expect(g.available).toBe(false);
   });
 });
+
+describe('指標G サマリー', () => {
+  const dept2 = { id: 'k', shiftTypes: ['早番', '日勤', '遅番', '夜勤'] };
+  const st = [{ id: 's1', name: '柳', dept: 'k' }];
+  function mDow(y, m0, dow, value) {
+    const s = {}; const dim = new Date(y, m0 + 1, 0).getDate();
+    for (let d = 1; d <= dim; d++) if (new Date(y, m0, d).getDay() === dow) s[d] = value;
+    return { y, m0, shifts: { s1: s } };
+  }
+  const F = 5;
+
+  test('summary が変化セル総件数と各平均を返す', () => {
+    const monthlyShifts = [
+      mDow(2026, 3, F, '遅番'), mDow(2026, 4, F, '遅番'),
+      mDow(2026, 5, F, '日勤'), mDow(2026, 6, F, '日勤'),
+    ];
+    const actual = mDow(2026, 7, F, '日勤').shifts;
+    const runs = [mDow(2026, 7, F, '日勤').shifts, mDow(2026, 7, F, '遅番').shifts]; // 1回目new・2回目old
+    const g = computeDriftMetric({ actual, runs, staffList: st, dept: dept2, monthlyShifts, year: 2026, month: 7 });
+    expect(g.summary).toBeTruthy();
+    expect(g.summary.changeCells).toBe(g.changeCells);
+    expect(g.summary.changeCells).toBeGreaterThanOrEqual(1);
+    // 生成: 金曜 new(日勤)率=（1回目1.0 + 2回目0）/2 = 0.5、old(遅番)率=0.5、実績new率=1.0
+    expect(g.summary.followNew).toBeCloseTo(0.5, 5);
+    expect(g.summary.stayOld).toBeCloseTo(0.5, 5);
+    expect(g.summary.actualNew).toBeCloseTo(1.0, 5);
+  });
+
+  test('測定不能・0件でも summary を返す（changeCells=0・平均null）', () => {
+    const g = computeDriftMetric({ actual: {}, runs: [{}], staffList: st, dept: dept2, monthlyShifts: [mDow(2026, 6, F, '日勤')], year: 2026, month: 7 });
+    expect(g.available).toBe(false);
+    expect(g.summary).toEqual({ changeCells: 0, followNew: null, stayOld: null, actualNew: null });
+  });
+});

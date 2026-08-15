@@ -1433,11 +1433,14 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
           {!metrics.G?.available ? <div style={{ fontSize: 11, color: '#94A3B8' }}>測定不能：{metrics.G?.reason || '変化を検出できるデータがありません'}</div> :
             metrics.G.changeCells === 0 ? <div style={{ fontSize: 11, color: '#94A3B8' }}>変化セルは0件です（前半{metrics.G.olderMonths}ヶ月／後半{metrics.G.recentMonths}ヶ月で最頻種別の入れ替わりが検出されませんでした。データが少ない/変化が無いことも結果として意味があります）。</div> :
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 8, fontSize: 12, marginBottom: 8 }}>
-                <div><b>変化セル件数</b>：{metrics.G.changeCells}件（前半{metrics.G.olderMonths}／後半{metrics.G.recentMonths}ヶ月）</div>
-                <div><b>変化追随率（生成=new）</b>：<span style={{ color: '#16a34a', fontWeight: 800 }}>{formatPct(metrics.G.followNew)}</span></div>
-                <div><b>old留まり率（生成=old）</b>：{formatPct(metrics.G.stayOld)}</div>
-                <div><b>実績newだった率</b>：{formatPct(metrics.G.actualNew)}</div>
+              <div style={{ background: '#F8FAFF', border: '1px solid #DBEAFE', borderRadius: 8, padding: '8px 10px', marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: '#1D4ED8', marginBottom: 6 }}>サマリー</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 8, fontSize: 12 }}>
+                  <div><b>変化セル総件数</b>：{metrics.G.summary.changeCells}件（前半{metrics.G.olderMonths}／後半{metrics.G.recentMonths}ヶ月）</div>
+                  <div><b>生成new率(追随)平均</b>：<span style={{ color: '#16a34a', fontWeight: 800 }}>{formatPct(metrics.G.summary.followNew)}</span></div>
+                  <div><b>生成old率 平均</b>：{formatPct(metrics.G.summary.stayOld)}</div>
+                  <div><b>実績new率 平均</b>：{formatPct(metrics.G.summary.actualNew)}</div>
+                </div>
               </div>
               <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
                 <thead><tr><th style={{ ...th, textAlign: 'left' }}>スタッフ</th><th style={th}>曜日</th><th style={th}>old</th><th style={th}>new</th><th style={th}>前半(k/n)</th><th style={th}>後半(k/n)</th><th style={th}>実績new率</th><th style={th}>生成new率(追随)</th><th style={th}>生成old率</th></tr></thead>

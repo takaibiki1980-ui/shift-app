@@ -186,7 +186,7 @@ export function computeBacktestMetrics({ actual, runs, staffList, dept, trend, y
  * @param {{actual, runs, staffList, dept, monthlyShifts, year, month, recentCount?, minNewObs?}} p
  *   monthlyShifts: [{ y, m0(0始まり月), shifts:{[sid]:{[day]:shift}} }] （対象月・例外月は除外済み）
  *   year/month: 対象月（month は 0始まり）
- * @returns {{available, reason?, changeCells, followNew, stayOld, actualNew, rows, olderMonths, recentMonths}}
+ * @returns {{available, reason?, changeCells, followNew, stayOld, actualNew, summary:{changeCells,followNew,stayOld,actualNew}, rows, olderMonths, recentMonths}}
  */
 export function computeDriftMetric({ actual, runs, staffList, dept, monthlyShifts, year, month, recentCount = 2, minNewObs = 2 }) {
   const days = getDays(year, month);
@@ -195,10 +195,11 @@ export function computeDriftMetric({ actual, runs, staffList, dept, monthlyShift
   // 入力(申請)・派生は除外。役割変更は勤務種別/休みの最頻遷移で捉える。
   const EXCLUDE = new Set(['', '明け', '希望休', '有休']);
   const months = [...(monthlyShifts || [])].sort((a, b) => (a.y * 12 + a.m0) - (b.y * 12 + b.m0));
-  if (months.length < 2) return { available: false, reason: `学習に使える月が${months.length}ヶ月（前半/後半に分けられません）`, changeCells: 0, followNew: null, stayOld: null, actualNew: null, rows: [], olderMonths: months.length, recentMonths: 0 };
+  const emptySummary = { changeCells: 0, followNew: null, stayOld: null, actualNew: null };
+  if (months.length < 2) return { available: false, reason: `学習に使える月が${months.length}ヶ月（前半/後半に分けられません）`, changeCells: 0, followNew: null, stayOld: null, actualNew: null, summary: emptySummary, rows: [], olderMonths: months.length, recentMonths: 0 };
   const recent = months.slice(-recentCount);
   const older = months.slice(0, months.length - recent.length);
-  if (older.length === 0 || recent.length === 0) return { available: false, reason: '前半または後半の月が不足しています', changeCells: 0, followNew: null, stayOld: null, actualNew: null, rows: [], olderMonths: older.length, recentMonths: recent.length };
+  if (older.length === 0 || recent.length === 0) return { available: false, reason: '前半または後半の月が不足しています', changeCells: 0, followNew: null, stayOld: null, actualNew: null, summary: emptySummary, rows: [], olderMonths: older.length, recentMonths: recent.length };
 
   const collect = (arr, sid, dow) => {
     const cnt = {}; let n = 0;
@@ -240,11 +241,14 @@ export function computeDriftMetric({ actual, runs, staffList, dept, monthlyShift
       });
     }
   }
+  const followNew = mean(rows.map(r => r.genNewRate).filter(v => v != null));
+  const stayOld = mean(rows.map(r => r.genOldRate).filter(v => v != null));
+  const actualNew = mean(rows.map(r => r.actualNewRate).filter(v => v != null));
   return {
-    available: true, changeCells: rows.length,
-    followNew: mean(rows.map(r => r.genNewRate).filter(v => v != null)),
-    stayOld: mean(rows.map(r => r.genOldRate).filter(v => v != null)),
-    actualNew: mean(rows.map(r => r.actualNewRate).filter(v => v != null)),
+    available: true, changeCells: rows.length, followNew, stayOld, actualNew,
+    // サマリー（表上部表示用）: 変化セル総件数・生成new率(追随)平均・生成old率平均・実績new率平均。
+    // 明細 rows・指標A〜F・既存フラット値には影響しない集計表示の追加。
+    summary: { changeCells: rows.length, followNew, stayOld, actualNew },
     rows, olderMonths: older.length, recentMonths: recent.length,
   };
 }
