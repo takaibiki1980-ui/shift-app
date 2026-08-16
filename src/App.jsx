@@ -3028,7 +3028,23 @@ function StaffKiboCalendar({ year, month, myDays, otherCounts, kiboLimit, onChan
   );
 }
 
-function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
+// 希望休ポータルの締切を「リンクの対象月(ym)」で解決する純粋関数。
+// ym があれば byMonth[ym] を最優先（前月リンクは前月の締切で判定＝新月募集で復活しない）。
+// byMonth 未整備でも ym が現在の対象月(flat)と一致すれば flat deadline にフォールバック。
+// ym が無い旧リンクは従来どおり flat deadline（壊さない）。
+export function resolvePortalDeadline(selDept, ymPreload) {
+  if (!selDept) return null;
+  const flatYm = (selDept.targetYear && selDept.targetMonth) ? `${selDept.targetYear}-${selDept.targetMonth}` : null;
+  const bm = selDept.byMonth;
+  if (ymPreload) {
+    if (bm && Object.prototype.hasOwnProperty.call(bm, ymPreload)) return bm[ymPreload]?.deadline || null;
+    if (ymPreload === flatYm) return selDept.deadline || null;
+    return null; // 過去月で byMonth に記録が無い → 締切なし扱い（現在の締切で誤判定しない）
+  }
+  return selDept.deadline || null;
+}
+
+function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -3053,7 +3069,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         const c = JSON.parse(json);
         const cfg = {
           facility_name: c.fn || '',
-          depts: [{ id: c.d.id, label: c.d.label, kiboLimit: c.d.kb || 3, kiboDayLimit: c.d.kd || 0, deadline: c.d.dl || null, targetYear: c.d.ty || null, targetMonth: c.d.tm || null }],
+          depts: [{ id: c.d.id, label: c.d.label, kiboLimit: c.d.kb || 3, kiboDayLimit: c.d.kd || 0, deadline: c.d.dl || null, targetYear: c.d.ty || null, targetMonth: c.d.tm || null, byMonth: c.d.bm || null }],
           staffList: (c.sl || []).map(s => ({ id: s.i ? shortToUuid(s.i) : s.id, name: s.n || s.name, dept: c.d.id }))
         };
         setConfig(cfg);
@@ -3089,11 +3105,16 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
 
   useEffect(() => { loadConfig(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 対象月を設定: targetYear/targetMonth が優先、なければ従来の締切日フォールバック
+  // 対象月を設定: URLの ym（対象シフト月）が最優先。無ければ targetYear/targetMonth、最後に締切日の月。
   useEffect(() => {
     if (!config) return;
     const dept = config.depts?.find(d => d.id === (fixedDeptId || config.depts?.[0]?.id));
     if (!dept) return;
+    // ① URLに ym があればその月を対象月にする（リンク＝月固定）
+    if (ymPreload) {
+      const [yy, mm] = ymPreload.split('-').map(Number);
+      if (!isNaN(yy) && !isNaN(mm)) { setYear(yy); setMonth(mm - 1); return; }
+    }
     if (dept.targetYear && dept.targetMonth) {
       setYear(dept.targetYear);
       setMonth(dept.targetMonth - 1);
@@ -3103,7 +3124,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
     if (!dept.deadline) return;
     const [dy, dm] = dept.deadline.split('-').map(Number);
     if (!isNaN(dy) && !isNaN(dm)) { setYear(dy); setMonth(dm - 1); }
-  }, [config, fixedDeptId]);
+  }, [config, fixedDeptId, ymPreload]);
 
   const mk = monthKey(year, month);
   const selDept = config?.depts?.find(d => d.id === selDeptId);
@@ -3114,8 +3135,12 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
   const overDayLimit = dayLim > 0 && myDays.length > dayLim; // 上限超過（既存データが超えている場合など）
 
   // 締め切りチェック・月固定
-  const isPastDeadline = selDept?.deadline ? new Date() > new Date(selDept.deadline + 'T23:59:59') : false;
-  const isMonthLocked = !!(selDept?.deadline || (selDept?.targetYear && selDept?.targetMonth));
+  // 締切は「リンクの対象月(ym)」で解決する。ym がある場合は byMonth[ym] を最優先で見る（＝前月リンクは前月の締切で判定）。
+  // ym が現在の targetMonth と一致する場合や byMonth 未整備の旧データでは flat な deadline にフォールバック。
+  // ym が無い旧リンクは従来どおり flat deadline を使う（壊さない）。
+  const resolvedDeadline = resolvePortalDeadline(selDept, ymPreload);
+  const isPastDeadline = resolvedDeadline ? new Date() > new Date(resolvedDeadline + 'T23:59:59') : false;
+  const isMonthLocked = !!(ymPreload || resolvedDeadline || (selDept?.targetYear && selDept?.targetMonth));
 
   useEffect(() => {
     if (!selStaffId || !selDeptId) return;
@@ -3217,7 +3242,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
             <span style={{fontSize:13,fontWeight:800,color:"#18181B"}}>{year}年{month+1}月の希望休入力</span>
             {!isMonthLocked&&<button onClick={nextMonth} style={{background:"none",border:"none",fontSize:18,color:"#6366F1",cursor:"pointer"}}>▶</button>}
           </div>
-          {selDept?.deadline&&<div style={{fontSize:10,color:"#6B7280"}}>締切：{selDept.deadline.replace(/-/g,'/')}</div>}
+          {resolvedDeadline&&<div style={{fontSize:10,color:"#6B7280"}}>締切：{resolvedDeadline.replace(/-/g,'/')}</div>}
         </div>
       </div>
 
@@ -3263,7 +3288,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload }) {
         <div style={{background:"#fff5f5",border:"2px solid #ef4444",borderRadius:12,padding:20,textAlign:"center",marginBottom:12}}>
           <div style={{marginBottom:6,display:"flex",justifyContent:"center"}}><Lock size={28} strokeWidth={2} style={{color:"#ef4444"}}/></div>
           <div style={{fontSize:15,fontWeight:900,color:"#ef4444",marginBottom:4}}>受付を終了しました</div>
-          <div style={{fontSize:12,color:"#6b7280"}}>締め切り日（{selDept?.deadline}）を過ぎています。<br/>管理者にお問い合わせください。</div>
+          <div style={{fontSize:12,color:"#6b7280"}}>締め切り日（{resolvedDeadline}）を過ぎています。<br/>管理者にお問い合わせください。</div>
         </div>
       )}
 
@@ -3653,6 +3678,7 @@ export default function App() {
   const staffUserId = params.get('staff');
   const staffDeptId = params.get('dept');
   const staffCfgB64 = params.get('cfg');
+  const staffYm = params.get('ym'); // 対象シフト月 "YYYY-M"（締切を月ごとに判定するため）
   // 短縮UUID（22文字）を通常UUIDに戻す
   const resolvedUserId = staffUserId ? (staffUserId.length <= 24 ? shortToUuid(staffUserId) : staffUserId) : null;
 
@@ -3660,7 +3686,7 @@ export default function App() {
   if (shareToken) return <SharedShiftView token={shareToken} />;
 
   // 希望休ポータル（スタッフURL）
-  if (resolvedUserId) return <StaffPortal adminUserId={resolvedUserId} fixedDeptId={staffDeptId||undefined} cfgPreload={staffCfgB64} />;
+  if (resolvedUserId) return <StaffPortal adminUserId={resolvedUserId} fixedDeptId={staffDeptId||undefined} cfgPreload={staffCfgB64} ymPreload={staffYm||undefined} />;
 
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -3789,7 +3815,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const reloadFromRemoteRef = useRef(null); // reloadFromRemote関数への参照（catch節から呼び出し用）
   const activeCellRef = useRef(null); // { staffId, day, time } 現在編集中のセル（Realtime上書き保護用）
   const [dbLoading, setDbLoading] = useState(true);
-  const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline: "YYYY-MM-DD"|null } }
+  const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline, targetYear, targetMonth, byMonth: { "YYYY-M": { deadline } } } }
 
   const [depts, setDepts] = useState(() => { try { const s=localStorage.getItem("shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
   useEffect(() => {
@@ -3909,7 +3935,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       facility_name: profile?.facility_name || '',
       depts: depts.map(d => {
         const ps = portalSettings[d.id] || {};
-        return { id: d.id, label: d.label, kiboLimit: d.kiboLimit || 3, kiboDayLimit: d.kiboDayLimit || 0, deadline: ps.deadline || null, targetYear: ps.targetYear || null, targetMonth: ps.targetMonth || null };
+        return { id: d.id, label: d.label, kiboLimit: d.kiboLimit || 3, kiboDayLimit: d.kiboDayLimit || 0, deadline: ps.deadline || null, targetYear: ps.targetYear || null, targetMonth: ps.targetMonth || null, byMonth: ps.byMonth || null };
       }),
       staffList: staffList.map(s => ({ id: s.id, dept: s.dept, name: s.name, role: s.role }))
     };
@@ -5315,14 +5341,19 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const ps=portalSettings[d.id]||{};
               const setPsDept=(key,val)=>setPortalSettings(prev=>({...prev,[d.id]:{...(prev[d.id]||{}),[key]:val}}));
               const deptSl=staffList.filter(s=>s.dept===d.id).map(s=>({i:uuidToShort(s.id),n:s.name}));
-              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,kb:d.kiboLimit||3,kd:d.kiboDayLimit||0,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null},sl:deptSl};
+              const ymStr=(ps.targetYear&&ps.targetMonth)?`${ps.targetYear}-${ps.targetMonth}`:null; // 対象シフト月 "YYYY-M"
+              const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,kb:d.kiboLimit||3,kd:d.kiboDayLimit||0,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null,bm:ps.byMonth||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
-              const urlShort=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}`;
+              // 配布URLに対象月 ym を付与（前月リンク/新月リンクを区別し、締切を月ごとに判定させる）。対象月未設定なら従来どおり ym なし。
+              const urlShort=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}${ymStr?`&ym=${ymStr}`:''}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlShort).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlShort}`));}else{alert(`URLをコピーしてください:\n${urlShort}`);}};
               const doLine=()=>{const dl=d.kiboDayLimit||0;const body=`${d.label}の希望休入力はこちら${dl>0?`\n※希望休は${dl}日までです`:''}\n${urlShort}`;const lineUrl=`https://line.me/R/msg/text/?${encodeURIComponent(body)}`;window.open(lineUrl,'_blank');};              const doSaveSettings=async()=>{
-                const newPs={...portalSettings,[d.id]:{deadline:ps.deadline||null,targetYear:ps.targetYear||null,targetMonth:ps.targetMonth||null}};
-                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,kiboLimit:dep.kiboLimit||3,kiboDayLimit:dep.kiboDayLimit||0,deadline:p.deadline||null,targetYear:p.targetYear||null,targetMonth:p.targetMonth||null};});
+                // 対象月ごとに締切を byMonth へ蓄積する（新しい月を保存しても前月の締切を上書きしない）。
+                const prevBm=portalSettings[d.id]?.byMonth||{};
+                const newBm=ymStr?{...prevBm,[ymStr]:{deadline:ps.deadline||null}}:prevBm;
+                const newPs={...portalSettings,[d.id]:{deadline:ps.deadline||null,targetYear:ps.targetYear||null,targetMonth:ps.targetMonth||null,byMonth:newBm}};
+                const deptsCfg=depts.map(dep=>{const p=newPs[dep.id]||{};return{id:dep.id,label:dep.label,kiboLimit:dep.kiboLimit||3,kiboDayLimit:dep.kiboDayLimit||0,deadline:p.deadline||null,targetYear:p.targetYear||null,targetMonth:p.targetMonth||null,byMonth:p.byMonth||null};});
                 const facilityVal={facility_name:profile?.facility_name||'',depts:deptsCfg,staffList:staffList.map(s=>({id:s.id,dept:s.dept,name:s.name,role:s.role}))};
                 const [r1,r2]=await Promise.all([
                   supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'portalSettings',data_value:newPs,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}),
