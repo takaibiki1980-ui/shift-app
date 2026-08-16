@@ -1306,6 +1306,19 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
       const remain = new Set();
       for (const k of Object.keys(filtered)) if (k.startsWith('shifts_') && k.split('_').slice(3).join('_') === deptId) { const p = k.split('_'); remain.add(`${p[1]}-${p[2]}`); }
       if (remain.size <= 2) nts.push(`学習に使える月が${remain.size}ヶ月しかありません。STRONG_MONTHS=2ギリギリで強癖がほぼ発動しない可能性があります（これ自体がデータ量と精度の関係の測定結果です）。`);
+      // 希望勤務セル数（学習期間内・当部署・勤務種別のみ）を参考表示。件数が少なければ重み強化の効果は小さい。
+      {
+        const WISH_REST = new Set(['休み', '希望休', '有休', '明け']);
+        let wishCount = 0;
+        for (const s of staffList) {
+          if (s.dept !== deptId) continue;
+          for (const ym of remain) {
+            const req = s.shiftRequestsByMonth?.[ym]; if (!req) continue;
+            for (const v of Object.values(req)) if (v && !WISH_REST.has(v)) wishCount++;
+          }
+        }
+        nts.push(`学習期間内の希望勤務セル数（当部署・勤務種別のみ）：${wishCount}件（少ないほど希望勤務の重み強化の効果は小さくなります）。`);
+      }
       // Step3: 入力再現（希望休・有休を実績から固定・希望勤務はクリアして答えを漏らさない）
       const yIdx = tgt.y, mIdx = tgt.m - 1;
       const mk = `${tgt.y}-${tgt.m}`;

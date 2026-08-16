@@ -2269,7 +2269,19 @@ const EDIT_WEIGHT_BOOST_ENABLED = true;
 const EDIT_WEIGHT = EDIT_WEIGHT_BOOST_ENABLED ? 3.0 : 1.5; // 従来1.5
 const EDIT_OBS_COUNT = 3;   // Wilson用の重みなし生カウントで手修正セルを何回分と数えるか（OFF時は1）
 
+// 希望勤務(shiftRequestsByMonth)はリーダーが入力する意思決定＝学ぶべき癖そのもの。
+// 手修正と同格で重み・生カウントを強める。WISH_WEIGHT_BOOST_ENABLED=false で従来(重み1倍・生カウント1回)へ即復帰。
+// 手修正かつ希望勤務のセルは倍率を掛け合わせず「大きい方」を採用（過度な偏重を避ける）。
+// 希望休・有休は職員の申請のため対象外（勤務種別のリクエストのみを希望勤務として扱う）。
+const WISH_WEIGHT_BOOST_ENABLED = true;
+const WISH_WEIGHT = 3.0;
+const WISH_OBS_COUNT = 3;
+const WISH_REST_EXCLUDE = new Set(['休み', '希望休', '有休', '明け']); // これらのリクエストは対象外
+
 function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
+  // 希望勤務参照用: staffId → staff（shiftRequestsByMonth を月×日で引く）
+  const _staffById = {};
+  for (const s of (staffList || [])) if (s && s.id != null) _staffById[s.id] = s;
   const exceptionSet = new Set(exceptionMonths); // "YYYY-M" 形式（1始まり月）
   const counts = {}, totals = {}, monthSets = {};
   const transitions = {}, transitionTotals = {}; // 遷移確率集計: [staffId][prev][curr]
@@ -2316,6 +2328,21 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
     for (const [sid, days] of Object.entries(editEntries)) {
       for (const d of (days || [])) editedSet.add(`${sid}:${d}`);
     }
+    // 希望勤務セル（リーダー入力）を staffList.shiftRequestsByMonth から staffId:day で参照可能に。
+    // 月キーは monthKey と同形式 `${year}-${month(1始まり)}`。勤務種別のリクエストのみ対象。
+    const wishSet = new Set();
+    if (WISH_WEIGHT_BOOST_ENABLED) {
+      const mkStr = `${keyYear}-${keyMonthRaw}`;
+      for (const [sid, s] of Object.entries(_staffById)) {
+        const req = s.shiftRequestsByMonth?.[mkStr];
+        if (!req) continue;
+        for (const [dStr, val] of Object.entries(req)) {
+          if (!val || WISH_REST_EXCLUDE.has(val)) continue;
+          const dn = parseInt(dStr);
+          if (!isNaN(dn)) wishSet.add(`${sid}:${dn}`);
+        }
+      }
+    }
     for (const [staffId, staffShifts] of Object.entries(shifts)) {
       if (!staffShifts || typeof staffShifts !== 'object') continue;
       if (!counts[staffId]) { counts[staffId] = {}; totals[staffId] = 0; monthSets[staffId] = new Set(); }
@@ -2327,19 +2354,28 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
       if (!dowWorkObs[staffId]) dowWorkObs[staffId] = [0,0,0,0,0,0,0];
       monthSets[staffId].add(`${keyYear}-${keyMonth}`);
       for (const [dayStr, shift] of Object.entries(staffShifts)) {
+        // このセルの重み倍率・生カウント倍率を決定（手修正と希望勤務は掛け合わせず「大きい方」）。
+        const _dn = parseInt(dayStr);
+        const _isEdit = !isNaN(_dn) && editedSet.has(`${staffId}:${_dn}`);
+        const _isWish = !isNaN(_dn) && wishSet.has(`${staffId}:${_dn}`);
+        const cellMul = Math.max(_isEdit ? EDIT_WEIGHT : 1, _isWish ? WISH_WEIGHT : 1);
+        const cellObs = Math.max(
+          (EDIT_WEIGHT_BOOST_ENABLED && _isEdit) ? EDIT_OBS_COUNT : 1,
+          (WISH_WEIGHT_BOOST_ENABLED && _isWish) ? WISH_OBS_COUNT : 1,
+        );
         // dowRestRate用: スキップ前に全シフトを曜日別集計
         if (shift) {
           const dr = parseInt(dayStr);
           if (!isNaN(dr)) {
             const dow2 = (new Date(keyYear, keyMonth, dr).getDay() + 6) % 7;
-            const ew = editedSet.has(`${staffId}:${dr}`) ? weight * EDIT_WEIGHT : weight;
+            const ew = weight * cellMul;
             dowTotalsR[staffId][dow2] += ew;
             if (REST_DOW_SET.has(shift)) dowRests[staffId][dow2] += ew;
           }
         }
         if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
         const d = parseInt(dayStr);
-        const ew = (!isNaN(d) && editedSet.has(`${staffId}:${d}`)) ? weight * EDIT_WEIGHT : weight;
+        const ew = weight * cellMul;
         counts[staffId][shift] = (counts[staffId][shift] || 0) + ew;
         totals[staffId] += ew;
         // 曜日別シフト集計
@@ -2347,9 +2383,9 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
           if (!isNaN(d)) {
             const dow = new Date(keyYear, keyMonth, d).getDay();
             dowShifts[staffId][dow][shift] = (dowShifts[staffId][dow][shift] || 0) + ew;
-            // Wilson用・重みなし生カウント。手修正セルは EDIT_OBS_COUNT 回分として数え、
-            // 体制変更後の新しい癖が早く確定癖になり古い癖が早く外れるようにする（フラグOFFで1回）。
-            const obsInc = (EDIT_WEIGHT_BOOST_ENABLED && editedSet.has(`${staffId}:${d}`)) ? EDIT_OBS_COUNT : 1;
+            // Wilson用・重みなし生カウント。手修正/希望勤務セルは EDIT/WISH_OBS_COUNT 回分として数え、
+            // リーダーの判断・体制変更が早く確定癖に反映されるようにする（各フラグOFFで1回・重複は大きい方）。
+            const obsInc = cellObs;
             dowShiftObs[staffId][dow][shift] = (dowShiftObs[staffId][dow][shift] || 0) + obsInc;
             dowWorkObs[staffId][dow] += obsInc;
           }
@@ -2589,6 +2625,9 @@ export {
   EDIT_WEIGHT,
   EDIT_WEIGHT_BOOST_ENABLED,
   EDIT_OBS_COUNT,
+  WISH_WEIGHT_BOOST_ENABLED,
+  WISH_WEIGHT,
+  WISH_OBS_COUNT,
   repairHardConstraints,
   wilsonLower,
   STRONG_RATE,
