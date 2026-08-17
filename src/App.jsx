@@ -3857,6 +3857,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [deptSettingModal, setDeptSettingModal] = useState(null);
   const [activeDeptId, setActiveDeptId] = useState("kaigo1");
   const [innerTab, setInnerTab] = useState("shift");
+  // バックテストは開発者(is_admin)専用。非adminがこのタブ状態になったら既定タブへ戻す（表示崩れ防止）。
+  useEffect(() => {
+    if (innerTab === "backtest" && !profile?.is_admin) setInnerTab("shift");
+  }, [innerTab, profile?.is_admin]);
 
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
@@ -5166,7 +5170,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#18181B":"#71717A",borderBottom:innerTab==="yotei"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
         }
         <button onClick={()=>setInnerTab("learn")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="learn"?"#18181B":"#71717A",borderBottom:innerTab==="learn"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="learn"?700:500,whiteSpace:"nowrap",flexShrink:0}}>学習状況</button>
-        <button onClick={()=>setInnerTab("backtest")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="backtest"?"#18181B":"#71717A",borderBottom:innerTab==="backtest"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="backtest"?700:500,whiteSpace:"nowrap",flexShrink:0}}>バックテスト</button>
+        {profile?.is_admin&&<button onClick={()=>setInnerTab("backtest")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="backtest"?"#18181B":"#71717A",borderBottom:innerTab==="backtest"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="backtest"?700:500,whiteSpace:"nowrap",flexShrink:0}}>バックテスト</button>}
         {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
           {innerTab==="shift"&&(
             <div style={{display:"flex",alignItems:"center",gap:4}}>
@@ -5241,7 +5245,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
         {innerTab==="learn"&&<LearnStatusView learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month}/>}
-        {innerTab==="backtest"&&<BacktestView staffList={staffList} depts={depts} allDBData={allDBDataRef.current} exceptionMonths={exceptionMonths} activeDeptId={activeDeptId} year={year} month={month}/>}
+        {innerTab==="backtest"&&profile?.is_admin&&<BacktestView staffList={staffList} depts={depts} allDBData={allDBDataRef.current} exceptionMonths={exceptionMonths} activeDeptId={activeDeptId} year={year} month={month}/>}
       </div>
 
       {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
