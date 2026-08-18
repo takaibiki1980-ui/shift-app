@@ -4,7 +4,7 @@ import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2 } from 'lucide-react';
+import { Settings, Calendar, Users, Trash2, Zap, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2, Info, Brain } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -2060,89 +2060,85 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
 
 const HELP_SECTIONS = [
   {
-    id: "staff", icon: "👥", label: "スタッフ登録",
+    id: "start", icon: Info, label: "はじめての方へ",
     steps: [
-      { title: "「スタッフ」タブを開く", body: "画面上部のタブから「👥 スタッフ」をタップします。" },
-      { title: "「＋ 追加」ボタンを押す", body: "右下または一覧上部の「＋ スタッフ追加」ボタンを押します。" },
-      { title: "情報を入力して保存", body: "氏名・部署・役職・スキルを入力し「保存」を押します。複数部署を掛け持ちする場合は所属部署を追加してください。" },
-      { title: "希望休を設定する（任意）", body: "スタッフ詳細画面のカレンダーから希望休の日付をタップすると選択できます。" },
+      { title: "画面の構成を知る", body: "画面の上部に部署タブ（介護部1階・2階など）があります。部署を選ぶと、その部署のシフトを編集できます。各部署には「シフト表」（作る・見るメイン）、「スタッフ」（職員の登録・設定）、「予定表」（フロア担当を決める）、「学習状況」（覚えた傾向を確認）のタブがあります。" },
+      { title: "シフト作成の流れ", body: "①スタッフに希望休を出してもらう ②「自動生成」で一括作成 ③手直し ④「保存」 ⑤「確定」して印刷・共有、という流れで進めます。" },
+      { title: "最初に登録を済ませる", body: "はじめにスタッフ登録と部署設定を済ませておくと、その後の作成がスムーズです。" },
     ],
-    tips: ["スタッフ名は後から変更できます。", "削除したスタッフのシフトデータは残りますが再表示はできません。"],
+    tips: ["まず「スタッフ」タブで職員を登録し、部署の設定で必要人数などを決めておきましょう。"],
   },
   {
-    id: "dept", icon: "🏢", label: "部署設定",
+    id: "kibo", icon: Share2, label: "希望休を集める",
     steps: [
-      { title: "部署タブ横の「⚙️ 設定」を押す", body: "部署名タブの右にある設定ボタンをクリックします。" },
-      { title: "部署名・アイコンを設定", body: "部署名とアイコン（絵文字）を入力します。" },
-      { title: "シフト種別・人数基準を設定", body: "使用するシフト種別と、各シフトの必要人数目安を設定します。自動生成時の基準になります。" },
-      { title: "締め切り日を設定（任意）", body: "スタッフポータルの希望休締め切り日を設定できます。設定するとポータルの月が自動的に固定されます。" },
+      { title: "募集を設定する", body: "右上メニューの「共有」を開き、対象シフト月と締め切り日を設定します。1人あたりの希望休の上限日数も設定できます（例：2日まで）。" },
+      { title: "リンクを配る", body: "設定するとスタッフ用のリンクとQRコードができます。「LINEで送る」やコピーで配ります。スタッフはリンクを開いて自分の名前を選び、休みたい日をタップして送信します。" },
+      { title: "管理者画面に自動反映", body: "スタッフが送信した希望休は、管理者のシフト表に自動で反映されます。" },
     ],
-    tips: ["部署は複数追加できます（＋ 部署追加）。", "PINロックを設定すると、シフト編集に暗証番号が必要になります。"],
+    warn: "月ごとに新しいリンクを配ってください。前の月のリンクは、その月の締め切りで止まります。新しい月を募集するときは、その月の設定をしてから新しいリンクを配り直してください。",
+    tips: ["QRコードを休憩室に貼ると、スタッフが自分のスマホで入力できます。", "上限日数を設定すると、スタッフは上限を超えて入れられず、案内に「希望休は◯日まで」と表示されます。"],
   },
   {
-    id: "shift", icon: "📅", label: "シフト入力",
+    id: "make", icon: Calendar, label: "シフトを作る",
     steps: [
-      { title: "「シフト表」タブを開く", body: "「📅 シフト表」タブがデフォルトで開いています。" },
-      { title: "セルを左クリック（タップ）", body: "スタッフ名×日付のセルを左クリックまたはタップするとシフト種別が順番に切り替わります。" },
-      { title: "右クリックでメニュー", body: "PC では右クリックするとシフト一覧のコンテキストメニューが表示され、直接選択できます。" },
-      { title: "「⚡ 自動生成」で一括作成", body: "ツールバーの「⚡ 自動生成」を押すと、傾向学習データと希望休を考慮してシフトを自動作成します。" },
+      { title: "自動生成する", body: "「シフト表」タブで「自動生成」を押すと、希望休・学習した傾向・公休日数をもとに一括で作成します。何度か押して良い結果を選べます。公休日数は毎回守られます。" },
+      { title: "手直しする", body: "セルを左クリックすると勤務が順番に切り替わります。右クリックでメニューが開き、希望休などを設定できます。半日勤務も選べます。早有・日有・有遅など＝半日が有給・半日が勤務／日休・早休など＝半日が勤務・半日が休み／有休（有/休）＝半日が有給・半日が休み（その日は出勤しません）。" },
+      { title: "保存する", body: "編集したら「保存」ボタンで保存します。自動保存はされないので、必ず保存してください。未保存のときは「未保存」と表示されます。" },
     ],
-    tips: ["夜勤を入力すると翌日が自動で「明け」になります。", "ズームスライダーで表示サイズを調整できます。"],
-    warn: "自動生成すると現在のシフトが上書きされます。",
+    warn: "気になるセルに警告マークが付くことがあります。マークをタップすると理由（学習した傾向と違う配置など）が見られます。直すかそのままにするかは自由です。",
+    tips: ["夜勤の翌日は自動で「明け」になります。", "手直しした内容は、アプリが特に強く覚えます。"],
   },
   {
-    id: "portal", icon: "🔗", label: "希望休ポータル",
+    id: "confirm", icon: Printer, label: "確定して印刷する",
     steps: [
-      { title: "「🔗 共有」ボタンを押す", body: "ツールバーの「🔗 共有」から部署ごとのURLとQRコードを確認します。" },
-      { title: "URLをスタッフに送る", body: "「LINEで送る」ボタン、またはURLをコピーしてLINEやメールで送ります。" },
-      { title: "スタッフが希望休を入力", body: "スタッフは受け取ったURLを開き、自分の名前を選んでカレンダーで希望休をタップ→送信します。" },
-      { title: "管理者に自動反映", body: "スタッフが送信すると管理者のシフト表にリアルタイムで反映されます。" },
+      { title: "確定する", body: "完成したら「確定」を押します。確定すると編集できない「閲覧・印刷用」の状態になります。確定中は希望休が「休」表示になり、そのまま印刷すれば希望休も休みとして印刷されます。" },
+      { title: "印刷・共有する", body: "「書き出し」ボタンを開くと「今すぐ印刷」（画面をそのまま印刷。ブラウザのCtrl+Pでも可）と、CSV（表計算ソフト用）・HTML（他のPCで印刷用）への保存があります。" },
+      { title: "編集に戻す", body: "「編集」ボタン（確定解除）を押すと編集に戻れます。編集に戻すと、希望休は元の「希」表示に戻ります。" },
     ],
-    tips: ["締め切り日を設定すると、期限を超えた送信はできなくなります。", "QRコードを印刷して掲示板に貼ることもできます。"],
+    tips: ["確定は何度でも解除・やり直しできます。印刷したいときは確定、直したいときは「編集」（確定解除）、と使い分けましょう。"],
   },
   {
-    id: "summary", icon: "📊", label: "集計・書き出し",
+    id: "settings", icon: Settings, label: "設定",
     steps: [
-      { title: "「📊 集計」タブを開く", body: "「📊 集計」タブを押すと月間集計表が表示されます。" },
-      { title: "各スタッフの勤務数を確認", body: "早・日・遅・夜・明・休の回数と合計勤務日数が表示されます。" },
-      { title: "「📤 書き出し」で保存", body: "ツールバーの「📤 書き出し」から CSV・HTML・印刷を選択できます。" },
+      { title: "スタッフの設定", body: "「スタッフ」タブで追加・編集・並び替え・削除ができます。名前・役職・スキル・夜勤の可否・目標勤務日数・公休（休み）日数・有給残などを設定します。公休日数は月ごとに変更できます。" },
+      { title: "部署の設定", body: "部署タブ横の設定から、部署名・必要人数・最大連続勤務日数などを決めます。夜勤のない部署（栄養科など）では、遅番の翌日に早番を許可する設定もあります（介護部では休息確保のため、許可しないのが基本です）。" },
+      { title: "編集PINロック（見るだけモード）", body: "シフトを他の人に「見るだけ」にしたいときに使います。右上メニューの「編集PIN設定」で各部署の暗証番号を設定します。ロック中は編集・自動生成・確定などができず、閲覧と印刷だけになります。PINを忘れても「編集PIN設定」はロック中でも開けるので、そこから設定し直せます。" },
     ],
-    tips: ["CSVはExcelやGoogleスプレッドシートで開けます。", "HTMLは他のPCでも印刷できる形式です。"],
+    warn: "PINを設定すると、そのPINを入れないと編集できません。現場では、シフトを作る担当だけがPINを知っておくと安全です。",
   },
   {
-    id: "ai", icon: "🧠", label: "傾向学習・AI",
+    id: "learn", icon: Brain, label: "学習について",
     steps: [
-      { title: "過去データの貼り付け学習（初回）", body: "「📊 傾向学習」ボタン→「シフトを貼り付け」で過去のシフト実績をコピー&ペーストして読み込みます。初回シフト作成の精度が上がります。" },
-      { title: "YEIXで作成するほど精度UP", body: "YEIXでシフトを作成・保存するたびに自動で学習が進みます。学習データはサーバーに蓄積され、次回の生成精度に活用されます。" },
-      { title: "例外月の除外", body: "コロナ・インフルエンザ等で通常のシフトが崩れた月は「例外月」に設定すると学習から除外できます。除外は18ヶ月後に自動解除されます。" },
-      { title: "🤖 AI調整（フルプランのみ）", body: "「🤖 AI」ボタンをONにして指示を入力すると、AIがシフトを調整します（例：「〇〇さんを15日に休みにして」）。" },
+      { title: "使うほど賢くなる", body: "YEIXは過去のシフトから「誰が・どの曜日に・どの勤務に入りやすいか」を学習します。作って保存・確定するほど傾向が蓄積し、自動生成の精度が上がります。" },
+      { title: "過去データを読み込む", body: "右上メニューの「貼付 / 傾向学習」から、過去のシフト表を貼り付けて読み込めます。多いほど最初から傾向をつかめます。月ごとに分けて貼り付けると、より正確になります。" },
+      { title: "手直しは特に強く学習される", body: "自動生成のあとにあなたが手で直した配置は「あなたの判断」として特に重く学習されます。警告マークを見て直す作業を続けると、アプリがあなたの作り方に近づきます。" },
     ],
-    tips: ["貼り付けた過去データと保存済みシフトはどちらも学習に利用されます。", "学習データが6ヶ月以上蓄積されると、貼り付けデータより保存済みシフトの学習が優先されます。"],
+    tips: ["学習には少し時間がかかります。データが育つほど傾向がはっきり出ます。", "今の傾向は「学習状況」タブで確認できます。"],
   },
 ];
 
 function HelpModal({ onClose }) {
-  const [activeId, setActiveId] = useState("staff");
+  const [activeId, setActiveId] = useState("start");
   const sec = HELP_SECTIONS.find(s => s.id === activeId);
   return (
     <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,width:"100%",maxWidth:600,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 30px 80px #000"}}>
         {/* ヘッダー */}
         <div style={{background:"#6366F1",color:"#fff",padding:"16px 20px",borderRadius:"16px 16px 0 0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-          <div style={{fontWeight:900,fontSize:16}}>❓ 使い方ガイド</div>
+          <div style={{fontWeight:900,fontSize:16,display:"flex",alignItems:"center",gap:6}}><HelpCircle size={18} strokeWidth={2}/>使い方ガイド</div>
           <button onClick={onClose} style={{background:"rgba(255,255,255,0.25)",border:"none",color:"#fff",cursor:"pointer",fontSize:18,width:32,height:32,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}><X size={18} strokeWidth={2}/></button>
         </div>
         {/* タブ */}
         <div style={{display:"flex",overflowX:"auto",borderBottom:"2px solid #F4F4F5",background:"#eaf8f6",flexShrink:0}}>
           {HELP_SECTIONS.map(s=>(
-            <button key={s.id} onClick={()=>setActiveId(s.id)} style={{padding:"9px 12px",background:"transparent",border:"none",color:activeId===s.id?"#4F46E5":"#3F3F46",borderBottom:activeId===s.id?"2px solid #6366F1":"2px solid transparent",cursor:"pointer",fontSize:11,fontWeight:activeId===s.id?800:500,whiteSpace:"nowrap",flexShrink:0}}>
-              {s.icon} {s.label}
+            <button key={s.id} onClick={()=>setActiveId(s.id)} style={{padding:"9px 12px",background:"transparent",border:"none",color:activeId===s.id?"#4F46E5":"#3F3F46",borderBottom:activeId===s.id?"2px solid #6366F1":"2px solid transparent",cursor:"pointer",fontSize:11,fontWeight:activeId===s.id?800:500,whiteSpace:"nowrap",flexShrink:0,display:"inline-flex",alignItems:"center",gap:4}}>
+              {s.icon&&<s.icon size={13} strokeWidth={2}/>} {s.label}
             </button>
           ))}
         </div>
         {/* コンテンツ */}
         <div style={{overflowY:"auto",padding:"20px 24px",flex:1}}>
-          <div style={{fontSize:16,fontWeight:900,color:"#18181B",marginBottom:16}}>{sec.icon} {sec.label}</div>
+          <div style={{fontSize:16,fontWeight:900,color:"#18181B",marginBottom:16,display:"flex",alignItems:"center",gap:8}}>{sec.icon&&<sec.icon size={18} strokeWidth={2}/>}{sec.label}</div>
           {sec.steps.map((st,i)=>(
             <div key={i} style={{display:"flex",gap:14,marginBottom:20,alignItems:"flex-start"}}>
               <div style={{background:"#6366F1",color:"#fff",borderRadius:"50%",width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,flexShrink:0,marginTop:2}}>{i+1}</div>
@@ -2160,7 +2156,7 @@ function HelpModal({ onClose }) {
           )}
           {sec.tips&&sec.tips.length>0&&(
             <div style={{background:"#e8f5ee",borderLeft:"4px solid #2d8a52",borderRadius:"0 8px 8px 0",padding:"10px 14px",margin:"8px 0"}}>
-              <div style={{fontWeight:800,color:"#2d8a52",fontSize:12,marginBottom:6}}>💡 ポイント</div>
+              <div style={{fontWeight:800,color:"#2d8a52",fontSize:12,marginBottom:6,display:"flex",alignItems:"center",gap:5}}><Lightbulb size={13} strokeWidth={2}/>ポイント</div>
               {sec.tips.map((t,i)=><div key={i} style={{fontSize:12,color:"#18181B",lineHeight:1.8}}>・{t}</div>)}
             </div>
           )}
