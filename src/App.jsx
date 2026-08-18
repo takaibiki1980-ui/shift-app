@@ -2008,7 +2008,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:400,boxShadow:"0 30px 80px #000",maxHeight:"90vh",overflowY:"auto"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><Upload size={16} strokeWidth={2}/>書き出し</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><Upload size={16} strokeWidth={2}/>印刷</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
         <div style={{fontSize:11,color:"#52525B",fontWeight:700,marginBottom:7}}>対象部署</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
           {depts.map(d=>{const sel=selectedDepts.includes(d.id);return<button key={d.id} onClick={()=>toggleDept(d.id)} style={{background:sel?"#4F46E5":"#fff",color:sel?"#fff":"#52525B",border:`1.5px solid ${sel?"#4F46E5":"#D4D4D8"}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:sel?700:400,letterSpacing:"0.01em",transition:"background 0.12s,color 0.12s,border-color 0.12s"}}>{d.label}</button>;})}
@@ -2092,7 +2092,7 @@ const HELP_SECTIONS = [
     id: "confirm", icon: Printer, label: "確定して印刷する",
     steps: [
       { title: "確定する", body: "完成したら「確定」を押します。確定すると編集できない「閲覧・印刷用」の状態になります。確定中は希望休が「休」表示になり、そのまま印刷すれば希望休も休みとして印刷されます。" },
-      { title: "印刷・共有する", body: "「書き出し」ボタンを開くと「今すぐ印刷」（画面をそのまま印刷。ブラウザのCtrl+Pでも可）と、CSV（表計算ソフト用）・HTML（他のPCで印刷用）への保存があります。" },
+      { title: "印刷・共有する", body: "「印刷」ボタンを開くと「今すぐ印刷」（画面をそのまま印刷。ブラウザのCtrl+Pでも可）と、CSV（表計算ソフト用）・HTML（他のPCで印刷用）への保存があります。" },
       { title: "編集に戻す", body: "「編集」ボタン（確定解除）を押すと編集に戻れます。編集に戻すと、希望休は元の「希」表示に戻ります。" },
     ],
     tips: ["確定は何度でも解除・やり直しできます。印刷したいときは確定、直したいときは「編集」（確定解除）、と使い分けましょう。"],
@@ -5120,7 +5120,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             ? <button onClick={handleUnconfirm} style={{background:"#F59E0B",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Pencil size={14} strokeWidth={2}/>{!isMobile&&" 編集"}</button>
             : <button onClick={async()=>{ const ok=await saveNow(); if(ok) handleConfirm(); }} title="保存してから確定します" style={{background:"#10B981",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Check size={14} strokeWidth={2}/>{!isMobile&&" 確定"}</button>
           )}
-          <button onClick={()=>setDownloadModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 書き出し"}</button>
+          <button onClick={()=>setDownloadModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 印刷"}</button>
           {!isLocked && <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>}
           {/* Overflow [•••] */}
           <div style={{position:"relative"}}>
