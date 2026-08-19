@@ -495,6 +495,28 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
   return "\uFEFF" + rows.join("\n");
 }
 
+// 印刷/HTML出力の氏名列は固定幅（印刷時 約84px）。長い氏名（中黒入りの外国人フルネーム等）が
+// はみ出して切れないよう、氏名の推定幅から1行で収まるフォントサイズを算出する（列は広げない）。
+// 全角=1.0 / 中黒・長音・半角=約0.55 / 小書きカナ=0.7 として概算し、印刷時の使用可能幅(約74px)に収める。
+export function printNameFontSize(name) {
+  // フォント10px・太字・sans-serif での実測に基づく1文字あたりの概算幅(px)。
+  // カタカナ/ひらがな全角は漢字より広い(≈11.5)ため、切れ防止に実測寄りへ較正。
+  const SMALL_KANA = 'ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ';
+  let w10 = 0;
+  for (const ch of String(name || '')) {
+    const code = ch.charCodeAt(0);
+    if (ch === '・' || ch === '·' || ch === 'ー' || ch === '／' || ch === '　' || ch === ' ') w10 += 6.0;
+    else if (code <= 0x00FF) w10 += 6.0;                                  // 半角(ASCII等)
+    else if (SMALL_KANA.includes(ch)) w10 += 8.0;                        // 小書きカナ
+    else if ((code >= 0x3040 && code <= 0x30FF)) w10 += 11.5;            // ひらがな・カタカナ(全角)
+    else w10 += 10.0;                                                     // 漢字・その他全角
+  }
+  if (w10 <= 0) return 10;
+  const USABLE = 72;           // 印刷時の氏名列の使用可能幅(px)：列84 − 余白 − 安全マージン
+  const MAX = 10, MIN = 6;     // 通常は10px、長い名前ほど縮小（下限6px）
+  return Math.max(MIN, Math.min(MAX, Math.floor((USABLE / w10) * 100) / 10));
+}
+
 function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts, allEvents) {
   const days = getDays(year, month);
   const mk = monthKey(year, month);
@@ -515,7 +537,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       let w=0,n=0,r=0;
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
-      html += TAG('tr')+'<td class="name"><div class="name-inner">'+s.name+'</div></td>';
+      html += TAG('tr')+'<td class="name"><div class="name-inner" style="font-size:'+printNameFontSize(s.name)+'px">'+s.name+'</div></td>';
       for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const isKibo=!dispV&&kibodays.includes(d); const isYukyu2=!dispV&&!isKibo&&yukyudays2.includes(d); w+=workDayValue(v); if(v==="夜勤") n++; if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休") r+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||dispV==="希望休"||dispV==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(HALF_REST_TYPES.has(dispV))?dispV:(getShiftDef(dispV, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}"`)+cellText+CTAG('td'); }
       html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+r+CTAG('td')+CTAG('tr');
     });
