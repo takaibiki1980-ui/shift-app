@@ -2662,7 +2662,7 @@ function SummaryView({ staffList, shifts, dept, year, month }) {
 
 const ICON_BTN = (color) => ({ background:`${color}18`, border:`1px solid ${color}40`, borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:13 });
 
-function StaffList({ locked, staffList, dept, year, month, onEdit:pEdit, onDelete:pDelete, onAdd:pAdd, onReorder:pReorder }) {
+function StaffList({ locked, staffList, dept, year, month, staffCount, staffMax, onEdit:pEdit, onDelete:pDelete, onAdd:pAdd, onReorder:pReorder }) {
   // ロック中は編集系を無効化（二重防御・親側の関数ガードと併せて閲覧のみにする）
   const onEdit=locked?()=>{}:pEdit, onDelete=locked?()=>{}:pDelete, onAdd=locked?()=>{}:pAdd, onReorder=locked?null:pReorder;
   const ds = staffList.filter(s=>s.dept===dept.id);
@@ -2670,7 +2670,7 @@ function StaffList({ locked, staffList, dept, year, month, onEdit:pEdit, onDelet
     <div style={{maxWidth:680}}>
       {locked&&<div style={{background:"#F3F4F6",border:"1px solid #E5E7EB",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:"#6B7280",display:"flex",alignItems:"center",gap:6}}><Lock size={13} strokeWidth={2}/>ロック中は閲覧のみです。編集するには解錠してください。</div>}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-        <div style={{fontSize:13,color:"#6366F1",fontWeight:800}}>{dept.label} — {ds.length}名</div>
+        <div style={{fontSize:13,color:"#6366F1",fontWeight:800}}>{dept.label} — {ds.length}名{staffMax!=null&&<span style={{fontSize:10,color:"#9CA3AF",fontWeight:600,marginLeft:8}}>施設合計 {staffCount}/{staffMax===Infinity?"∞":staffMax}</span>}</div>
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
@@ -3770,6 +3770,16 @@ export default function App() {
 // ─────────────────────────────────────────────
 const PLAN_LABELS = { free:"無料プラン", standard:"スタンダード", full:"フルプラン" };
 const PLAN_COLORS = { free:"#6b7280", standard:"#6366F1", full:"#f59e0b" };
+// プラン別の数の上限（部署数・スタッフ数＝施設合計）。is_admin（研究用）は無制限。
+const PLAN_LIMITS = {
+  free:     { depts: 1,        staff: 10 },
+  standard: { depts: 2,        staff: 30 },
+  full:     { depts: Infinity, staff: Infinity },
+};
+export const limitOf = (profile) => profile?.is_admin
+  ? { depts: Infinity, staff: Infinity }
+  : (PLAN_LIMITS[profile?.plan] || PLAN_LIMITS.free);
+const limitDisp = (n) => n === Infinity ? "∞" : n;
 
 // ─────────────────────────────────────────────
 //  ADMIN PANEL
@@ -3898,6 +3908,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => {
     if (innerTab === "backtest" && !profile?.is_admin) setInnerTab("shift");
   }, [innerTab, profile?.is_admin]);
+  const planLimit = limitOf(profile);              // { depts, staff }（is_admin/fullは Infinity）
+  const planLabelJa = profile?.is_admin ? "研究用" : (PLAN_LABELS[profile?.plan||'free'] || "無料プラン");
 
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
@@ -5095,7 +5107,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setCtxMenu(null);
   };
 
-  const saveStaff = (form) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
+  const saveStaff = (form) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} const isNewStaff=!staffList.find(s=>s.id===form.id); if(isNewStaff && staffList.length>=planLimit.staff){alert(`${planLabelJa}プランではスタッフは${planLimit.staff}名までです。`);return;} setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
   const deleteStaff = (id) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} const s=staffList.find(x=>x.id===id); setConfirmDialog({message:`「${s?.name||'このスタッフ'}」を削除します。\nよろしいですか？`,onOk:()=>setStaffList(prev=>prev.filter(x=>x.id!==id)),okLabel:"削除する"}); };
   // 表示順の並べ替え（部署内で上下移動）。staff.id・シフト・生成・学習には非影響（配列順のみ変更）
   const moveStaff = (id, dir) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} setStaffList(prev => {
@@ -5140,7 +5152,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
 
-  const handleSaveDept = (deptData) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} const isNew=!depts.find(d=>d.id===deptData.id); setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
+  const handleSaveDept = (deptData) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} const isNew=!depts.find(d=>d.id===deptData.id); if(isNew && depts.length>=planLimit.depts){alert(`${planLabelJa}プランでは部署は${planLimit.depts}個までです。`);return;} setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
   const handleDeleteDept = (deptId) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
   if (dbLoading) return (
@@ -5221,7 +5233,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* DEPT TABS */}
       <div style={{background:"#F8FAFC",borderBottom:"1px solid #E5E7EB",display:"flex",overflowX:"auto",padding:"0 16px",alignItems:"center"}}>
         {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:act?"2px solid #2563EB":"2px solid transparent",color:act?"#111827":"#6B7280",borderRadius:0,cursor:"pointer",fontSize:12,fontWeight:act?600:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"0 1px"}}><span>{d.label}</span><span style={{background:act?"#EFF6FF":"#F1F5F9",color:act?"#2563EB":"#9CA3AF",borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&!isLocked&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",padding:"3px 6px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={13} strokeWidth={2}/></button>}</div>);})}
-        {!isLocked && <button onClick={()=>setDeptSettingModal({dept:null,isNew:true})} style={{background:"none",border:"1px dashed #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",fontSize:11,padding:"5px 11px",marginLeft:8,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>}
+        {!isLocked && <button onClick={()=>{ if(depts.length>=planLimit.depts){alert(`${planLabelJa}プランでは部署は${planLimit.depts}個までです。`);return;} setDeptSettingModal({dept:null,isNew:true}); }} style={{background:"none",border:"1px dashed #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",fontSize:11,padding:"5px 11px",marginLeft:8,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>}
+        {!isLocked && <span style={{fontSize:10,color:"#9CA3AF",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>部署 {depts.length}/{limitDisp(planLimit.depts)}</span>}
       </div>
 
       {/* INNER TABS */}
@@ -5304,7 +5317,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
-        {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>setStaffModal({data:null})} onReorder={moveStaff}/>}
+        {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} staffCount={staffList.length} staffMax={planLimit.staff} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>{ if(staffList.length>=planLimit.staff){alert(`${planLabelJa}プランではスタッフは${planLimit.staff}名までです。`);return;} setStaffModal({data:null}); }} onReorder={moveStaff}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
         {innerTab==="learn"&&<LearnStatusView learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month}/>}
         {innerTab==="backtest"&&profile?.is_admin&&<BacktestView staffList={staffList} depts={depts} allDBData={allDBDataRef.current} exceptionMonths={exceptionMonths} activeDeptId={activeDeptId} year={year} month={month}/>}
