@@ -920,10 +920,14 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
 }
 
 const SHIFT_TYPE_OPTIONS = ["早番","日勤","遅番","夜勤"];
-function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm }) {
+function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm, year, month, onApplyMonthlyKyuko }) {
   const buildInitMaxStaff = (types, existing, customDefs) => { const d={}; (types||["日勤"]).forEach(k=>{const cd=(customDefs||[]).find(c=>c.key===k);const base=cd?.baseType||k;const def=base==="日勤"?99:1;const saved=existing?.[k];d[k]=(saved!=null&&!(cd&&base==="日勤"&&saved===1))?saved:def;}); return d; };
   const initShiftTypes = () => { const base=dept?.shiftTypes||["日勤"]; const ckeys=(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean); const missing=ckeys.filter(k=>!base.includes(k)); const all=missing.length>0?[...base,...missing]:base; return all.filter((k,i)=>all.indexOf(k)===i); };
   const [label,setLabel]=useState(dept?.label||""), [shiftTypes,setShiftTypes]=useState(initShiftTypes), [minStaff,setMinStaff]=useState(dept?.minStaff||{日勤:1}), [maxStaff,setMaxStaff]=useState(()=>buildInitMaxStaff(initShiftTypes(),dept?.maxStaff,dept?.customShiftDefs)), [maxConsec,setMaxConsec]=useState(dept?.maxConsecutive||5), [defKyuko,setDefKyuko]=useState(dept?.defaultKyukoDays||8), [kiboLimit,setKiboLimit]=useState(dept?.kiboLimit||3), [kiboDayLimit,setKiboDayLimit]=useState(dept?.kiboDayLimit||0), [rolesText,setRolesText]=useState((dept?.roles||["職員"]).join("\n")), [pinCode,setPinCode]=useState(dept?.pin||""), [roleShiftTypes,setRoleShiftTypes]=useState(dept?.roleShiftTypes||{});
+  // 部署×その月だけの公休数。dept.kyukoDaysByMonth["YYYY-M"] を記録として保持し、設定時に全スタッフへ適用。
+  const _mkDept = (year!=null&&month!=null) ? monthKey(year,month) : null;
+  const [monthlyKyukoMap, setMonthlyKyukoMap] = useState(dept?.kyukoDaysByMonth||{});
+  const monthKyukoSet = _mkDept!=null ? (monthlyKyukoMap[_mkDept] ?? null) : null;
   const [shiftMaxByType,setShiftMaxByType]=useState(()=>{const d={};initShiftTypes().filter(k=>k!=="夜勤").forEach(k=>{d[k]=dept?.shiftMaxByType?.[k]||0;});return d;});
   const [customShiftDefs, setCustomShiftDefs] = useState(dept?.customShiftDefs || []);
   const [crossFloorNightEnabled, setCrossFloorNightEnabled] = useState(!!dept?.crossFloorNightEnabled);
@@ -937,7 +941,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
   const [maxStaffRelaxable, setMaxStaffRelaxable] = useState(dept?.maxStaffRelaxable !== false);
   const [engineType, setEngineType] = useState(dept?.engineType || 'kaigo');
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,allowLateToEarly:allowLateToEarly||undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kyukoDaysByMonth:(monthlyKyukoMap&&Object.keys(monthlyKyukoMap).length)?monthlyKyukoMap:undefined,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,allowLateToEarly:allowLateToEarly||undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -1000,10 +1004,25 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm })
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div><label style={LS}>最大連続勤務日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:maxConsec,min:3,max:7,unit:"日",onConfirm:v=>setMaxConsec(v===""?5:Math.max(3,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{maxConsec}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div></div>
-          <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:defKyuko,min:4,max:15,unit:"日",onConfirm:v=>setDefKyuko(v===""?8:Math.max(4,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{defKyuko}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div></div>
+          <div><label style={LS}>デフォルト公休日数</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:defKyuko,min:4,max:15,unit:"日",onConfirm:v=>setDefKyuko(v===""?8:Math.max(4,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{defKyuko}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div><div style={{fontSize:10,color:"#9CA3AF",marginTop:3}}>新規スタッフを追加したときの初期値です。すでにいるスタッフや生成には影響しません。</div></div>
           <div><label style={LS}>希望休 上限人数（同日）</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:kiboLimit,min:1,max:10,unit:"名",onConfirm:v=>setKiboLimit(v===""?3:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{kiboLimit}</div><span style={{fontSize:12,color:"#3F3F46"}}>名</span></div><div style={{fontSize:10,color:"#c44b4b",marginTop:3}}>同じ日に何名まで希望休を取れるか（同日に達すると⚠警告）</div></div>
           <div><label style={LS}>希望休 上限日数（1人あたり）</label><div style={{display:"flex",alignItems:"center",gap:8}}><div onClick={e=>setKp({value:kiboDayLimit,min:0,max:31,unit:"日",onConfirm:v=>setKiboDayLimit(v===""?0:Math.max(0,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{kiboDayLimit===0?"制限なし":kiboDayLimit}</div><span style={{fontSize:12,color:"#3F3F46"}}>日</span></div><div style={{fontSize:10,color:"#2563EB",marginTop:3}}>1人が1ヶ月に何日まで希望休を出せるか（0=制限なし・超過はポータルで入力不可）</div></div>
         </div>
+        {/* 今月の公休数（この部署だけ）— apply-on-set。生成は各スタッフの月別公休を読む（core.js無改変） */}
+        {_mkDept!=null && !isNew && onApplyMonthlyKyuko && (
+        <div style={{background:"#F5F3FF",border:"1px solid #C4B5FD",borderRadius:10,padding:"12px 14px",marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:800,color:"#5B21B6",marginBottom:4}}>今月の公休数（この部署だけ）</div>
+          <div style={{fontSize:10,color:"#6D28D9",marginBottom:10}}>{year}年{month+1}月だけ、この部署の全員の公休をこの日数にします。翌月は元に戻ります。</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"#3F3F46"}}>設定日数</span>
+            <div onClick={e=>setKp({value:(monthKyukoSet??defKyuko),min:0,max:20,unit:"日",onConfirm:v=>{const nv=v===""?defKyuko:Math.max(0,Math.min(20,+v));setMonthlyKyukoMap(m=>({...m,[_mkDept]:nv}));},anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,width:64,padding:"7px 10px",textAlign:"center",marginBottom:0,cursor:"pointer",userSelect:"none",fontWeight:700}}>{monthKyukoSet??defKyuko}</div>
+            <span style={{fontSize:12,color:"#3F3F46"}}>日</span>
+            <button onClick={()=>{const days=monthKyukoSet??defKyuko;setMonthlyKyukoMap(m=>({...m,[_mkDept]:days}));onApplyMonthlyKyuko(dept.id,_mkDept,days);}} style={{background:"#7C3AED",color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:800}}>この部署の{month+1}月を{monthKyukoSet??defKyuko}日にする</button>
+            {monthKyukoSet!=null&&<button onClick={()=>{setMonthlyKyukoMap(m=>{const n={...m};delete n[_mkDept];return n;});onApplyMonthlyKyuko(dept.id,_mkDept,null);}} style={{background:"none",border:"none",color:"#c44b4b",cursor:"pointer",fontSize:11,fontWeight:700}}><X size={12} strokeWidth={2} style={{verticalAlign:"middle",marginRight:2}}/>解除（全体設定に戻す）</button>}
+          </div>
+          {monthKyukoSet!=null&&<div style={{fontSize:10,color:"#7C3AED",marginTop:8,fontWeight:700}}>現在：{year}年{month+1}月はこの部署の全員が {monthKyukoSet}日 に設定されています（個別）。</div>}
+        </div>
+        )}
         <label style={LS}>役職一覧（1行に1つ）</label>
         <textarea value={rolesText} onChange={e=>setRolesText(e.target.value)} rows={4} placeholder={"介護福祉士\n介護職員\n介護補助"} style={{...INPUT_STYLE,resize:"vertical",lineHeight:1.7,marginBottom:14}}/>
         {(()=>{
@@ -5091,7 +5110,32 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     [next[a], next[b]] = [next[b], next[a]];
     return next;
   }); };
-  const handleBulkKyuko = (days, mk) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}}))); setBulkKyukoModal(false); };
+  const handleBulkKyuko = (days, mk) => {
+    if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
+    const conflicts = depts.filter(d => d.kyukoDaysByMonth?.[mk] != null);
+    const doApply = () => {
+      // 全部署・全スタッフに一律適用
+      setStaffList(prev=>prev.map(s=>({...s,kyukoDaysByMonth:{...(s.kyukoDaysByMonth||{}),[mk]:days}})));
+      // 上書きした部署個別設定の記録は削除（整合）
+      if(conflicts.length) setDepts(prev=>prev.map(d=>{ if(d.kyukoDaysByMonth?.[mk]==null) return d; const nb={...d.kyukoDaysByMonth}; delete nb[mk]; return {...d, kyukoDaysByMonth: Object.keys(nb).length?nb:undefined}; }));
+      setBulkKyukoModal(false);
+    };
+    if(conflicts.length){
+      const [yy,mm]=mk.split('-');
+      setBulkKyukoModal(false);
+      setConfirmDialog({ message:`${yy}年${mm}月は次の部署に個別の公休設定があります：\n${conflicts.map(d=>`・${d.label}（${d.kyukoDaysByMonth[mk]}日）`).join('\n')}\n\n全体設定（${days}日）で上書きしますか？`, okLabel:'上書きする', onOk: doApply });
+    } else doApply();
+  };
+  // 部署×その月だけの公休数を適用（apply-on-set）。その部署の全スタッフの kyukoDaysByMonth[mk] に書き込み、
+  // dept.kyukoDaysByMonth[mk] にも記録（全体一括の警告検知・表示用）。days=null で解除（全体設定に戻す）。
+  const applyDeptMonthlyKyuko = (deptId, mk, days) => {
+    if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
+    setStaffList(prev=>prev.map(s=>{ if(s.dept!==deptId) return s; const nb={...(s.kyukoDaysByMonth||{})}; if(days==null) delete nb[mk]; else nb[mk]=days; return {...s, kyukoDaysByMonth:nb}; }));
+    setDepts(prev=>prev.map(d=>{ if(d.id!==deptId) return d; const nb={...(d.kyukoDaysByMonth||{})}; if(days==null) delete nb[mk]; else nb[mk]=days; return {...d, kyukoDaysByMonth: Object.keys(nb).length?nb:undefined}; }));
+    const [yy,mm]=mk.split('-');
+    const lbl=depts.find(d=>d.id===deptId)?.label||'';
+    alert(days==null ? `${lbl} の ${yy}年${mm}月 の公休を全体設定に戻しました。` : `${lbl} の ${yy}年${mm}月 の公休を全員 ${days}日 に設定しました。`);
+  };
 
   const prevMonth = ()=>{ if(month===0){setYear(y=>y-1);setMonth(11);}else setMonth(m=>m-1); };
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
@@ -5268,7 +5312,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
-      {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
+      {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} year={year} month={month} onApplyMonthlyKyuko={applyDeptMonthlyKyuko} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;} setDeptShifts({},{resetHistory:true});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinSettingsModal&&<PinSettingsModal depts={depts} onSave={(pins)=>{ setDepts(prev=>prev.map(d=>({...d, pin:(pins[d.id]||"")||undefined}))); }} onClose={()=>setPinSettingsModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
