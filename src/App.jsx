@@ -3780,6 +3780,10 @@ export const limitOf = (profile) => profile?.is_admin
   ? { depts: Infinity, staff: Infinity }
   : (PLAN_LIMITS[profile?.plan] || PLAN_LIMITS.free);
 const limitDisp = (n) => n === Infinity ? "∞" : n;
+// 学習を有料の目玉にする: standard/full と is_admin のみ学習が生成に効く。free は学習オフ（trend空）。
+// LEARNING_BY_PLAN=false で常に学習オン（従来動作）へ即復帰。
+const LEARNING_BY_PLAN = true;
+export const isLearningEnabled = (profile) => !LEARNING_BY_PLAN || !!profile?.is_admin || ['standard','full'].includes(profile?.plan);
 
 // ─────────────────────────────────────────────
 //  ADMIN PANEL
@@ -3907,9 +3911,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // バックテストは開発者(is_admin)専用。非adminがこのタブ状態になったら既定タブへ戻す（表示崩れ防止）。
   useEffect(() => {
     if (innerTab === "backtest" && !profile?.is_admin) setInnerTab("shift");
-  }, [innerTab, profile?.is_admin]);
+    if (innerTab === "learn" && !isLearningEnabled(profile)) setInnerTab("shift"); // free は学習状況タブ不可
+  }, [innerTab, profile?.is_admin, profile?.plan]);
   const planLimit = limitOf(profile);              // { depts, staff }（is_admin/fullは Infinity）
   const planLabelJa = profile?.is_admin ? "研究用" : (PLAN_LABELS[profile?.plan||'free'] || "無料プラン");
+  const learningEnabled = isLearningEnabled(profile); // 学習を生成/表示に効かせるか（free=false）
 
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
@@ -4607,10 +4613,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }
     const dp = depts.find(d => d.id === activeDeptId);
     if (!dp) return;
+    if (!learningEnabled) { setGenWarnings(prev => (prev.length ? [] : prev)); return; } // free は学習オフ＝警告なし
     try {
       setGenWarnings(computeWarnings({ shifts: allShifts[activeDeptId] || {}, staffList, dept: dp, trend: learnedTrend, year, month }));
     } catch { /* 表示専用のため失敗時は無視 */ }
-  }, [allShifts, warningsScope, warningsOn, activeDeptId, year, month, learnedTrend, staffList, depts]);
+  }, [allShifts, warningsScope, warningsOn, activeDeptId, year, month, learnedTrend, staffList, depts, learningEnabled]);
   const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
   // ── 部署編集ロック ──
   const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
@@ -4854,7 +4861,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       const fl = s.floorJoinDate    ? deriveYears(s.floorJoinDate,    _gen_refDate) : (s.floorYears    ?? null);
       return { ...s, facilityYears: fy, floorYears: fl };
     });
-    const cd=dept, ct=learnedTrend;
+    const cd=dept, ct=learningEnabled?learnedTrend:{}; // free は学習オフ＝中立trend（制約は従来どおり守る）
     generateTimerRef.current = setTimeout(() => {
       // 月切り替え中は生成を中断（year/monthクロージャ陳腐化チェック）
       if (year !== yearRef.current || month !== monthRef.current) {
@@ -5210,6 +5217,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   <ClipboardList size={14} strokeWidth={2} style={{color:isConfirmed?"#D4D4D8":"#6B7280",flexShrink:0}}/>
                   <div style={{flex:1}}>
                     <div style={{fontWeight:500}}>貼付 / 傾向学習</div>
+                    {!learningEnabled&&<div style={{fontSize:10,color:"#9CA3AF",marginTop:2}}>現在のプランでは学習は生成に反映されません。有料プランにすると、取り込んだ過去データが活用されます。</div>}
                   </div>
                 </div>
                 <div onClick={()=>{ if(isConfirmed){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setOverflowOpen(false);return;} setHistoryModal(true);setOverflowOpen(false);}} title={isConfirmed?"確定済みです。「編集」を押してから使用できます":undefined} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:isConfirmed?"not-allowed":"pointer",fontSize:12,color:isConfirmed?"#C4C4C4":"#374151"}} onMouseEnter={e=>{if(!isConfirmed)e.currentTarget.style.background="#F8FAFC";}} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><History size={14} strokeWidth={2} style={{color:isConfirmed?"#D4D4D8":"#6B7280"}}/><span>履歴から復元</span></div>
@@ -5244,7 +5252,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           ? <button onClick={()=>alert("予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 予定表</button>
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#18181B":"#71717A",borderBottom:innerTab==="yotei"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
         }
-        <button onClick={()=>setInnerTab("learn")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="learn"?"#18181B":"#71717A",borderBottom:innerTab==="learn"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="learn"?700:500,whiteSpace:"nowrap",flexShrink:0}}>学習状況</button>
+        {learningEnabled
+          ? <button onClick={()=>setInnerTab("learn")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="learn"?"#18181B":"#71717A",borderBottom:innerTab==="learn"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="learn"?700:500,whiteSpace:"nowrap",flexShrink:0}}>学習状況</button>
+          : <button onClick={()=>alert("学習機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 学習状況</button>
+        }
         {profile?.is_admin&&<button onClick={()=>setInnerTab("backtest")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="backtest"?"#18181B":"#71717A",borderBottom:innerTab==="backtest"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="backtest"?700:500,whiteSpace:"nowrap",flexShrink:0}}>バックテスト</button>}
         {!isMobile&&<div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:10}}>
           {innerTab==="shift"&&(
@@ -5292,7 +5303,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="shift"&&(<><Legend/>
           {(()=>{
             const hasSchedule = Object.keys(deptShifts||{}).length > 0;
-            const hasLearning = Object.keys(learnedTrend||{}).filter(k=>k!=='_monthCounts'&&k!=='_months').length > 0;
+            const hasLearning = learningEnabled && Object.keys(learnedTrend||{}).filter(k=>k!=='_monthCounts'&&k!=='_months').length > 0;
             const showMatch = hasSchedule && hasLearning;
             if (!showMatch && !isConfirmed) return null;
             const curRate = editRates[`${year}_${month+1}_${activeDeptId}`];
@@ -5319,7 +5330,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} staffCount={staffList.length} staffMax={planLimit.staff} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>{ if(staffList.length>=planLimit.staff){alert(`${planLabelJa}プランではスタッフは${planLimit.staff}名までです。`);return;} setStaffModal({data:null}); }} onReorder={moveStaff}/>}
         {innerTab==="yotei"&&<YoteiView dept={dept} staffList={staffList} shifts={deptShifts} year={year} month={month} yoteiDeptData={deptYotei} onUpdateYotei={handleUpdateYotei} onBatchUpdateYotei={handleBatchUpdateYotei} floorSettings={floorSettings} onUpdateFloorSettings={handleUpdateFloorSettings}/>}
-        {innerTab==="learn"&&<LearnStatusView learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month}/>}
+        {innerTab==="learn"&&learningEnabled&&<LearnStatusView learnedTrend={learnedTrend} staffList={staffList} depts={depts} allDBData={allDBDataRef.current} activeDeptId={activeDeptId} year={year} month={month}/>}
         {innerTab==="backtest"&&profile?.is_admin&&<BacktestView staffList={staffList} depts={depts} allDBData={allDBDataRef.current} exceptionMonths={exceptionMonths} activeDeptId={activeDeptId} year={year} month={month}/>}
       </div>
 
