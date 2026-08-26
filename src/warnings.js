@@ -12,7 +12,7 @@
  *
  * 出力: [{ staffId, name, day, level, dow, reason, k, n, wilsonLower, expected?, actual }]
  */
-import { getDays, nameMatch, wilsonLower, STRONG_RATE, STRONG_MONTHS, WILSON_Z } from './engine/core.js';
+import { getDays, nameMatch, wilsonLower, STRONG_RATE, STRONG_MONTHS, WILSON_Z, HARD_REST_MIN_OBS } from './engine/core.js';
 
 const REST_SET = new Set(['休み', '希望休', '有休']);
 const DOW_JA = ['日', '月', '火', '水', '木', '金', '土'];
@@ -52,6 +52,21 @@ export function computeWarnings({ shifts, staffList, dept, trend, year, month })
       const dow = new Date(year, month, d).getDay();
       const nObs = t.dowWorkObs?.[dow] ?? 0;
       const obs = t.dowShiftObs?.[dow] || {};
+
+      // ── レベル3: 「本物の100%休み」の曜日に勤務が置かれた（D-1安全弁で人員確保のため解除された日） ──
+      // 実績が十分あり(該当曜日 >= HARD_REST_MIN_OBS 回)、その全てが休み系(一度も出勤なし)なのに勤務。
+      // 隠さず明示する警告（生成ロジックには影響しない・表示のみ）。
+      const cellObs = t.dowCellObs?.[dow] ?? 0;
+      const restObs = t.dowRestObs?.[dow] ?? 0;
+      const isHardRest100 = cellObs >= HARD_REST_MIN_OBS && restObs === cellObs;
+      if (isHardRest100 && !REST_SET.has(v) && v !== '明け') {
+        out.push({
+          staffId: s.id, name: s.name, day: d, level: 3, dow, hardRest100: true,
+          reason: `${s.name}さんの${DOW_JA[dow]}曜は実績${cellObs}回すべて休み（本物の100%）。この日は人員確保のため通常休みの職員を配置しています`,
+          k: restObs, n: cellObs, wilsonLower: null, expected: '休み', actual: v,
+        });
+        continue; // レベル3優先
+      }
 
       // ── レベル1: 確定癖と違う勤務が置かれた ──
       let strongShift = null, sk = 0, sw = 0;
