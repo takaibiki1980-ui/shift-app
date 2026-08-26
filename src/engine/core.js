@@ -33,7 +33,7 @@ const NEXT_DAY_HABIT_GUARD = false;
 // 学習の休み率(dowRestRate)は部署平均で平滑化されるため、平滑後の値ではなく生カウント
 // (dowCellObs/dowRestObs)で判定する(偽の100%=少数観測を除外)。既定OFF。物理的にminStaffが
 // 満たせない日は固定を控えて出勤を許す(デッドロック回避・その職員は表示側で警告)。
-const HARD_REST_100 = false;
+const HARD_REST_100 = true;
 const HARD_REST_MIN_OBS = 8; // 本物と認める該当曜日の最低生観測数(≈2ヶ月分)。
 
 // 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
