@@ -28,6 +28,14 @@ const NIGHT_STRONG_ENABLED = true;
 // 候補プール・nightMax救済・明け従属は不変＝must-fill厳守。false で従来の夜勤ソートへ即復帰。
 const NEXT_DAY_HABIT_GUARD = false;
 
+// D-1: 「本物の100%休み」＝実績でその曜日に一度も出勤がなく(生の休み系観測=総観測)、かつ
+// 観測が十分(HARD_REST_MIN_OBS以上)の曜日を、希望休と同格に生成前に絶対固定(lockedDays)する。
+// 学習の休み率(dowRestRate)は部署平均で平滑化されるため、平滑後の値ではなく生カウント
+// (dowCellObs/dowRestObs)で判定する(偽の100%=少数観測を除外)。既定OFF。物理的にminStaffが
+// 満たせない日は固定を控えて出勤を許す(デッドロック回避・その職員は表示側で警告)。
+const HARD_REST_100 = false;
+const HARD_REST_MIN_OBS = 8; // 本物と認める該当曜日の最低生観測数(≈2ヶ月分)。
+
 // 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
 // 従来は一次キーが「そのシフトの総回数」の公平性(dow非依存)のため、他曜日でも同シフトを
 // 多くこなす人は総数が増えて特定曜日で後回しになり、例: 火曜遅番55%のような強い曜日癖が
@@ -663,6 +671,31 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       }
     }
   });
+
+  // ★ステップ1.2（D-1）: 本物の100%休みを希望休と同格に絶対固定（HARD_REST_100・既定OFF）
+  // 生の観測で「その曜日に一度も出勤なし(dowRestObs===dowCellObs)かつ観測十分(>=HARD_REST_MIN_OBS)」の
+  // 曜日を、その月の該当曜日すべてに「休み」で先置き＆lockedDaysへ。以降のPass A/夜勤/後半フェーズは触れない。
+  // 安全弁: minStaff が物理的に満たせなくなる日は固定を控える（勤務可能人数を ΣminStaff 名以上残す）。
+  if (HARD_REST_100) {
+    const _minReq = Math.max(0, Object.values(dept.minStaff || {}).reduce((a, b) => a + b, 0));
+    const _hardDow = {}; // sid -> Set(getDay)
+    ds.forEach(s => {
+      const t = getTrend(s); const set = new Set();
+      if (t?.dowCellObs && t?.dowRestObs) {
+        for (let dw = 0; dw < 7; dw++) { const n = t.dowCellObs[dw] || 0, r = t.dowRestObs[dw] || 0; if (n >= HARD_REST_MIN_OBS && r === n) set.add(dw); }
+      }
+      _hardDow[s.id] = set;
+    });
+    for (let d = 1; d <= days; d++) {
+      const dow = new Date(year, month, d).getDay();
+      const cand = ds.filter(s => !res[s.id][d] && _hardDow[s.id].has(dow));
+      if (!cand.length) continue;
+      const emptyNow = ds.filter(s => !res[s.id][d]).length;      // まだ勤務にも休みにもできる人数
+      const maxLockable = Math.max(0, emptyNow - _minReq);        // ΣminStaff名は勤務用に残す
+      cand.slice(0, maxLockable).forEach(s => { res[s.id][d] = '休み'; lockedDays[s.id].add(d); });
+      // ロックしきれなかった候補は「人員確保のため通常休みでも配置」＝表示側で警告（warnings.js）
+    }
+  }
 
   // ★ステップ1.5: 希望休アンカー配置
   // 希望休D がある夜勤対応スタッフに対し、D-2=夜勤・D-1=明け を先行仮置きする。
@@ -2290,6 +2323,8 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
   const dowTotalsR = {}; // 曜日別総日数:   [staffId][dow] 重み付きカウント (+6%7: 月=0,日=6)
   const dowShiftObs = {}; // Wilson用・重みなし生カウント: [staffId][dow(0=日..6=土)][shift] = 観測回数
   const dowWorkObs = {};   // Wilson用・重みなし生カウント: [staffId][dow] = その曜日の勤務日観測回数
+  const dowCellObs = {};   // D-1用・重みなし: [staffId][dow(0=日..6=土)] = その曜日の観測総数(非空)
+  const dowRestObs = {};   // D-1用・重みなし: [staffId][dow(0=日..6=土)] = その曜日の休み系観測数
   const REST_DOW_SET = new Set(['休み','希望休','有休']);
   const now = new Date();
   const nowYM = now.getFullYear() * 12 + now.getMonth();
@@ -2352,6 +2387,9 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
       if (!dowRests[staffId]) dowRests[staffId] = [0,0,0,0,0,0,0];
       if (!dowShiftObs[staffId]) dowShiftObs[staffId] = [{},{},{},{},{},{},{}];
       if (!dowWorkObs[staffId]) dowWorkObs[staffId] = [0,0,0,0,0,0,0];
+      // D-1(本物の100%休み判定)用・重みなし生カウント。getDay()基準(0=日..6=土)。既存出力に影響しない追加のみ。
+      if (!dowCellObs[staffId]) dowCellObs[staffId] = [0,0,0,0,0,0,0]; // その曜日の観測総数(非空セル)
+      if (!dowRestObs[staffId]) dowRestObs[staffId] = [0,0,0,0,0,0,0]; // その曜日の休み系(休み/希望休/有休)観測数
       monthSets[staffId].add(`${keyYear}-${keyMonth}`);
       for (const [dayStr, shift] of Object.entries(staffShifts)) {
         // このセルの重み倍率・生カウント倍率を決定（手修正と希望勤務は掛け合わせず「大きい方」）。
@@ -2367,10 +2405,14 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
         if (shift) {
           const dr = parseInt(dayStr);
           if (!isNaN(dr)) {
-            const dow2 = (new Date(keyYear, keyMonth, dr).getDay() + 6) % 7;
+            const dowG = new Date(keyYear, keyMonth, dr).getDay(); // 0=日..6=土
+            const dow2 = (dowG + 6) % 7;
             const ew = weight * cellMul;
             dowTotalsR[staffId][dow2] += ew;
             if (REST_DOW_SET.has(shift)) dowRests[staffId][dow2] += ew;
+            // D-1用・重みなし生カウント（明けは在席だが休みでないので rest には数えない）
+            dowCellObs[staffId][dowG] += 1;
+            if (REST_DOW_SET.has(shift)) dowRestObs[staffId][dowG] += 1;
           }
         }
         if (!shift || ['希望休','有休','明け',''].includes(shift)) continue;
@@ -2455,7 +2497,9 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
     });
     result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate,
       dowShiftObs: dowShiftObs[staff.id] || [{},{},{},{},{},{},{}], // Wilson用・重みなし観測回数[dow][shift]
-      dowWorkObs: dowWorkObs[staff.id] || [0,0,0,0,0,0,0] };        // Wilson用・重みなし観測回数[dow]
+      dowWorkObs: dowWorkObs[staff.id] || [0,0,0,0,0,0,0],          // Wilson用・重みなし観測回数[dow]
+      dowCellObs: dowCellObs[staff.id] || [0,0,0,0,0,0,0],          // D-1用・その曜日の観測総数(getDay基準)
+      dowRestObs: dowRestObs[staff.id] || [0,0,0,0,0,0,0] };        // D-1用・その曜日の休み系観測数(getDay基準)
 
     monthCounts[staff.name] = monthSets[staff.id].size;
   }
@@ -2633,5 +2677,7 @@ export {
   STRONG_RATE,
   STRONG_MONTHS,
   WILSON_Z,
-  NEXT_DAY_HABIT_GUARD
+  NEXT_DAY_HABIT_GUARD,
+  HARD_REST_100,
+  HARD_REST_MIN_OBS
 };

@@ -253,4 +253,117 @@ export function computeDriftMetric({ actual, runs, staffList, dept, monthlyShift
   };
 }
 
+/**
+ * 指標H「表示確率 vs 実現率」— UIに表示している確率が、実際の生成でどれだけ実現しているか。
+ * 研究用・読み取り専用。A〜G・生成ロジックに一切影響しない（純粋関数・追加のみ）。
+ *
+ * 「表示確率」= LearnStatusView / セルツールチップ等でユーザーに見せている学習確率。
+ *   - 休み率: trend.dowRestRate（月=0..日=6 インデックス）
+ *   - 勤務種別率: trend.dowShiftRate（0=日..6=土 インデックス）
+ * 「実現率」= まっさら状態（希望休/希望勤務なし）で生成した runs における、対象月の
+ *   その曜日での 該当セル出現率（非空セル分母・5回平均）。
+ *
+ * 各 (staff, dow) を確率帯にビニングし、帯ごとに「表示確率平均 vs 実現率平均」を並べる。
+ * 特に「表示100%（=1.0）」が実際に何%実現しているかを別枠で出す（金を払う価値がある誠実さの核）。
+ *
+ * @param {{runs, staffList, dept, trend, year, month, minObs?}} p
+ *   runs: まっさら生成の結果配列（各 {[sid]:{[day]:shift}}）
+ *   minObs: この生観測数(dowWorkObs / dowCellObs)未満の (staff,dow) は薄すぎる表示として集計から除外
+ * @returns {{available, reason?, rest, shift, _fmt}}
+ *   rest/shift それぞれ { bands:[{label,lo,hi,n,dispAvg,realAvg,gap}], full:{n,dispAvg,realAvg,gap}, rows:[...] }
+ */
+export function computeDisplayVsRealizedMetric({ runs, staffList, dept, trend, year, month, minObs = 3 }) {
+  const days = getDays(year, month);
+  const ds = staffList.filter(s => s.dept === dept.id);
+  const cell = (obj, sid, d) => obj?.[sid]?.[d] ?? obj?.[sid]?.[String(d)] ?? '';
+  if (!runs?.length) return { available: false, reason: '生成結果(runs)がありません', rest: null, shift: null, _fmt: { pct } };
+  if (!trend) return { available: false, reason: '学習データ(trend)がありません', rest: null, shift: null, _fmt: { pct } };
+
+  const dowDaysOf = (dow) => {
+    const arr = [];
+    for (let d = 1; d <= days; d++) if (new Date(year, month, d).getDay() === dow) arr.push(d);
+    return arr;
+  };
+  const mean = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  // 生成runsでの (staff,dow,判定) 実現率（非空セル分母・5回平均）。matchFn(shiftValue)=>bool
+  const realizedRate = (sid, dowDays, matchFn) => mean(runs.map(run => {
+    const den = dowDays.filter(d => cell(run, sid, d) !== '').length;
+    if (den === 0) return null;
+    return dowDays.filter(d => matchFn(cell(run, sid, d))).length / den;
+  }).filter(v => v != null));
+
+  // 確率帯ビニング（0-20 / 20-40 / 40-60 / 60-80 / 80-100）。100%(=1.0)は full 別枠にも入れる。
+  const BANDS = [[0, 0.2], [0.2, 0.4], [0.4, 0.6], [0.6, 0.8], [0.8, 1.0]];
+  const bandLabel = ([lo, hi]) => `${Math.round(lo * 100)}〜${Math.round(hi * 100)}%`;
+  const summarize = (rows) => {
+    const bands = BANDS.map(([lo, hi]) => {
+      const inb = rows.filter(r => r.disp >= lo && (hi >= 1.0 ? r.disp <= hi : r.disp < hi) && r.real != null);
+      return {
+        label: bandLabel([lo, hi]), lo, hi, n: inb.length,
+        dispAvg: mean(inb.map(r => r.disp)), realAvg: mean(inb.map(r => r.real)),
+        gap: inb.length ? mean(inb.map(r => Math.abs(r.disp - r.real))) : null,
+      };
+    });
+    // 表示100%（>=0.999）別枠
+    const fullRows = rows.filter(r => r.disp >= 0.999 && r.real != null);
+    const full = {
+      n: fullRows.length, dispAvg: mean(fullRows.map(r => r.disp)),
+      realAvg: mean(fullRows.map(r => r.real)),
+      gap: fullRows.length ? mean(fullRows.map(r => Math.abs(r.disp - r.real))) : null,
+    };
+    // 全体の平均絶対差（キャリブレーション誤差）
+    const withReal = rows.filter(r => r.real != null);
+    const meanAbsGap = withReal.length ? mean(withReal.map(r => Math.abs(r.disp - r.real))) : null;
+    return { bands, full, meanAbsGap, count: withReal.length };
+  };
+
+  // ── 休み率（dowRestRate） ──
+  const restRows = [];
+  for (const s of ds) {
+    const t = trendForStaff(trend, s);
+    if (!t?.dowRestRate) continue;
+    for (let dow = 0; dow < 7; dow++) {
+      const dowDays = dowDaysOf(dow);
+      if (!dowDays.length) continue;
+      const nObs = t.dowCellObs?.[dow] ?? 0;         // getDay基準の生観測数
+      if (nObs < minObs) continue;
+      const disp = t.dowRestRate[(dow + 6) % 7];     // dowRestRateは月=0..日=6
+      if (disp == null) continue;
+      const real = realizedRate(s.id, dowDays, (v) => REST_ANY.has(v));
+      restRows.push({ name: s.name, dow: DOW_JA[dow], disp, real, obs: nObs });
+    }
+  }
+
+  // ── 勤務種別率（dowShiftRate） ──
+  const shiftRows = [];
+  for (const s of ds) {
+    const t = trendForStaff(trend, s);
+    if (!t?.dowShiftRate) continue;
+    for (let dow = 0; dow < 7; dow++) {
+      const rateMap = t.dowShiftRate[dow];
+      if (!rateMap) continue;
+      const dowDays = dowDaysOf(dow);
+      if (!dowDays.length) continue;
+      const nObs = t.dowWorkObs?.[dow] ?? 0;
+      if (nObs < minObs) continue;
+      for (const shift of Object.keys(rateMap)) {
+        const disp = rateMap[shift];
+        if (disp == null || disp < 0.05) continue;   // ほぼ0%の種別は表示対象外
+        const real = realizedRate(s.id, dowDays, (v) => v === shift);
+        shiftRows.push({ name: s.name, dow: DOW_JA[dow], shift, disp, real, obs: nObs });
+      }
+    }
+  }
+
+  const byDispDesc = (a, b) => b.disp - a.disp;
+  restRows.sort(byDispDesc); shiftRows.sort(byDispDesc);
+
+  return {
+    available: true,
+    rest: { ...summarize(restRows), rows: restRows },
+    shift: { ...summarize(shiftRows), rows: shiftRows },
+    _fmt: { pct },
+  };
+}
+
 export { pct as formatPct, DOW_JA };

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
-import { computeBacktestMetrics, computeDriftMetric, formatPct } from './research/backtest.js';
+import { computeBacktestMetrics, computeDriftMetric, computeDisplayVsRealizedMetric, formatPct } from './research/backtest.js';
 import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
@@ -1400,6 +1400,22 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
         monthlyShifts.push({ y: yy, m0: mm - 1, shifts: v });
       }
       m.G = computeDriftMetric({ actual, runs, staffList: btStaff, dept, monthlyShifts, year: yIdx, month: mIdx });
+      // 指標H（表示確率 vs 実現率）: まっさら状態（希望休/希望勤務なし）で別途5回生成し、
+      // UIに表示している確率が実際の生成でどれだけ実現するかを測る（読み取り専用・A〜Gに影響なし）。
+      const cleanStaff = staffList.map(s => s.dept !== deptId ? s : ({
+        ...s,
+        kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: [] },
+        yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: [] },
+        shiftRequestsByMonth: { ...(s.shiftRequestsByMonth || {}), [mk]: {} },
+      }));
+      const cleanRuns = [];
+      for (let i = 0; i < 5; i++) {
+        await new Promise(r => setTimeout(r, 20));
+        const { shifts } = bestOfN(cleanStaff, dept, yIdx, mIdx, {}, trend, 30, prevTail);
+        cleanRuns.push(shifts);
+        setProgress(5 + i + 1);
+      }
+      m.H = computeDisplayVsRealizedMetric({ runs: cleanRuns, staffList: cleanStaff, dept, trend, year: yIdx, month: mIdx });
       setMetrics(m); setRunsData({ actual, runs, ds: btStaff.filter(s => s.dept === deptId), year: yIdx, month: mIdx }); setViewRun(0); setNotes(nts);
     } catch (e) {
       setError('バックテスト実行エラー: ' + (e?.message || e));
@@ -1433,7 +1449,7 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
           </select>
         </div>
         <button onClick={run} disabled={running || !tgt} style={{ background: running || !tgt ? '#E5E7EB' : '#6366F1', color: running || !tgt ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 8, padding: '9px 18px', cursor: running || !tgt ? 'default' : 'pointer', fontSize: 13, fontWeight: 800 }}>
-          {running ? `生成中… ${progress}/5` : '▶ バックテスト実行（5回生成）'}
+          {running ? `生成中… ${progress}/10` : '▶ バックテスト実行（5回生成）'}
         </button>
       </div>
 
@@ -1513,6 +1529,33 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
               <tr><td style={{ ...td, fontWeight: 700, textAlign: 'left' }}>生成</td>{metrics.F.map(r => <td key={r.dow} style={td}>{formatPct(r.gen.avg)}</td>)}</tr>
             </tbody>
           </table></div>
+        </div>
+
+        {/* H: 表示確率 vs 実現率（まっさら生成での誠実さ検証） */}
+        <div style={box}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>H. 表示確率 vs 実現率（まっさら生成・希望休/希望勤務なしで別途5回生成）</div>
+          <div style={{ fontSize: 11, color: '#64748B', marginBottom: 8 }}>UIに見せている学習確率（表示）と、実際にまっさら状態で生成したときの出現率（実現）がどれだけ一致するかを、休み率・勤務種別率それぞれで確率帯別に集計。<b>表示100%が実現何%か</b>が誠実さの核。</div>
+          {!metrics.H?.available ? <div style={{ fontSize: 11, color: '#94A3B8' }}>測定不能：{metrics.H?.reason || 'データ不足'}</div> :
+            [['休み率（dowRestRate）', metrics.H.rest], ['勤務種別率（dowShiftRate）', metrics.H.shift]].map(([title, sec]) => (
+              <div key={title} style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: '#1D4ED8', marginBottom: 6 }}>{title}</div>
+                <div style={{ background: '#F8FAFF', border: '1px solid #DBEAFE', borderRadius: 8, padding: '8px 10px', marginBottom: 8, fontSize: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 6 }}>
+                  <div><b>全体の平均絶対差</b>：{sec.meanAbsGap == null ? '—' : (sec.meanAbsGap * 100).toFixed(1) + 'pt'}（{sec.count}件）</div>
+                  <div><b>表示100%の実現率</b>：{sec.full.n === 0 ? '該当なし' : <span style={{ color: sec.full.realAvg >= 0.9 ? '#16a34a' : '#dc2626', fontWeight: 800 }}>{formatPct(sec.full.realAvg)}</span>}{sec.full.n > 0 && `（${sec.full.n}件）`}</div>
+                </div>
+                <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead><tr><th style={{ ...th, textAlign: 'left' }}>表示確率帯</th><th style={th}>件数</th><th style={th}>表示（平均）</th><th style={th}>実現（平均）</th><th style={th}>差(絶対)</th></tr></thead>
+                  <tbody>{sec.bands.map((b, i) => <tr key={i}><td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{b.label}</td><td style={td}>{b.n}</td><td style={td}>{b.n ? formatPct(b.dispAvg) : '—'}</td><td style={{ ...td, fontWeight: 700, color: b.n && b.gap != null && b.gap <= 0.1 ? '#16a34a' : b.n ? '#dc2626' : '#94A3B8' }}>{b.n ? formatPct(b.realAvg) : '—'}</td><td style={td}>{b.n && b.gap != null ? (b.gap * 100).toFixed(1) + 'pt' : '—'}</td></tr>)}</tbody>
+                </table></div>
+                <details style={{ marginTop: 6 }}>
+                  <summary style={{ fontSize: 11, color: '#64748B', cursor: 'pointer' }}>明細（表示確率が高い順・上位40件）</summary>
+                  <div style={{ overflowX: 'auto', marginTop: 6 }}><table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                    <thead><tr><th style={{ ...th, textAlign: 'left' }}>スタッフ</th><th style={th}>曜日</th>{sec.rows[0]?.shift !== undefined && <th style={th}>種別</th>}<th style={th}>表示</th><th style={th}>実現</th><th style={th}>差</th><th style={th}>観測</th></tr></thead>
+                    <tbody>{sec.rows.slice(0, 40).map((r, i) => { const gap = r.real == null ? null : Math.abs(r.disp - r.real); return <tr key={i}><td style={{ ...td, textAlign: 'left' }}>{r.name}</td><td style={td}>{r.dow}</td>{r.shift !== undefined && <td style={{ ...td, fontWeight: 700 }}>{r.shift}</td>}<td style={td}>{formatPct(r.disp)}</td><td style={{ ...td, fontWeight: 700, color: gap != null && gap <= 0.1 ? '#16a34a' : '#dc2626' }}>{formatPct(r.real)}</td><td style={td}>{gap == null ? '—' : (gap * 100).toFixed(0) + 'pt'}</td><td style={td}>{r.obs}</td></tr>; })}</tbody>
+                  </table></div>
+                </details>
+              </div>
+            ))}
         </div>
 
         {/* Step6: 実績 vs 生成 並列（不一致ハイライト） */}
@@ -2596,9 +2639,10 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const kiboAsRest=confirmed&&isKibo;
                   const dispShown=(confirmed&&dispType==="希望休")?"休み":dispType;
                   const warn=warnings?warnings[`${s.id}:${d}`]:null;
-                  const warnBg=warn?(warn.level===1?"#fee2e2":"#fef9c3"):undefined;
-                  const warnOutline=warn?(warn.level===1?"2px dashed #ef4444":"1px dashed #f59e0b"):undefined;
-                  return <td key={d} title={warn?warn.reason:undefined} style={{position:"relative",padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":warnBg||(isKibo?"#fff5f5":isYukyu?"#faf0ff":showFix?"#f5f3ff":cellWeekBg),cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showFix?"2px solid #a78bfa":warnOutline||(consecViol?"1px solid #e0707060":undefined),outlineOffset:isSelected||isRoleViol||showFix||warn?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?(kiboAsRest?<ShiftBadge type="休み" defs={dept.customShiftDefs}/>:<span style={{fontSize:9,color:"#BE123C"}}>希</span>):isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispShown} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{warn&&<span onClick={(e)=>{e.stopPropagation();setWarnPop({reason:warn.reason,x:e.clientX,y:e.clientY});}} title={warn.reason} style={{position:"absolute",top:0,right:1,fontSize:8,fontWeight:900,lineHeight:1,color:warn.level===1?"#dc2626":"#b45309",cursor:"pointer"}}>{warn.level===1?"⚠":"!"}</span>}</td>;
+                  const warnStrong=warn&&(warn.level===1||warn.level===3);
+                  const warnBg=warn?(warnStrong?"#fee2e2":"#fef9c3"):undefined;
+                  const warnOutline=warn?(warnStrong?"2px dashed #ef4444":"1px dashed #f59e0b"):undefined;
+                  return <td key={d} title={warn?warn.reason:undefined} style={{position:"relative",padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":warnBg||(isKibo?"#fff5f5":isYukyu?"#faf0ff":showFix?"#f5f3ff":cellWeekBg),cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showFix?"2px solid #a78bfa":warnOutline||(consecViol?"1px solid #e0707060":undefined),outlineOffset:isSelected||isRoleViol||showFix||warn?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?(kiboAsRest?<ShiftBadge type="休み" defs={dept.customShiftDefs}/>:<span style={{fontSize:9,color:"#BE123C"}}>希</span>):isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispShown} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{warn&&<span onClick={(e)=>{e.stopPropagation();setWarnPop({reason:warn.reason,x:e.clientX,y:e.clientY});}} title={warn.reason} style={{position:"absolute",top:0,right:1,fontSize:8,fontWeight:900,lineHeight:1,color:warnStrong?"#dc2626":"#b45309",cursor:"pointer"}}>{warnStrong?"⚠":"!"}</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -4683,7 +4727,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const dept = depts.find(d=>d.id===activeDeptId) || depts[0];
   const deptShifts = allShifts[activeDeptId]||{};
   const warnMap = useMemo(()=>{const m={};for(const w of genWarnings)m[`${w.staffId}:${w.day}`]=w;return m;},[genWarnings]);
-  const warnCounts = useMemo(()=>({l1:genWarnings.filter(w=>w.level===1).length,l2:genWarnings.filter(w=>w.level===2).length}),[genWarnings]);
+  const warnCounts = useMemo(()=>({l1:genWarnings.filter(w=>w.level===1).length,l2:genWarnings.filter(w=>w.level===2).length,l3:genWarnings.filter(w=>w.level===3).length}),[genWarnings]);
   // 学習一致度（生成シフトが学習済みの曜日別癖 dowShiftRate にどれだけ沿うか・平均%）
   const learnedMatch = useMemo(() => {
     if (!dept) return null;
@@ -5294,6 +5338,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             <span style={{fontWeight:800,color:"#92400E",display:"inline-flex",alignItems:"center",gap:5}}><AlertTriangle size={14} strokeWidth={2}/>生成レビュー</span>
             <span style={{color:"#dc2626",fontWeight:700}}>癖違反 {warnCounts.l1}件</span>
             <span style={{color:"#b45309",fontWeight:700}}>異例配置 {warnCounts.l2}件</span>
+            {warnCounts.l3>0&&<span style={{color:"#b91c1c",fontWeight:800}}>人員確保のため通常休みを配置 {warnCounts.l3}件</span>}
             <span style={{color:"#64748B",fontSize:10}}>セルの⚠/!をタップで根拠。直すと消灯・保存でクリア。</span>
             <label style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",color:"#374151"}}>
               <input type="checkbox" checked={warningsOn} onChange={e=>setWarningsOn(e.target.checked)} style={{accentColor:"#6366F1"}}/>警告表示
