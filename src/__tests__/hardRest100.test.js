@@ -43,8 +43,8 @@ function makeDB(months, sundayVal = '休み') {
 const MONTHS = [[2025, 1], [2025, 2], [2025, 3]];
 
 describe('HARD_REST_100 フラグ・定数', () => {
-  test('既定はOFF・観測下限は8', () => {
-    expect(HARD_REST_100).toBe(false);
+  test('既定はON（本物100%休みの絶対保護が有効）・観測下限は8', () => {
+    expect(HARD_REST_100).toBe(true);
     expect(HARD_REST_MIN_OBS).toBe(8);
   });
 });
