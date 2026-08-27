@@ -36,6 +36,20 @@ const NEXT_DAY_HABIT_GUARD = false;
 const HARD_REST_100 = true;
 const HARD_REST_MIN_OBS = 8; // 本物と認める該当曜日の最低生観測数(≈2ヶ月分)。
 
+// 案B: 「本物の高確率の勤務種別」を Pass A(休み抽選)より前に予約・直置きする。
+// 計測で判明した勤務種別ズレの2大主犯 ①Pass Aが高確率勤務日を休みに先取り(過剰休み)
+// ②Pass B抽選が席が空いても高確率席を外す(非決定性) を、席を先に確定して塞ぐ。
+// 対象は dowShiftRate>=RATE かつ Wilson下限>=WILSON かつ その曜日の生観測>=MIN_OBS の
+// 「その人・その曜日・その勤務種別」。dowShiftRateの分母は勤務日のみ＝「働いた日にこの種別」
+// を守るもので、休むか働くかは HARD_REST_100(休み率D-1)が別途担当(役割分担)。
+// 単席競合は dowShiftRate の高い方が勝ち(90%>80%=正しい席分け)、負けた側は従来経路へ。
+// 予約日は lockedDays に入れ Pass A・後段が触れない。HARD_REST_100 が固定した休みには置かない。
+// 公休が割れないよう1人あたり予約上限を設ける(安全弁)。既定OFF・false で従来動作へ即復帰。
+const WORK_HABIT_RESERVE = false;
+const WORK_HABIT_RESERVE_RATE = 0.9; // 予約する表示確率(dowShiftRate)の下限(まず高めから)
+const WORK_HABIT_MIN_OBS = 8;        // その曜日の生観測(dowWorkObs)下限(偽の高確率を除外)
+const WORK_HABIT_WILSON = 0.6;       // Wilson score下限ゲート(観測薄の偶然高率を除外)
+
 // 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
 // 従来は一次キーが「そのシフトの総回数」の公平性(dow非依存)のため、他曜日でも同シフトを
 // 多くこなす人は総数が増えて特定曜日で後回しになり、例: 火曜遅番55%のような強い曜日癖が
@@ -1236,6 +1250,60 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   if (dayTypes.length === 0) {
     ds.forEach(s => { for (let d = 1; d <= days; d++) { if (!res[s.id][d]) res[s.id][d] = "休み"; } });
   } else {
+
+    // ── ステップ2.0（案B）: 本物の高確率の単席勤務を Pass A の前に予約 ──────────
+    // dowShiftRate>=RATE ∧ Wilson下限>=WILSON ∧ 生観測>=MIN_OBS の「本物の高確率」を、
+    // 席が空いて遷移/連勤/明け/公休と矛盾しない日に直置き＆lockedDays。Pass Aの前に置くことで
+    // 過剰休み(主犯①)と抽選負け(主犯②)を防ぐ。HARD_REST_100固定の休みには置かない(空きのみ)。
+    if (WORK_HABIT_RESERVE) {
+      const reserveTypes = dayTypes.filter(k => _isSlotManaged(k) && k !== '夜勤' && (maxStaff[k] ?? 99) < 99);
+      const _rsvGate = (s, dow, k) => {
+        if (getMonthCount(s) < STRONG_MONTHS) return false;
+        const t = getTrend(s);
+        const rate = t?.dowShiftRate?.[dow]?.[k];
+        if (rate == null || rate < WORK_HABIT_RESERVE_RATE) return false;
+        const n = t?.dowWorkObs?.[dow] ?? 0;
+        if (n < WORK_HABIT_MIN_OBS) return false;
+        const kobs = t?.dowShiftObs?.[dow]?.[k] ?? 0;
+        return wilsonLower(kobs, n) >= WORK_HABIT_WILSON;
+      };
+      // 安全弁(公休): 1人が予約できる勤務日数の上限＝残り空き日から必要公休を引いた数。
+      const _rsvCap = {};
+      ds.forEach(s => {
+        const kyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
+        const existingRest = Object.values(res[s.id]).filter(v => deptRest.has(v)).length;
+        const freeNow = days - Object.values(res[s.id]).filter(v => v).length;
+        _rsvCap[s.id] = Math.max(0, freeNow - Math.max(0, kyuko - existingRest));
+      });
+      for (const k of reserveTypes) {
+        const limit = maxStaff[k];
+        for (let d = 1; d <= days; d++) {
+          const dow = new Date(year, month, d).getDay();
+          let seats = limit - ds.filter(s => res[s.id][d] === k).length;
+          if (seats <= 0) continue;
+          const cand = ds.filter(s => {
+            if (res[s.id][d] || lockedDays[s.id].has(d)) return false;
+            if (_rsvCap[s.id] <= 0) return false;
+            if (!getAllowedTypes(s).includes(k)) return false;
+            if (!_rsvGate(s, dow, k)) return false;
+            const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1];
+            const next = res[s.id][d + 1];
+            if (prev === '明け') return false;
+            if (_isBadTransition(prev, k) || _isBadTransition(k, next)) return false;
+            if ((_consecWork(s.id, d - 1) + 1) > maxConsec) return false;
+            return true;
+          }).sort((a, b) => {
+            const ra = getTrend(a)?.dowShiftRate?.[dow]?.[k] ?? 0;
+            const rb = getTrend(b)?.dowShiftRate?.[dow]?.[k] ?? 0;
+            return rb - ra; // 高い方が席を取る（90%>80%＝正しい席分け）
+          });
+          for (const s of cand) {
+            if (seats <= 0) break;
+            res[s.id][d] = k; lockedDays[s.id].add(d); _rsvCap[s.id] -= 1; seats--;
+          }
+        }
+      }
+    }
 
     // ── Pass A: 休み日を確率サンプリングで全スタッフに先行確定 ──────────────
     // Phase5 Step1 改善: 4点
@@ -2679,5 +2747,9 @@ export {
   WILSON_Z,
   NEXT_DAY_HABIT_GUARD,
   HARD_REST_100,
-  HARD_REST_MIN_OBS
+  HARD_REST_MIN_OBS,
+  WORK_HABIT_RESERVE,
+  WORK_HABIT_RESERVE_RATE,
+  WORK_HABIT_MIN_OBS,
+  WORK_HABIT_WILSON
 };

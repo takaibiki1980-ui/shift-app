@@ -12,7 +12,8 @@
  *
  * 出力: [{ staffId, name, day, level, dow, reason, k, n, wilsonLower, expected?, actual }]
  */
-import { getDays, nameMatch, wilsonLower, STRONG_RATE, STRONG_MONTHS, WILSON_Z, HARD_REST_MIN_OBS } from './engine/core.js';
+import { getDays, nameMatch, wilsonLower, STRONG_RATE, STRONG_MONTHS, WILSON_Z, HARD_REST_MIN_OBS,
+  WORK_HABIT_RESERVE, WORK_HABIT_RESERVE_RATE, WORK_HABIT_MIN_OBS, WORK_HABIT_WILSON } from './engine/core.js';
 
 const REST_SET = new Set(['休み', '希望休', '有休']);
 const DOW_JA = ['日', '月', '火', '水', '木', '金', '土'];
@@ -46,6 +47,7 @@ export function computeWarnings({ shifts, staffList, dept, trend, year, month })
     if (!t) continue;
     const mc = monthCountFor(trend, s.name);
     const l2 = [];
+    let reserveWarned = false;
     for (let d = 1; d <= days; d++) {
       const v = shifts?.[s.id]?.[d];
       if (!v) continue;
@@ -66,6 +68,28 @@ export function computeWarnings({ shifts, staffList, dept, trend, year, month })
           k: restObs, n: cellObs, wilsonLower: null, expected: '休み', actual: v,
         });
         continue; // レベル3優先
+      }
+
+      // ── レベル4: 高確率勤務の予約(案B)が人員/公休の都合で守れなかった ──
+      // WORK_HABIT_RESERVE ON 時のみ。予約対象(dowShiftRate>=RATE・Wilson>=WILSON・観測>=MIN_OBS)の
+      // 勤務種別 rk があるのに、その曜日に別の勤務が置かれた＝席を落とした/調整された。1人1件。
+      if (WORK_HABIT_RESERVE && !reserveWarned && mc >= STRONG_MONTHS && nObs >= WORK_HABIT_MIN_OBS
+          && !REST_SET.has(v) && v !== '明け') {
+        const rmap = t.dowShiftRate?.[dow] || {};
+        let rk = null, rr = 0;
+        for (const [sh, rate] of Object.entries(rmap)) {
+          if (sh === '明け' || sh === '日勤' || rate < WORK_HABIT_RESERVE_RATE) continue;
+          if (wilsonLower(obs[sh] ?? 0, nObs, WILSON_Z) >= WORK_HABIT_WILSON) { rk = sh; rr = rate; break; }
+        }
+        if (rk && v !== rk) {
+          reserveWarned = true;
+          out.push({
+            staffId: s.id, name: s.name, day: d, level: 4, dow, reserveMiss: true,
+            reason: `${s.name}さんの${DOW_JA[dow]}曜は${rk}（表示${(rr * 100).toFixed(0)}%）の学習配置対象。人員/公休の都合で${v}に調整しています`,
+            k: obs[rk] ?? 0, n: nObs, wilsonLower: null, expected: rk, actual: v,
+          });
+          continue; // レベル4優先
+        }
       }
 
       // ── レベル1: 確定癖と違う勤務が置かれた ──
