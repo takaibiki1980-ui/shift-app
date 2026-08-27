@@ -4727,7 +4727,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const dept = depts.find(d=>d.id===activeDeptId) || depts[0];
   const deptShifts = allShifts[activeDeptId]||{};
   const warnMap = useMemo(()=>{const m={};for(const w of genWarnings)m[`${w.staffId}:${w.day}`]=w;return m;},[genWarnings]);
-  const warnCounts = useMemo(()=>({l1:genWarnings.filter(w=>w.level===1).length,l2:genWarnings.filter(w=>w.level===2).length,l3:genWarnings.filter(w=>w.level===3).length}),[genWarnings]);
+  const warnCounts = useMemo(()=>({l1:genWarnings.filter(w=>w.level===1).length,l2:genWarnings.filter(w=>w.level===2).length,l3:genWarnings.filter(w=>w.level===3).length,l4:genWarnings.filter(w=>w.level===4).length}),[genWarnings]);
   // 学習一致度（生成シフトが学習済みの曜日別癖 dowShiftRate にどれだけ沿うか・平均%）
   const learnedMatch = useMemo(() => {
     if (!dept) return null;
@@ -5339,6 +5339,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             <span style={{color:"#dc2626",fontWeight:700}}>癖違反 {warnCounts.l1}件</span>
             <span style={{color:"#b45309",fontWeight:700}}>異例配置 {warnCounts.l2}件</span>
             {warnCounts.l3>0&&<span style={{color:"#b91c1c",fontWeight:800}}>人員確保のため通常休みを配置 {warnCounts.l3}件</span>}
+            {warnCounts.l4>0&&<span style={{color:"#b45309",fontWeight:700}}>学習配置を人員/公休で調整 {warnCounts.l4}件</span>}
             <span style={{color:"#64748B",fontSize:10}}>セルの⚠/!をタップで根拠。直すと消灯・保存でクリア。</span>
             <label style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",color:"#374151"}}>
               <input type="checkbox" checked={warningsOn} onChange={e=>setWarningsOn(e.target.checked)} style={{accentColor:"#6366F1"}}/>警告表示
