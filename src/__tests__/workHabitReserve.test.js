@@ -15,15 +15,15 @@ import {
 import { computeWarnings } from '../warnings.js';
 
 describe('WORK_HABIT_RESERVE 定数', () => {
-  test('既定ON（先行予約が有効）・閾値 RATE0.9/OBS8/WILSON0.6', () => {
-    expect(WORK_HABIT_RESERVE).toBe(true);
+  test('既定OFF（実データ悪化のため無効化）・閾値 RATE0.9/OBS8/WILSON0.6', () => {
+    expect(WORK_HABIT_RESERVE).toBe(false);
     expect(WORK_HABIT_RESERVE_RATE).toBe(0.9);
     expect(WORK_HABIT_MIN_OBS).toBe(8);
     expect(WORK_HABIT_WILSON).toBe(0.6);
   });
 });
 
-describe('フラグON時 level4(学習配置調整)警告', () => {
+describe('フラグOFFでは level4(学習配置調整)警告は出ない', () => {
   const DEPT = 'care';
   const staff = [{ id: 's1', name: '早番太', dept: DEPT }];
   // 月曜=早番100%(観測十分)の学習を作る
@@ -40,24 +40,12 @@ describe('フラグON時 level4(学習配置調整)警告', () => {
     }
     return db;
   }
-  test('予約対象(月曜早番)に別勤務が置かれると level4 が出る（フラグON）', () => {
+  test('予約対象(月曜早番)に別勤務を置いても level4 は出ない（フラグOFF）', () => {
     const trend = computeLearnedTrend(buildDB(), staff);
     const Y = 2025, M0 = 8; const dim = getDays(Y, M0);
     let firstMon = null;
     for (let d = 1; d <= dim; d++) if (new Date(Y, M0, d).getDay() === 1) { firstMon = d; break; }
     const shifts = { s1: { [firstMon]: '日勤' } }; // 早番癖の月曜に日勤
-    const w = computeWarnings({ shifts, staffList: staff, dept: { id: DEPT }, trend, year: Y, month: M0 });
-    const l4 = w.find(x => x.level === 4);
-    expect(l4).toBeTruthy();
-    expect(l4.reserveMiss).toBe(true);
-    expect(l4.expected).toBe('早番');
-  });
-  test('予約対象どおり(月曜早番)なら level4 は出ない', () => {
-    const trend = computeLearnedTrend(buildDB(), staff);
-    const Y = 2025, M0 = 8; const dim = getDays(Y, M0);
-    let firstMon = null;
-    for (let d = 1; d <= dim; d++) if (new Date(Y, M0, d).getDay() === 1) { firstMon = d; break; }
-    const shifts = { s1: { [firstMon]: '早番' } };
     const w = computeWarnings({ shifts, staffList: staff, dept: { id: DEPT }, trend, year: Y, month: M0 });
     expect(w.find(x => x.level === 4)).toBeUndefined();
   });
