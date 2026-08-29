@@ -45,7 +45,7 @@ const HARD_REST_MIN_OBS = 8; // 本物と認める該当曜日の最低生観測
 // 単席競合は dowShiftRate の高い方が勝ち(90%>80%=正しい席分け)、負けた側は従来経路へ。
 // 予約日は lockedDays に入れ Pass A・後段が触れない。HARD_REST_100 が固定した休みには置かない。
 // 公休が割れないよう1人あたり予約上限を設ける(安全弁)。既定OFF・false で従来動作へ即復帰。
-const WORK_HABIT_RESERVE = true;
+const WORK_HABIT_RESERVE = false;
 const WORK_HABIT_RESERVE_RATE = 0.9; // 予約する表示確率(dowShiftRate)の下限(まず高めから)
 const WORK_HABIT_MIN_OBS = 8;        // その曜日の生観測(dowWorkObs)下限(偽の高確率を除外)
 const WORK_HABIT_WILSON = 0.6;       // Wilson score下限ゲート(観測薄の偶然高率を除外)
