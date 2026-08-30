@@ -11,8 +11,8 @@ import { describe, test, expect } from 'vitest';
 import { PART_FIRST_DAY, PART_FIRST_DAY_FULLTIMER_NIKKIN_WEIGHT } from '../engine/core.js';
 
 describe('PART_FIRST_DAY 定数', () => {
-  test('既定OFF・正社員日勤重み倍率0.3', () => {
-    expect(PART_FIRST_DAY).toBe(false);
+  test('既定ON（日勤パート優先が有効）・正社員日勤重み倍率0.3', () => {
+    expect(PART_FIRST_DAY).toBe(true);
     expect(PART_FIRST_DAY_FULLTIMER_NIKKIN_WEIGHT).toBe(0.3);
   });
 });

@@ -57,7 +57,7 @@ const WORK_HABIT_WILSON = 0.6;       // Wilson score下限ゲート(観測薄の
 // Step4-3: 正社員は、その日の日勤が既に足りている(>=minStaff)ときだけ日勤の基礎重みを下げて変則へ回る(soft・確率のみ)。
 //   日勤が不足している日は従来どおり(deficit boost)正社員が日勤でカバー。must-fill/minStaff/maxStaff/遷移/公休/HARD_REST_100は不変。
 // 既定OFF・false で従来動作へ即復帰。
-const PART_FIRST_DAY = false;
+const PART_FIRST_DAY = true;
 const PART_FIRST_DAY_FULLTIMER_NIKKIN_WEIGHT = 0.3; // 正社員の日勤"基礎"重み倍率(日勤充足日のみ・deficit boostは別途優先)
 
 // 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
