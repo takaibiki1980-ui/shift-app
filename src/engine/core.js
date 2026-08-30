@@ -50,6 +50,16 @@ const WORK_HABIT_RESERVE_RATE = 0.9; // 予約する表示確率(dowShiftRate)�
 const WORK_HABIT_MIN_OBS = 8;        // その曜日の生観測(dowWorkObs)下限(偽の高確率を除外)
 const WORK_HABIT_WILSON = 0.6;       // Wilson score下限ゲート(観測薄の偶然高率を除外)
 
+// ④ 人間手順「日勤はパート優先・不足を正社員がカバー」を実装するフラグ。
+// パート=雇用形態フィールドではなく getAllowedTypes(s) が日勤系のみ(変則/夜勤なし)かつ nightOk=false の役職で判別。
+// Step4-1/4-2: パートの「働く日」は Pass A が dowRestRate(=出勤頻度 1-休み率)で休みを先に確定済み。その残りの空き日を
+//   Pass B の前に日勤で埋める(soft=lockedDaysに入れない→公休調整/must-fillが後で上書き可)。率でなく頻度を見る＝伊藤型の過剰配置を防ぐ。
+// Step4-3: 正社員は、その日の日勤が既に足りている(>=minStaff)ときだけ日勤の基礎重みを下げて変則へ回る(soft・確率のみ)。
+//   日勤が不足している日は従来どおり(deficit boost)正社員が日勤でカバー。must-fill/minStaff/maxStaff/遷移/公休/HARD_REST_100は不変。
+// 既定OFF・false で従来動作へ即復帰。
+const PART_FIRST_DAY = false;
+const PART_FIRST_DAY_FULLTIMER_NIKKIN_WEIGHT = 0.3; // 正社員の日勤"基礎"重み倍率(日勤充足日のみ・deficit boostは別途優先)
+
 // 早番/遅番の配置(step2.5)で「その曜日の強い癖」を持つスタッフを優先配置するか。
 // 従来は一次キーが「そのシフトの総回数」の公平性(dow非依存)のため、他曜日でも同シフトを
 // 多くこなす人は総数が増えて特定曜日で後回しになり、例: 火曜遅番55%のような強い曜日癖が
@@ -1133,6 +1143,13 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     const allowed = dept.roleShiftTypes?.[s.role];
     return allowed ? dayTypes.filter(k => allowed.includes(k)) : dayTypes;
   };
+  // ④パート判別: 夜勤不可(nightOk=false)かつ許可勤務が日勤系のみ(変則なし)＝日勤専従＝パート相当。
+  const _cdsAG = dept.customShiftDefs || [];
+  const _isPartRole = (s) => {
+    if (s.nightOk) return false;
+    const aw = getAllowedTypes(s);
+    return aw.length > 0 && aw.every(k => k === '日勤' || isNikkinBase(k, _cdsAG));
+  };
 
   // enforceMaxStaff ─ [Tier1例外: count>maxStaff の超過状態のみ削減許可]
   // 正常状態（count≤maxStaff）では発動しない → _shouldProtectSlot と逆条件で安全
@@ -1518,6 +1535,28 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       }
     }
 
+    // ── ステップ2.7（④）: 日勤をパート優先で先に埋める（Pass Aの後・Pass Bの前）──────
+    // Step4-1: パートの休みは Pass A が dowRestRate(=出勤頻度)で先に確定済み → 残る空き日=働く日。
+    // Step4-2: その働く日を日勤で埋める（soft=未ロック→公休調整/must-fill等が後で上書き可能）。
+    // 率でなく頻度に従う＝伊藤型の過剰配置を防ぐ。順序は変えない（休みはPass Aのまま）。PART_FIRST_DAY 既定OFF。
+    if (PART_FIRST_DAY) {
+      const _partDay = dayTypes.includes('日勤') ? '日勤' : dayTypes.find(k => isNikkinBase(k, _cdsAG));
+      if (_partDay) {
+        ds.filter(_isPartRole).forEach(s => {
+          if (!getAllowedTypes(s).includes(_partDay)) return;
+          for (let d = 1; d <= days; d++) {
+            if (res[s.id][d] || lockedDays[s.id].has(d)) continue;
+            const prev = d === 1 ? prevShift(s.id) : res[s.id][d - 1], next = res[s.id][d + 1];
+            if (prev === '明け') continue;
+            if (_isBadTransition(prev, _partDay) || _isBadTransition(_partDay, next)) continue;
+            if ((_consecWork(s.id, d - 1) + 1) > maxConsec) continue;
+            if (ds.filter(sx => res[sx.id][d] === _partDay).length >= (maxStaff[_partDay] ?? 99)) continue;
+            res[s.id][d] = _partDay; // soft: lockedDays に入れない
+          }
+        });
+      }
+    }
+
     // ── Pass B: 全スタッフの勤務シフトを確率サンプリングで配置 ──────────────
     // trend あり → dowShiftRate を重みにサンプリング（ratio指定があれば枠を先確保）
     // trend なし → deptAvgRatio fallback → 均等ランダム
@@ -1559,6 +1598,11 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if ((dayCnts[k] || 0) >= (maxStaff[k] ?? 99)) probs[k] = 0;
         });
         if (d === 1) { const ps = prevShift(s.id); if (ps) allowed.forEach(k => { if (_isBadTransition(ps, k)) probs[k] = 0; }); }
+        // ④Step4-3: 正社員は、その日の日勤が既に足りている(>=minStaff)ときだけ日勤の基礎重みを下げて変則へ回る(soft)。
+        // 日勤が不足している日は down-weight しない＝正社員が従来どおりカバー。minStaff/must-fill を壊さない。
+        if (PART_FIRST_DAY && !_isPartRole(s) && (dayCnts['日勤'] ?? 0) >= (dept.minStaff['日勤'] ?? 0)) {
+          allowed.forEach(k => { if (k === '日勤' || isNikkinBase(k, _cdsAG)) probs[k] = (probs[k] ?? 0) * PART_FIRST_DAY_FULLTIMER_NIKKIN_WEIGHT; });
+        }
         const pick = sampleFromProbs(probs)
           || allowed.find(k => !_isBadTransition(d === 1 ? prevShift(s.id) : null, k) && (dayCnts[k]||0) < (maxStaff[k]??99))
           || allowed.find(k => k === '日勤')
@@ -2751,5 +2795,7 @@ export {
   WORK_HABIT_RESERVE,
   WORK_HABIT_RESERVE_RATE,
   WORK_HABIT_MIN_OBS,
-  WORK_HABIT_WILSON
+  WORK_HABIT_WILSON,
+  PART_FIRST_DAY,
+  PART_FIRST_DAY_FULLTIMER_NIKKIN_WEIGHT
 };
