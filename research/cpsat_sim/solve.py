@@ -20,9 +20,13 @@ REST_INPUT = {"希望休", "有休"}          # 固定入力(休み扱い・公�
 REST_ALL   = {"休み", "希望休", "有休"}   # 休み系(公休カウント対象)
 
 
-def build_and_solve(data, time_limit=20.0, obj_mode="none", w_learn=100, w_fair=300):
-    """obj_mode: none=実行可能解のみ(Step A) / rate=学習率(dowShiftRate) / freq=頻度(夜勤等/総観測)。
-    目的 = 学習不一致 Σ(1-prob)*w_learn*x + 夜勤公平性 (max-min)*w_fair を最小化。ハード制約は不変。"""
+def build_and_solve(data, time_limit=20.0, obj_mode="none", use_rest=False, hard_rest100=False,
+                    rest100_th=0.95, w_learn=100, w_fair=300):
+    """obj_mode: none=実行可能解のみ(Step A) / rate=学習率(dowShiftRate) / freq=頻度(種別観測/総観測)。
+    use_rest: 休み率(learn.rest)も目的に加える(段階2)。hard_rest100: rest>=rest100_th の曜日を絶対休みに(段階4)。
+    目的 = Σ(1-prob)*w_learn*x + 夜勤公平性(max-min)*w_fair を最小化。ハード制約は不変。"""
+    from datetime import date as __d
+    def _dow(y, mo0, d): return (__d(y, mo0 + 1, d).weekday() + 1) % 7  # 0=日..6=土
     days   = data["days"]
     staff  = data["staff"]
     work   = list(data["shiftTypes"])          # 例 早番/日勤/遅番/夜勤
@@ -31,10 +35,11 @@ def build_and_solve(data, time_limit=20.0, obj_mode="none", w_learn=100, w_fair=
     minS   = data.get("minStaff", {})
     maxS   = data.get("maxStaff", {})
     maxc   = data.get("maxConsec", 5)
-    # カテゴリ = 勤務種別 + 明け + 休み (希望休/有休は「休み」枠に固定して表現)
-    cats = list(work) + (["明け"] if has_night else []) + ["休み"]
+    # カテゴリ = 勤務種別 + 明け + 休み + 有休 (有休は公休カウント外・希望休は休み枠で公休カウント)
+    cats = list(work) + (["明け"] if has_night else []) + ["休み", "有休"]
     ci = {c: i for i, c in enumerate(cats)}
     REST_I = ci["休み"]
+    YUK_I = ci["有休"]
     AKE_I  = ci["明け"] if has_night else None
     NIGHT_I = ci["夜勤"] if has_night else None
     m = cp_model.CpModel()
@@ -62,11 +67,19 @@ def build_and_solve(data, time_limit=20.0, obj_mode="none", w_learn=100, w_fair=
                     m.Add(x[si, d, ci[c]] == 0)
             if not st.get("nightOk", False) and has_night:
                 m.Add(x[si, d, NIGHT_I] == 0)   # 夜勤不可者
-            # (3) 希望休/有休/希望勤務を固定
-            if d in kibo or d in yuk:
+            # (3) 希望休(公休カウント)/有休(公休外)/希望勤務を固定
+            if d in yuk:
+                m.Add(x[si, d, YUK_I] == 1)
+            elif d in kibo:
                 m.Add(x[si, d, REST_I] == 1)
             elif d in req and req[d] in ci:
                 m.Add(x[si, d, ci[req[d]]] == 1)
+            # (3b) 段階4: 本物100%休みの曜日を絶対休みに(休み率D-1のCP-SAT版)
+            if hard_rest100:
+                rest_arr = st.get("learn", {}).get("rest") or []
+                dw = _dow(data["year"], data["month"], d)
+                if dw < len(rest_arr) and rest_arr[dw] is not None and rest_arr[dw] >= rest100_th and d not in yuk:
+                    m.Add(x[si, d, REST_I] == 1)
         # (4) 夜勤 -> 翌日明け -> 翌々日休み
         if has_night:
             for d in range(1, days):
@@ -132,11 +145,12 @@ def build_and_solve(data, time_limit=20.0, obj_mode="none", w_learn=100, w_fair=
                     if p is None: continue
                     coef = int(round((1.0 - max(0.0, min(1.0, p))) * w_learn))
                     if coef: terms.append(coef * x[si, d, ci[c]])
-                # 休み: dowRestRate(頻度) を getDay基準で
-                pr = rest_by_dow[dow] if (rest_by_dow and rest_by_dow[dow] is not None) else None
-                if pr is not None:
-                    coef = int(round((1.0 - max(0.0, min(1.0, pr))) * w_learn))
-                    if coef: terms.append(coef * x[si, d, REST_I])
+                # 休み目的(段階2以降・use_rest): dowRestRate を getDay基準で
+                if use_rest:
+                    pr = rest_by_dow[dow] if (rest_by_dow and rest_by_dow[dow] is not None) else None
+                    if pr is not None:
+                        coef = int(round((1.0 - max(0.0, min(1.0, pr))) * w_learn))
+                        if coef: terms.append(coef * x[si, d, REST_I])
         # 夜勤公平性: (max_s 夜勤数 - min_s 夜勤数) を最小化
         if has_night:
             nights = [sum(x[si, d, NIGHT_I] for d in range(1, days + 1)) for si in range(S)]
@@ -185,8 +199,8 @@ def verify(data, solution):
             if c in maxS and maxS[c] < 99 and cnt > maxS[c]: problems.append(f"day{d} {c} max {cnt}>{maxS[c]}")
     for sid, st in by.items():
         vals = [cell(sid, d) for d in range(1, days + 1)]
-        # 公休
-        rest = sum(1 for v in vals if v in REST_ALL)
+        # 公休(休み+希望休のみ・有休は公休外)
+        rest = sum(1 for v in vals if v in ("休み", "希望休"))
         if rest != st.get("kyukoDays", 8): problems.append(f"{sid} kyuko {rest}!={st.get('kyukoDays',8)}")
         # 夜勤->明け
         for i in range(days - 1):
@@ -214,7 +228,9 @@ def main():
         print("usage: solve.py input.json [out.json]", file=sys.stderr); sys.exit(2)
     data = json.load(open(sys.argv[1], encoding="utf-8"))
     obj_mode = sys.argv[3] if len(sys.argv) > 3 else "none"   # none/rate/freq
-    sname, solution, solver = build_and_solve(data, obj_mode=obj_mode)
+    opts = set((sys.argv[4] if len(sys.argv) > 4 else "").split(","))  # rest,hard100
+    sname, solution, solver = build_and_solve(
+        data, obj_mode=obj_mode, use_rest=("rest" in opts), hard_rest100=("hard100" in opts))
     problems = verify(data, solution) if solution else ["解なし"]
     out = {"status": sname, "solveSec": round(solver.WallTime(), 3),
            "verify": {"ok": len(problems) == 0, "problems": problems[:20]},
