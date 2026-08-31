@@ -1,0 +1,4 @@
+sample_input.json
+solution.json
+*.pyc
+__pycache__/

@@ -1325,6 +1325,7 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
   const [progress, setProgress] = useState(0);
   const [metrics, setMetrics] = useState(null);
   const [runsData, setRunsData] = useState(null);
+  const [cpsatInput, setCpsatInput] = useState(null); // 研究用: CP-SATシミュレーター入力(読み取りのみ・本番非改変)
   const [viewRun, setViewRun] = useState(0);
   const [notes, setNotes] = useState([]);
   const [error, setError] = useState('');
@@ -1416,6 +1417,26 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
         setProgress(5 + i + 1);
       }
       m.H = computeDisplayVsRealizedMetric({ runs: cleanRuns, staffList: cleanStaff, dept, trend, year: yIdx, month: mIdx });
+      // 研究用: CP-SATシミュレーター(research/cpsat_sim)の入力JSONを組み立てる（読み取りのみ・生成やDBは非改変）。
+      // 今の生成と同じ入力(希望休/希望勤務/必要人数/夜勤明け/連勤/公休/役職)を隔離ソルバーへ渡してフェア比較するため。
+      const _cpsatInput = {
+        year: yIdx, month: mIdx, days: getDays(yIdx, mIdx),
+        shiftTypes: dept.shiftTypes, minStaff: dept.minStaff, maxStaff: dept.maxStaff,
+        maxConsec: dept.maxConsecutive || 5, roleShiftTypes: dept.roleShiftTypes || {},
+        prevTail: Object.fromEntries(Object.entries(prevTail).map(([sid, tail]) => {
+          const dn = Object.keys(tail).map(Number); const last = dn.length ? Math.max(...dn) : null;
+          return [sid, { lastShift: last != null ? tail[last] : null }];
+        })),
+        actual, // 実績(答え合わせ用・Step Bで比較に使用)
+        staff: btStaff.filter(s => s.dept === deptId).map(s => ({
+          id: s.id, name: s.name, role: s.role, nightOk: !!s.nightOk,
+          kyukoDays: s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8,
+          kibo: (s.kiboByMonth?.[mk] || []).map(Number),
+          yukyu: (s.yukyuByMonth?.[mk] || []).map(Number),
+          requests: s.shiftRequestsByMonth?.[mk] || {},
+        })),
+      };
+      setCpsatInput(_cpsatInput);
       setMetrics(m); setRunsData({ actual, runs, ds: btStaff.filter(s => s.dept === deptId), year: yIdx, month: mIdx }); setViewRun(0); setNotes(nts);
     } catch (e) {
       setError('バックテスト実行エラー: ' + (e?.message || e));
@@ -1451,6 +1472,15 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
         <button onClick={run} disabled={running || !tgt} style={{ background: running || !tgt ? '#E5E7EB' : '#6366F1', color: running || !tgt ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 8, padding: '9px 18px', cursor: running || !tgt ? 'default' : 'pointer', fontSize: 13, fontWeight: 800 }}>
           {running ? `生成中… ${progress}/10` : '▶ バックテスト実行（5回生成）'}
         </button>
+        {cpsatInput && <button onClick={() => {
+          // 読み取りのみ: 生成済みの入力JSONをダウンロード（research/cpsat_sim/solve.py の入力）。本番非改変。
+          const blob = new Blob([JSON.stringify(cpsatInput, null, 1)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob); const a = document.createElement('a');
+          a.href = url; a.download = `cpsat_input_${cpsatInput.year}_${cpsatInput.month + 1}_${deptId}.json`;
+          a.click(); URL.revokeObjectURL(url);
+        }} style={{ background: '#0e7490', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 700 }} title="CP-SATシミュレーター(research/cpsat_sim)用の入力JSONを書き出します（読み取りのみ・本番非改変）">
+          ⬇ CP-SAT入力JSON
+        </button>}
       </div>
 
       {error && <div style={{ ...box, background: '#fff0f0', border: '1px solid #ef4444', color: '#dc2626', fontSize: 12, fontWeight: 700 }}>{error}</div>}
