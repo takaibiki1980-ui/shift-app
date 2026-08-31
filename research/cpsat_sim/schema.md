@@ -41,3 +41,16 @@
 ## 出力
 `{"status","solveSec","verify":{"ok","problems"},"solution":{sid:{day:shift}}}`。
 `solution` は生成エンジンの run と同一形＝`computeBacktestMetrics` にそのまま渡せる。
+
+## Step B: 学習値 `learn`（各スタッフ）と目的関数
+各 staff に `learn` を付与すると `solve.py <in> <out> rate|freq` で学習目的が有効になる。
+```jsonc
+"learn": {
+  "rate": {"0":{"早番":0.6,...}, ...},   // dowShiftRate(働いた日の率) getDay 0=日..6=土
+  "freq": {"0":{"夜勤":0.3,...}, ...},   // 頻度(その種別の観測/その曜日の総観測=休み含む)
+  "rest": [0.2,0.1,...]                   // dowRestRate を getDay基準(0=日..6=土)に並べ替え
+}
+```
+- `rate` = 「働いた日のうちその種別の率」（条件付き）。`freq` = 「その曜日の全出現のうちその種別」（頻度）。
+- 目的 = `Σ(1-prob)·w_learn·x + (max夜勤-min夜勤)·w_fair` を最小化。ハード制約は不変。
+- モード `none`(Step A) / `rate` / `freq`。比較は `compare.mjs`（合成）または実データ書き出しJSONで。

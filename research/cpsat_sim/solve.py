@@ -13,13 +13,16 @@ Step A の目的: 学習目的はまだ入れず、全ハード制約を満た�
 入力スキーマは schema.md 参照。出力は {"status","solution":{sid:{day:shift}},"verify":{...}}。
 """
 import sys, json
+from datetime import date as _date
 from ortools.sat.python import cp_model
 
 REST_INPUT = {"希望休", "有休"}          # 固定入力(休み扱い・公休にカウント)
 REST_ALL   = {"休み", "希望休", "有休"}   # 休み系(公休カウント対象)
 
 
-def build_and_solve(data, time_limit=20.0):
+def build_and_solve(data, time_limit=20.0, obj_mode="none", w_learn=100, w_fair=300):
+    """obj_mode: none=実行可能解のみ(Step A) / rate=学習率(dowShiftRate) / freq=頻度(夜勤等/総観測)。
+    目的 = 学習不一致 Σ(1-prob)*w_learn*x + 夜勤公平性 (max-min)*w_fair を最小化。ハード制約は不変。"""
     days   = data["days"]
     staff  = data["staff"]
     work   = list(data["shiftTypes"])          # 例 早番/日勤/遅番/夜勤
@@ -113,6 +116,37 @@ def build_and_solve(data, time_limit=20.0):
             if c in minS: m.Add(tot >= minS[c])
             if c in maxS and maxS[c] < 99: m.Add(tot <= maxS[c])
 
+    # ── 目的関数（Step B）: 学習適合 + 夜勤公平性。ハード制約は上で確定済み・不変。 ──
+    if obj_mode in ("rate", "freq"):
+        terms = []
+        for si, st in enumerate(staff):
+            learn = st.get("learn", {})            # {"rate":{dow:{k:p}}, "freq":{dow:{k:p}}, "rest":[7 by getDay]}
+            probmap = learn.get(obj_mode, {})       # dow(0=日..6=土, 文字列キー) -> {種別: 確率}
+            rest_by_dow = learn.get("rest", [None] * 7)
+            for d in range(1, days + 1):
+                # getDay基準(0=日..6=土)。Python weekday()は0=月なので +1 %7 で日曜=0に合わせる。
+                dow = (_date(data["year"], data["month"] + 1, d).weekday() + 1) % 7
+                pm = probmap.get(str(dow), {})
+                for c in work:
+                    p = pm.get(c)
+                    if p is None: continue
+                    coef = int(round((1.0 - max(0.0, min(1.0, p))) * w_learn))
+                    if coef: terms.append(coef * x[si, d, ci[c]])
+                # 休み: dowRestRate(頻度) を getDay基準で
+                pr = rest_by_dow[dow] if (rest_by_dow and rest_by_dow[dow] is not None) else None
+                if pr is not None:
+                    coef = int(round((1.0 - max(0.0, min(1.0, pr))) * w_learn))
+                    if coef: terms.append(coef * x[si, d, REST_I])
+        # 夜勤公平性: (max_s 夜勤数 - min_s 夜勤数) を最小化
+        if has_night:
+            nights = [sum(x[si, d, NIGHT_I] for d in range(1, days + 1)) for si in range(S)]
+            nmax = m.NewIntVar(0, days, "nmax"); nmin = m.NewIntVar(0, days, "nmin")
+            for si in range(S):
+                m.Add(nights[si] <= nmax); m.Add(nights[si] >= nmin)
+            terms.append(w_fair * (nmax - nmin))
+        if terms:
+            m.Minimize(sum(terms))
+
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit
     solver.parameters.num_search_workers = 8
@@ -179,7 +213,8 @@ def main():
     if len(sys.argv) < 2:
         print("usage: solve.py input.json [out.json]", file=sys.stderr); sys.exit(2)
     data = json.load(open(sys.argv[1], encoding="utf-8"))
-    sname, solution, solver = build_and_solve(data)
+    obj_mode = sys.argv[3] if len(sys.argv) > 3 else "none"   # none/rate/freq
+    sname, solution, solver = build_and_solve(data, obj_mode=obj_mode)
     problems = verify(data, solution) if solution else ["解なし"]
     out = {"status": sname, "solveSec": round(solver.WallTime(), 3),
            "verify": {"ok": len(problems) == 0, "problems": problems[:20]},

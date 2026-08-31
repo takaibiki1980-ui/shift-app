@@ -1434,6 +1434,17 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
           kibo: (s.kiboByMonth?.[mk] || []).map(Number),
           yukyu: (s.yukyuByMonth?.[mk] || []).map(Number),
           requests: s.shiftRequestsByMonth?.[mk] || {},
+          learn: (() => { // CP-SAT Step B 用: 率(dowShiftRate)・頻度(観測/総観測)・休み率(getDay基準)
+            const t = trend[s.name] || Object.values(trend).find((v, i) => Object.keys(trend)[i] === s.name) || null;
+            const rate = {}, freq = {};
+            for (let dow = 0; dow < 7; dow++) {
+              const sr = t?.dowShiftRate?.[dow] || {}, obs = t?.dowShiftObs?.[dow] || {}, cell = t?.dowCellObs?.[dow] || 0;
+              rate[dow] = {}; freq[dow] = {};
+              for (const k of dept.shiftTypes) { if (sr[k] != null) rate[dow][k] = sr[k]; freq[dow][k] = cell > 0 ? (obs[k] || 0) / cell : 0; }
+            }
+            const rest = Array.from({ length: 7 }, (_, dow) => t?.dowRestRate?.[(dow + 6) % 7] ?? null);
+            return { rate, freq, rest };
+          })(),
         })),
       };
       setCpsatInput(_cpsatInput);
