@@ -75,6 +75,15 @@ const STRONG_MONTHS = 2;    // 観測ゲート: monthCounts≥2（各曜日≈8�
 // 発動しにくくなる。WILSON_STRONG_ENABLED=false で従来の生率判定へ即復帰。
 const WILSON_STRONG_ENABLED = true;
 const WILSON_Z = 1.645;     // 90%信頼水準。大きいほど判定が厳しくなる（1.28→1.645→1.96）
+
+// 頻度ベース学習（段階1: 夜勤ソートのみ）。CP-SAT実データ検証で「率(働いた日の割合)」より
+// 「頻度(その曜日に実際その種別で働く割合=種別観測/その曜日の総観測)」が効くと実証されたため、
+// 「席に誰を座らせるか」の並び替えキーだけを率→頻度に切り替える。並び替えのみ・席数/休み配置/
+// must-fill/公休/HARD_REST_100は不変。薄いデータ(dowCellObs<FREQ_MIN_OBS)では率にフォールバック。
+// FREQ_BASED_LEARNING=false で従来(率)動作へ即復帰。※Pass B(率と数学的に等価)・scoreShifts
+// (休みの二重計上リスク)・早番遅番slot-first(段階2で別途)・強癖ゲート(段階3で別途)は今回対象外。
+const FREQ_BASED_LEARNING = false;
+const FREQ_MIN_OBS = 4;     // この曜日の生観測(dowCellObs)未満なら頻度が荒れるため率にフォールバック
 // k=該当シフトの観測回数, n=その曜日の勤務観測回数（どちらも重みなしの生カウント）
 function wilsonLower(k, n, z = WILSON_Z) {
   if (n === 0) return 0;
@@ -571,6 +580,19 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
     return key ? shiftTrend[key] : null;
   };
 
+  // 学習の並び替えキー用アクセサ(段階1・夜勤ソート)。FREQ_BASED_LEARNING時はその曜日の頻度
+  // (dowShiftFreq=種別観測/総観測)を返す。ただし薄い曜日(dowCellObs<FREQ_MIN_OBS)は率にフォールバック。
+  // OFF時・データ欠損時は従来の dowShiftRate。dow は getDay基準(0=日..6=土)。
+  const learnDowProb = (t, dow, k) => {
+    if (!t) return 0;
+    if (FREQ_BASED_LEARNING) {
+      const cell = t.dowCellObs?.[dow] ?? 0;
+      const fv = t.dowShiftFreq?.[dow]?.[k];
+      if (cell >= FREQ_MIN_OBS && fv != null) return fv;
+    }
+    return t.dowShiftRate?.[dow]?.[k] ?? 0;
+  };
+
   // 学習の観測ゲート用: そのスタッフが登場した月数(monthCounts)。名前一致で引く。
   const getMonthCount = (s) => {
     const mc = shiftTrend?._monthCounts;
@@ -813,8 +835,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       const stA = _isStrongNight(a, _dowd), stB = _isStrongNight(b, _dowd);
       if (stA !== stB) return stA ? -1 : 1;          // 片方だけstrong → strong優先
       if (stA && stB) {                                // 両方strong → 率が高い順 → 既存キーへ
-        const rA = getTrend(a)?.dowShiftRate?.[_dowd]?.['夜勤'] ?? 0;
-        const rB = getTrend(b)?.dowShiftRate?.[_dowd]?.['夜勤'] ?? 0;
+        const rA = learnDowProb(getTrend(a), _dowd, '夜勤');
+        const rB = learnDowProb(getTrend(b), _dowd, '夜勤');
         if (Math.abs(rA - rB) > 0.05) return rB - rA;
       }
       // ⓪.5 翌日確定癖ガード: 夜勤→翌日明けで翌日の確定勤務癖が潰れるのを避ける。
@@ -833,8 +855,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       //   一次キー(公平性)は不変・must-fillも不変（候補の並び替えのみ）。NIGHT_LEARN_ENABLED=false で無効化。
       if (NIGHT_LEARN_ENABLED) {
         const _dow = new Date(year, month, d).getDay();
-        const nrA = getTrend(a)?.dowShiftRate?.[_dow]?.['夜勤'] ?? 0;
-        const nrB = getTrend(b)?.dowShiftRate?.[_dow]?.['夜勤'] ?? 0;
+        const nrA = learnDowProb(getTrend(a), _dow, '夜勤');
+        const nrB = learnDowProb(getTrend(b), _dow, '夜勤');
         if (nrA !== nrB) return nrB - nrA; // 高い方（普段その曜日に夜勤）を優先
       }
       // ③ 前半/後半カウント: 当日の半月内夜勤数少ない順
@@ -2607,7 +2629,16 @@ function computeLearnedTrend(allDBData, staffList, exceptionMonths = []) {
       const raw = (dowRests[staff.id]?.[i]||0)/tot, ra = Math.min(1, tot/3);
       return raw * ra + (deptAvgRestL[i] ?? raw) * (1 - ra);
     });
-    result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate,
+    // 曜日別「頻度」= その曜日にその種別で働いた観測 / その曜日の総観測(休み含む)。dowShiftRate(条件付き率)と別。
+    // 夜勤ソートの並び替えキー用(段階1)。既存出力は変えず追加のみ。薄い曜日はアクセサ側で率にフォールバック。
+    const _cellObsArr = dowCellObs[staff.id] || [0,0,0,0,0,0,0];
+    const _shiftObsArr = dowShiftObs[staff.id] || [{},{},{},{},{},{},{}];
+    const dowShiftFreq = _cellObsArr.map((cell, i) => {
+      const o = _shiftObsArr[i] || {}; const f = {};
+      for (const k of Object.keys(o)) f[k] = cell > 0 ? (o[k] || 0) / cell : 0;
+      return f;
+    });
+    result[staff.name] = { ...freq, transitionRate, dowShiftRate, dowRestRate, dowShiftFreq,
       dowShiftObs: dowShiftObs[staff.id] || [{},{},{},{},{},{},{}], // Wilson用・重みなし観測回数[dow][shift]
       dowWorkObs: dowWorkObs[staff.id] || [0,0,0,0,0,0,0],          // Wilson用・重みなし観測回数[dow]
       dowCellObs: dowCellObs[staff.id] || [0,0,0,0,0,0,0],          // D-1用・その曜日の観測総数(getDay基準)
@@ -2797,5 +2828,7 @@ export {
   WORK_HABIT_MIN_OBS,
   WORK_HABIT_WILSON,
   PART_FIRST_DAY,
-  PART_FIRST_DAY_FULLTIMER_NIKKIN_WEIGHT
+  PART_FIRST_DAY_FULLTIMER_NIKKIN_WEIGHT,
+  FREQ_BASED_LEARNING,
+  FREQ_MIN_OBS
 };
