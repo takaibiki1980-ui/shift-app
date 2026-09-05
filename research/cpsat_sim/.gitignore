@@ -2,3 +2,5 @@ sample_input.json
 solution.json
 *.pyc
 __pycache__/
+real_input.json
+_c_*.json
