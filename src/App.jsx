@@ -18,6 +18,11 @@ import { effectiveCellShift } from './lib/exportCell.js';
 // ※生成ロジック・遅番→早番許可(allowLateToEarly)には非接触。
 const TIME_FEATURES_ENABLED = false;
 
+// ロック(PIN)の解錠を部署ごとに保持するか。true=一度解錠した部署は階の行き来でPIN再入力不要
+// (解錠状態はメモリのみ＝端末/タブローカル・他端末やクラウドには一切載せない)。手動ロックで再施錠可。
+// false=従来動作(部署タブを移動するたびに解錠リセット＝毎回PIN)。リロード/タブ閉じでは常に全解錠リセット。
+const LOCK_KEEP_UNLOCKED = true;
+
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
 function YeixTextLogo({ height = 36 }) {
@@ -4705,17 +4710,18 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [allShifts, warningsScope, warningsOn, activeDeptId, year, month, learnedTrend, staffList, depts, learningEnabled]);
   const [exceptionMonths, setExceptionMonths] = useState([]); // ["YYYY-M", ...]
   // ── 部署編集ロック ──
-  const [unlockedDeptId, setUnlockedDeptId] = useState(null); // 解錠中の部署ID
+  const [unlockedDeptIds, setUnlockedDeptIds] = useState(() => new Set()); // 解錠中の部署IDの集合（メモリのみ＝端末/タブローカル）
   const [pinModal, setPinModal] = useState(false);
   const [historyModal, setHistoryModal] = useState(false); // 変更履歴から復元モーダル
   const [conflictBanner, setConflictBanner] = useState(false); // 他端末で更新通知バナー
   const [overflowOpen, setOverflowOpen] = useState(false);
   const conflictBannerDismissed = useRef(false); // ×で閉じたら次のRealtimeで再表示しない
-  // タブ切替で自動ロック
-  useEffect(() => { setUnlockedDeptId(null); }, [activeDeptId]);
+  // タブ切替時の再ロック。LOCK_KEEP_UNLOCKED=true では解錠を部署ごとに保持（階の行き来でPIN不要）。
+  // false では従来どおり全解錠をリセット（毎回PIN）。※解錠状態はメモリのみ・リロード/タブ閉じで消える。
+  useEffect(() => { if (!LOCK_KEEP_UNLOCKED) setUnlockedDeptIds(new Set()); }, [activeDeptId]);
   // 部署切替時にアンドゥ可能数を現在部署のスタック長に合わせる
   useEffect(() => { setUndoCount((undoStackRef.current[activeDeptId] || []).length); setRedoCount((redoStackRef.current[activeDeptId] || []).length); }, [activeDeptId]);
-  const isLocked = !!(depts.find(d=>d.id===activeDeptId)?.pin && unlockedDeptId !== activeDeptId);
+  const isLocked = !!(depts.find(d=>d.id===activeDeptId)?.pin && !unlockedDeptIds.has(activeDeptId));
   const isLockedRef = useRef(isLocked);
   useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
   const isConfirmed = confirmedMonths[`${year}_${month+1}_${activeDeptId}`] === true;
@@ -5286,6 +5292,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Lock size={14} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
             : <button onClick={handleGenerate} disabled={generating||isMonthLoading||isConfirmed} title={isConfirmed?"確定済みです。「編集」ボタンで解除してください":isMonthLoading?"データ読み込み中です":undefined} style={{background:(generating||isMonthLoading||isConfirmed)?"#E5E7EB":"#2563EB",color:(generating||isMonthLoading||isConfirmed)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||isMonthLoading||isConfirmed)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(isMonthLoading||isConfirmed)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
           }
+          {/* 手動ロック: 解錠中(PIN設定あり)の部署を、席を離れるとき等に再施錠。解錠状態はメモリのみ・端末ローカル。 */}
+          {!isLocked && dept?.pin && <button onClick={()=>setUnlockedDeptIds(prev=>{const n=new Set(prev);n.delete(activeDeptId);return n;})} title="この部署を再ロックします（編集にはPINが必要になります）" style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Lock size={14} strokeWidth={2}/>{!isMobile&&" ロック"}</button>}
           {!isLocked && (isConfirmed
             ? <button onClick={handleUnconfirm} style={{background:"#F59E0B",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Pencil size={14} strokeWidth={2}/>{!isMobile&&" 編集"}</button>
             : <button onClick={async()=>{ const ok=await saveNow(); if(ok) handleConfirm(); }} title="保存してから確定します" style={{background:"#10B981",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Check size={14} strokeWidth={2}/>{!isMobile&&" 確定"}</button>
@@ -5426,7 +5434,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} year={year} month={month} onApplyMonthlyKyuko={applyDeptMonthlyKyuko} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;} setDeptShifts({},{resetHistory:true});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinSettingsModal&&<PinSettingsModal depts={depts} onSave={(pins)=>{ setDepts(prev=>prev.map(d=>({...d, pin:(pins[d.id]||"")||undefined}))); }} onClose={()=>setPinSettingsModal(false)}/>}
-      {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptId(activeDeptId);setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
+      {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptIds(prev=>{const n=new Set(prev);n.add(activeDeptId);return n;});setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
             // ★PINロックガード: ロック中は貼り付けで上書きさせない
             if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");setExcelPasteModal(false);return;}
@@ -5461,7 +5469,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           if (isConfirmedRef.current) { alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`); setHistoryModal(false); return; }
           // ★PIN: 破壊的な復元は実行直前に解錠を要求（既に解錠済みなら再入力不要／PIN未設定なら従来通り）
           const rdept = depts.find(x=>x.id===restoreDeptId);
-          if (rdept?.pin && unlockedDeptId !== restoreDeptId) {
+          if (rdept?.pin && !unlockedDeptIds.has(restoreDeptId)) {
             alert('この部署はロックされています。PINで解錠してから復元してください。');
             setHistoryModal(false);
             setPinModal(true);
