@@ -234,3 +234,32 @@ describe('非劣化: 固定なしの生成が従来通り動く', () => {
     }
   });
 });
+
+// ── 修正マーカー(shiftEditsByMonth・EDIT_MODE段階1) ──────────────────────────
+describe('applyCellFix 修正マーカー(markEdit)', () => {
+  const staff = { id: 's1', shiftRequestsByMonth: {} };
+  const targets = [['s1', 5]];
+  const now = { s1: { 5: '早番' } };
+  test('markEdit省略時は従来通り(shiftEditsByMonthを作らない)', () => {
+    const r = applyCellFix(staff, targets, true, now, YEAR, MONTH);
+    expect(r.shiftRequestsByMonth[mk][5]).toBe('早番');
+    expect(r.shiftEditsByMonth).toBeUndefined();
+  });
+  test('markEdit=true で shiftRequests と shiftEdits の両方に記録(段階1併記)', () => {
+    const r = applyCellFix(staff, targets, true, now, YEAR, MONTH, true);
+    expect(r.shiftRequestsByMonth[mk][5]).toBe('早番');
+    expect(r.shiftEditsByMonth[mk][5]).toBe('早番');
+  });
+  test('希望(markEdit=false)で上書きすると修正マーカーは解除される', () => {
+    const edited = applyCellFix(staff, targets, true, now, YEAR, MONTH, true);
+    const rewished = applyCellFix(edited, targets, true, now, YEAR, MONTH, false);
+    expect(rewished.shiftRequestsByMonth[mk][5]).toBe('早番');
+    expect(rewished.shiftEditsByMonth[mk][5]).toBeUndefined();
+  });
+  test('クリア(fix=false)で希望・修正の両方が消える', () => {
+    const edited = applyCellFix(staff, targets, true, now, YEAR, MONTH, true);
+    const cleared = applyCellFix(edited, targets, false, {}, YEAR, MONTH, true);
+    expect(cleared.shiftRequestsByMonth[mk][5]).toBeUndefined();
+    expect(cleared.shiftEditsByMonth[mk][5]).toBeUndefined();
+  });
+});
