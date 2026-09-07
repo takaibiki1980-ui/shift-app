@@ -23,6 +23,12 @@ const TIME_FEATURES_ENABLED = false;
 // false=従来動作(部署タブを移動するたびに解錠リセット＝毎回PIN)。リロード/タブ閉じでは常に全解錠リセット。
 const LOCK_KEEP_UNLOCKED = true;
 
+// 生成前後で右クリック配置を「希望(生成前)」「修正(生成後)」に自動区別する表示機能（段階1・表示レイヤーのみ）。
+// true: 生成後の右クリックを shiftEditsByMonth にマーカー記録し、緑装飾＋「修正だけ一括削除」を可能にする。
+// ※段階1は生成/学習/確定の挙動を一切変えない(修正も従来通り shiftRequestsByMonth にも入れる)。
+// false で従来動作(区別なし・全部希望扱い)へ即復帰。
+const EDIT_MODE_ENABLED = false;
+
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
 function YeixTextLogo({ height = 36 }) {
@@ -2681,6 +2687,9 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const cdow=new Date(year,month,d).getDay(); const cellWeekBg=cdow===0?"#FFF5F5":cdow===6?"#F5F5FF":undefined;
                   // 青枠は下書き中(confirmed=false)のみ。確定後はデータ(shiftRequestsByMonth)は残し装飾だけ消す。
                   const showFix=isFixed&&!confirmed;
+                  // 修正マーカー(緑): 生成後の右クリック修正。希望(青)と一目で区別。確定中は装飾を消す。
+                  const isEdit=EDIT_MODE_ENABLED&&!!s.shiftEditsByMonth?.[mk]?.[d];
+                  const showEdit=isEdit&&!confirmed;
                   // 確定中のみ希望休を「休」表示（ブラウザ印刷用・表示のみ）。データ/学習/公休カウントは不変。編集に戻すと自動で「希」へ。
                   const kiboAsRest=confirmed&&isKibo;
                   const dispShown=(confirmed&&dispType==="希望休")?"休み":dispType;
@@ -2688,7 +2697,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const warnStrong=warn&&(warn.level===1||warn.level===3);
                   const warnBg=warn?(warnStrong?"#fee2e2":"#fef9c3"):undefined;
                   const warnOutline=warn?(warnStrong?"2px dashed #ef4444":"1px dashed #f59e0b"):undefined;
-                  return <td key={d} title={warn?warn.reason:undefined} style={{position:"relative",padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":warnBg||(isKibo?"#fff5f5":isYukyu?"#faf0ff":showFix?"#f5f3ff":cellWeekBg),cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showFix?"2px solid #a78bfa":warnOutline||(consecViol?"1px solid #e0707060":undefined),outlineOffset:isSelected||isRoleViol||showFix||warn?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?(kiboAsRest?<ShiftBadge type="休み" defs={dept.customShiftDefs}/>:<span style={{fontSize:9,color:"#BE123C"}}>希</span>):isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispShown} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{warn&&<span onClick={(e)=>{e.stopPropagation();setWarnPop({reason:warn.reason,x:e.clientX,y:e.clientY});}} title={warn.reason} style={{position:"absolute",top:0,right:1,fontSize:8,fontWeight:900,lineHeight:1,color:warnStrong?"#dc2626":"#b45309",cursor:"pointer"}}>{warnStrong?"⚠":"!"}</span>}</td>;
+                  return <td key={d} title={warn?warn.reason:undefined} style={{position:"relative",padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":warnBg||(isKibo?"#fff5f5":isYukyu?"#faf0ff":showEdit?"#ecfdf5":showFix?"#f5f3ff":cellWeekBg),cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showEdit?"2px dashed #34d399":showFix?"2px solid #a78bfa":warnOutline||(consecViol?"1px solid #e0707060":undefined),outlineOffset:isSelected||isRoleViol||showEdit||showFix||warn?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?(kiboAsRest?<ShiftBadge type="休み" defs={dept.customShiftDefs}/>:<span style={{fontSize:9,color:"#BE123C"}}>希</span>):isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispShown} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{warn&&<span onClick={(e)=>{e.stopPropagation();setWarnPop({reason:warn.reason,x:e.clientX,y:e.clientY});}} title={warn.reason} style={{position:"absolute",top:0,right:1,fontSize:8,fontWeight:900,lineHeight:1,color:warnStrong?"#dc2626":"#b45309",cursor:"pointer"}}>{warnStrong?"⚠":"!"}</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -4673,6 +4682,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [warningsScope, setWarningsScope] = useState(null); // {deptId, year, month}
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
+  // EDIT_MODE: 生成後(=修正入力中)か生成前(=希望入力中)か。生成で true、部署/月切替で false。
+  const [editEra, setEditEra] = useState(false);
+  useEffect(() => { setEditEra(false); }, [activeDeptId, year, month]);
   const undoStackRef = useRef({}); // { [deptId]: snapshot[] } — アンドゥ履歴（最大30ステップ）。snapshot={shifts, sr}
   const redoStackRef = useRef({}); // { [deptId]: snapshot[] } — リドゥ履歴（最大30ステップ）
   const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
@@ -5028,6 +5040,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         dirtyDeptIdsRef.current.add(cd.id); // ★Fix S-1: 生成部署を明示dirty登録（active部署と異なる場合でも保存される）
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         setSaveStatus("unsaved");
+        if (cd.id === activeDeptIdRef.current) setEditEra(true); // EDIT_MODE: 生成後=以降の右クリックは「修正」
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
@@ -5201,8 +5214,47 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const synthNow = {};
     for (const [sid, d] of targets) synthNow[sid] = {...(synthNow[sid] || {}), [d]: shiftKey};
     shiftReqDeferSave.current = true; // 右クリック希望勤務のstaffList変更は自動保存せず「保存」まで保留
-    setStaffList(prev => prev.map(s => applyCellFix(s, targets, fix, synthNow, year, month)));
+    // EDIT_MODE: 生成後(editEra)の右クリックは「修正」としてマーカー記録。生成前は従来の「希望」。
+    const markEdit = EDIT_MODE_ENABLED && editEra;
+    setStaffList(prev => prev.map(s => applyCellFix(s, targets, fix, synthNow, year, month, markEdit)));
     setCtxMenu(null);
+  };
+
+  // EDIT_MODE: 「修正だけ一括削除」。生成後の修正(shiftEditsByMonthマーカー)のセルを、生成結果の値に戻す
+  //（無ければ空）。生成前の希望(shiftRequestsByMonthのみ)は残す。生成/学習/確定には非関与(表示・入力データのみ)。
+  const clearEditsOnly = () => {
+    if (isLockedRef.current) { alert("この部署はロックされています。編集するには解錠してください。"); return; }
+    const gen = lastAutoGenRef.current[activeDeptId] || {};
+    const marks = {}; // sid -> [day,...]
+    for (const s of staffList) {
+      if (s.dept !== activeDeptId) continue;
+      const em = s.shiftEditsByMonth?.[mk];
+      if (em && Object.keys(em).length) marks[s.id] = Object.keys(em).map(Number);
+    }
+    const total = Object.values(marks).reduce((a, ds) => a + ds.length, 0);
+    if (total === 0) { alert("削除する修正はありません。"); return; }
+    setConfirmDialog({ message: `生成後の修正 ${total}件 を取り消して自動生成の状態に戻します。\n（生成前の希望勤務は残ります）\nよろしいですか？`, okLabel: "修正を取り消す", onOk: () => {
+      userEditSeq.current++; saveStatusRef.current = "unsaved"; setSaveStatus("unsaved");
+      // deptShifts: 修正セルを生成値へ復元（無ければ空）
+      setAllShifts(prev => {
+        const cur = { ...(prev[activeDeptId] || {}) };
+        for (const [sid, days] of Object.entries(marks)) {
+          cur[sid] = { ...(cur[sid] || {}) };
+          for (const d of days) { const gv = gen[sid]?.[d]; if (gv) cur[sid][d] = gv; else delete cur[sid][d]; }
+        }
+        return { ...prev, [activeDeptId]: cur };
+      });
+      // staffList: 修正セルの shiftRequestsByMonth(段階1で併記) と shiftEditsByMonth を解除
+      shiftReqDeferSave.current = true;
+      setStaffList(prev => prev.map(s => {
+        if (!marks[s.id]) return s;
+        const sr = { ...(s.shiftRequestsByMonth || {}) }; sr[mk] = { ...(sr[mk] || {}) };
+        const se = { ...(s.shiftEditsByMonth || {}) }; se[mk] = { ...(se[mk] || {}) };
+        for (const d of marks[s.id]) { delete sr[mk][d]; delete se[mk][d]; }
+        return { ...s, shiftRequestsByMonth: sr, shiftEditsByMonth: se };
+      }));
+      dirtyDeptIdsRef.current.add(activeDeptId);
+    } });
   };
 
   const saveStaff = (form) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} const isNewStaff=!staffList.find(s=>s.id===form.id); if(isNewStaff && staffList.length>=planLimit.staff){alert(`${planLabelJa}プランではスタッフは${planLimit.staff}名までです。`);return;} setStaffList(prev=>{const idx=prev.findIndex(s=>s.id===form.id);if(idx>=0)return prev.map((s,i)=>i===idx?form:s);return[...prev,{...form,id:`${activeDeptId}_${Date.now()}`,dept:activeDeptId}];}); setStaffModal(null); };
@@ -5300,6 +5352,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           )}
           <button onClick={()=>setDownloadModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 印刷"}</button>
           {!isLocked && <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>}
+          {EDIT_MODE_ENABLED && !isLocked && !isConfirmed && <span title={editEra?"生成後：右クリックは「修正」（緑）として記録されます":"生成前：右クリックは「希望」（青）として記録されます"} style={{display:"inline-flex",alignItems:"center",gap:4,height:36,padding:"0 10px",borderRadius:8,fontSize:11,fontWeight:700,background:editEra?"#ecfdf5":"#f5f3ff",color:editEra?"#047857":"#6d28d9",border:`1px solid ${editEra?"#a7f3d0":"#ddd6fe"}`}}>{editEra?"● 修正中":"● 希望入力中"}</span>}
+          {EDIT_MODE_ENABLED && !isLocked && editEra && <button onClick={clearEditsOnly} title="生成後の修正だけをまとめて取り消します（生成前の希望は残ります）" style={{background:"#FFFFFF",color:"#047857",border:"1px solid #a7f3d0",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Trash2 size={14} strokeWidth={2}/>{!isMobile&&" 修正だけ削除"}</button>}
           {/* Overflow [•••] */}
           <div style={{position:"relative"}}>
             <button onClick={()=>setOverflowOpen(o=>!o)} style={{background:overflowOpen?"#F1F5F9":"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,width:36,height:36,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}} title="その他のメニュー"><MoreHorizontal size={16} strokeWidth={2}/></button>

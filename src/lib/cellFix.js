@@ -19,19 +19,28 @@ import { monthKey } from '../engine/core.js';
  * @param {number} month     0始まり
  * @returns {Object} 更新後のスタッフ（対象外なら同一参照）
  */
-export function applyCellFix(staff, targets, fix, shiftsNow, year, month) {
+export function applyCellFix(staff, targets, fix, shiftsNow, year, month, markEdit = false) {
   const mk = monthKey(year, month);
   const mine = (targets || []).filter(([sid]) => sid === staff.id);
   if (mine.length === 0) return staff;
   const sr = { ...(staff.shiftRequestsByMonth || {}) }; sr[mk] = { ...(sr[mk] || {}) };
+  // 修正マーカー(shiftEditsByMonth): 段階1は表示・一括削除用のマーカーとして並行保持。
+  // markEdit時のみ書き込む/既に持つ場合のみ整理する（フラグOFF・従来利用時は staff の形を変えない）。
+  const touchEdits = markEdit || !!staff.shiftEditsByMonth;
+  const se = touchEdits ? { ...(staff.shiftEditsByMonth || {}) } : null;
+  if (se) se[mk] = { ...(se[mk] || {}) };
   for (const [sid, d] of mine) {
     if (fix) {
       const v = shiftsNow?.[sid]?.[d];
-      if (!v) continue; // 空セルは固定しない
+      if (!v) { if (se) delete se[mk][d]; continue; } // 空セルは固定しない
       sr[mk][d] = v;
+      if (se) { if (markEdit) se[mk][d] = v; else delete se[mk][d]; } // 希望で上書き時は修正マーカー解除
     } else {
       delete sr[mk][d];
+      if (se) delete se[mk][d];
     }
   }
-  return { ...staff, shiftRequestsByMonth: sr };
+  const out = { ...staff, shiftRequestsByMonth: sr };
+  if (se) out.shiftEditsByMonth = se;
+  return out;
 }
