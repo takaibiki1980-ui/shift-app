@@ -4682,9 +4682,23 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [warningsScope, setWarningsScope] = useState(null); // {deptId, year, month}
   const [downloadModal, setDownloadModal] = useState(false);
   const [bulkKyukoModal, setBulkKyukoModal] = useState(false);
-  // EDIT_MODE: 生成後(=修正入力中)か生成前(=希望入力中)か。生成で true、部署/月切替で false。
-  const [editEra, setEditEra] = useState(false);
-  useEffect(() => { setEditEra(false); }, [activeDeptId, year, month]);
+  // EDIT_MODE: 生成後(=修正入力中)か生成前(=希望入力中)かを「永続データ」から判定する。
+  //  判定: その部署・月の deptShifts に「希望(shiftRequestsByMonth)でないセル」が1つ以上あるか。
+  //   - 生成前の右クリック希望は deptShifts と shiftRequestsByMonth の両方に入るので“希望でないセル”は生じない → false(希望モード)。
+  //   - 生成すると多数のセルが希望外で埋まる → true(修正モード)。
+  //   - オールクリアで deptShifts が空になる → false(希望モードへ自動復帰)。
+  //  セッション状態(旧editEra state)ではなく永続データ由来なので、部署/月の切替・再読込でも維持される（バグ1の根治）。
+  const editEra = useMemo(() => {
+    const emk = monthKey(year, month);
+    const ds = allShifts[activeDeptId] || {};
+    for (const s of staffList) {
+      if (s.dept !== activeDeptId) continue;
+      const cells = ds[s.id]; if (!cells) continue;
+      const req = s.shiftRequestsByMonth?.[emk] || {};
+      for (const d in cells) { if (cells[d] && !(d in req)) return true; }
+    }
+    return false;
+  }, [allShifts, activeDeptId, staffList, year, month]);
   const undoStackRef = useRef({}); // { [deptId]: snapshot[] } — アンドゥ履歴（最大30ステップ）。snapshot={shifts, sr}
   const redoStackRef = useRef({}); // { [deptId]: snapshot[] } — リドゥ履歴（最大30ステップ）
   const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
@@ -5040,7 +5054,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         dirtyDeptIdsRef.current.add(cd.id); // ★Fix S-1: 生成部署を明示dirty登録（active部署と異なる場合でも保存される）
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         setSaveStatus("unsaved");
-        if (cd.id === activeDeptIdRef.current) setEditEra(true); // EDIT_MODE: 生成後=以降の右クリックは「修正」
+        // EDIT_MODE: 生成後=以降の右クリックは「修正」。editEra は allShifts から派生するため明示更新は不要。
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
@@ -5224,6 +5238,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   //（無ければ空）。生成前の希望(shiftRequestsByMonthのみ)は残す。生成/学習/確定には非関与(表示・入力データのみ)。
   const clearEditsOnly = () => {
     if (isLockedRef.current) { alert("この部署はロックされています。編集するには解錠してください。"); return; }
+    const mk = monthKey(year, month); // ★バグ1(無反応)の直接原因: App スコープに mk が無く ReferenceError で握り潰されていた
     const gen = lastAutoGenRef.current[activeDeptId] || {};
     const marks = {}; // sid -> [day,...]
     for (const s of staffList) {
@@ -5486,7 +5501,26 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} year={year} month={month} onApplyMonthlyKyuko={applyDeptMonthlyKyuko} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
-      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;} setDeptShifts({},{resetHistory:true});setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
+      {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;}
+        // オールクリア = 生成結果と「生成後の修正」だけ消す。生成前の希望勤務/希望休/有給は残す（同じ条件で生成し直せる）。
+        setDeptShifts({},{resetHistory:true}); // 生成シフト(deptShifts)を消去 → editEra が false になり希望モードへ自動復帰(バグ3も解消)
+        // 生成後の修正(shiftEditsByMonthマーカー)と、その修正が段階1で併記した shiftRequestsByMonth 分だけを消す。
+        //   マーカーの無い shiftRequestsByMonth(=生成前の希望)・kiboByMonth(希望休)・yukyuByMonth(有給)は温存(バグ2の正しい動作)。
+        { const cmk = monthKey(year, month);
+          shiftReqDeferSave.current = true;
+          setStaffList(prev=>prev.map(s=>{
+            if (s.dept !== activeDeptId) return s;
+            const em = s.shiftEditsByMonth?.[cmk];
+            if (!em || !Object.keys(em).length) return s; // 修正なし=そのまま(希望は残す)
+            const sr = { ...(s.shiftRequestsByMonth||{}) }; sr[cmk] = { ...(sr[cmk]||{}) };
+            for (const d of Object.keys(em)) delete sr[cmk][d]; // 修正が併記した希望分のみ削除
+            if (!Object.keys(sr[cmk]).length) delete sr[cmk];
+            const se = { ...(s.shiftEditsByMonth||{}) }; delete se[cmk]; // 修正マーカーを一掃
+            return { ...s, shiftRequestsByMonth: sr, shiftEditsByMonth: se };
+          }));
+          dirtyDeptIdsRef.current.add(activeDeptId);
+        }
+        setClearModal(false);}} onClose={()=>setClearModal(false)}/>}
       {pinSettingsModal&&<PinSettingsModal depts={depts} onSave={(pins)=>{ setDepts(prev=>prev.map(d=>({...d, pin:(pins[d.id]||"")||undefined}))); }} onClose={()=>setPinSettingsModal(false)}/>}
       {pinModal&&dept?.pin&&<PinModal deptLabel={dept.label} onVerify={(pin)=>{if(pin===dept.pin){setUnlockedDeptIds(prev=>{const n=new Set(prev);n.add(activeDeptId);return n;});setPinModal(false);return true;}return false;}} onClose={()=>setPinModal(false)}/>}
       {excelPasteModal&&<ExcelPasteModal year={year} month={month} staffList={staffList.filter(s=>s.dept===activeDeptId)} customShiftKeys={(dept?.customShiftDefs||[]).map(cd=>cd.key).filter(Boolean)} deptShiftTypes={dept?.shiftTypes||[]} customShiftDefs={dept?.customShiftDefs||[]} onApply={(pastedShifts)=>{
