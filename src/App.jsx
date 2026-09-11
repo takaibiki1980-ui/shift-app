@@ -27,7 +27,7 @@ const LOCK_KEEP_UNLOCKED = true;
 // true: 生成後の右クリックを shiftEditsByMonth にマーカー記録し、緑装飾＋「修正だけ一括削除」を可能にする。
 // ※段階1は生成/学習/確定の挙動を一切変えない(修正も従来通り shiftRequestsByMonth にも入れる)。
 // false で従来動作(区別なし・全部希望扱い)へ即復帰。
-const EDIT_MODE_ENABLED = false;
+const EDIT_MODE_ENABLED = true;
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
