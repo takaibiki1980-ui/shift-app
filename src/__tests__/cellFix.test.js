@@ -235,22 +235,42 @@ describe('非劣化: 固定なしの生成が従来通り動く', () => {
   });
 });
 
-// ── 修正マーカー(shiftEditsByMonth・EDIT_MODE段階1) ──────────────────────────
+// ── 修正マーカー(shiftEditsByMonth・EDIT_MODE) ──────────────────────────
 describe('applyCellFix 修正マーカー(markEdit)', () => {
   const staff = { id: 's1', shiftRequestsByMonth: {} };
   const targets = [['s1', 5]];
   const now = { s1: { 5: '早番' } };
-  test('markEdit省略時は従来通り(shiftEditsByMonthを作らない)', () => {
+  test('markEdit省略時は従来通り(shiftEditsByMonthを作らない・希望として固定)', () => {
     const r = applyCellFix(staff, targets, true, now, YEAR, MONTH);
     expect(r.shiftRequestsByMonth[mk][5]).toBe('早番');
     expect(r.shiftEditsByMonth).toBeUndefined();
   });
-  test('markEdit=true で shiftRequests と shiftEdits の両方に記録(段階1併記)', () => {
+  test('段階2: markEdit=true は shiftEdits だけに記録し shiftRequests には載せない', () => {
     const r = applyCellFix(staff, targets, true, now, YEAR, MONTH, true);
-    expect(r.shiftRequestsByMonth[mk][5]).toBe('早番');
     expect(r.shiftEditsByMonth[mk][5]).toBe('早番');
+    expect(r.shiftRequestsByMonth[mk][5]).toBeUndefined(); // 希望として固定しない
   });
-  test('希望(markEdit=false)で上書きすると修正マーカーは解除される', () => {
+  test('段階2: 修正(markEdit=true)は自動生成でロックされない(同月再生成で固定されない)', () => {
+    // 生成後に遅番へ修正した状態を作る → shiftRequestsに載らない → autoGenerateはその日を自由に埋める
+    let base = makeStaff()[0];
+    base = applyCellFix(base, [['e0', 10]], true, { e0: { 10: '遅番' } }, YEAR, MONTH, true);
+    expect(base.shiftRequestsByMonth[mk]?.[10]).toBeUndefined(); // 絶対固定の希望になっていない
+    let varied = false, first = null;
+    for (let i = 0; i < 30; i++) {
+      const staffL = makeStaff(); staffL[0] = base;
+      const { shifts } = autoGenerate(staffL, eiyoDept(), YEAR, MONTH, {}, {}, {});
+      if (first === null) first = shifts.e0[10];
+      if (shifts.e0[10] !== first) { varied = true; break; }
+    }
+    expect(varied).toBe(true); // 修正はロックされず、再生成で変動する（＝生成の産物として置き換わる）
+  });
+  test('段階2: 希望のあるセルを修正すると希望が解除される(修正≠希望)', () => {
+    const wished = { id: 's1', shiftRequestsByMonth: { [mk]: { 5: '日勤' } } };
+    const edited = applyCellFix(wished, targets, true, now, YEAR, MONTH, true);
+    expect(edited.shiftRequestsByMonth[mk][5]).toBeUndefined(); // 希望固定は外れる
+    expect(edited.shiftEditsByMonth[mk][5]).toBe('早番');
+  });
+  test('希望(markEdit=false)で上書きすると修正マーカーは解除され希望として固定される', () => {
     const edited = applyCellFix(staff, targets, true, now, YEAR, MONTH, true);
     const rewished = applyCellFix(edited, targets, true, now, YEAR, MONTH, false);
     expect(rewished.shiftRequestsByMonth[mk][5]).toBe('早番');
