@@ -24,7 +24,7 @@ export function applyCellFix(staff, targets, fix, shiftsNow, year, month, markEd
   const mine = (targets || []).filter(([sid]) => sid === staff.id);
   if (mine.length === 0) return staff;
   const sr = { ...(staff.shiftRequestsByMonth || {}) }; sr[mk] = { ...(sr[mk] || {}) };
-  // 修正マーカー(shiftEditsByMonth): 段階1は表示・一括削除用のマーカーとして並行保持。
+  // 修正マーカー(shiftEditsByMonth): 表示・一括削除用のマーカー。
   // markEdit時のみ書き込む/既に持つ場合のみ整理する（フラグOFF・従来利用時は staff の形を変えない）。
   const touchEdits = markEdit || !!staff.shiftEditsByMonth;
   const se = touchEdits ? { ...(staff.shiftEditsByMonth || {}) } : null;
@@ -33,8 +33,16 @@ export function applyCellFix(staff, targets, fix, shiftsNow, year, month, markEd
     if (fix) {
       const v = shiftsNow?.[sid]?.[d];
       if (!v) { if (se) delete se[mk][d]; continue; } // 空セルは固定しない
-      sr[mk][d] = v;
-      if (se) { if (markEdit) se[mk][d] = v; else delete se[mk][d]; } // 希望で上書き時は修正マーカー解除
+      if (markEdit) {
+        // 段階2: 修正は「その回の生成の産物」。希望勤務(shiftRequestsByMonth)には載せない
+        //   → 生成step1で絶対固定されず、同じ月を生成し直すと消えて新結果に置き換わる（ユーザー意図）。
+        //   マーカー(shiftEditsByMonth)だけに記録し、同セルに希望が残っていれば解除する（修正≠希望）。
+        delete sr[mk][d];
+        if (se) se[mk][d] = v;
+      } else {
+        sr[mk][d] = v;                    // 希望勤務は従来通り固定（生成step1で絶対ロック）
+        if (se) delete se[mk][d];         // 希望で上書き＝修正マーカー解除
+      }
     } else {
       delete sr[mk][d];
       if (se) delete se[mk][d];
