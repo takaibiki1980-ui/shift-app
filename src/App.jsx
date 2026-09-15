@@ -29,10 +29,12 @@ const LOCK_KEEP_UNLOCKED = true;
 // false で従来動作(区別なし・全部希望扱い)へ即復帰。
 const EDIT_MODE_ENABLED = true;
 
-// ── [DIAG] 一時診断ログ（上書きバグ調査用・本番挙動は不変） ─────────────────
-// 剥がすときは "[DIAG]" と _diag( を grep して削除すれば元通り。false にすれば全ログ停止。
-const DIAG_OVERWRITE = true;
-const _diag = (tag, ...args) => { if (DIAG_OVERWRITE) { try { console.log(`[DIAG:${tag}] ${new Date().toLocaleTimeString()}.${String(new Date().getMilliseconds()).padStart(3,'0')}`, ...args); } catch {} } };
+// ── 自己エコー抑止: 自分の保存が Supabase Realtime で自分に返ってきた通知で
+//    reloadFromRemote が発火し、リモート値で自分の表示を上書きするのを防ぐ。
+//    直近に自分が保存した同じキーで、通知の値が自分の保存値と一致（＝純粋なエコー）なら reload しない。
+//    他セッション/他端末の変更（値が異なる）は従来どおり反映する。false で従来動作へ即復帰。
+const ECHO_SUPPRESS_ENABLED = true;
+const ECHO_SUPPRESS_WINDOW_MS = 10000;
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
@@ -3968,6 +3970,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const dbInitialized = useRef(false); // 初回DB読込完了フラグ（二重保護）
   const dirtyDeptIdsRef = useRef(new Set()); // ★Fix W-2: 未保存部署の追跡（emergencySave多部署対応）
   const reloadFromRemoteRef = useRef(null); // reloadFromRemote関数への参照（catch節から呼び出し用）
+  const selfEchoRef = useRef({}); // 自己エコー抑止: { [shiftKey]: { ts, json } } 自分が最後に保存した内容
   const activeCellRef = useRef(null); // { staffId, day, time } 現在編集中のセル（Realtime上書き保護用）
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline, targetYear, targetMonth, byMonth: { "YYYY-M": { deadline } } } }
@@ -4245,24 +4248,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => {
     if (dbLoading) return;
 
-    const reloadFromRemote = async (trigger = 'unknown') => {
-      _diag('RELOAD', `called trigger=${trigger} saveStatus=${saveStatusRef.current} isLoadingMonth=${isLoadingMonth.current} activeDept=${activeDeptIdRef.current} year=${yearRef.current} month=${monthRef.current+1}`);
+    const reloadFromRemote = async () => {
       // 月ロード中はRealtimeの割り込みを拒否（データ混線防止）
-      if (isLoadingMonth.current) { _diag('RELOAD', `skip: month-loading (trigger=${trigger})`); return; }
+      if (isLoadingMonth.current) return;
       // 編集中（unsaved）はスキップ — 保存完了後に次のRealtimeイベントで自動反映される
       if (saveStatusRef.current === 'unsaved') {
         // 自分の保存から8秒以内は自己ループなので競合バナーを出さない
         const isSelfTriggered = Date.now() - lastSelfSaveTime.current < 8000;
-        _diag('RELOAD', `skip: UNSAVED protected (trigger=${trigger}, selfTriggered=${isSelfTriggered}) → 未保存は上書きされない`);
         if (!isSelfTriggered && !conflictBannerDismissed.current) setConflictBanner(true);
         return;
       }
       // 貼り付け後5秒間はRealtime上書きをブロック（保存完了前にRTが旧データを上書きするのを防ぐ）
       if (Date.now() - pasteTimestamp.current < 5000) {
-        _diag('RELOAD', `skip: paste-block (trigger=${trigger})`);
         return;
       }
-      _diag('RELOAD', `PROCEEDING (trigger=${trigger}) → 保存済みなのでリモート内容でローカルを上書きし得る`);
       // 保存完了後に実際にロードする際はdismissedフラグをリセット
       conflictBannerDismissed.current = false;
       setConflictBanner(false);
@@ -4293,11 +4292,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           const hasLocalChanges = lastSaved !== null &&
             JSON.stringify(staffListRef.current) !== JSON.stringify(lastSaved);
           if (!hasLocalChanges && JSON.stringify(byKey['staffList']) !== JSON.stringify(staffListRef.current)) {
-            _diag('RELOAD', 'OVERWRITE staffList ← リモート（ローカル未変更と判定）');
             staffListSkipSave.current = true;
             setStaffList(byKey['staffList']);
-          } else if (hasLocalChanges) {
-            _diag('RELOAD', 'keep staffList（ローカル変更あり→上書きせず保護）');
           }
         }
         const latestExcRT = filterExpiredExceptions(byKey['exceptionMonths'] || exceptionMonths);
@@ -4320,7 +4316,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         const shiftPrefix = `shifts_${yearRef.current}_${monthRef.current+1}_`;
         const deptShiftEntries = Object.entries(byKey).filter(([k]) => k.startsWith(shiftPrefix));
         if (deptShiftEntries.length > 0) {
-          _diag('RELOAD', `OVERWRITE shifts ← リモート depts=[${deptShiftEntries.map(([k])=>k.slice(shiftPrefix.length)).join(',')}] activeDept=${activeDeptIdRef.current}（この瞬間に表示中シフトが差し替わる）`);
           isLoadingMonth.current = true;
           // ★Fix W-3: RT適用時のundo stack リセット
           // 「RT更新前の古いundo履歴」でundoするとRT変更が消滅するリスクを防止
@@ -4382,7 +4377,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     reloadFromRemoteRef.current = reloadFromRemote; // catch節からも呼べるように公開
 
     // スマホでアプリを切り替えて戻ったとき同期
-    const onVisibility = () => { _diag('VISIBILITY', `hidden=${document.hidden}${!document.hidden?' → reloadFromRemote(visibility) 発火':''}`); if (!document.hidden) reloadFromRemote('visibility'); };
+    const onVisibility = () => { if (!document.hidden) reloadFromRemote(); };
     document.addEventListener('visibilitychange', onVisibility);
 
     // Supabase Realtime: 他デバイスが保存した瞬間に同期
@@ -4419,7 +4414,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       if (reloadDebounceTimer) clearTimeout(reloadDebounceTimer);
       reloadDebounceTimer = setTimeout(() => {
         reloadDebounceTimer = null;
-        reloadFromRemote('realtime');
+        reloadFromRemote();
       }, 500);
     };
 
@@ -4432,8 +4427,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           // 副次的な保存が realtime_update → autosave → echo loop を引き起こすのを防止
           const changedKey = payload.new?.data_key || payload.old?.data_key || '';
           const currentShiftPrefix = `shifts_${yearRef.current}_${monthRef.current+1}_`;
-          _diag('REALTIME', `postgres_changes key=${changedKey} match=${changedKey.startsWith(currentShiftPrefix)}${changedKey.startsWith(currentShiftPrefix)?' → debouncedReload':' → 無視'}`);
           if (changedKey.startsWith(currentShiftPrefix)) {
+            // 自己エコー抑止: 自分が直近に保存した同じキーの通知で、値も自分の保存値と一致するなら
+            // 「自分の保存が Realtime で返ってきただけ」なので reload しない（自分の表示を上書きしない）。
+            // 値が異なる＝他セッション/他端末の変更 → 従来どおり reload して反映する。
+            if (ECHO_SUPPRESS_ENABLED) {
+              const echo = selfEchoRef.current[changedKey];
+              const newVal = payload.new?.data_value;
+              const isSelfEcho = echo && (Date.now() - echo.ts < ECHO_SUPPRESS_WINDOW_MS) &&
+                (newVal === undefined || JSON.stringify(newVal) === echo.json);
+              if (isSelfEcho) return; // 自己エコー → 何もしない
+            }
             debouncedReload();
           }
           // staffList / depts / shiftTrend 等の変更は reload 対象外（自己 echo 防止）
@@ -4491,7 +4495,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       if (!dbInitialized.current) return;
       // dirty部署がなく、saveStatus も 'saved' なら保存不要
       const dirtyIds = new Set(dirtyDeptIdsRef.current);
-      _diag('SAVE', `emergencySave（月切替/アンマウント時）dirty=[${[...dirtyIds].join(',')}] saveStatus=${saveStatusRef.current}`);
       if (dirtyIds.size === 0 && saveStatusRef.current !== 'unsaved') return;
       // saveStatusが'unsaved'なら activeDeptId も保存対象に含める（dirtyに漏れがある場合の安全網）
       if (saveStatusRef.current === 'unsaved') dirtyIds.add(activeDeptIdRef.current);
@@ -4501,6 +4504,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       for (const deptId of dirtyIds) {
         const emergencyKey = `shifts_${year}_${month+1}_${deptId}`;
         const emergencyData = allShiftsRef.current[deptId] || {};
+        // 自己エコー抑止: 緊急保存の内容も記録（この保存の Realtime エコーで reload しないように）
+        selfEchoRef.current[emergencyKey] = { ts: Date.now(), json: JSON.stringify(emergencyData) };
         supabase.from('shift_data').upsert(
           { user_id:session.user.id, data_key:emergencyKey, data_value:emergencyData, updated_at:new Date().toISOString() },
           { onConflict:'user_id,data_key' }
@@ -4575,11 +4580,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // dirty 部署（+アクティブ部署）を保存する。成功=true / 失敗=false / 保存対象なし=true。
   const saveNow = useCallback(async () => {
     if (!dbInitialized.current) return false;
-    if (isLoadingMonth.current) { _diag('SAVE', 'saveNow skip: month-loading'); return false; }
+    if (isLoadingMonth.current) return false;
     const y = yearRef.current, m = monthRef.current;
     const deptIdsToSave = new Set(dirtyDeptIdsRef.current);
     deptIdsToSave.add(activeDeptIdRef.current); // 安全網: アクティブ部署も必ず含める
-    _diag('SAVE', `saveNow start depts=[${[...deptIdsToSave].join(',')}] year=${y} month=${m+1}`);
     let saveError = null;
     for (const currentDeptId of deptIdsToSave) {
       const key = `shifts_${y}_${m+1}_${currentDeptId}`;
@@ -4598,6 +4602,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           throw error;
         }
         dirtyDeptIdsRef.current.delete(currentDeptId); // 保存成功 → dirty解除
+        // 自己エコー抑止: この保存の内容と時刻を記録。直後に Realtime で返ってくる同一通知を無視する。
+        selfEchoRef.current[key] = { ts: Date.now(), json: JSON.stringify(deptData) };
         // DBキャッシュ更新 → learnedTrend 再計算（保存＝学習の節目）
         allDBDataRef.current[key] = deptData;
         {
@@ -4644,7 +4650,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }
     try { localStorage.setItem(SAVE_KEY(y,m),JSON.stringify(allShiftsRef.current)); } catch {}
     if (!saveError) {
-      _diag('SAVE', `saveNow OK → saveStatus=saved（以後 reloadFromRemote の未保存保護が外れる）`);
       saveFailCountRef.current = 0;
       lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
       seqAtLastRemoteLoad.current = userEditSeq.current; // 保存済み＝現状を基準に（未保存判定のリセット）
@@ -5084,7 +5089,6 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       message: `${year}年${month+1}月 ${dept?.label} のシフトを確定しますか？\n確定後は編集・自動生成ができなくなります。`,
       okLabel: '確定する',
       onOk: async () => {
-        _diag('CONFIRM', `確定 dept=${activeDeptId} ${year}/${month+1}`);
         const key = `confirmed_${year}_${month+1}_${activeDeptId}`;
         const { error } = await supabase.from('shift_data').upsert(
           { user_id: session.user.id, data_key: key, data_value: true, updated_at: new Date().toISOString() },
@@ -5420,7 +5424,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* DEPT TABS */}
       <div style={{background:"#F8FAFC",borderBottom:"1px solid #E5E7EB",display:"flex",overflowX:"auto",padding:"0 16px",alignItems:"center"}}>
-        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>{_diag('TAB',`部署タブ切替 ${activeDeptIdRef.current} → ${d.id}（saveStatus=${saveStatusRef.current}）`);setActiveDeptId(d.id);}} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:act?"2px solid #2563EB":"2px solid transparent",color:act?"#111827":"#6B7280",borderRadius:0,cursor:"pointer",fontSize:12,fontWeight:act?600:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"0 1px"}}><span>{d.label}</span><span style={{background:act?"#EFF6FF":"#F1F5F9",color:act?"#2563EB":"#9CA3AF",borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&!isLocked&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",padding:"3px 6px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={13} strokeWidth={2}/></button>}</div>);})}
+        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:act?"2px solid #2563EB":"2px solid transparent",color:act?"#111827":"#6B7280",borderRadius:0,cursor:"pointer",fontSize:12,fontWeight:act?600:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"0 1px"}}><span>{d.label}</span><span style={{background:act?"#EFF6FF":"#F1F5F9",color:act?"#2563EB":"#9CA3AF",borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&!isLocked&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",padding:"3px 6px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={13} strokeWidth={2}/></button>}</div>);})}
         {!isLocked && <button onClick={()=>{ if(depts.length>=planLimit.depts){alert(`${planLabelJa}プランでは部署は${planLimit.depts}個までです。`);return;} setDeptSettingModal({dept:null,isNew:true}); }} style={{background:"none",border:"1px dashed #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",fontSize:11,padding:"5px 11px",marginLeft:8,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>}
         {!isLocked && <span style={{fontSize:10,color:"#9CA3AF",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>部署 {depts.length}/{limitDisp(planLimit.depts)}</span>}
       </div>
