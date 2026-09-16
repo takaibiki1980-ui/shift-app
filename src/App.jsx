@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo, Component } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, Component } from "react";
 import { computeBacktestMetrics, computeDriftMetric, computeDisplayVsRealizedMetric, formatPct } from './research/backtest.js';
 import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
@@ -35,6 +35,12 @@ const EDIT_MODE_ENABLED = true;
 //    他セッション/他端末の変更（値が異なる）は従来どおり反映する。false で従来動作へ即復帰。
 const ECHO_SUPPRESS_ENABLED = true;
 const ECHO_SUPPRESS_WINDOW_MS = 10000;
+
+// ── シフト表: 日付行(ヘッダー)の縦スクロール固定（sticky header）。表示のみ・生成/印刷/出力に非関与。
+//    ON時: シフト表を「高さ制限＋overflowY:auto」の自前スクロール容器にし、thead を position:sticky で上部固定。
+//    横スクロールの氏名列固定(既存)はそのまま。false で従来動作(縦は画面スクロール・固定なし)へ即復帰。
+const STICKY_HEADER_ENABLED = false;
+const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
@@ -2472,6 +2478,19 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
   const [warnPop, setWarnPop] = useState(null); // 生成警告の根拠ポップオーバー {reason,x,y}
+  // sticky header用: 1行目(日付行)の高さを測り、2行目(行事行)の sticky top オフセットに使う。
+  // 拡大時もレイアウトpx基準で一致する（ブラウザ拡大・アプリ内transform拡大どちらも整合）。
+  const headRow1Ref = useRef(null);
+  const [row1H, setRow1H] = useState(0);
+  useLayoutEffect(() => {
+    if (!STICKY_HEADER_ENABLED) return;
+    const measure = () => { if (headRow1Ref.current) setRow1H(headRow1Ref.current.offsetHeight); };
+    measure();
+    window.addEventListener('resize', measure); // ブラウザ拡大(Ctrl+/-)や画面サイズ変更で再測定
+    return () => window.removeEventListener('resize', measure);
+  }, [year, month, staffList.length, dept.id]);
+  // sticky header用: ヘッダーth に縦固定(top)を付与する追加スタイル。corner=氏名列(左固定と交差)は最前面。
+  const stTop = (topPx, corner) => STICKY_HEADER_ENABLED ? { position:'sticky', top:topPx, zIndex: corner ? 6 : 4 } : null;
   const maxConsec = dept.maxConsecutive || 5;
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
@@ -2644,18 +2663,18 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
         <span>役職制限: {roleViolationCount}件</span>
       </div>
     )}
-    <div style={{overflowX:"auto",overflowY:"visible",userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
+    <div style={{overflowX:"auto",overflowY:STICKY_HEADER_ENABLED?"auto":"visible",...(STICKY_HEADER_ENABLED?{maxHeight:STICKY_HEADER_MAXH}:{}),userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
         <thead>
-          <tr>
-            <th style={TH({sticky:true,w:148})}><span style={{color:"#71717A",fontSize:10}}>氏名</span></th>
-            {Array.from({length:days},(_,i)=>i+1).map(d=>{const wd=getWD(year,month,d),dow=new Date(year,month,d).getDay(),isSun=dow===0,isSat=dow===6,we=isSun||isSat,alert=isAlert(d);const hBg=isSun?"#FFF5F5":isSat?"#F5F5FF":"#FAFAFA";return(<th key={d} style={{...TH({}),background:hBg,minWidth:30,width:30,padding:"3px 1px"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}><span style={{fontSize:10,fontWeight:700,color:isSun?"#DC2626":isSat?"#6366F1":"#52525B"}}>{d}</span><span style={{fontSize:9,color:isSun?"#DC2626":isSat?"#6366F1":"#A1A1AA"}}>{wd}</span><span style={{fontSize:8}}>{alert?<span style={{width:4,height:4,borderRadius:"50%",background:"#EF4444",display:"inline-block"}}/>:"　"}</span></div></th>);})}
-            {rightCols.map(col=><th key={col} style={TH({w:28})}><span style={{fontSize:9,color:"#71717A"}}>{col}</span></th>)}
+          <tr ref={headRow1Ref}>
+            <th style={{...TH({sticky:true,w:148}),...stTop(0,true)}}><span style={{color:"#71717A",fontSize:10}}>氏名</span></th>
+            {Array.from({length:days},(_,i)=>i+1).map(d=>{const wd=getWD(year,month,d),dow=new Date(year,month,d).getDay(),isSun=dow===0,isSat=dow===6,we=isSun||isSat,alert=isAlert(d);const hBg=isSun?"#FFF5F5":isSat?"#F5F5FF":"#FAFAFA";return(<th key={d} style={{...TH({}),...stTop(0,false),background:hBg,minWidth:30,width:30,padding:"3px 1px"}}><div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}><span style={{fontSize:10,fontWeight:700,color:isSun?"#DC2626":isSat?"#6366F1":"#52525B"}}>{d}</span><span style={{fontSize:9,color:isSun?"#DC2626":isSat?"#6366F1":"#A1A1AA"}}>{wd}</span><span style={{fontSize:8}}>{alert?<span style={{width:4,height:4,borderRadius:"50%",background:"#EF4444",display:"inline-block"}}/>:"　"}</span></div></th>);})}
+            {rightCols.map(col=><th key={col} style={{...TH({w:28}),...stTop(0,false)}}><span style={{fontSize:9,color:"#71717A"}}>{col}</span></th>)}
           </tr>
           {onEventEdit&&<tr>
-            <th style={{...TH({sticky:true,w:148}),background:"#fffbea",borderBottom:"2px solid #fde68a"}}><span style={{fontSize:10,color:"#92400e",fontWeight:700}}>行事</span></th>
-            {Array.from({length:days},(_,i)=>i+1).map(d=>{const ev=(events||{})[d]||"";return(<th key={d} onClick={()=>onEventEdit(d)} title={ev||"クリックして行事を入力"} style={{...TH({}),background:ev?"#fef3c7":"#fffdf0",borderBottom:"2px solid #fde68a",padding:"3px 1px",cursor:"pointer",minWidth:30,width:30,verticalAlign:"top"}}><div style={{writingMode:"vertical-rl",textOrientation:"mixed",fontSize:10,color:"#92400e",fontWeight:700,lineHeight:1.2,margin:"0 auto",minHeight:ev?undefined:16}}>{ev}</div></th>);})}
-            <th colSpan={rightColCount} style={{background:"#fffbea",borderBottom:"2px solid #fde68a"}}/>
+            <th style={{...TH({sticky:true,w:148}),...stTop(row1H,true),background:"#fffbea",borderBottom:"2px solid #fde68a"}}><span style={{fontSize:10,color:"#92400e",fontWeight:700}}>行事</span></th>
+            {Array.from({length:days},(_,i)=>i+1).map(d=>{const ev=(events||{})[d]||"";return(<th key={d} onClick={()=>onEventEdit(d)} title={ev||"クリックして行事を入力"} style={{...TH({}),...stTop(row1H,false),background:ev?"#fef3c7":"#fffdf0",borderBottom:"2px solid #fde68a",padding:"3px 1px",cursor:"pointer",minWidth:30,width:30,verticalAlign:"top"}}><div style={{writingMode:"vertical-rl",textOrientation:"mixed",fontSize:10,color:"#92400e",fontWeight:700,lineHeight:1.2,margin:"0 auto",minHeight:ev?undefined:16}}>{ev}</div></th>);})}
+            <th colSpan={rightColCount} style={{...stTop(row1H,false),background:"#fffbea",borderBottom:"2px solid #fde68a"}}/>
           </tr>}
         </thead>
         <tbody>
