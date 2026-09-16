@@ -39,7 +39,7 @@ const ECHO_SUPPRESS_WINDOW_MS = 10000;
 // ── シフト表: 日付行(ヘッダー)の縦スクロール固定（sticky header）。表示のみ・生成/印刷/出力に非関与。
 //    ON時: シフト表を「高さ制限＋overflowY:auto」の自前スクロール容器にし、thead を position:sticky で上部固定。
 //    横スクロールの氏名列固定(既存)はそのまま。false で従来動作(縦は画面スクロール・固定なし)へ即復帰。
-const STICKY_HEADER_ENABLED = false;
+const STICKY_HEADER_ENABLED = true;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
