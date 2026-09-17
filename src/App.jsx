@@ -2721,7 +2721,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const fixedVal=s.shiftRequestsByMonth?.[mk]?.[d];
                   const dispType=type||fixedVal||"";
                   // KIBO_EDIT: スタッフ送信/右クリック編集の希望休・有給(kiboByMonth/yukyuByMonth)にも枠を付け、見た目を統一。
-                  const isFixed=!!fixedVal || (KIBO_EDIT_ENABLED && !dispType && (kibodays.includes(d)||yukyudays.includes(d)));
+                  const isFixed=!!fixedVal; // 青枠＝リーダーの希望(shiftRequestsByMonth)のみ。スタッフの希望休/有給は別途「赤」で表示（下記 isKibo/isYukyu）。
                   const isKibo=kibodays.includes(d)&&!dispType, isYukyu=yukyudays.includes(d)&&!dispType&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
                   const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&dispType&&deptWork.has(dispType)&&dispType!=="明け"&&!_ra.includes(dispType);
@@ -2731,6 +2731,9 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   // 修正マーカー(緑): 生成後の右クリック修正。希望(青)と一目で区別。確定中は装飾を消す。
                   const isEdit=EDIT_MODE_ENABLED&&!!s.shiftEditsByMonth?.[mk]?.[d];
                   const showEdit=isEdit&&!confirmed;
+                  // スタッフの希望(赤): 職員送信 or リーダーがKIBO機能で付与した希望休/有給(kiboByMonth/yukyuByMonth)。
+                  //   「大事な希望」を赤で強調しうっかり上書きを防ぐ安全装置。確定中は装飾を消す（青/緑と同じ扱い）。
+                  const showStaffReq=(isKibo||isYukyu)&&!confirmed;
                   // 確定中のみ希望休を「休」表示（ブラウザ印刷用・表示のみ）。データ/学習/公休カウントは不変。編集に戻すと自動で「希」へ。
                   const kiboAsRest=confirmed&&isKibo;
                   const dispShown=(confirmed&&dispType==="希望休")?"休み":dispType;
@@ -2738,7 +2741,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const warnStrong=warn&&(warn.level===1||warn.level===3);
                   const warnBg=warn?(warnStrong?"#fee2e2":"#fef9c3"):undefined;
                   const warnOutline=warn?(warnStrong?"2px dashed #ef4444":"1px dashed #f59e0b"):undefined;
-                  return <td key={d} title={warn?warn.reason:undefined} style={{position:"relative",padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":warnBg||(isKibo?"#fff5f5":isYukyu?"#faf0ff":showEdit?"#ecfdf5":showFix?"#f5f3ff":cellWeekBg),cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showEdit?"2px dashed #34d399":showFix?"2px solid #a78bfa":warnOutline||(consecViol?"1px solid #e0707060":undefined),outlineOffset:isSelected||isRoleViol||showEdit||showFix||warn?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?(kiboAsRest?<ShiftBadge type="休み" defs={dept.customShiftDefs}/>:<span style={{fontSize:9,color:"#BE123C"}}>希</span>):isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispShown} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{warn&&<span onClick={(e)=>{e.stopPropagation();setWarnPop({reason:warn.reason,x:e.clientX,y:e.clientY});}} title={warn.reason} style={{position:"absolute",top:0,right:1,fontSize:8,fontWeight:900,lineHeight:1,color:warnStrong?"#dc2626":"#b45309",cursor:"pointer"}}>{warnStrong?"⚠":"!"}</span>}</td>;
+                  return <td key={d} title={warn?warn.reason:undefined} style={{position:"relative",padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":warnBg||(isKibo?"#fee2e2":isYukyu?"#ffe4e6":showEdit?"#ecfdf5":showFix?"#f5f3ff":cellWeekBg),cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":showStaffReq?"2px solid #dc2626":showEdit?"2px dashed #34d399":showFix?"2px solid #a78bfa":warnOutline||(consecViol?"1px solid #e0707060":undefined),outlineOffset:isSelected||isRoleViol||showStaffReq||showEdit||showFix||warn?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?(kiboAsRest?<ShiftBadge type="休み" defs={dept.customShiftDefs}/>:<span style={{fontSize:9,color:"#BE123C"}}>希</span>):isYukyu?<span style={{fontSize:9,color:"#e11d48"}}>有</span>:<ShiftBadge type={dispShown} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{warn&&<span onClick={(e)=>{e.stopPropagation();setWarnPop({reason:warn.reason,x:e.clientX,y:e.clientY});}} title={warn.reason} style={{position:"absolute",top:0,right:1,fontSize:8,fontWeight:900,lineHeight:1,color:warnStrong?"#dc2626":"#b45309",cursor:"pointer"}}>{warnStrong?"⚠":"!"}</span>}</td>;
                 })}
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
@@ -2833,6 +2836,9 @@ function Legend() {
           </div>
         );
       })}
+      <span style={{display:"inline-flex",alignItems:"center",gap:2,marginLeft:6}}><span style={{width:11,height:11,border:"2px solid #dc2626",borderRadius:2,display:"inline-block"}}/><span style={{fontSize:9,color:"#6B7280"}}>スタッフ希望(休/有)</span></span>
+      <span style={{display:"inline-flex",alignItems:"center",gap:2}}><span style={{width:11,height:11,border:"2px solid #a78bfa",borderRadius:2,display:"inline-block"}}/><span style={{fontSize:9,color:"#6B7280"}}>リーダー希望</span></span>
+      <span style={{display:"inline-flex",alignItems:"center",gap:2}}><span style={{width:11,height:11,border:"2px dashed #34d399",borderRadius:2,display:"inline-block"}}/><span style={{fontSize:9,color:"#6B7280"}}>生成後の修正</span></span>
       <span style={{fontSize:9,color:"#9CA3AF",marginLeft:4}}>左クリック：切替 ／ 右クリック：メニュー</span>
     </div>
   );
