@@ -4161,6 +4161,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [eventEditDay, setEventEditDay] = useState(null);
 
   const [confirmedMonths, setConfirmedMonths] = useState({}); // { "YYYY_M_deptId": true|false }
+  // 生成済みフラグ: 自動生成ボタンを押した部署・月だけ true。修正/希望モードの判定に使う（deptShiftsの中身からの推測はやめる）。
+  // 手入力(左クリック/貼り付け)では変わらない＝生成前は希望モードのまま。オールクリアで false。永続(shift_data の generated_ キー)。
+  const [generatedMonths, setGeneratedMonths] = useState({}); // { "YYYY_M_deptId": true }
   const [editRates, setEditRates] = useState({}); // { "YYYY_M_deptId": number(%) } 修正率
 
   const [saveStatus, setSaveStatus] = useState("saved");
@@ -4235,12 +4238,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         allDBDataRef.current = byKey; // DBキャッシュを初期化
         const confirmedInit = {};
         const editRateInit = {};
+        const generatedInit = {};
         for (const [k, v] of Object.entries(byKey)) {
           if (k.startsWith('confirmed_')) confirmedInit[k.slice('confirmed_'.length)] = v;
           else if (k.startsWith('editRate_')) editRateInit[k.slice('editRate_'.length)] = v;
+          else if (k.startsWith('generated_')) generatedInit[k.slice('generated_'.length)] = v;
         }
         if (Object.keys(confirmedInit).length > 0) setConfirmedMonths(confirmedInit);
         if (Object.keys(editRateInit).length > 0) setEditRates(editRateInit);
+        if (Object.keys(generatedInit).length > 0) setGeneratedMonths(generatedInit);
         exceptionMonthsRef.current = latestExceptionMonths;
         const learned = computeLearnedTrend(byKey, latestStaffList, latestExceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
@@ -4336,12 +4342,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         allDBDataRef.current = {...allDBDataRef.current, ...byKey}; // DBキャッシュを更新
         const confirmedFromRT = {};
         const editRateFromRT = {};
+        const generatedFromRT = {};
         for (const [k, v] of Object.entries(byKey)) {
           if (k.startsWith('confirmed_')) confirmedFromRT[k.slice('confirmed_'.length)] = v;
           else if (k.startsWith('editRate_')) editRateFromRT[k.slice('editRate_'.length)] = v;
+          else if (k.startsWith('generated_')) generatedFromRT[k.slice('generated_'.length)] = v;
         }
         if (Object.keys(confirmedFromRT).length > 0) setConfirmedMonths(prev => ({...prev, ...confirmedFromRT}));
         if (Object.keys(editRateFromRT).length > 0) setEditRates(prev => ({...prev, ...editRateFromRT}));
+        if (Object.keys(generatedFromRT).length > 0) setGeneratedMonths(prev => ({...prev, ...generatedFromRT}));
         exceptionMonthsRef.current = latestExcRT;
         const latestStaffListRT = byKey['staffList'] || staffList;
         const learnedRT = computeLearnedTrend(byKey, latestStaffListRT, latestExcRT);
@@ -4744,17 +4753,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   //   - 生成すると多数のセルが希望外で埋まる → true(修正モード)。
   //   - オールクリアで deptShifts が空になる → false(希望モードへ自動復帰)。
   //  セッション状態(旧editEra state)ではなく永続データ由来なので、部署/月の切替・再読込でも維持される（バグ1の根治）。
-  const editEra = useMemo(() => {
-    const emk = monthKey(year, month);
-    const ds = allShifts[activeDeptId] || {};
-    for (const s of staffList) {
-      if (s.dept !== activeDeptId) continue;
-      const cells = ds[s.id]; if (!cells) continue;
-      const req = s.shiftRequestsByMonth?.[emk] || {};
-      for (const d in cells) { if (cells[d] && !(d in req)) return true; }
-    }
-    return false;
-  }, [allShifts, activeDeptId, staffList, year, month]);
+  // 修正/希望モードの判定: 「自動生成ボタンを押した」明示フラグ(generatedMonths)で判定する。
+  //  deptShiftsの中身からの推測はやめた（左クリック手入力/Excel貼り付けでも修正モードに誤判定されるため）。
+  //  生成前は false(希望・青)、生成後は true(修正・緑)。オールクリアで false に戻る。部署/月切替・再読込でも永続維持。
+  const editEra = generatedMonths[`${year}_${month+1}_${activeDeptId}`] === true;
   const undoStackRef = useRef({}); // { [deptId]: snapshot[] } — アンドゥ履歴（最大30ステップ）。snapshot={shifts, sr}
   const redoStackRef = useRef({}); // { [deptId]: snapshot[] } — リドゥ履歴（最大30ステップ）
   const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
@@ -5110,7 +5112,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         dirtyDeptIdsRef.current.add(cd.id); // ★Fix S-1: 生成部署を明示dirty登録（active部署と異なる場合でも保存される）
         setAllShifts(prev => ({...prev, [cd.id]: result}));
         setSaveStatus("unsaved");
-        // EDIT_MODE: 生成後=以降の右クリックは「修正」。editEra は allShifts から派生するため明示更新は不要。
+        // EDIT_MODE: 生成済みフラグを立てる → 以降この部署月は修正モード(緑)。手入力では立たない。永続化(shift_data)。
+        {
+          const gKey = `generated_${year}_${month+1}_${cd.id}`;
+          setGeneratedMonths(prev => ({...prev, [`${year}_${month+1}_${cd.id}`]: true}));
+          allDBDataRef.current[gKey] = true;
+          supabase.from('shift_data').upsert(
+            { user_id: session.user.id, data_key: gKey, data_value: true, updated_at: new Date().toISOString() },
+            { onConflict: 'user_id,data_key' }
+          ).then(({ error }) => { if (error) console.error('[generated flag] upsert失敗:', gKey, error); });
+        }
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
       finally{setGenerating(false);}
@@ -5598,7 +5609,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} year={year} month={month} onApplyMonthlyKyuko={applyDeptMonthlyKyuko} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;}
         // オールクリア = 生成結果と「生成後の修正」だけ消す。生成前の希望勤務/希望休/有給は残す（同じ条件で生成し直せる）。
-        setDeptShifts({},{resetHistory:true}); // 生成シフト(deptShifts)を消去 → editEra が false になり希望モードへ自動復帰(バグ3も解消)
+        setDeptShifts({},{resetHistory:true}); // 生成シフト(deptShifts)を消去
+        // 生成済みフラグを false に戻す → 希望モードへ復帰（「修正だけ削除」ボタン/「修正中」バッジが消える）。永続化。
+        { const gKey = `generated_${year}_${month+1}_${activeDeptId}`;
+          setGeneratedMonths(prev => { const n = {...prev}; delete n[`${year}_${month+1}_${activeDeptId}`]; return n; });
+          allDBDataRef.current[gKey] = false;
+          supabase.from('shift_data').upsert(
+            { user_id: session.user.id, data_key: gKey, data_value: false, updated_at: new Date().toISOString() },
+            { onConflict: 'user_id,data_key' }
+          ).then(({ error }) => { if (error) console.error('[generated flag] clear失敗:', gKey, error); });
+        }
         // 生成後の修正(shiftEditsByMonthマーカー)と、その修正が段階1で併記した shiftRequestsByMonth 分だけを消す。
         //   マーカーの無い shiftRequestsByMonth(=生成前の希望)・kiboByMonth(希望休)・yukyuByMonth(有給)は温存(バグ2の正しい動作)。
         { const cmk = monthKey(year, month);
