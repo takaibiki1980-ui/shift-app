@@ -46,7 +46,7 @@ const STICKY_HEADER_ENABLED = true;
 //    ON時: 右クリックメニューに「希望休 付与/解除」「有休 付与/解除」を追加し、staff_kibo テーブルへ write-through。
 //    これによりスタッフ送信(①)の希望休もアプリ上で調整でき、mergeStaffKibo で revert されない(③のデータ消失も解消)。
 //    false で従来動作（右クリックはkibo/yukyuに触れない）へ即復帰。
-const KIBO_EDIT_ENABLED = false;
+const KIBO_EDIT_ENABLED = true;
 const TOGGLE_KIBO = '__TOGGLE_KIBO__';
 const TOGGLE_YUKYU = '__TOGGLE_YUKYU__';
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
