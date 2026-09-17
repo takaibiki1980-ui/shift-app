@@ -12,6 +12,7 @@ import { computePaidLeaveConsumed, applyConsumption } from './lib/paidLeave.js';
 import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
+import { toggleKiboDays } from './lib/kiboEdit.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -40,6 +41,14 @@ const ECHO_SUPPRESS_WINDOW_MS = 10000;
 //    ON時: シフト表を「高さ制限＋overflowY:auto」の自前スクロール容器にし、thead を position:sticky で上部固定。
 //    横スクロールの氏名列固定(既存)はそのまま。false で従来動作(縦は画面スクロール・固定なし)へ即復帰。
 const STICKY_HEADER_ENABLED = true;
+
+// ── 右クリックで希望休/有給(kiboByMonth/yukyuByMonth)を編集する機能。表示・入力データのみ・生成/core.jsに非関与。
+//    ON時: 右クリックメニューに「希望休 付与/解除」「有休 付与/解除」を追加し、staff_kibo テーブルへ write-through。
+//    これによりスタッフ送信(①)の希望休もアプリ上で調整でき、mergeStaffKibo で revert されない(③のデータ消失も解消)。
+//    false で従来動作（右クリックはkibo/yukyuに触れない）へ即復帰。
+const KIBO_EDIT_ENABLED = false;
+const TOGGLE_KIBO = '__TOGGLE_KIBO__';
+const TOGGLE_YUKYU = '__TOGGLE_YUKYU__';
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
@@ -600,7 +609,7 @@ function ShiftBadge({ type, defs }) {
   return <span style={{background:s.bg,color:s.color,border:`1px solid ${s.border||"transparent"}`,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:700,display:"inline-block",minWidth:22,textAlign:"center",lineHeight:"18px",letterSpacing:"0.02em"}}>{s.short}</span>;
 }
 
-function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount, roleAllowed }) {
+function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, selectionCount, roleAllowed, kiboEdit }) {
   const ref = useRef();
   useEffect(() => { const h = (e) => { if(ref.current && !ref.current.contains(e.target)) onClose(); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [onClose]);
   const [pos, setPos] = useState({x,y});
@@ -616,6 +625,11 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, sele
       {/* 右クリックで勤務を入れた時点で希望勤務ロック（統一ルール）。専用の「希望勤務にする/解除」メニューは廃止し、
           値の選択＝ロック、クリア＝解除で兼ねる（handleMenuSelect が shiftRequestsByMonth を更新する）。 */}
       {isBulk&&<div style={{gridColumn:"1/-1",background:"#3b1d5e",border:"1px solid #7c3aed",borderRadius:6,padding:"4px 8px",marginBottom:2,fontSize:10,color:"#EDE9FE",textAlign:"center"}}>選択した勤務は希望勤務として固定されます</div>}
+      {kiboEdit&&<>
+        <button onClick={()=>onSelect(TOGGLE_KIBO)} style={{gridColumn:"1/-1",background:"#7f1d1d",color:"#fecaca",border:"1px solid #b91c1c",borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,textAlign:"center"}}>希望休 付与 / 解除</button>
+        <button onClick={()=>onSelect(TOGGLE_YUKYU)} style={{gridColumn:"1/-1",background:"#581c87",color:"#e9d5ff",border:"1px solid #7c3aed",borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,textAlign:"center"}}>有休 付与 / 解除</button>
+        <div style={{gridColumn:"1/-1",borderTop:"1px solid #27272A",margin:"2px 0"}}/>
+      </>}
       {customWorkKeys.length>0&&<>
         {customWorkKeys.map(cd => { const s=getShiftDef(cd.key,customDefs); return <button key={cd.key} onClick={()=>onSelect(cd.key)} style={{background:s.bg,color:s.color,border:`1px solid ${s.border}`,borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{minWidth:18,height:18,background:s.bg,borderRadius:3,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800}}>{s.short}</span><span style={{fontSize:11,color:"#A1A1AA"}}>{cd.key}</span></button>; })}
         <div style={{gridColumn:"1/-1",borderTop:"1px solid #27272A",margin:"2px 0"}}/>
@@ -2705,8 +2719,9 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   // 希望勤務(shiftRequestsByMonth)は希望休/有休と同じくstaffList側に残る。全体クリアで
                   // deptShiftsが空になっても、値をオーバーレイ表示して勤務が消えないようにする（不整合(b)解消）。
                   const fixedVal=s.shiftRequestsByMonth?.[mk]?.[d];
-                  const isFixed=!!fixedVal;
                   const dispType=type||fixedVal||"";
+                  // KIBO_EDIT: スタッフ送信/右クリック編集の希望休・有給(kiboByMonth/yukyuByMonth)にも枠を付け、見た目を統一。
+                  const isFixed=!!fixedVal || (KIBO_EDIT_ENABLED && !dispType && (kibodays.includes(d)||yukyudays.includes(d)));
                   const isKibo=kibodays.includes(d)&&!dispType, isYukyu=yukyudays.includes(d)&&!dispType&&!isKibo, consecViol=isConsecViolation(sShifts,d);
                   const cellKey=`${s.id}|${d}`, isSelected=selectedCells.has(cellKey);
                   const _ra=dept.roleShiftTypes?.[s.role]; const isRoleViol=_ra&&dispType&&deptWork.has(dispType)&&dispType!=="明け"&&!_ra.includes(dispType);
@@ -5249,12 +5264,51 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   //   保存先・形式は既存の applyCellFix と完全一致（選択値を shiftsNow 形に包んで渡す）。
   //   ★編集保護フラグ(PR #117): setStaffList した shiftRequestsByMonth が保存完了前に Realtime で
   //     巻き戻されないよう userEditSeq/saveStatusRef を立てる（立てないと生成前にロックが外れる）。
+  // KIBO_EDIT: 右クリックで希望休/有給(kiboByMonth/yukyuByMonth)をトグルし staff_kibo へ write-through。
+  //   締切後にリーダーが調整する用途。締切前のスタッフ送信とは時間的に重ならない前提（競合ルール不要）。
+  //   生成・core.js・確定には非関与（入力データのみ）。
+  const toggleKiboYukyu = (targets, kind) => {
+    if (isLockedRef.current) { alert("この部署はロックされています。編集するには解錠してください。"); return; }
+    if (isConfirmedRef.current) return; // 確定済みは編集不可
+    const mk = monthKey(year, month);
+    // 対象スタッフの新しい配列を、現在の staffList から先に計算（更新関数内で副作用を持たせない）
+    const affected = {}; // staffId -> { dept, days, yukyu_days }
+    for (const s of staffListRef.current) {
+      const mine = targets.filter(([sid]) => sid === s.id).map(([, d]) => Number(d));
+      if (mine.length === 0) continue;
+      const res = toggleKiboDays(s.kiboByMonth?.[mk] || [], s.yukyuByMonth?.[mk] || [], mine, kind);
+      affected[s.id] = { dept: s.dept, days: res.days, yukyu_days: res.yukyu_days };
+    }
+    if (Object.keys(affected).length === 0) return;
+    staffListSkipSave.current = true; // kibo/yukyu は staff_kibo 管理。staffList blob の自動保存はスキップ
+    setStaffList(prev => prev.map(s => {
+      const a = affected[s.id];
+      if (!a) return s;
+      return { ...s, kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: a.days }, yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: a.yukyu_days } };
+    }));
+    // staff_kibo テーブルへ write-through（mergeStaffKibo に revert されない＝③のデータ消失も解消）
+    for (const [sid, info] of Object.entries(affected)) {
+      supabase.from('staff_kibo').upsert({
+        admin_user_id: session.user.id, dept_id: info.dept, staff_id: sid,
+        month_key: mk, days: info.days, yukyu_days: info.yukyu_days, updated_at: new Date().toISOString()
+      }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' }).then(({ error }) => {
+        if (error) console.error('[kiboEdit] staff_kibo upsert失敗:', error);
+      });
+    }
+  };
+
   const handleMenuSelect = (shiftKey) => {
     if (!ctxMenu) return;
     const {staffId, day, selCells} = ctxMenu;
     const targets = (selCells && selCells.size > 1)
       ? [...selCells].map(k => { const i = k.lastIndexOf('|'); return [k.slice(0, i), +k.slice(i + 1)]; })
       : [[staffId, day]];
+    // KIBO_EDIT: 希望休/有給トグルは通常のシフト値配置とは別経路（kiboByMonth/yukyuByMonth＋staff_kibo）
+    if (shiftKey === TOGGLE_KIBO || shiftKey === TOGGLE_YUKYU) {
+      toggleKiboYukyu(targets, shiftKey === TOGGLE_KIBO ? 'kibo' : 'yukyu');
+      setCtxMenu(null);
+      return;
+    }
     userEditSeq.current++;
     saveStatusRef.current = "unsaved";
     setSaveStatus("unsaved");
@@ -5539,7 +5593,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         {innerTab==="backtest"&&profile?.is_admin&&<BacktestView staffList={staffList} depts={depts} allDBData={allDBDataRef.current} exceptionMonths={exceptionMonths} activeDeptId={activeDeptId} year={year} month={month}/>}
       </div>
 
-      {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null}/>;})()}
+      {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null} kiboEdit={KIBO_EDIT_ENABLED}/>;})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} year={year} month={month} onApplyMonthlyKyuko={applyDeptMonthlyKyuko} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;}
