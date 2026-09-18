@@ -54,7 +54,7 @@ const TOGGLE_YUKYU = '__TOGGLE_YUKYU__';
 // ── 早番⇄遅番の自動入れ替え（生成後・修正モードのみ）。表示・入力データのみ・生成/core.jsに非関与。
 //    ON時: 右クリックで早番/遅番を選ぶと、同日に既にその種別の人がいれば1対1で入れ替える（複数人は選択）。
 //    false で従来動作（選んだ人だけ変更）へ即復帰。
-const EARLY_LATE_SWAP_ENABLED = false;
+const EARLY_LATE_SWAP_ENABLED = true;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
