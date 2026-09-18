@@ -13,6 +13,7 @@ import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
+import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -49,6 +50,11 @@ const STICKY_HEADER_ENABLED = true;
 const KIBO_EDIT_ENABLED = true;
 const TOGGLE_KIBO = '__TOGGLE_KIBO__';
 const TOGGLE_YUKYU = '__TOGGLE_YUKYU__';
+
+// ── 早番⇄遅番の自動入れ替え（生成後・修正モードのみ）。表示・入力データのみ・生成/core.jsに非関与。
+//    ON時: 右クリックで早番/遅番を選ぶと、同日に既にその種別の人がいれば1対1で入れ替える（複数人は選択）。
+//    false で従来動作（選んだ人だけ変更）へ即復帰。
+const EARLY_LATE_SWAP_ENABLED = false;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
@@ -4829,6 +4835,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'portalSettings', data_value:portalSettings, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' }).then(()=>{}).catch(()=>{});
   }, [portalSettings]); // eslint-disable-line react-hooks/exhaustive-deps
   const [ctxMenu, setCtxMenu] = useState(null);
+  const [swapPicker, setSwapPicker] = useState(null); // 早番⇄遅番入れ替え: 相手が複数のときの選択 {targetId, day, shiftKey, candidateIds}
   const [staffModal, setStaffModal] = useState(null);
 
   const DEFAULT_FLOOR_SETTINGS = {floors:[],duties:[{name:"入浴"},{name:"フリー"}]};
@@ -5303,6 +5310,24 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     }
   };
 
+  // 早番⇄遅番の入れ替え: 対象者=shiftKey、相手(otherId)=反対の種別。両セルを markEdit(生成後=緑)で記録。
+  //   頭数は不変(2人が種別を交換するだけ)→ minStaff/maxStaff に影響しない。
+  const doEarlyLateSwap = (targetId, otherId, day, shiftKey) => {
+    const other = SWAP_PAIR[shiftKey];
+    userEditSeq.current++; saveStatusRef.current = "unsaved"; setSaveStatus("unsaved");
+    setDeptShifts(prev => {
+      const next = { ...prev };
+      next[targetId] = { ...(next[targetId] || {}), [day]: shiftKey };
+      next[otherId]  = { ...(next[otherId]  || {}), [day]: other };
+      return next;
+    });
+    const targets = [[targetId, day], [otherId, day]];
+    const synthNow = { [targetId]: { [day]: shiftKey }, [otherId]: { [day]: other } };
+    shiftReqDeferSave.current = true;
+    const markEdit = EDIT_MODE_ENABLED && editEra;
+    setStaffList(prev => prev.map(s => applyCellFix(s, targets, true, synthNow, year, month, markEdit)));
+  };
+
   const handleMenuSelect = (shiftKey) => {
     if (!ctxMenu) return;
     const {staffId, day, selCells} = ctxMenu;
@@ -5314,6 +5339,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       toggleKiboYukyu(targets, shiftKey === TOGGLE_KIBO ? 'kibo' : 'yukyu');
       setCtxMenu(null);
       return;
+    }
+    // 早番⇄遅番の自動入れ替え: 単一セル・生成後(editEra)・早番/遅番・両種別が部署にある場合のみ。
+    if (EARLY_LATE_SWAP_ENABLED && editEra && (!selCells || selCells.size <= 1) && isSwapShift(shiftKey)
+        && dept?.shiftTypes?.includes('早番') && dept?.shiftTypes?.includes('遅番')) {
+      const cur = allShifts[activeDeptId] || {};
+      const cands = findSwapCandidates(cur, staffList, activeDeptId, staffId, day, shiftKey);
+      if (cands.length === 1) { doEarlyLateSwap(staffId, cands[0], day, shiftKey); setCtxMenu(null); return; }
+      if (cands.length >= 2) { setSwapPicker({ targetId: staffId, day, shiftKey, candidateIds: cands }); setCtxMenu(null); return; }
+      // 0人 → 通常処理へフォールスルー（その人だけ変更）
     }
     userEditSeq.current++;
     saveStatusRef.current = "unsaved";
@@ -5600,6 +5634,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       </div>
 
       {ctxMenu&&(()=>{const _st=staffList.find(s=>s.id===ctxMenu.staffId);return <ContextMenu x={ctxMenu.x} y={ctxMenu.y} onSelect={handleMenuSelect} onClose={()=>setCtxMenu(null)} customDefs={dept?.customShiftDefs||[]} deptShiftTypes={dept?.shiftTypes||[]} selectionCount={ctxMenu.selCells?.size||1} roleAllowed={(!ctxMenu.selCells||ctxMenu.selCells.size<=1)?dept?.roleShiftTypes?.[_st?.role]??null:null} kiboEdit={KIBO_EDIT_ENABLED}/>;})()}
+      {swapPicker&&(()=>{const other=SWAP_PAIR[swapPicker.shiftKey];const cands=swapPicker.candidateIds.map(id=>staffList.find(s=>s.id===id)).filter(Boolean);return(
+        <div onClick={()=>setSwapPicker(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"#fff",borderRadius:12,padding:20,width:"100%",maxWidth:360,boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <div style={{fontSize:14,fontWeight:800,color:"#18181B",marginBottom:6}}>{swapPicker.day}日：{swapPicker.shiftKey}へ入れ替え</div>
+            <div style={{fontSize:12,color:"#52525B",marginBottom:14}}>同じ日に「{swapPicker.shiftKey}」の人が複数います。誰と入れ替えますか？<br/>選んだ人が「{other}」に変わります。</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {cands.map(s=><button key={s.id} onClick={()=>{doEarlyLateSwap(swapPicker.targetId,s.id,swapPicker.day,swapPicker.shiftKey);setSwapPicker(null);}} style={{background:"#F4F4F5",border:"1px solid #D4D4D8",borderRadius:8,padding:"10px 14px",cursor:"pointer",fontSize:13,fontWeight:700,color:"#18181B",textAlign:"left"}}>{s.name} <span style={{fontSize:11,color:"#6B7280",fontWeight:400}}>（{swapPicker.shiftKey}→{other}）</span></button>)}
+            </div>
+            <button onClick={()=>setSwapPicker(null)} style={{marginTop:14,width:"100%",background:"#fff",border:"1px solid #D4D4D8",borderRadius:8,padding:"9px 0",cursor:"pointer",fontSize:13,color:"#52525B"}}>キャンセル</button>
+          </div>
+        </div>);})()}
       {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} year={year} month={month} onApplyMonthlyKyuko={applyDeptMonthlyKyuko} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;}
