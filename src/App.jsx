@@ -859,14 +859,10 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
     return base;
   });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
-  const kiboSelected = form.kiboByMonth?.[mk] || [];
-  const setKibo = (days) => set("kiboByMonth",{...(form.kiboByMonth||{}),[mk]:days});
-  const shiftRequests = form.shiftRequestsByMonth?.[mk] || {};
-  const setShiftRequests = (reqs) => set("shiftRequestsByMonth",{...(form.shiftRequestsByMonth||{}),[mk]:reqs});
+  // 希望休/有給の編集(setKibo/setYukyu)・希望勤務(setShiftRequests)のカレンダー入力は廃止（③）。
+  // 入力経路は 職員ポータル(①) と シフト表の右クリック(②) に一本化。
   const kyukoThisMonth = form.kyukoDaysByMonth?.[mk] ?? form.kyukoDays ?? 8;
   const setKyukoThisMonth = (v) => set("kyukoDaysByMonth",{...(form.kyukoDaysByMonth||{}),[mk]:+v});
-  const yukyuSelected = form.yukyuByMonth?.[mk] || [];
-  const setYukyu = (days) => set("yukyuByMonth",{...(form.yukyuByMonth||{}),[mk]:days});
   const deptObj = depts.find(d => d.id === deptId);
   const [kp, setKp] = useState(null);
   return (
@@ -940,14 +936,7 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
           </div>
         )}
         {kp&&<NumericKeypad mode={kp.mode} value={kp.value} min={kp.min} max={kp.max} unit={kp.unit} anchorRect={kp.anchorRect} onConfirm={v=>{kp.onConfirm(v);setKp(null);}} onClose={()=>setKp(null)}/>}
-        <div style={{fontSize:11,color:"#A1A1AA",fontWeight:700,marginBottom:10}}>▍ {year}年{month+1}月 希望休</div>
-        <div style={{background:"#F4F4F5",borderRadius:8,padding:12,border:"1px solid #D4D4D8"}}>
-          <KiboCalendar year={year} month={month} selected={kiboSelected} onChange={setKibo} shiftRequests={shiftRequests} onShiftRequests={setShiftRequests} deptId={deptId} depts={depts} kiboCountByDay={kiboCountByDay} kiboLimit={kiboLimit}/>
-        </div>
-        <div style={{fontSize:11,color:"#9b4db5",fontWeight:700,marginBottom:10,marginTop:16}}>▍ {year}年{month+1}月 有休{yukyuSelected.length>0&&<span style={{marginLeft:8,background:"#f3e5f5",border:"1px solid #c07ad5",borderRadius:10,padding:"1px 8px",fontSize:10}}>{yukyuSelected.length}日</span>}</div>
-        <div style={{background:"#faf0ff",borderRadius:8,padding:12,border:"1px solid #c07ad5"}}>
-          {(()=>{const days=getDays(year,month),firstDow=new Date(year,month,1).getDay(),cells=[];for(let i=0;i<firstDow;i++)cells.push(null);for(let d=1;d<=days;d++)cells.push(d);return(<div><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:4}}>{["日","月","火","水","木","金","土"].map((w,i)=><div key={w} style={{textAlign:"center",fontSize:10,color:i===0?"#f87171":i===6?"#6366F1":"#52525B",padding:"2px 0"}}>{w}</div>)}</div><div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:6}}>{cells.map((d,i)=>{if(!d)return<div key={i}/>;const isY=yukyuSelected.includes(d),dow=(firstDow+d-1)%7,we=dow===0||dow===6;return<button key={d} onClick={()=>setYukyu(isY?yukyuSelected.filter(x=>x!==d):[...yukyuSelected,d])} style={{background:isY?"#e8d5f5":"transparent",border:isY?"1px solid #9b4db5":"1px solid #c4a0d4",borderRadius:5,padding:"3px 1px",cursor:"pointer",color:isY?"#6b21a8":we?"#6366F1":"#52525B",fontSize:10,fontWeight:isY?800:400,display:"flex",flexDirection:"column",alignItems:"center",gap:1,minHeight:32}}><span>{d}</span>{isY&&<span style={{fontSize:8,lineHeight:1,color:"#9b4db5"}}>有休</span>}</button>;})}</div>{yukyuSelected.length>0&&<button onClick={()=>setYukyu([])} style={{fontSize:10,color:"#9b4db5",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>全てクリア</button>}</div>);})()}
-        </div>
+        {/* 希望休・有休のカレンダー入力は廃止（③）。希望休/有給は職員ポータル(①)またはシフト表の右クリック(②)で入力・調整する。 */}
         <div style={{display:"flex",gap:10,marginTop:20}}>
           <button onClick={()=>form.name&&onSave(form)} style={{flex:1,background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14,fontWeight:800}}>保存</button>
           <button onClick={onClose} style={{flex:1,background:"#F4F4F5",color:"#52525B",border:"1px solid #D4D4D8",borderRadius:8,padding:"11px 0",cursor:"pointer",fontSize:14}}>キャンセル</button>
