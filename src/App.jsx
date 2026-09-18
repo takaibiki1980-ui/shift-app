@@ -14,6 +14,7 @@ import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
+import { resolveEditEra } from './lib/editEra.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -4757,7 +4758,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // 修正/希望モードの判定: 「自動生成ボタンを押した」明示フラグ(generatedMonths)で判定する。
   //  deptShiftsの中身からの推測はやめた（左クリック手入力/Excel貼り付けでも修正モードに誤判定されるため）。
   //  生成前は false(希望・青)、生成後は true(修正・緑)。オールクリアで false に戻る。部署/月切替・再読込でも永続維持。
-  const editEra = generatedMonths[`${year}_${month+1}_${activeDeptId}`] === true;
+  //  旧月フォールバック: 明示フラグ導入(PR #198)より前に生成/確定された月は generated_ キーを持たない(undefined)。
+  //   その場合のみ、確定済み or 保存済みシフトの有無で修正モードを補う(false=明示クリアは尊重)。新月はフラグ必須で不使用。
+  const _emk = `${year}_${month+1}_${activeDeptId}`;
+  const editEra = resolveEditEra(
+    generatedMonths[_emk],
+    confirmedMonths[_emk] === true,
+    Object.keys(allShifts[activeDeptId] || {}).length > 0
+  );
   const undoStackRef = useRef({}); // { [deptId]: snapshot[] } — アンドゥ履歴（最大30ステップ）。snapshot={shifts, sr}
   const redoStackRef = useRef({}); // { [deptId]: snapshot[] } — リドゥ履歴（最大30ステップ）
   const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
