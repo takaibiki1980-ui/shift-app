@@ -80,4 +80,20 @@ describe('undo/redo スタック遷移', () => {
     expect(undo0).toEqual(['x']); expect(redo0).toEqual(['y']);
     expect(r.undo).toEqual(['x', 'z']); expect(r.redo).toEqual([]);
   });
+
+  test('スナップショットの se(修正マーカー)フィールドが push→undo→redo で保持される', () => {
+    // 現在=編集後(緑あり) から「戻る」→ 編集前(緑なし) を復元、「進む」→ 編集後(緑あり) を復元。
+    const before = { shifts: { a: {} }, sr: { a: null }, se: { a: null } };            // 緑なし
+    const after  = { shifts: { a: { 5: '早番' } }, sr: { a: null }, se: { a: { 5: '早番' } } }; // 緑あり
+    // 編集直前に before を積む
+    let { undo, redo } = pushHistory([], [], before);
+    // 戻る: current=after を渡す → before が復元され、after が redo に載る
+    const u = undoStep(undo, redo, after);
+    expect(u.restored).toEqual(before);          // 緑なし状態が戻る（se が復元対象に含まれる）
+    expect(u.restored.se.a).toBeNull();
+    // 進む: current=before を渡す → after が復元される
+    const rd = redoStep(u.undo, u.redo, before);
+    expect(rd.restored).toEqual(after);          // 緑あり状態が復元される
+    expect(rd.restored.se.a).toEqual({ 5: '早番' });
+  });
 });
