@@ -14,7 +14,6 @@ import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
-import { resolveEditEra } from './lib/editEra.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -4754,18 +4753,24 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   //   - 生成前の右クリック希望は deptShifts と shiftRequestsByMonth の両方に入るので“希望でないセル”は生じない → false(希望モード)。
   //   - 生成すると多数のセルが希望外で埋まる → true(修正モード)。
   //   - オールクリアで deptShifts が空になる → false(希望モードへ自動復帰)。
-  //  セッション状態(旧editEra state)ではなく永続データ由来なので、部署/月の切替・再読込でも維持される（バグ1の根治）。
-  // 修正/希望モードの判定: 「自動生成ボタンを押した」明示フラグ(generatedMonths)で判定する。
-  //  deptShiftsの中身からの推測はやめた（左クリック手入力/Excel貼り付けでも修正モードに誤判定されるため）。
-  //  生成前は false(希望・青)、生成後は true(修正・緑)。オールクリアで false に戻る。部署/月切替・再読込でも永続維持。
-  //  旧月フォールバック: 明示フラグ導入(PR #198)より前に生成/確定された月は generated_ キーを持たない(undefined)。
-  //   その場合のみ、確定済み or 保存済みシフトの有無で修正モードを補う(false=明示クリアは尊重)。新月はフラグ必須で不使用。
+  // 修正/希望モードの判定: 明示フラグ(generatedMonths)だけを見る。推測・フォールバックは廃止。
+  //  true=修正モード(緑) / false or 未設定=希望モード(青)。
+  //  切替の“きっかけ”のみ自動: 自動生成完了→true / オールクリア→false。それ以外(右/左クリック入力等)では一切変わらない。
+  //  リーダーは手動トグル(toggleEditMode)でいつでも切替可。旧月(フラグ無し)は既定=希望モードで、手動ボタンで直せる。
   const _emk = `${year}_${month+1}_${activeDeptId}`;
-  const editEra = resolveEditEra(
-    generatedMonths[_emk],
-    confirmedMonths[_emk] === true,
-    Object.keys(allShifts[activeDeptId] || {}).length > 0
-  );
+  const editEra = generatedMonths[_emk] === true;
+  // 手動モード切替: フラグを反転して永続化(shift_data)。入力操作では自動で変わらないため誤判定が起きない。
+  const toggleEditMode = () => {
+    if (isLockedRef.current) { alert("この部署はロックされています。編集するには解錠してください。"); return; }
+    const next = !editEra;
+    const gKey = `generated_${year}_${month+1}_${activeDeptId}`;
+    setGeneratedMonths(prev => ({ ...prev, [_emk]: next }));
+    allDBDataRef.current[gKey] = next;
+    supabase.from('shift_data').upsert(
+      { user_id: session.user.id, data_key: gKey, data_value: next, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,data_key' }
+    ).then(({ error }) => { if (error) console.error('[mode toggle] upsert失敗:', gKey, error); });
+  };
   const undoStackRef = useRef({}); // { [deptId]: snapshot[] } — アンドゥ履歴（最大30ステップ）。snapshot={shifts, sr}
   const redoStackRef = useRef({}); // { [deptId]: snapshot[] } — リドゥ履歴（最大30ステップ）
   const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
@@ -5510,7 +5515,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           )}
           <button onClick={()=>setDownloadModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Download size={14} strokeWidth={2}/>{!isMobile&&" 印刷"}</button>
           {!isLocked && <button onClick={()=>setBulkKyukoModal(true)} style={{background:"#FFFFFF",color:"#374151",border:"1px solid #E5E7EB",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:5}}><Calendar size={14} strokeWidth={2}/>{!isMobile&&" 休み設定"}</button>}
-          {EDIT_MODE_ENABLED && !isLocked && !isConfirmed && <span title={editEra?"生成後：右クリックは「修正」（緑）として記録されます":"生成前：右クリックは「希望」（青）として記録されます"} style={{display:"inline-flex",alignItems:"center",gap:4,height:36,padding:"0 10px",borderRadius:8,fontSize:11,fontWeight:700,background:editEra?"#ecfdf5":"#f5f3ff",color:editEra?"#047857":"#6d28d9",border:`1px solid ${editEra?"#a7f3d0":"#ddd6fe"}`}}>{editEra?"● 修正中":"● 希望入力中"}</span>}
+          {EDIT_MODE_ENABLED && !isLocked && !isConfirmed && <button onClick={toggleEditMode} title={editEra?"修正モード（緑）。クリックで希望モードに切り替え":"希望モード（青）。クリックで修正モードに切り替え"} style={{display:"inline-flex",alignItems:"center",gap:4,height:36,padding:"0 10px",borderRadius:8,fontSize:11,fontWeight:700,cursor:"pointer",background:editEra?"#ecfdf5":"#f5f3ff",color:editEra?"#047857":"#6d28d9",border:`1px solid ${editEra?"#a7f3d0":"#ddd6fe"}`}}>{editEra?"● 修正中":"● 希望入力中"}<span style={{fontSize:9,fontWeight:600,opacity:0.7,marginLeft:2}}>切替</span></button>}
           {EDIT_MODE_ENABLED && !isLocked && editEra && <button onClick={clearEditsOnly} title="生成後の修正だけをまとめて取り消します（生成前の希望は残ります）" style={{background:"#FFFFFF",color:"#047857",border:"1px solid #a7f3d0",borderRadius:8,padding:"0 12px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Trash2 size={14} strokeWidth={2}/>{!isMobile&&" 修正だけ削除"}</button>}
           {/* Overflow [•••] */}
           <div style={{position:"relative"}}>
