@@ -619,13 +619,24 @@ function ContextMenu({ x, y, onSelect, onClose, customDefs, deptShiftTypes, sele
   const ref = useRef();
   useEffect(() => { const h = (e) => { if(ref.current && !ref.current.contains(e.target)) onClose(); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [onClose]);
   const [pos, setPos] = useState({x,y});
-  useEffect(() => { setPos({ x: Math.min(x, window.innerWidth-200), y: Math.min(y, window.innerHeight-320) }); }, [x,y]);
+  // 実寸を測って画面内に収める: 下/右にはみ出す場合は上詰め/左詰め。max-height で収まらない分は内部スクロール(下記style)。
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const pad = 8;
+    const r = el.getBoundingClientRect();
+    const w = r.width, h = r.height; // max-height 適用後の実高さ（画面内に収まる）
+    let nx = x, ny = y;
+    if (nx + w > window.innerWidth - pad) nx = window.innerWidth - w - pad;   // 右にはみ出す→左へ
+    if (ny + h > window.innerHeight - pad) ny = window.innerHeight - h - pad; // 下にはみ出す→上へ
+    nx = Math.max(pad, nx); ny = Math.max(pad, ny);
+    if (nx !== pos.x || ny !== pos.y) setPos({ x: nx, y: ny });
+  }, [x, y]); // eslint-disable-line react-hooks/exhaustive-deps
   const customWorkKeys = (customDefs||[]).filter(cd=>cd.key&&deptShiftTypes?.includes(cd.key));
   const isBulk = selectionCount > 1;
   // 研修は全職員が対象になりうるため、半日シフト同様に役職制限の対象外（常時選択可）
   const visibleKeys = roleAllowed ? SHIFT_KEYS_MANUAL.filter(k=>k==="研修"||!WORK_TYPES.has(k)||roleAllowed.includes(k)) : SHIFT_KEYS_MANUAL;
   return (
-    <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#18181B",border:"1px solid #27272A",borderRadius:8,padding:6,boxShadow:"0 8px 32px rgba(0,0,0,0.6)",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170,color:"#F4F4F5"}}>
+    <div ref={ref} style={{position:"fixed",left:pos.x,top:pos.y,zIndex:999,background:"#18181B",border:"1px solid #27272A",borderRadius:8,padding:6,boxShadow:"0 8px 32px rgba(0,0,0,0.6)",display:"grid",gridTemplateColumns:"1fr 1fr",gap:3,minWidth:170,maxHeight:"calc(100vh - 16px)",overflowY:"auto",color:"#F4F4F5"}}>
       {isBulk&&<div style={{gridColumn:"1/-1",background:"#1e1b4b",border:"1px solid #4338CA",borderRadius:6,padding:"4px 8px",marginBottom:2,fontSize:11,color:"#C7D2FE",fontWeight:700,textAlign:"center"}}>{selectionCount}セルに一括適用</div>}
       {roleAllowed&&<div style={{gridColumn:"1/-1",background:"#1c1917",border:"1px solid #78350F",borderRadius:6,padding:"3px 8px",marginBottom:2,fontSize:10,color:"#FEF3C7",textAlign:"center"}}>役職制限: {roleAllowed.join("・")}のみ</div>}
       {/* 右クリックで勤務を入れた時点で希望勤務ロック（統一ルール）。専用の「希望勤務にする/解除」メニューは廃止し、
