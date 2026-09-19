@@ -4907,22 +4907,37 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     for (const s of staffListRef.current) if (s.dept === deptId) out[s.id] = s.shiftRequestsByMonth?.[mk] ?? null;
     return out;
   }, [year, month]);
-  const takeSnapshot = useCallback((deptId) => ({ shifts: allShiftsRef.current[deptId] || {}, sr: captureSR(deptId) }), [captureSR]);
+  // 修正マーカー(shiftEditsByMonth・緑枠)のスナップショット。captureSR と対で Undo/Redo に含める。
+  const captureSE = useCallback((deptId) => {
+    const mk = monthKey(year, month); const out = {};
+    for (const s of staffListRef.current) if (s.dept === deptId) out[s.id] = s.shiftEditsByMonth?.[mk] ?? null;
+    return out;
+  }, [year, month]);
+  const takeSnapshot = useCallback((deptId) => ({ shifts: allShiftsRef.current[deptId] || {}, sr: captureSR(deptId), se: captureSE(deptId) }), [captureSR, captureSE]);
   const applySnapshot = useCallback((deptId, snap) => {
     const mk = monthKey(year, month);
     setAllShifts(prev => ({ ...prev, [deptId]: snap.shifts }));
-    // 希望勤務(shiftRequestsByMonth[mk]) は変化がある時のみ復元（左クリック等の無駄なstaffList更新を避ける）
-    const cur = captureSR(deptId); let changed = false;
-    for (const id of new Set([...Object.keys(cur), ...Object.keys(snap.sr || {})])) {
-      if (JSON.stringify(cur[id] ?? null) !== JSON.stringify(snap.sr?.[id] ?? null)) { changed = true; break; }
+    // 希望勤務(sr)・修正マーカー(se) は変化がある時のみ復元（左クリック等の無駄なstaffList更新を避ける）
+    const curSR = captureSR(deptId), curSE = captureSE(deptId); let changed = false;
+    const hasSE = snap.se !== undefined; // 古い履歴(se無し)は se 比較・復元をしない
+    for (const id of new Set([...Object.keys(curSR), ...Object.keys(snap.sr || {}), ...(hasSE ? [...Object.keys(curSE), ...Object.keys(snap.se || {})] : [])])) {
+      if (JSON.stringify(curSR[id] ?? null) !== JSON.stringify(snap.sr?.[id] ?? null)) { changed = true; break; }
+      if (hasSE && JSON.stringify(curSE[id] ?? null) !== JSON.stringify(snap.se?.[id] ?? null)) { changed = true; break; }
     }
     if (changed) { shiftReqDeferSave.current = true; setStaffList(prev => prev.map(st => {
       if (st.dept !== deptId) return st;
-      const slice = snap.sr?.[st.id] ?? null; const nb = { ...(st.shiftRequestsByMonth || {}) };
-      if (slice == null) delete nb[mk]; else nb[mk] = slice;
-      return { ...st, shiftRequestsByMonth: nb };
+      const srSlice = snap.sr?.[st.id] ?? null; const nb = { ...(st.shiftRequestsByMonth || {}) };
+      if (srSlice == null) delete nb[mk]; else nb[mk] = srSlice;
+      // 古い履歴(se無し)は snap.se が undefined → 変更なしとして扱い、既存の se を保持
+      const out = { ...st, shiftRequestsByMonth: nb };
+      if (snap.se !== undefined) {
+        const seSlice = snap.se?.[st.id] ?? null; const ne = { ...(st.shiftEditsByMonth || {}) };
+        if (seSlice == null) delete ne[mk]; else ne[mk] = seSlice;
+        out.shiftEditsByMonth = ne;
+      }
+      return out;
     })); }
-  }, [year, month, captureSR]);
+  }, [year, month, captureSR, captureSE]);
 
   const setDeptShifts = useCallback((updater, opts = {}) => {
     if (opts.resetHistory) {
