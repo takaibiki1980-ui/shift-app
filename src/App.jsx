@@ -5602,7 +5602,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:40,textAlign:"center"}}>{tableZoom}%</span>
               <button onClick={()=>handleZoomChange(tableZoom+5)} title="拡大" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>＋</button>
               {!isLocked && <div style={{display:"flex",alignItems:"center",gap:4,marginLeft:4}}>
-                <button onClick={handleUndo} disabled={undoCount===0} title={`戻る (Ctrl+Z)${undoCount>0?` — ${undoCount}ステップ`:''}`} style={{background:undoCount===0?"#F8FAFC":"#EFF6FF",color:undoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${undoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:undoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}><Undo2 size={13} strokeWidth={2}/>戻る</button>
+                <button onClick={handleUndo} disabled={undoCount===0} title={undoCount>0?`戻る (Ctrl+Z) — ${undoCount}ステップ`:"元に戻せる操作がありません（別の階・月へ移動すると、元に戻す履歴はリセットされます）"} style={{background:undoCount===0?"#F8FAFC":"#EFF6FF",color:undoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${undoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:undoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}><Undo2 size={13} strokeWidth={2}/>戻る</button>
                 <button onClick={handleRedo} disabled={redoCount===0} title={`進む (Ctrl+Y)${redoCount>0?` — ${redoCount}ステップ`:''}`} style={{background:redoCount===0?"#F8FAFC":"#EFF6FF",color:redoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${redoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:redoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,whiteSpace:"nowrap"}}><Redo2 size={13} strokeWidth={2}/>進む</button>
               </div>}
             </div>
@@ -5618,7 +5618,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           <span style={{fontSize:12,fontWeight:600,color:"#6B7280",minWidth:40,textAlign:"center"}}>{tableZoom}%</span>
           <button onClick={()=>handleZoomChange(tableZoom+5)} title="拡大" style={{background:"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:8,color:"#6B7280",fontSize:15,fontWeight:700,lineHeight:1,padding:"4px 11px",cursor:"pointer"}}>＋</button>
           {!isLocked && <>
-            <button onClick={handleUndo} disabled={undoCount===0} title="戻る (Ctrl+Z)" style={{background:undoCount===0?"#F8FAFC":"#EFF6FF",color:undoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${undoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:undoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,marginLeft:4}}><Undo2 size={13} strokeWidth={2}/>戻る</button>
+            <button onClick={handleUndo} disabled={undoCount===0} title={undoCount>0?"戻る (Ctrl+Z)":"元に戻せる操作がありません（別の階・月へ移動すると、元に戻す履歴はリセットされます）"} style={{background:undoCount===0?"#F8FAFC":"#EFF6FF",color:undoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${undoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:undoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3,marginLeft:4}}><Undo2 size={13} strokeWidth={2}/>戻る</button>
             <button onClick={handleRedo} disabled={redoCount===0} title="進む (Ctrl+Y)" style={{background:redoCount===0?"#F8FAFC":"#EFF6FF",color:redoCount===0?"#CBD5E1":"#3B82F6",border:`1px solid ${redoCount===0?"#EEF2F7":"#BFDBFE"}`,borderRadius:8,padding:"4px 9px",cursor:redoCount===0?"default":"pointer",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3}}><Redo2 size={13} strokeWidth={2}/>進む</button>
           </>}
         </div>
@@ -5759,6 +5759,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             return;
           }
           setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
+          // 緑マーカー(shiftEditsByMonth)の整合: 履歴(shift_data_history)は deptShifts のみ保存でマーカーを持たない。
+          // 復元は「その保存時点の状態に戻す」操作なので、当該部署・月の修正マーカーをクリアし、緑枠が古いまま残らないようにする。
+          { const rmk = monthKey(year, month);
+            setStaffList(prev=>prev.map(s=>{
+              if (s.dept !== restoreDeptId || !s.shiftEditsByMonth?.[rmk]) return s;
+              const se = { ...s.shiftEditsByMonth }; delete se[rmk];
+              return { ...s, shiftEditsByMonth: se };
+            }));
+          }
           // ★Fix W-3: 復元後のundo/redo履歴をリセット（復元前の状態へ戻るundoを防止）
           // 復元を「新しい基準状態」として扱う → 復元前への逆行undoを不可能にする
           undoStackRef.current[restoreDeptId] = [];
