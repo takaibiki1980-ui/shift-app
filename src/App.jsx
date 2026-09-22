@@ -4380,8 +4380,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           if (willApplyRT) {
             for (const [k] of deptShiftEntries) {
               const dId = k.slice(shiftPrefix.length);
-              undoStackRef.current[dId] = []; // RT適用部署のundo/redo履歴をリセット
-              redoStackRef.current[dId] = [];
+              undoStackRef.current[hkey(dId)] = []; // RT適用部署×月のundo/redo履歴をリセット
+              redoStackRef.current[hkey(dId)] = [];
             }
             setUndoCount(0); setRedoCount(0);
           }
@@ -4583,9 +4583,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     isLoadingMonth.current = true;
     setIsMonthLoading(true); // UIロック開始
     setAllShifts({}); // 月切替時に即座にクリア（旧月データが一瞬残るのを防ぐ）
-    undoStackRef.current = {}; // 月切替でundo/redo履歴をリセット
-    redoStackRef.current = {};
-    setUndoCount(0); setRedoCount(0);
+    // 履歴は部署×月キー(hkey)で保持するため月切替でクリアしない（戻ってきてもUndo可能）。
+    // 表示中カウントは下の [activeDeptId,year,month] 依存の同期effectが、その月のキーから再計算する。
     // ロード完了処理（reqId一致時のみ適用）
     const applyLoaded = (data) => {
       if (reqId !== fetchReqIdRef.current) {
@@ -4783,8 +4782,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       { onConflict: 'user_id,data_key' }
     ).then(({ error }) => { if (error) console.error('[mode toggle] upsert失敗:', gKey, error); });
   };
-  const undoStackRef = useRef({}); // { [deptId]: snapshot[] } — アンドゥ履歴（最大30ステップ）。snapshot={shifts, sr}
-  const redoStackRef = useRef({}); // { [deptId]: snapshot[] } — リドゥ履歴（最大30ステップ）
+  const undoStackRef = useRef({}); // { [deptId|YYYY-M]: snapshot[] } — アンドゥ履歴（部署×月ごと・最大30）。snapshot={shifts,sr,se}
+  const redoStackRef = useRef({}); // { [deptId|YYYY-M]: snapshot[] } — リドゥ履歴（部署×月ごと）
+  // 履歴キー: 部署だけでなく「部署×月」で持つ → 月を移動して戻っても履歴が保持され、Undoが正しいその月の変更のみを取り消す。
+  const hkey = (deptId, y = yearRef.current, m = monthRef.current) => `${deptId}|${monthKey(y, m)}`;
   const [undoCount, setUndoCount] = useState(0); // 現在部署のアンドゥ可能ステップ数（ボタンのenabled判定用）
   const [redoCount, setRedoCount] = useState(0); // 現在部署のリドゥ可能ステップ数
   const isMobile = (window.innerWidth || document.documentElement.clientWidth) < 900;
@@ -4830,7 +4831,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   // false では従来どおり全解錠をリセット（毎回PIN）。※解錠状態はメモリのみ・リロード/タブ閉じで消える。
   useEffect(() => { if (!LOCK_KEEP_UNLOCKED) setUnlockedDeptIds(new Set()); }, [activeDeptId]);
   // 部署切替時にアンドゥ可能数を現在部署のスタック長に合わせる
-  useEffect(() => { setUndoCount((undoStackRef.current[activeDeptId] || []).length); setRedoCount((redoStackRef.current[activeDeptId] || []).length); }, [activeDeptId]);
+  useEffect(() => { const k = hkey(activeDeptId, year, month); setUndoCount((undoStackRef.current[k] || []).length); setRedoCount((redoStackRef.current[k] || []).length); }, [activeDeptId, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
   const isLocked = !!(depts.find(d=>d.id===activeDeptId)?.pin && !unlockedDeptIds.has(activeDeptId));
   const isLockedRef = useRef(isLocked);
   useEffect(() => { isLockedRef.current = isLocked; }, [isLocked]);
@@ -4941,16 +4942,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [year, month, captureSR, captureSE]);
 
   const setDeptShifts = useCallback((updater, opts = {}) => {
+    const _hk = hkey(activeDeptId);
     if (opts.resetHistory) {
       // 自動生成・全体クリア・paste等の大操作: undo/redo対象にせず、履歴をリセット
-      undoStackRef.current[activeDeptId] = [];
-      redoStackRef.current[activeDeptId] = [];
+      undoStackRef.current[_hk] = [];
+      redoStackRef.current[_hk] = [];
       setUndoCount(0); setRedoCount(0);
     } else {
       // 手編集: アンドゥ用に変更前の状態を積む。新規編集なのでリドゥは無効化。
-      const { undo, redo } = pushHistory(undoStackRef.current[activeDeptId], redoStackRef.current[activeDeptId], takeSnapshot(activeDeptId));
-      undoStackRef.current[activeDeptId] = undo;
-      redoStackRef.current[activeDeptId] = redo;
+      const { undo, redo } = pushHistory(undoStackRef.current[_hk], redoStackRef.current[_hk], takeSnapshot(activeDeptId));
+      undoStackRef.current[_hk] = undo;
+      redoStackRef.current[_hk] = redo;
       setUndoCount(undo.length);
       setRedoCount(0);
     }
@@ -4995,8 +4997,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
     // 自動生成はundo/redo対象外: 履歴をリセット（redoも無効化）。
-    undoStackRef.current[targetDept.id] = [];
-    redoStackRef.current[targetDept.id] = [];
+    undoStackRef.current[hkey(targetDept.id, year, month)] = [];
+    redoStackRef.current[hkey(targetDept.id, year, month)] = [];
     const _genResult = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
     const {shifts:result, warnings, timelineWarnings, score, diagnosticReport} = _genResult;
     lastAutoGenRef.current[targetDept.id] = result;
@@ -5125,7 +5127,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         }
         const {result, warnings, timelineWarnings, score, genSnapshot} = _gen;
-        setUndoCount(undoStackRef.current[cd.id].length); setRedoCount(0);
+        setUndoCount((undoStackRef.current[hkey(cd.id, year, month)] || []).length); setRedoCount(0);
 
         const _p1_ds = cs.filter(s => s.dept === cd.id);
         // 方針B: 最小変更フェーズ前の結果(公休正解の可能性)を退避しておく。
@@ -5258,10 +5260,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleUndo = useCallback(() => {
     if (isLockedRef.current) return;
     if (isConfirmedRef.current) return; // 確定済みは編集不可
-    const res = undoStep(undoStackRef.current[activeDeptId], redoStackRef.current[activeDeptId], takeSnapshot(activeDeptId));
+    const _hk = hkey(activeDeptId);
+    const res = undoStep(undoStackRef.current[_hk], redoStackRef.current[_hk], takeSnapshot(activeDeptId));
     if (!res) return;
-    undoStackRef.current[activeDeptId] = res.undo;
-    redoStackRef.current[activeDeptId] = res.redo;
+    undoStackRef.current[_hk] = res.undo;
+    redoStackRef.current[_hk] = res.redo;
     setUndoCount(res.undo.length);
     setRedoCount(res.redo.length);
     // ★編集保護(PR #117): Realtime巻き戻し防止。undo/redoも編集の一種として必須。
@@ -5274,10 +5277,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleRedo = useCallback(() => {
     if (isLockedRef.current) return;
     if (isConfirmedRef.current) return; // 確定済みは編集不可
-    const res = redoStep(undoStackRef.current[activeDeptId], redoStackRef.current[activeDeptId], takeSnapshot(activeDeptId));
+    const _hk = hkey(activeDeptId);
+    const res = redoStep(undoStackRef.current[_hk], redoStackRef.current[_hk], takeSnapshot(activeDeptId));
     if (!res) return;
-    undoStackRef.current[activeDeptId] = res.undo;
-    redoStackRef.current[activeDeptId] = res.redo;
+    undoStackRef.current[_hk] = res.undo;
+    redoStackRef.current[_hk] = res.redo;
     setUndoCount(res.undo.length);
     setRedoCount(res.redo.length);
     userEditSeq.current++;
@@ -5724,8 +5728,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             // ★確定済みガード（自動生成と同趣旨）: 確定月を貼り付けで上書きさせない
             if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setExcelPasteModal(false);return;}
             // Excel貼付はundo/redo対象外: 履歴をリセット（redoも無効化）。
-            undoStackRef.current[activeDeptId]=[];
-            redoStackRef.current[activeDeptId]=[];
+            undoStackRef.current[hkey(activeDeptId)]=[];
+            redoStackRef.current[hkey(activeDeptId)]=[];
             setUndoCount(0); setRedoCount(0);
             pasteTimestamp.current = Date.now(); // Realtime上書きを5秒ブロック
             userEditSeq.current++;
@@ -5770,8 +5774,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
           // ★Fix W-3: 復元後のundo/redo履歴をリセット（復元前の状態へ戻るundoを防止）
           // 復元を「新しい基準状態」として扱う → 復元前への逆行undoを不可能にする
-          undoStackRef.current[restoreDeptId] = [];
-          redoStackRef.current[restoreDeptId] = [];
+          undoStackRef.current[hkey(restoreDeptId, year, month)] = [];
+          redoStackRef.current[hkey(restoreDeptId, year, month)] = [];
           setUndoCount(0); setRedoCount(0);
           setSaveStatus('saved');
         }}
