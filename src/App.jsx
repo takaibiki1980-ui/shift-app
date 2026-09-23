@@ -2444,17 +2444,27 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
     return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
   };
 
-  const handleRestore = async (histId, archivedAt) => {
+  const handleRestore = async (histId, archivedAt, originalUpdatedAt) => {
     if (!window.confirm(`${fmt(archivedAt)} 時点の状態に復元しますか？\n現在のシフトは上書きされます（現在の状態も履歴に残ります）。`)) return;
     setRestoring(histId);
     const { data: hd, error: he } = await supabase.from('shift_data_history').select('data_value').eq('id', histId).single();
     if (he || !hd) { alert('取得失敗: ' + (he?.message || '不明')); setRestoring(null); return; }
+    // ★色情報の復元: 同じ保存(=同一 original_updated_at)でペア保存された editmarks 履歴を取得。
+    //   無い場合(この修正より前の古い履歴)は null → 中身のみ復元(従来動作)。
+    let marksVal = null;
+    if (originalUpdatedAt) {
+      const marksKey = `editmarks_${year}_${month+1}_${deptId}`;
+      const { data: md } = await supabase.from('shift_data_history')
+        .select('data_value').eq('user_id', session.user.id).eq('data_key', marksKey)
+        .eq('original_updated_at', originalUpdatedAt).order('archived_at',{ascending:false}).limit(1);
+      if (md && md[0]?.data_value) marksVal = md[0].data_value;
+    }
     const { error: ue } = await supabase.from('shift_data').upsert(
       { user_id:session.user.id, data_key:shiftKey, data_value:hd.data_value, updated_at:new Date().toISOString() },
       { onConflict:'user_id,data_key' }
     );
     if (ue) { alert('復元失敗: ' + ue.message); setRestoring(null); return; }
-    onRestore(hd.data_value);
+    onRestore(hd.data_value, marksVal);
     onClose();
   };
 
@@ -2482,7 +2492,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
             </div>
             <button
               disabled={!!restoring}
-              onClick={() => handleRestore(h.id, h.archived_at)}
+              onClick={() => handleRestore(h.id, h.archived_at, h.original_updated_at)}
               style={{background:restoring===h.id?"#d1fae5":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:restoring?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap",minWidth:80}}
             >{restoring===h.id?"復元中…":"この状態\nに戻す"}</button>
           </div>
@@ -4643,9 +4653,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     for (const currentDeptId of deptIdsToSave) {
       const key = `shifts_${y}_${m+1}_${currentDeptId}`;
       const deptData = allShiftsRef.current[currentDeptId] || {};
+      const saveTs = new Date().toISOString(); // shifts と色情報(editmarks)をペアにする共通タイムスタンプ
       try {
         const { error } = await supabase.from('shift_data').upsert(
-          { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:new Date().toISOString() },
+          { user_id:session.user.id, data_key:key, data_value:deptData, updated_at:saveTs },
           { onConflict:'user_id,data_key' }
         );
         if (error) {
@@ -4655,6 +4666,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             return false;
           }
           throw error;
+        }
+        // ★色情報の履歴保存: shiftRequestsByMonth(青)/shiftEditsByMonth(緑) を同じ updated_at で別キーに保存。
+        //   DBトリガーが editmarks_ キーも15世代アーカイブ → 復元時に original_updated_at 完全一致でペア復元できる。
+        {
+          const _mk = monthKey(y, m);
+          const marksKey = `editmarks_${y}_${m+1}_${currentDeptId}`;
+          const marksVal = {};
+          for (const s of staffListRef.current) {
+            if (s.dept !== currentDeptId) continue;
+            const sr = s.shiftRequestsByMonth?.[_mk]; const se = s.shiftEditsByMonth?.[_mk];
+            if ((sr && Object.keys(sr).length) || (se && Object.keys(se).length)) marksVal[s.id] = { sr: sr || null, se: se || null };
+          }
+          supabase.from('shift_data').upsert(
+            { user_id:session.user.id, data_key:marksKey, data_value:marksVal, updated_at:saveTs },
+            { onConflict:'user_id,data_key' }
+          ).then(({ error:me })=>{ if (me) console.error('[editmarks] upsert失敗:', marksKey, me); });
         }
         dirtyDeptIdsRef.current.delete(currentDeptId); // 保存成功 → dirty解除
         // 自己エコー抑止: この保存の内容と時刻を記録。直後に Realtime で返ってくる同一通知を無視する。
@@ -5750,7 +5777,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         session={session} year={year} month={month}
         deptId={activeDeptId} deptLabel={dept?.label||activeDeptId}
         onClose={()=>setHistoryModal(false)}
-        onRestore={(restoredData)=>{
+        onRestore={(restoredData, marksVal)=>{
           const restoreDeptId = activeDeptIdRef.current;
           // ★確定済みガード（自動生成・クリア・貼付と統一）: 確定月を復元で上書きさせない
           if (isConfirmedRef.current) { alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`); setHistoryModal(false); return; }
@@ -5763,11 +5790,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             return;
           }
           setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
-          // 緑マーカー(shiftEditsByMonth)の整合: 履歴(shift_data_history)は deptShifts のみ保存でマーカーを持たない。
-          // 復元は「その保存時点の状態に戻す」操作なので、当該部署・月の修正マーカーをクリアし、緑枠が古いまま残らないようにする。
+          // 色情報(青=shiftRequestsByMonth / 緑=shiftEditsByMonth)の整合。
+          //  marksVal あり(この修正以降に保存された履歴)→ その時点の色を復元。
+          //  marksVal なし(古い履歴)→ 色は復元できないため当該月のマーカーをクリア(緑が古いまま残らないように)。
           { const rmk = monthKey(year, month);
+            shiftReqDeferSave.current = true;
             setStaffList(prev=>prev.map(s=>{
-              if (s.dept !== restoreDeptId || !s.shiftEditsByMonth?.[rmk]) return s;
+              if (s.dept !== restoreDeptId) return s;
+              if (marksVal) {
+                const m = marksVal[s.id]; // {sr, se} | undefined
+                const sr = { ...(s.shiftRequestsByMonth||{}) }; const se = { ...(s.shiftEditsByMonth||{}) };
+                if (m?.sr) sr[rmk] = m.sr; else delete sr[rmk];
+                if (m?.se) se[rmk] = m.se; else delete se[rmk];
+                return { ...s, shiftRequestsByMonth: sr, shiftEditsByMonth: se };
+              }
+              // 古い履歴: 緑マーカーのみクリア(青=希望は従来どおり保持)
+              if (!s.shiftEditsByMonth?.[rmk]) return s;
               const se = { ...s.shiftEditsByMonth }; delete se[rmk];
               return { ...s, shiftEditsByMonth: se };
             }));
