@@ -14,6 +14,7 @@ import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
+import { buildMarksVal, collectSeById } from './lib/editMarks.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -2459,11 +2460,21 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
         .eq('original_updated_at', originalUpdatedAt).order('archived_at',{ascending:false}).limit(1);
       if (md && md[0]?.data_value) marksVal = md[0].data_value;
     }
+    const restoreTs = new Date().toISOString(); // shifts と色情報(editmarks)をペアにする共通タイムスタンプ
     const { error: ue } = await supabase.from('shift_data').upsert(
-      { user_id:session.user.id, data_key:shiftKey, data_value:hd.data_value, updated_at:new Date().toISOString() },
+      { user_id:session.user.id, data_key:shiftKey, data_value:hd.data_value, updated_at:restoreTs },
       { onConflict:'user_id,data_key' }
     );
     if (ue) { alert('復元失敗: ' + ue.message); setRestoring(null); return; }
+    // ★色情報のペア書き: 復元した shifts_ と同一 updated_at で editmarks_ も書き、ペアを揃える。
+    //   対の色情報が見つかった時のみ復元値で上書き(見つからない古い履歴では既存の色を保持＝破壊しない)。
+    if (marksVal) {
+      const marksKey = `editmarks_${year}_${month+1}_${deptId}`;
+      await supabase.from('shift_data').upsert(
+        { user_id:session.user.id, data_key:marksKey, data_value:marksVal, updated_at:restoreTs },
+        { onConflict:'user_id,data_key' }
+      );
+    }
     onRestore(hd.data_value, marksVal);
     onClose();
   };
@@ -4471,7 +4482,36 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         return changed ? next : prev;
       });
     };
-    mergeStaffKibo();
+
+    // ★緑(修正)の表示ハイドレーション: staffList の shiftEditsByMonth[mk] が空でも、
+    //   editmarks companion に se が残っていれば表示用に補う（赤の mergeStaffKibo と同じ思想）。
+    //   単一保管(staffList)が崩れても緑が消えないための保険。既存の se は上書きしない。
+    const mergeEditMarks = async () => {
+      const y = yearRef.current, m = monthRef.current;
+      const mk = monthKey(y, m);
+      const prefix = `editmarks_${y}_${m+1}_`;
+      const { data, error } = await supabase.from('shift_data')
+        .select('data_key,data_value').eq('user_id', session.user.id).like('data_key', `${prefix}%`);
+      if (error || !data || data.length === 0) return;
+      const seById = collectSeById(data);
+      if (Object.keys(seById).length === 0) return;
+      staffListSkipSave.current = true; // 表示用の補完なので保存不要(companionが真実源として毎回再構築)
+      setStaffList(prev => {
+        let changed = false;
+        const next = prev.map(s => {
+          const cur = s.shiftEditsByMonth?.[mk];
+          if (cur && Object.keys(cur).length) return s; // 既に緑がある → 上書きしない
+          const se = seById[s.id];
+          if (!se) return s;
+          changed = true;
+          return { ...s, shiftEditsByMonth: { ...(s.shiftEditsByMonth || {}), [mk]: se } };
+        });
+        if (!changed) staffListSkipSave.current = false;
+        return changed ? next : prev;
+      });
+    };
+    // kibo → editmarks の順に直列化し、staffListSkipSave フラグの取り合いを避ける。
+    mergeStaffKibo().then(mergeEditMarks);
 
     // 自動生成後など複数行のupsertが連続するとpostgres_changesが連打されるため
     // 500msデバウンスで1回にまとめる（auto_generate直後の realtime_update 洪水を防止）
@@ -4570,10 +4610,21 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       for (const deptId of dirtyIds) {
         const emergencyKey = `shifts_${year}_${month+1}_${deptId}`;
         const emergencyData = allShiftsRef.current[deptId] || {};
+        const emergencyTs = new Date().toISOString(); // shifts と色情報(editmarks)をペアにする共通タイムスタンプ
         // 自己エコー抑止: 緊急保存の内容も記録（この保存の Realtime エコーで reload しないように）
         selfEchoRef.current[emergencyKey] = { ts: Date.now(), json: JSON.stringify(emergencyData) };
+        // ★色情報のペア書き: shifts_ を書く経路では必ず editmarks_ も同一 updated_at で書く。
+        //   ペアの欠落(復元時 marksVal=null → 緑消失)を根本から防ぐ。
+        {
+          const marksKey = `editmarks_${year}_${month+1}_${deptId}`;
+          const marksVal = buildMarksVal(staffListRef.current, deptId, monthKey(year, month));
+          supabase.from('shift_data').upsert(
+            { user_id:session.user.id, data_key:marksKey, data_value:marksVal, updated_at:emergencyTs },
+            { onConflict:'user_id,data_key' }
+          ).then(({ error:me })=>{ if (me) console.error('[editmarks] 緊急保存失敗:', marksKey, me); });
+        }
         supabase.from('shift_data').upsert(
-          { user_id:session.user.id, data_key:emergencyKey, data_value:emergencyData, updated_at:new Date().toISOString() },
+          { user_id:session.user.id, data_key:emergencyKey, data_value:emergencyData, updated_at:emergencyTs },
           { onConflict:'user_id,data_key' }
         ).then(({ error }) => {
           if (!error) {
@@ -4670,14 +4721,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // ★色情報の履歴保存: shiftRequestsByMonth(青)/shiftEditsByMonth(緑) を同じ updated_at で別キーに保存。
         //   DBトリガーが editmarks_ キーも15世代アーカイブ → 復元時に original_updated_at 完全一致でペア復元できる。
         {
-          const _mk = monthKey(y, m);
           const marksKey = `editmarks_${y}_${m+1}_${currentDeptId}`;
-          const marksVal = {};
-          for (const s of staffListRef.current) {
-            if (s.dept !== currentDeptId) continue;
-            const sr = s.shiftRequestsByMonth?.[_mk]; const se = s.shiftEditsByMonth?.[_mk];
-            if ((sr && Object.keys(sr).length) || (se && Object.keys(se).length)) marksVal[s.id] = { sr: sr || null, se: se || null };
-          }
+          const marksVal = buildMarksVal(staffListRef.current, currentDeptId, monthKey(y, m));
           supabase.from('shift_data').upsert(
             { user_id:session.user.id, data_key:marksKey, data_value:marksVal, updated_at:saveTs },
             { onConflict:'user_id,data_key' }
@@ -5792,23 +5837,18 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
           setAllShifts(prev=>({...prev,[restoreDeptId]:restoredData}));
           // 色情報(青=shiftRequestsByMonth / 緑=shiftEditsByMonth)の整合。
-          //  marksVal あり(この修正以降に保存された履歴)→ その時点の色を復元。
-          //  marksVal なし(古い履歴)→ 色は復元できないため当該月のマーカーをクリア(緑が古いまま残らないように)。
-          { const rmk = monthKey(year, month);
+          //  marksVal あり(対の色情報が見つかった)→ その時点の色を復元。
+          //  marksVal なし(対が見つからない)→ 何もしない(現在の色をそのまま保持)。
+          //   ※以前は緑を削除していたが、正常な修正記録まで消える事故の原因だったため撤廃。
+          if (marksVal) { const rmk = monthKey(year, month);
             shiftReqDeferSave.current = true;
             setStaffList(prev=>prev.map(s=>{
               if (s.dept !== restoreDeptId) return s;
-              if (marksVal) {
-                const m = marksVal[s.id]; // {sr, se} | undefined
-                const sr = { ...(s.shiftRequestsByMonth||{}) }; const se = { ...(s.shiftEditsByMonth||{}) };
-                if (m?.sr) sr[rmk] = m.sr; else delete sr[rmk];
-                if (m?.se) se[rmk] = m.se; else delete se[rmk];
-                return { ...s, shiftRequestsByMonth: sr, shiftEditsByMonth: se };
-              }
-              // 古い履歴: 緑マーカーのみクリア(青=希望は従来どおり保持)
-              if (!s.shiftEditsByMonth?.[rmk]) return s;
-              const se = { ...s.shiftEditsByMonth }; delete se[rmk];
-              return { ...s, shiftEditsByMonth: se };
+              const m = marksVal[s.id]; // {sr, se} | undefined
+              const sr = { ...(s.shiftRequestsByMonth||{}) }; const se = { ...(s.shiftEditsByMonth||{}) };
+              if (m?.sr) sr[rmk] = m.sr; else delete sr[rmk];
+              if (m?.se) se[rmk] = m.se; else delete se[rmk];
+              return { ...s, shiftRequestsByMonth: sr, shiftEditsByMonth: se };
             }));
           }
           // ★Fix W-3: 復元後のundo/redo履歴をリセット（復元前の状態へ戻るundoを防止）
