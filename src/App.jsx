@@ -14,7 +14,7 @@ import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
-import { buildMarksVal, collectSeById } from './lib/editMarks.js';
+import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -4367,7 +4367,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             JSON.stringify(staffListRef.current) !== JSON.stringify(lastSaved);
           if (!hasLocalChanges && JSON.stringify(byKey['staffList']) !== JSON.stringify(staffListRef.current)) {
             staffListSkipSave.current = true;
-            setStaffList(byKey['staffList']);
+            // ★緑(修正)の消失防止: リモートの staffList に se が欠けていても、companion に
+            //   残る se を表示用に補ってから反映する（reload で緑が消える不具合の恒久対策）。
+            const seById = collectSeByIdFromByKey(byKey, yearRef.current, monthRef.current);
+            setStaffList(hydrateStaffListSe(byKey['staffList'], monthKey(yearRef.current, monthRef.current), seById));
           }
         }
         const latestExcRT = filterExpiredExceptions(byKey['exceptionMonths'] || exceptionMonths);
@@ -4497,17 +4500,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       if (Object.keys(seById).length === 0) return;
       staffListSkipSave.current = true; // 表示用の補完なので保存不要(companionが真実源として毎回再構築)
       setStaffList(prev => {
-        let changed = false;
-        const next = prev.map(s => {
-          const cur = s.shiftEditsByMonth?.[mk];
-          if (cur && Object.keys(cur).length) return s; // 既に緑がある → 上書きしない
-          const se = seById[s.id];
-          if (!se) return s;
-          changed = true;
-          return { ...s, shiftEditsByMonth: { ...(s.shiftEditsByMonth || {}), [mk]: se } };
-        });
-        if (!changed) staffListSkipSave.current = false;
-        return changed ? next : prev;
+        const next = hydrateStaffListSe(prev, mk, seById);
+        if (next === prev) staffListSkipSave.current = false;
+        return next;
       });
     };
     // kibo → editmarks の順に直列化し、staffListSkipSave フラグの取り合いを避ける。
@@ -5840,16 +5835,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           //  marksVal あり(対の色情報が見つかった)→ その時点の色を復元。
           //  marksVal なし(対が見つからない)→ 何もしない(現在の色をそのまま保持)。
           //   ※以前は緑を削除していたが、正常な修正記録まで消える事故の原因だったため撤廃。
-          if (marksVal) { const rmk = monthKey(year, month);
+          if (marksVal) {
             shiftReqDeferSave.current = true;
-            setStaffList(prev=>prev.map(s=>{
-              if (s.dept !== restoreDeptId) return s;
-              const m = marksVal[s.id]; // {sr, se} | undefined
-              const sr = { ...(s.shiftRequestsByMonth||{}) }; const se = { ...(s.shiftEditsByMonth||{}) };
-              if (m?.sr) sr[rmk] = m.sr; else delete sr[rmk];
-              if (m?.se) se[rmk] = m.se; else delete se[rmk];
-              return { ...s, shiftRequestsByMonth: sr, shiftEditsByMonth: se };
-            }));
+            setStaffList(prev=>applyRestoredMarks(prev, restoreDeptId, monthKey(year, month), marksVal));
           }
           // ★Fix W-3: 復元後のundo/redo履歴をリセット（復元前の状態へ戻るundoを防止）
           // 復元を「新しい基準状態」として扱う → 復元前への逆行undoを不可能にする

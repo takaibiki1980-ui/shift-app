@@ -47,3 +47,93 @@ export function collectSeById(rows) {
   }
   return seById;
 }
+
+/**
+ * byKey(全 shift_data の {data_key:data_value}) から当該月の editmarks 行だけを
+ * 取り出し collectSeById へ渡すためのユーティリティ。
+ * @param {Object} byKey  { data_key: data_value }
+ * @param {number} year
+ * @param {number} month  0始まり
+ * @returns {Object} { [staffId]: se }
+ */
+export function collectSeByIdFromByKey(byKey, year, month) {
+  const prefix = `editmarks_${year}_${month + 1}_`;
+  const rows = [];
+  for (const [k, v] of Object.entries(byKey || {})) {
+    if (k.startsWith(prefix)) rows.push({ data_value: v });
+  }
+  return collectSeById(rows);
+}
+
+/**
+ * staffList の shiftEditsByMonth[mk] が空の staff に、companion 由来の se を補う。
+ * 既に中身がある staff は上書きしない（真実の記録を壊さない）。他月・他フィールドは不変。
+ * staffList を設定する全経路(初期ロード・月ロード・reloadFromRemote)で共用し、
+ * どの経路でも緑が消えないことを保証する。
+ * @param {Array}  staffList
+ * @param {string} mk
+ * @param {Object} seById  { [staffId]: se }
+ * @returns {Array} 変化があれば新配列・無ければ同一参照
+ */
+export function hydrateStaffListSe(staffList, mk, seById) {
+  if (!staffList || !seById || Object.keys(seById).length === 0) return staffList;
+  let changed = false;
+  const next = staffList.map((s) => {
+    if (!s) return s;
+    const cur = s.shiftEditsByMonth?.[mk];
+    if (cur && Object.keys(cur).length) return s; // 既に緑あり → 上書きしない
+    const se = seById[s.id];
+    if (!se) return s;
+    changed = true;
+    return { ...s, shiftEditsByMonth: { ...(s.shiftEditsByMonth || {}), [mk]: se } };
+  });
+  return changed ? next : staffList;
+}
+
+/**
+ * 履歴復元時、対の色情報(marksVal)が見つかった場合のみ当該部署×月の色を復元する。
+ * marksVal が無い(対が見つからない)場合は何もしない＝現在の色をそのまま保持（破壊しない）。
+ * @param {Array}  staffList
+ * @param {string} deptId
+ * @param {string} mk
+ * @param {Object|null} marksVal  { [staffId]: { sr, se } } | null
+ * @returns {Array} 更新後の staffList（marksVal が無ければ同一参照）
+ */
+export function applyRestoredMarks(staffList, deptId, mk, marksVal) {
+  if (!marksVal) return staffList;
+  return (staffList || []).map((s) => {
+    if (!s || s.dept !== deptId) return s;
+    const m = marksVal[s.id]; // {sr, se} | undefined
+    const sr = { ...(s.shiftRequestsByMonth || {}) };
+    const se = { ...(s.shiftEditsByMonth || {}) };
+    if (m?.sr) sr[mk] = m.sr; else delete sr[mk];
+    if (m?.se) se[mk] = m.se; else delete se[mk];
+    return { ...s, shiftRequestsByMonth: sr, shiftEditsByMonth: se };
+  });
+}
+
+/**
+ * セルの色分類（表示ロジックのモデル）。App.jsx の ShiftTable 描画（青/緑/赤の
+ * 優先順位・confirmed ゲート）を忠実に写したもの。回帰テストの基準に使う。
+ * 優先順位: 赤(スタッフ希望) > 緑(修正) > 青(希望勤務)。確定中は全て装飾なし。
+ * @returns {'red'|'green'|'blue'|null}
+ */
+export function cellColor({ hasSe, hasSr, isKibo, isYukyu, confirmed = false, editModeEnabled = true }) {
+  if (confirmed) return null;
+  if (isKibo || isYukyu) return 'red';
+  if (editModeEnabled && hasSe) return 'green';
+  if (hasSr) return 'blue';
+  return null;
+}
+
+/** cellColor を staff オブジェクト＋月キー＋日から判定するヘルパ（テスト・可読性用）。 */
+export function cellColorOf(staff, mk, day, opts = {}) {
+  return cellColor({
+    hasSe: !!staff?.shiftEditsByMonth?.[mk]?.[day],
+    hasSr: !!staff?.shiftRequestsByMonth?.[mk]?.[day],
+    isKibo: !!opts.kibodays?.includes(day),
+    isYukyu: !!opts.yukyudays?.includes(day),
+    confirmed: !!opts.confirmed,
+    editModeEnabled: opts.editModeEnabled !== false,
+  });
+}
