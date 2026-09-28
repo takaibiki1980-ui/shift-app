@@ -15,7 +15,7 @@ import { effectiveCellShift } from './lib/exportCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
-import { NON_WORK_SHIFTS } from './lib/recurringPattern.js';
+import { NON_WORK_SHIFTS, applyPatternsToStaff, markPatternOverrides } from './lib/recurringPattern.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -4560,8 +4560,22 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         return next;
       });
     };
-    // kibo → editmarks の順に直列化し、staffListSkipSave フラグの取り合いを避ける。
-    mergeStaffKibo().then(mergeEditMarks);
+    // ★曜日パターン(繰り返しルール)の当月展開: recurringPatterns を当月の希望勤務(青)へ展開。
+    //   個別変更(override)は applyPatternsToStaff 内で保護される。skipSave で state のみ（毎回再展開＝冪等）。
+    //   フラグOFF時は完全な no-op（setStaffList もしない＝従来動作と一致）。
+    const expandRecurringPatterns = () => {
+      if (!RECURRING_PATTERN_ENABLED) return;
+      const y = yearRef.current, m = monthRef.current;
+      staffListSkipSave.current = true;
+      setStaffList(prev => {
+        let changed = false;
+        const next = prev.map(s => { const ns = applyPatternsToStaff(s, y, m); if (ns !== s) changed = true; return ns; });
+        if (!changed) staffListSkipSave.current = false;
+        return changed ? next : prev;
+      });
+    };
+    // kibo → editmarks → パターン展開 の順に直列化し、staffListSkipSave フラグの取り合いを避ける。
+    mergeStaffKibo().then(mergeEditMarks).then(expandRecurringPatterns);
 
     // 自動生成後など複数行のupsertが連続するとpostgres_changesが連打されるため
     // 500msデバウンスで1回にまとめる（auto_generate直後の realtime_update 洪水を防止）
@@ -5463,7 +5477,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     setStaffList(prev => prev.map(s => {
       const a = affected[s.id];
       if (!a) return s;
-      return { ...s, kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: a.days }, yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: a.yukyu_days } };
+      let ns = { ...s, kiboByMonth: { ...(s.kiboByMonth || {}), [mk]: a.days }, yukyuByMonth: { ...(s.yukyuByMonth || {}), [mk]: a.yukyu_days } };
+      // 曜日パターン: KIBOトグルで触った日も override 記録（次回展開で保護）。OFF時は no-op。
+      if (RECURRING_PATTERN_ENABLED) ns = markPatternOverrides(ns, mk, targets.filter(([sid])=>sid===s.id).map(([,d])=>Number(d)));
+      return ns;
     }));
     // staff_kibo テーブルへ write-through（mergeStaffKibo に revert されない＝③のデータ消失も解消）
     for (const [sid, info] of Object.entries(affected)) {
@@ -5491,7 +5508,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const synthNow = { [targetId]: { [day]: shiftKey }, [otherId]: { [day]: other } };
     shiftReqDeferSave.current = true;
     const markEdit = EDIT_MODE_ENABLED && editEra;
-    setStaffList(prev => prev.map(s => applyCellFix(s, targets, true, synthNow, year, month, markEdit)));
+    const _rpMk = monthKey(year, month);
+    setStaffList(prev => prev.map(s => {
+      let ns = applyCellFix(s, targets, true, synthNow, year, month, markEdit);
+      if (RECURRING_PATTERN_ENABLED) ns = markPatternOverrides(ns, _rpMk, targets.filter(([sid])=>sid===s.id).map(([,d])=>Number(d)));
+      return ns;
+    }));
   };
 
   const handleMenuSelect = (shiftKey) => {
@@ -5531,7 +5553,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     shiftReqDeferSave.current = true; // 右クリック希望勤務のstaffList変更は自動保存せず「保存」まで保留
     // EDIT_MODE: 生成後(editEra)の右クリックは「修正」としてマーカー記録。生成前は従来の「希望」。
     const markEdit = EDIT_MODE_ENABLED && editEra;
-    setStaffList(prev => prev.map(s => applyCellFix(s, targets, fix, synthNow, year, month, markEdit)));
+    const _rpMk = monthKey(year, month);
+    setStaffList(prev => prev.map(s => {
+      let ns = applyCellFix(s, targets, fix, synthNow, year, month, markEdit);
+      // 曜日パターン: 手動で触ったセルは override 記録（次回展開で保護＝個別が勝つ）。OFF時は no-op。
+      if (RECURRING_PATTERN_ENABLED) ns = markPatternOverrides(ns, _rpMk, targets.filter(([sid])=>sid===s.id).map(([,d])=>Number(d)));
+      return ns;
+    }));
     setCtxMenu(null);
   };
 

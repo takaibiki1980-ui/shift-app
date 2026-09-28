@@ -116,3 +116,31 @@ export function applyPatternsToStaff(staff, year, month) {
 
   return { ...staff, shiftRequestsByMonth: nextSrByMonth, patternAppliedByMonth: nextAppliedByMonth };
 }
+
+/**
+ * 手動で触った日を override として記録する純粋関数（非破壊）。
+ * 右クリック/KIBOトグル/入替などで個別にセルを変更したとき呼び、
+ *   - patternOverridesByMonth[mk][day] = true（以後パターンで上書き/復活させない）
+ *   - patternAppliedByMonth[mk][day] を削除（自作扱いを解除＝手動が真実）
+ * にする。これにより次回展開でその日は保護される。変化が無ければ同一参照を返す。
+ * @param {Object} staff
+ * @param {string} mk
+ * @param {Array<number>} days  手動で触った日番号
+ * @returns {Object} 更新後 staff
+ */
+export function markPatternOverrides(staff, mk, days) {
+  if (!staff || !days || days.length === 0) return staff;
+  const ov = { ...(staff.patternOverridesByMonth?.[mk] || {}) };
+  const ap = { ...(staff.patternAppliedByMonth?.[mk] || {}) };
+  let changed = false;
+  for (const d of days) {
+    const dk = String(d);
+    if (!ov[dk]) { ov[dk] = true; changed = true; }
+    if (ap[dk] != null) { delete ap[dk]; changed = true; }
+  }
+  if (!changed) return staff;
+  const nextOv = { ...(staff.patternOverridesByMonth || {}), [mk]: ov };
+  const nextAp = { ...(staff.patternAppliedByMonth || {}) };
+  if (Object.keys(ap).length) nextAp[mk] = ap; else delete nextAp[mk];
+  return { ...staff, patternOverridesByMonth: nextOv, patternAppliedByMonth: nextAp };
+}
