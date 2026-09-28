@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import {
-  patternDays, expandPatternsForMonth, applyPatternsToStaff, NON_WORK_SHIFTS,
+  patternDays, expandPatternsForMonth, applyPatternsToStaff, markPatternOverrides, NON_WORK_SHIFTS,
 } from '../lib/recurringPattern.js';
 
 // 2026年9月(month=8): 火(dow2)=1,8,15,22,29 / 日(dow0)=6,13,20,27
@@ -142,5 +142,44 @@ describe('applyPatternsToStaff（staffラッパ・非破壊）', () => {
 
   test('null staff 安全', () => {
     expect(applyPatternsToStaff(null, Y, M)).toBe(null);
+  });
+});
+
+describe('markPatternOverrides（手動override記録）と展開後の保護', () => {
+  test('override を記録し applied から外す', () => {
+    const s = { id:'a', dept:'k1',
+      patternAppliedByMonth: { [MK]: { 6:'休み', 13:'休み' } } };
+    const out = markPatternOverrides(s, MK, [13]);
+    expect(out.patternOverridesByMonth[MK]).toEqual({ 13:true });
+    expect(out.patternAppliedByMonth[MK]).toEqual({ 6:'休み' }); // 13は自作解除
+  });
+  test('変化が無ければ同一参照', () => {
+    const s = { id:'a', dept:'k1', patternOverridesByMonth:{ [MK]:{ 13:true } } };
+    expect(markPatternOverrides(s, MK, [13])).toBe(s);
+    expect(markPatternOverrides(s, MK, [])).toBe(s);
+    expect(markPatternOverrides(null, MK, [1])).toBe(null);
+  });
+  test('シナリオ: 展開→手動上書き→再展開でも手動が勝つ', () => {
+    // 1) 毎週日曜=休み を展開
+    let s = { id:'a', dept:'k1', recurringPatterns:[{ id:'p1', kind:'weekly', dow:0, shift:'休み' }] };
+    s = applyPatternsToStaff(s, Y, M);
+    expect(s.shiftRequestsByMonth[MK]).toEqual({ 6:'休み',13:'休み',20:'休み',27:'休み' });
+    // 2) 13日を右クリックで早番に（applyCellFix相当を模擬）＋override記録
+    s = { ...s, shiftRequestsByMonth:{ ...s.shiftRequestsByMonth, [MK]:{ ...s.shiftRequestsByMonth[MK], 13:'早番' } } };
+    s = markPatternOverrides(s, MK, [13]);
+    // 3) 再展開（月を開き直す等）
+    s = applyPatternsToStaff(s, Y, M);
+    expect(s.shiftRequestsByMonth[MK][13]).toBe('早番'); // 手動が勝つ
+    expect(s.shiftRequestsByMonth[MK][6]).toBe('休み');  // 他のパターン日は維持
+  });
+  test('シナリオ: 手動でパターン日を消す→再展開で復活しない', () => {
+    let s = { id:'a', dept:'k1', recurringPatterns:[{ id:'p1', kind:'weekly', dow:0, shift:'休み' }] };
+    s = applyPatternsToStaff(s, Y, M);
+    // 20日を手動クリア（srから削除）＋override
+    const sr = { ...s.shiftRequestsByMonth[MK] }; delete sr[20];
+    s = { ...s, shiftRequestsByMonth:{ ...s.shiftRequestsByMonth, [MK]:sr } };
+    s = markPatternOverrides(s, MK, [20]);
+    s = applyPatternsToStaff(s, Y, M);
+    expect(s.shiftRequestsByMonth[MK][20]).toBeUndefined(); // 復活しない
   });
 });
