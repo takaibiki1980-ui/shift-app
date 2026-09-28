@@ -60,7 +60,7 @@ const EARLY_LATE_SWAP_ENABLED = true;
 // ── 曜日パターン（繰り返しルール）。リーダーが「毎週○曜」「毎月第N○曜」に勤務種別を割り当て、
 //    生成前に当月へ希望勤務(青)として展開する（個別変更が優先）。表示・入力データのみ・core.jsに非関与。
 //    PR-B(このフラグ): StaffModal の設定UIのみ。展開・生成反映(PR-C)は別途。false で完全に従来動作。
-const RECURRING_PATTERN_ENABLED = false;
+const RECURRING_PATTERN_ENABLED = true;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
