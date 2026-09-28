@@ -15,6 +15,7 @@ import { effectiveCellShift } from './lib/exportCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
+import { NON_WORK_SHIFTS } from './lib/recurringPattern.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -56,6 +57,10 @@ const TOGGLE_YUKYU = '__TOGGLE_YUKYU__';
 //    ON時: 右クリックで早番/遅番を選ぶと、同日に既にその種別の人がいれば1対1で入れ替える（複数人は選択）。
 //    false で従来動作（選んだ人だけ変更）へ即復帰。
 const EARLY_LATE_SWAP_ENABLED = true;
+// ── 曜日パターン（繰り返しルール）。リーダーが「毎週○曜」「毎月第N○曜」に勤務種別を割り当て、
+//    生成前に当月へ希望勤務(青)として展開する（個別変更が優先）。表示・入力データのみ・core.jsに非関与。
+//    PR-B(このフラグ): StaffModal の設定UIのみ。展開・生成反映(PR-C)は別途。false で完全に従来動作。
+const RECURRING_PATTERN_ENABLED = false;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
@@ -874,9 +879,21 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
     if (!base.kiboByMonth) base.kiboByMonth = {};
     if (!base.shiftRequestsByMonth) base.shiftRequestsByMonth = {};
     if (!base.kyukoDaysByMonth) base.kyukoDaysByMonth = {};
+    if (RECURRING_PATTERN_ENABLED && !Array.isArray(base.recurringPatterns)) base.recurringPatterns = [];
     return base;
   });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
+  // 曜日パターン(繰り返しルール)の「追加」行の入力状態（v1=勤務種別のみ）
+  const DOW_LABELS = ['日','月','火','水','木','金','土'];
+  const rpShiftOptions = ['休み', ...((depts.find(d=>d.id===deptId)?.shiftTypes)||[]).filter(k=>k!=='明け'&&!NON_WORK_SHIFTS.has(k))];
+  const [rpDraft, setRpDraft] = useState({ kind:'weekly', nth:1, dow:0, shift: '休み' });
+  const rpAdd = () => {
+    const p = { id:`rp_${Date.now()}_${Math.random().toString(36).slice(2,7)}`, kind:rpDraft.kind, dow:+rpDraft.dow, shift:rpDraft.shift };
+    if (rpDraft.kind==='nth') p.nth = +rpDraft.nth;
+    setForm(f=>({ ...f, recurringPatterns:[...(f.recurringPatterns||[]), p] }));
+  };
+  const rpRemove = (id) => setForm(f=>({ ...f, recurringPatterns:(f.recurringPatterns||[]).filter(p=>p.id!==id) }));
+  const rpLabel = (p) => `${p.kind==='nth'?`毎月 第${p.nth}`:'毎週'} ${DOW_LABELS[p.dow]}曜 → ${p.shift}`;
   // 希望休/有給の編集(setKibo/setYukyu)・希望勤務(setShiftRequests)のカレンダー入力は廃止（③）。
   // 入力経路は 職員ポータル(①) と シフト表の右クリック(②) に一本化。
   const kyukoThisMonth = form.kyukoDaysByMonth?.[mk] ?? form.kyukoDays ?? 8;
@@ -950,6 +967,44 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
                   {label}
                 </label>
               ))}
+            </div>
+          </div>
+        )}
+        {RECURRING_PATTERN_ENABLED && (
+          <div style={{background:"#eef2ff",border:"1px solid #c7d2fe",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+            <div style={{fontSize:12,color:"#4338ca",fontWeight:800,marginBottom:2}}>繰り返しルール（曜日パターン）</div>
+            <div style={{fontSize:10,color:"#6366F1",marginBottom:8}}>毎週/毎月第◯の曜日に勤務種別を設定します。解除するまで有効（自動生成前に希望として反映予定）。個別の変更が優先されます。</div>
+            {/* 既存パターン一覧 */}
+            {(form.recurringPatterns||[]).length>0 ? (
+              <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+                {(form.recurringPatterns||[]).map(p=>(
+                  <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"#fff",border:"1px solid #e0e7ff",borderRadius:6,padding:"6px 10px"}}>
+                    <span style={{fontSize:12,color:"#3730a3",fontWeight:700}}>{rpLabel(p)}</span>
+                    <button onClick={()=>rpRemove(p.id)} style={{background:"#fff1f2",border:"1px solid #fecdd3",color:"#be123c",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>クリア</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{fontSize:11,color:"#9CA3AF",marginBottom:10}}>まだパターンはありません。</div>
+            )}
+            {/* 追加行 */}
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              <select value={rpDraft.kind} onChange={e=>setRpDraft(d=>({...d,kind:e.target.value}))} style={{...INPUT_STYLE,width:"auto",marginBottom:0,padding:"6px 8px",fontSize:12}}>
+                <option value="weekly">毎週</option>
+                <option value="nth">毎月 第◯</option>
+              </select>
+              {rpDraft.kind==='nth' && (
+                <select value={rpDraft.nth} onChange={e=>setRpDraft(d=>({...d,nth:+e.target.value}))} style={{...INPUT_STYLE,width:"auto",marginBottom:0,padding:"6px 8px",fontSize:12}}>
+                  {[1,2,3,4,5].map(n=><option key={n} value={n}>第{n}</option>)}
+                </select>
+              )}
+              <select value={rpDraft.dow} onChange={e=>setRpDraft(d=>({...d,dow:+e.target.value}))} style={{...INPUT_STYLE,width:"auto",marginBottom:0,padding:"6px 8px",fontSize:12}}>
+                {DOW_LABELS.map((w,i)=><option key={w} value={i}>{w}曜</option>)}
+              </select>
+              <select value={rpDraft.shift} onChange={e=>setRpDraft(d=>({...d,shift:e.target.value}))} style={{...INPUT_STYLE,width:"auto",marginBottom:0,padding:"6px 8px",fontSize:12}}>
+                {rpShiftOptions.map(k=><option key={k} value={k}>{k}</option>)}
+              </select>
+              <button onClick={rpAdd} style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:800}}>追加</button>
             </div>
           </div>
         )}
