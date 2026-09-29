@@ -65,7 +65,7 @@ const RECURRING_PATTERN_ENABLED = true;
 // ── 変更履歴のピン留め（永続保存）。15件回転枠と別に、重要な履歴を無制限・名前付きで残す。
 //    独立テーブル shift_data_pins を使用（案B）。既存の履歴/トリガー/生成には非関与。
 //    false で完全に従来動作（UI 非表示・DB 参照もしない）。要: shift_data_pins マイグレーション適用。
-const PIN_HISTORY_ENABLED = false;
+const PIN_HISTORY_ENABLED = true;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
