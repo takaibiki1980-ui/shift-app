@@ -17,6 +17,7 @@ import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
 import { NON_WORK_SHIFTS, applyPatternsToStaff, markPatternOverrides } from './lib/recurringPattern.js';
 import { buildPinInsert, sanitizePinName, sortPinsByNewest } from './lib/historyPins.js';
+import { moveByIdDir } from './lib/reorder.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -3975,7 +3976,8 @@ function SharedShiftView({ token }) {
     <>
     <div style={{position:'fixed',inset:0,background:'#f0fbfa',zIndex:-1}} />
     <div style={{fontFamily:"'Noto Sans JP',sans-serif",margin:0,padding:'12px 8px',color:'#111',position:'relative',zIndex:0}}>
-      {dept_ids.map(deptId => {
+      {/* 表示順は depts 配列順（dept_data）に統一。dept_data が無い旧データは dept_ids にフォールバック。 */}
+      {((dept_data && dept_data.length) ? dept_data.map(d => d.id) : dept_ids).map(deptId => {
         const dept = (dept_data || []).find(d => d.id === deptId) || { id: deptId, label: deptId };
         const deptStaff = (staff_data || []).filter(s => s.dept === deptId);
         const deptShifts = (shift_data || {})[deptId] || {};
@@ -5742,6 +5744,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const nextMonth = ()=>{ if(month===11){setYear(y=>y+1);setMonth(0);}else setMonth(m=>m+1); };
 
   const handleSaveDept = (deptData) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} const isNew=!depts.find(d=>d.id===deptData.id); if(isNew && depts.length>=planLimit.depts){alert(`${planLabelJa}プランでは部署は${planLimit.depts}個までです。`);return;} setDepts(prev=>{const idx=prev.findIndex(d=>d.id===deptData.id);if(idx>=0)return prev.map((d,i)=>i===idx?deptData:d);return[...prev,deptData];}); if(isNew)setActiveDeptId(deptData.id); setDeptSettingModal(null); };
+  // 部署の並び替え（▲上/▼下）。depts 配列の順序を入れ替えて保存 → タブ・印刷・LINE共有が自動連動。
+  //   データは全て deptId 基準なので、順序変更は生成・学習・確定・履歴・ピンに影響しない。
+  const reorderDept = (deptId, direction) => {
+    if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
+    setDepts(prev => moveByIdDir(prev, deptId, direction)); // 変化なしなら同一参照 → 保存エフェクトも走らない
+  };
   const handleDeleteDept = (deptId) => { if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;} if(depts.length<=1){alert("部署は最低1つ必要です。");return;} if(activeDeptId===deptId){const next=depts.find(d=>d.id!==deptId);if(next)setActiveDeptId(next.id);} setDepts(prev=>prev.filter(d=>d.id!==deptId)); setStaffList(prev=>prev.filter(s=>s.dept!==deptId)); setAllShifts(prev=>{const n={...prev};delete n[deptId];return n;}); setDeptSettingModal(null); };
 
   if (dbLoading) return (
@@ -5827,7 +5835,11 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* DEPT TABS */}
       <div style={{background:"#F8FAFC",borderBottom:"1px solid #E5E7EB",display:"flex",overflowX:"auto",padding:"0 16px",alignItems:"center"}}>
-        {depts.map(d=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:act?"2px solid #2563EB":"2px solid transparent",color:act?"#111827":"#6B7280",borderRadius:0,cursor:"pointer",fontSize:12,fontWeight:act?600:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"0 1px"}}><span>{d.label}</span><span style={{background:act?"#EFF6FF":"#F1F5F9",color:act?"#2563EB":"#9CA3AF",borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&!isLocked&&<button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",padding:"3px 6px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={13} strokeWidth={2}/></button>}</div>);})}
+        {depts.map((d,di)=>{const cnt=staffList.filter(s=>s.dept===d.id).length,act=d.id===activeDeptId;return(<div key={d.id} style={{display:"flex",alignItems:"center",position:"relative"}}><button onClick={()=>setActiveDeptId(d.id)} style={{padding:"10px 14px",background:"transparent",border:"none",borderBottom:act?"2px solid #2563EB":"2px solid transparent",color:act?"#111827":"#6B7280",borderRadius:0,cursor:"pointer",fontSize:12,fontWeight:act?600:400,whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:5,margin:"0 1px"}}><span>{d.label}</span><span style={{background:act?"#EFF6FF":"#F1F5F9",color:act?"#2563EB":"#9CA3AF",borderRadius:4,padding:"1px 5px",fontSize:10,fontWeight:600}}>{cnt}</span></button>{act&&!isLocked&&<>
+          <button onClick={()=>reorderDept(d.id,'up')} disabled={di===0} title="前へ（左/上に移動）" style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:di===0?"#D1D5DB":"#9CA3AF",cursor:di===0?"default":"pointer",padding:"3px 5px",marginLeft:2,display:"flex",alignItems:"center",fontSize:11,lineHeight:1,fontWeight:800}}>▲</button>
+          <button onClick={()=>reorderDept(d.id,'down')} disabled={di===depts.length-1} title="後ろへ（右/下に移動）" style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:di===depts.length-1?"#D1D5DB":"#9CA3AF",cursor:di===depts.length-1?"default":"pointer",padding:"3px 5px",marginLeft:1,display:"flex",alignItems:"center",fontSize:11,lineHeight:1,fontWeight:800}}>▼</button>
+          <button onClick={()=>setDeptSettingModal({dept:d,isNew:false})} style={{background:"transparent",border:"1px solid #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",padding:"3px 6px",marginLeft:2,display:"flex",alignItems:"center"}}><Settings size={13} strokeWidth={2}/></button>
+        </>}</div>);})}
         {!isLocked && <button onClick={()=>{ if(depts.length>=planLimit.depts){alert(`${planLabelJa}プランでは部署は${planLimit.depts}個までです。`);return;} setDeptSettingModal({dept:null,isNew:true}); }} style={{background:"none",border:"1px dashed #E5E7EB",borderRadius:6,color:"#9CA3AF",cursor:"pointer",fontSize:11,padding:"5px 11px",marginLeft:8,whiteSpace:"nowrap",flexShrink:0}}>＋ 追加</button>}
         {!isLocked && <span style={{fontSize:10,color:"#9CA3AF",marginLeft:6,whiteSpace:"nowrap",flexShrink:0}}>部署 {depts.length}/{limitDisp(planLimit.depts)}</span>}
       </div>
