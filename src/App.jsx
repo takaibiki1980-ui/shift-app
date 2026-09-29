@@ -16,6 +16,7 @@ import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
 import { NON_WORK_SHIFTS, applyPatternsToStaff, markPatternOverrides } from './lib/recurringPattern.js';
+import { buildPinInsert, sanitizePinName, sortPinsByNewest } from './lib/historyPins.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -61,6 +62,10 @@ const EARLY_LATE_SWAP_ENABLED = true;
 //    生成前に当月へ希望勤務(青)として展開する（個別変更が優先）。表示・入力データのみ・core.jsに非関与。
 //    PR-B(このフラグ): StaffModal の設定UIのみ。展開・生成反映(PR-C)は別途。false で完全に従来動作。
 const RECURRING_PATTERN_ENABLED = true;
+// ── 変更履歴のピン留め（永続保存）。15件回転枠と別に、重要な履歴を無制限・名前付きで残す。
+//    独立テーブル shift_data_pins を使用（案B）。既存の履歴/トリガー/生成には非関与。
+//    false で完全に従来動作（UI 非表示・DB 参照もしない）。要: shift_data_pins マイグレーション適用。
+const PIN_HISTORY_ENABLED = false;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
@@ -2479,6 +2484,8 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
   const [histories, setHistories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [restoring, setRestoring] = useState(null);
+  const [pins, setPins] = useState([]);        // ピン留め済み一覧（PIN_HISTORY_ENABLED時のみ）
+  const [pinBusy, setPinBusy] = useState(false);
   const shiftKey = `shifts_${year}_${month+1}_${deptId}`;
 
   useEffect(() => {
@@ -2493,6 +2500,13 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
         if (!error && data) setHistories(data);
         else if (error) console.error('[history]', error);
       });
+    // ピン一覧の取得（フラグOFF時は何もしない・テーブル未作成時もエラーを握り潰し安全にフォールバック）
+    if (PIN_HISTORY_ENABLED) {
+      supabase.from('shift_data_pins').select('*')
+        .eq('user_id', session.user.id).eq('data_key', shiftKey)
+        .order('created_at', { ascending: false })
+        .then(({ data, error }) => { if (!error && data) setPins(sortPinsByNewest(data)); });
+    }
   }, [shiftKey, session.user.id]);
 
   const fmt = (iso) => {
@@ -2500,29 +2514,25 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
     return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
   };
 
-  const handleRestore = async (histId, archivedAt, originalUpdatedAt) => {
-    if (!window.confirm(`${fmt(archivedAt)} 時点の状態に復元しますか？\n現在のシフトは上書きされます（現在の状態も履歴に残ります）。`)) return;
-    setRestoring(histId);
-    const { data: hd, error: he } = await supabase.from('shift_data_history').select('data_value').eq('id', histId).single();
-    if (he || !hd) { alert('取得失敗: ' + (he?.message || '不明')); setRestoring(null); return; }
-    // ★色情報の復元: 同じ保存(=同一 original_updated_at)でペア保存された editmarks 履歴を取得。
-    //   無い場合(この修正より前の古い履歴)は null → 中身のみ復元(従来動作)。
-    let marksVal = null;
-    if (originalUpdatedAt) {
-      const marksKey = `editmarks_${year}_${month+1}_${deptId}`;
-      const { data: md } = await supabase.from('shift_data_history')
-        .select('data_value').eq('user_id', session.user.id).eq('data_key', marksKey)
-        .eq('original_updated_at', originalUpdatedAt).order('archived_at',{ascending:false}).limit(1);
-      if (md && md[0]?.data_value) marksVal = md[0].data_value;
-    }
+  // 対の色情報(editmarks)を original_updated_at で照合して取得（無ければ null）。
+  const fetchMarksVal = async (originalUpdatedAt) => {
+    if (!originalUpdatedAt) return null;
+    const marksKey = `editmarks_${year}_${month+1}_${deptId}`;
+    const { data: md } = await supabase.from('shift_data_history')
+      .select('data_value').eq('user_id', session.user.id).eq('data_key', marksKey)
+      .eq('original_updated_at', originalUpdatedAt).order('archived_at',{ascending:false}).limit(1);
+    return (md && md[0]?.data_value) ? md[0].data_value : null;
+  };
+
+  // 復元の共通処理: shifts を upsert（＋対の色情報を同一 updated_at でペア書き）→ 反映して閉じる。
+  const doRestore = async (dataValue, marksVal) => {
     const restoreTs = new Date().toISOString(); // shifts と色情報(editmarks)をペアにする共通タイムスタンプ
     const { error: ue } = await supabase.from('shift_data').upsert(
-      { user_id:session.user.id, data_key:shiftKey, data_value:hd.data_value, updated_at:restoreTs },
+      { user_id:session.user.id, data_key:shiftKey, data_value:dataValue, updated_at:restoreTs },
       { onConflict:'user_id,data_key' }
     );
-    if (ue) { alert('復元失敗: ' + ue.message); setRestoring(null); return; }
-    // ★色情報のペア書き: 復元した shifts_ と同一 updated_at で editmarks_ も書き、ペアを揃える。
-    //   対の色情報が見つかった時のみ復元値で上書き(見つからない古い履歴では既存の色を保持＝破壊しない)。
+    if (ue) { alert('復元失敗: ' + ue.message); setRestoring(null); return false; }
+    // 対の色情報が見つかった時のみ復元値で上書き(見つからない場合は既存の色を保持＝破壊しない)。
     if (marksVal) {
       const marksKey = `editmarks_${year}_${month+1}_${deptId}`;
       await supabase.from('shift_data').upsert(
@@ -2530,8 +2540,56 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
         { onConflict:'user_id,data_key' }
       );
     }
-    onRestore(hd.data_value, marksVal);
+    onRestore(dataValue, marksVal);
     onClose();
+    return true;
+  };
+
+  const handleRestore = async (histId, archivedAt, originalUpdatedAt) => {
+    if (!window.confirm(`${fmt(archivedAt)} 時点の状態に復元しますか？\n現在のシフトは上書きされます（現在の状態も履歴に残ります）。`)) return;
+    setRestoring(histId);
+    const { data: hd, error: he } = await supabase.from('shift_data_history').select('data_value').eq('id', histId).single();
+    if (he || !hd) { alert('取得失敗: ' + (he?.message || '不明')); setRestoring(null); return; }
+    const marksVal = await fetchMarksVal(originalUpdatedAt); // 対の色情報（無ければ null＝従来動作）
+    await doRestore(hd.data_value, marksVal);
+  };
+
+  // ── ピン留め（永続保存）操作。PIN_HISTORY_ENABLED OFF 時は UI 非表示・DB 参照もしない。──
+  const handlePin = async (h) => {
+    if (!PIN_HISTORY_ENABLED || pinBusy) return;
+    const name = window.prompt('このピンの名前を入力してください（大事な状態として残ります）', `${fmt(h.archived_at)} の状態`);
+    if (name === null) return; // キャンセル
+    setPinBusy(true);
+    const { data: hd } = await supabase.from('shift_data_history').select('data_value').eq('id', h.id).single();
+    const marksVal = await fetchMarksVal(h.original_updated_at);
+    const row = buildPinInsert({ userId: session.user.id, dataKey: shiftKey, name, dataValue: hd?.data_value, marksValue: marksVal, sourceArchivedAt: h.archived_at, originalUpdatedAt: h.original_updated_at });
+    if (!row) { setPinBusy(false); alert('ピン留めに失敗しました（データ取得に失敗）'); return; }
+    const { data: ins, error } = await supabase.from('shift_data_pins').insert(row).select().single();
+    setPinBusy(false);
+    if (error) { alert('ピン留め失敗: ' + error.message); return; }
+    setPins(prev => sortPinsByNewest([ins, ...prev]));
+  };
+
+  const handleRenamePin = async (pin) => {
+    const name = window.prompt('新しい名前を入力してください', pin.name);
+    if (name === null) return;
+    const clean = sanitizePinName(name);
+    const { error } = await supabase.from('shift_data_pins').update({ name: clean }).eq('id', pin.id);
+    if (error) { alert('改名失敗: ' + error.message); return; }
+    setPins(prev => prev.map(p => p.id === pin.id ? { ...p, name: clean } : p));
+  };
+
+  const handleUnpin = async (pin) => {
+    if (!window.confirm(`ピン「${pin.name}」を解除（削除）しますか？\n（シフト本体は変わりません）`)) return;
+    const { error } = await supabase.from('shift_data_pins').delete().eq('id', pin.id);
+    if (error) { alert('解除失敗: ' + error.message); return; }
+    setPins(prev => prev.filter(p => p.id !== pin.id));
+  };
+
+  const handleRestorePin = async (pin) => {
+    if (!window.confirm(`ピン「${pin.name}」の状態に復元しますか？\n現在のシフトは上書きされます（現在の状態も履歴に残ります）。`)) return;
+    setRestoring('pin_' + pin.id);
+    await doRestore(pin.data_value, pin.marks_value || null);
   };
 
   return (
@@ -2542,6 +2600,33 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
           <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#888",lineHeight:1}}><X size={18} strokeWidth={2}/></button>
         </div>
         <div style={{fontSize:12,color:"#71717A",marginBottom:16,fontWeight:600}}>{deptLabel} — {year}年{month+1}月シフト</div>
+        {/* ── ピン留め（永続保存）セクション: 15件回転枠と別に、名前付きで残した状態 ── */}
+        {PIN_HISTORY_ENABLED && pins.length > 0 && (
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:800,color:"#b45309",marginBottom:6,display:"flex",alignItems:"center",gap:4}}>📌 ピン留め（永続・自動削除されません）</div>
+            {pins.map((pin) => (
+              <div key={`pin_${pin.id}`} style={{border:"1px solid #fde68a",borderRadius:10,padding:"10px 12px",marginBottom:8,background:"#fffbeb"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontWeight:800,fontSize:13,color:"#92400e",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pin.name}</div>
+                    <div style={{fontSize:10,color:"#b45309",marginTop:2}}>{pin.source_archived_at?`元: ${fmt(pin.source_archived_at)}`:""}</div>
+                  </div>
+                  <button
+                    disabled={!!restoring}
+                    onClick={() => handleRestorePin(pin)}
+                    style={{background:restoring===('pin_'+pin.id)?"#fde68a":"#d97706",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:restoring?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap",minWidth:80}}
+                  >{restoring===('pin_'+pin.id)?"復元中…":"この状態\nに戻す"}</button>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <button onClick={() => handleRenamePin(pin)} style={{background:"#fff",border:"1px solid #fcd34d",color:"#92400e",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>改名</button>
+                  <button onClick={() => handleUnpin(pin)} style={{background:"#fff1f2",border:"1px solid #fecdd3",color:"#be123c",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>解除</button>
+                </div>
+              </div>
+            ))}
+            <div style={{borderBottom:"1px solid #f1f5f9",margin:"12px 0 4px"}}/>
+            <div style={{fontSize:12,fontWeight:800,color:"#52525B",marginBottom:2}}>最近の変更（最大15件）</div>
+          </div>
+        )}
         {loading && <div style={{textAlign:"center",color:"#aaa",padding:32}}>読み込み中…</div>}
         {!loading && histories.length === 0 && (
           <div style={{textAlign:"center",padding:32}}>
@@ -2556,11 +2641,21 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
               <div style={{fontWeight:700,fontSize:13,color:"#18181B"}}>{fmt(h.archived_at)} に上書き保存</div>
               <div style={{fontSize:11,color:"#9ca3af",marginTop:2}}>この時点の直前の状態に戻せます</div>
             </div>
-            <button
-              disabled={!!restoring}
-              onClick={() => handleRestore(h.id, h.archived_at, h.original_updated_at)}
-              style={{background:restoring===h.id?"#d1fae5":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:restoring?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap",minWidth:80}}
-            >{restoring===h.id?"復元中…":"この状態\nに戻す"}</button>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              {PIN_HISTORY_ENABLED && (
+                <button
+                  disabled={pinBusy}
+                  onClick={() => handlePin(h)}
+                  title="この状態を永続保存（ピン留め）"
+                  style={{background:"#fff",border:"1px solid #fcd34d",color:"#b45309",borderRadius:8,padding:"7px 10px",cursor:pinBusy?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}
+                >📌</button>
+              )}
+              <button
+                disabled={!!restoring}
+                onClick={() => handleRestore(h.id, h.archived_at, h.original_updated_at)}
+                style={{background:restoring===h.id?"#d1fae5":"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"7px 12px",cursor:restoring?"wait":"pointer",fontSize:12,fontWeight:700,whiteSpace:"nowrap",minWidth:80}}
+              >{restoring===h.id?"復元中…":"この状態\nに戻す"}</button>
+            </div>
           </div>
         ))}
         <div style={{fontSize:10,color:"#d1d5db",textAlign:"center",marginTop:12}}>最大15世代まで遡れます</div>
