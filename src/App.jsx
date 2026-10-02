@@ -76,7 +76,7 @@ const TRANSITION_FORCE_ENABLED = true;
 //    カバレッジ/連勤/公休は不変、公平性は許容幅内、遷移禁止/強制・個別ロックを尊重する後処理。
 //    PR-2(このフラグ): 部署設定のチェックボックスのみ・保存のみ。生成反映(core.js後処理)は PR-3。
 //    false で完全に従来動作（UI 非表示・dept の形も不変）。
-const TARGET_SWAP_ENABLED = false;
+const TARGET_SWAP_ENABLED = true;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
