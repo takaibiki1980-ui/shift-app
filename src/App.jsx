@@ -71,7 +71,7 @@ const PIN_HISTORY_ENABLED = true;
 // ── 部署独自の「前日の勤務→翌日の勤務」強制ルール（dept.transitionForces）。
 //    既存の夜勤→明け→休みセット/allowLateToEarly とは独立。PR-2(このフラグ): 設定UIのみ・保存のみ。
 //    生成反映(core.js 後処理)は PR-3。false で完全に従来動作（UI 非表示・dept の形も不変）。
-const TRANSITION_FORCE_ENABLED = false;
+const TRANSITION_FORCE_ENABLED = true;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
