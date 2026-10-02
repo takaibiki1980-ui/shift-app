@@ -72,6 +72,11 @@ const PIN_HISTORY_ENABLED = true;
 //    既存の夜勤→明け→休みセット/allowLateToEarly とは独立。PR-2(このフラグ): 設定UIのみ・保存のみ。
 //    生成反映(core.js 後処理)は PR-3。false で完全に従来動作（UI 非表示・dept の形も不変）。
 const TRANSITION_FORCE_ENABLED = true;
+// ── 生成後「ペア交換」（同日の早番の人↔遅番の人を学習傾向に合わせ交換）。dept.targetSwapEnabled で部署別ON。
+//    カバレッジ/連勤/公休は不変、公平性は許容幅内、遷移禁止/強制・個別ロックを尊重する後処理。
+//    PR-2(このフラグ): 部署設定のチェックボックスのみ・保存のみ。生成反映(core.js後処理)は PR-3。
+//    false で完全に従来動作（UI 非表示・dept の形も不変）。
+const TARGET_SWAP_ENABLED = false;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
@@ -1051,6 +1056,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm, y
   const [requiredEnd, setRequiredEnd] = useState(dept?.requiredEnd || "");
   const [maxStaffRelaxable, setMaxStaffRelaxable] = useState(dept?.maxStaffRelaxable !== false);
   const [engineType, setEngineType] = useState(dept?.engineType || 'kaigo');
+  const [targetSwapEnabled, setTargetSwapEnabled] = useState(!!dept?.targetSwapEnabled); // ペア交換(生成後処理)の部署別ON/OFF
   // 遷移強制ルール（前日→翌日を必ず）。夜勤/明けは夜勤連鎖と混同しないよう選択肢から除外。
   const [transitionForces, setTransitionForces] = useState(Array.isArray(dept?.transitionForces) ? dept.transitionForces : []);
   const tfOptions = ['休み', ...shiftTypes.filter(k => k !== '夜勤' && k !== '明け')];
@@ -1058,7 +1064,7 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm, y
   const tfAdd = () => { if (tfDraft.from === tfDraft.to) { alert('前日と翌日に同じ勤務は指定できません'); return; } setTransitionForces(prev => sanitizeForces([...prev, { from: tfDraft.from, to: tfDraft.to }])); };
   const tfRemove = (idx) => setTransitionForces(prev => prev.filter((_, i) => i !== idx));
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kyukoDaysByMonth:(monthlyKyukoMap&&Object.keys(monthlyKyukoMap).length)?monthlyKyukoMap:undefined,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,allowLateToEarly:allowLateToEarly||undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType,transitionForces:(TRANSITION_FORCE_ENABLED?(sanitizeForces(transitionForces).length?sanitizeForces(transitionForces):undefined):(dept?.transitionForces||undefined))}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kyukoDaysByMonth:(monthlyKyukoMap&&Object.keys(monthlyKyukoMap).length)?monthlyKyukoMap:undefined,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,allowLateToEarly:allowLateToEarly||undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType,transitionForces:(TRANSITION_FORCE_ENABLED?(sanitizeForces(transitionForces).length?sanitizeForces(transitionForces):undefined):(dept?.transitionForces||undefined)),targetSwapEnabled:(TARGET_SWAP_ENABLED?(targetSwapEnabled||undefined):(dept?.targetSwapEnabled||undefined))}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -1082,6 +1088,17 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm, y
             </span>
           </label>
         </div>
+        {TARGET_SWAP_ENABLED && (
+          <div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+            <label style={{display:"flex",alignItems:"flex-start",gap:8,cursor:"pointer"}}>
+              <input type="checkbox" checked={targetSwapEnabled} onChange={e=>setTargetSwapEnabled(e.target.checked)} style={{width:14,height:14,accentColor:"#16a34a",marginTop:2}}/>
+              <span>
+                <span style={{fontSize:12,fontWeight:700,color:"#166534"}}>ペア交換（学習に合わせて早番/遅番を入れ替える）</span>
+                <span style={{display:"block",fontSize:10,color:"#52525B",marginTop:2}}>自動生成の後に、同じ日の早番の人と遅番の人を、学習した曜日の傾向に合うよう入れ替えます。必要人数・連勤・公休・個別希望は崩さず、公平性が大きく偏らない範囲でのみ交換します。</span>
+              </span>
+            </label>
+          </div>
+        )}
         {TRANSITION_FORCE_ENABLED && (
           <div style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
             <div style={{fontSize:12,fontWeight:800,color:"#4338ca",marginBottom:2}}>遷移強制ルール（前日→翌日を必ず）</div>
