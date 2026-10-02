@@ -456,6 +456,54 @@ function NSO_canSwap(s1, s2, d1, d2, assignment, lockedDays, res, deptWork, days
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 遷移強制ルール（dept.transitionForces = [{from,to}]）の生成後処理パス（純粋・res を直接更新）。
+// 「前日が from なら翌日を to にする」を、以下を"全て満たす時だけ"適用する（1つでもダメなら諦める）:
+//   - 個別の希望（lockedDays に d+1 が含まれる）→ 適用しない（個別優先）
+//   - 夜勤/明けが絡む（prev/curr/to のいずれか、または d+2 が明け）→ 触れない（夜勤連鎖保護）
+//   - 公休/連勤を崩さない: curr と to が同カテゴリ（勤務↔勤務 または 休み↔休み）でないと適用しない
+//   - 役職: to が勤務なら roleShiftTypes[role] が to を許可
+//   - minStaff: curr（勤務）を1減らしても最低人数を割らない
+//   - maxStaff: to（勤務）を1増やしても最大人数を超えない
+//   - 既存の遷移ルール: prev→to・to→翌日 が isBadTransition に触れない（遅番→早番等を作らない）
+// ※ 同カテゴリ限定のため、公休数・連勤は変化しない（勤務種別の置換のみ）。
+function applyTransitionForces(res, ds, dept, days, lockedDays = {}) {
+  const forces = (dept.transitionForces || []).filter(f => f && f.from && f.to && f.from !== f.to);
+  if (forces.length === 0) return res;
+  const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
+  const nightSet = buildNightSet(dept);
+  const NIGHT = new Set(['夜勤', '明け']);
+  const isWork = (v) => deptWork.has(v);
+  const dayCount = (d, shift) => ds.reduce((a, s) => a + (res[s.id]?.[d] === shift ? 1 : 0), 0);
+  const maxFor = (k) => (dept.maxStaff?.[k] != null ? dept.maxStaff[k] : (k === '日勤' ? 99 : 1));
+  const minFor = (k) => (dept.minStaff?.[k] != null ? dept.minStaff[k] : 0);
+  for (const s of ds) {
+    const ra = dept.roleShiftTypes?.[s.role];
+    const locked = lockedDays[s.id];
+    for (let d = 1; d < days; d++) {
+      const prev = res[s.id]?.[d];
+      const curr = res[s.id]?.[d + 1];
+      const f = forces.find(x => x.from === prev);
+      if (!f) continue;
+      const to = f.to;
+      if (!to || to === curr) continue;
+      if (locked && locked.has(d + 1)) continue;                       // 個別優先
+      if (NIGHT.has(prev) || NIGHT.has(curr) || NIGHT.has(to)) continue; // 夜勤セット非干渉
+      if (res[s.id]?.[d + 2] === '明け') continue;                      // 明け連鎖保護
+      if (isWork(curr) !== isWork(to)) continue;                        // 公休/連勤を崩さない（同カテゴリのみ）
+      if (isWork(to) && ra && !ra.includes(to)) continue;              // 役職で to 不可
+      if (isWork(curr) && (dayCount(d + 1, curr) - 1) < minFor(curr)) continue; // minStaff 割れ
+      if (isWork(to) && (dayCount(d + 1, to) + 1) > maxFor(to)) continue;        // maxStaff 超過
+      if (isBadTransition(prev, to, dept, nightSet)) continue;         // prev→to が既存ルール違反
+      const next = res[s.id]?.[d + 2];
+      if (next && isBadTransition(to, next, dept, nightSet)) continue; // to→翌日 が既存ルール違反
+      res[s.id][d + 1] = to;                                           // 全条件クリア → 適用
+    }
+  }
+  return res;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 
 function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {}, prevTail = {}) {
   const days = getDays(year, month);
@@ -2145,6 +2193,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
       };
     })(),
   };
+  // ★遷移強制ルール（dept.transitionForces）の生成後処理。条件を全て満たす箇所のみ適用（ダメなら諦める）。
+  applyTransitionForces(res, ds, dept, days, lockedDays);
   return { shifts: res, warnings, timelineWarnings, diagnosticReport };
 }
 
@@ -2758,6 +2808,7 @@ export {
   normName,
   nameMatch,
   buildNightSet,
+  applyTransitionForces,
   buildSlotManagedTypes,
   isNikkinBase,
   isBadTransition,
