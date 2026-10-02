@@ -1,3 +1,5 @@
+import { swapLearningGain, fairnessOkAfterSwap, shouldSwapPair, DEFAULT_FAIRNESS_TOL } from '../lib/targetSwap.js';
+
 const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 
 const WORK_TYPES  = new Set(["早番","日勤","研修","遅番","夜勤"]);
@@ -497,6 +499,70 @@ function applyTransitionForces(res, ds, dept, days, lockedDays = {}) {
       const next = res[s.id]?.[d + 2];
       if (next && isBadTransition(to, next, dept, nightSet)) continue; // to→翌日 が既存ルール違反
       res[s.id][d + 1] = to;                                           // 全条件クリア → 適用
+    }
+  }
+  return res;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 生成後「ペア交換」パス（純粋・res を直接更新）。dept.targetSwapEnabled の部署でのみ動作。
+// 同じ日の「早番の人」と「遅番の人」を、学習(dowShiftRate)に合うよう入れ替える。
+// 判定は lib/targetSwap.js（swapLearningGain / fairnessOkAfterSwap / shouldSwapPair）を使用し、
+// 以下を"全て満たす時だけ"交換（1つでもNGなら交換しない）:
+//   - 学習ゲイン > 0（交換で一致が上がる）
+//   - 個別ロック（希望）でない
+//   - カバレッジ: 同日の早1遅1を入れ替えるだけ＝min/maxStaff不変（coverageOk=true）
+//   - 遷移: 交換後の両セルで isBadTransition に触れない＋ dept.transitionForces を破らない
+//   - 公平性: 早番総数の個人間 (最大-最小) が許容幅 tol(既定3) 以内
+// 連勤・公休は勤務↔勤務のラベル入替のため不変。
+function applyTargetSwap(res, ds, dept, days, lockedDays = {}, year, month, shiftTrend = {}) {
+  if (!dept.targetSwapEnabled) return res;
+  if (!(dept.shiftTypes || []).includes('早番') || !(dept.shiftTypes || []).includes('遅番')) return res;
+  const nightSet = buildNightSet(dept);
+  const forces = (dept.transitionForces || []).filter(f => f && f.from && f.to && f.from !== f.to);
+  const trendOf = (s) => {
+    if (!shiftTrend || Object.keys(shiftTrend).length === 0) return null;
+    const key = Object.keys(shiftTrend).filter(k => k !== '_months' && k !== '_monthCounts').find(k => nameMatch(k, s.name));
+    return key ? shiftTrend[key] : null;
+  };
+  const rate = (t, w, sh) => t?.dowShiftRate?.[w]?.[sh] ?? 0;
+  // 早番総数(個人別)の配列(ds と同順)
+  const earlyCounts = ds.map(s => { let c = 0; for (let d = 1; d <= days; d++) if (res[s.id]?.[d] === '早番') c++; return c; });
+  const idxOf = new Map(ds.map((s, i) => [s.id, i]));
+  // force 違反チェック: staff の day に newShift を置いたとき、前日→当日・当日→翌日 の強制を破らないか
+  const forceViolated = (sid, d, newShift) => {
+    if (forces.length === 0) return false;
+    const prev = d > 1 ? res[sid]?.[d - 1] : null;
+    const next = res[sid]?.[d + 1];
+    if (prev) { const f = forces.find(x => x.from === prev); if (f && f.to !== newShift) return true; }
+    if (next) { const f = forces.find(x => x.from === newShift); if (f && f.to !== next) return true; }
+    return false;
+  };
+  const transOk = (sid, d, newShift) => {
+    const prev = d > 1 ? res[sid]?.[d - 1] : null;
+    const next = res[sid]?.[d + 1];
+    if (prev && isBadTransition(prev, newShift, dept, nightSet)) return false;
+    if (next && isBadTransition(newShift, next, dept, nightSet)) return false;
+    if (forceViolated(sid, d, newShift)) return false;
+    return true;
+  };
+  for (let d = 1; d <= days; d++) {
+    const early = ds.find(s => res[s.id]?.[d] === '早番');
+    const late = ds.find(s => res[s.id]?.[d] === '遅番');
+    if (!early || !late) continue;
+    const w = new Date(year, month, d).getDay();
+    const tE = trendOf(early), tL = trendOf(late);
+    const gain = swapLearningGain(rate(tE, w, '早番'), rate(tL, w, '遅番'), rate(tE, w, '遅番'), rate(tL, w, '早番'));
+    const locked = !!(lockedDays[early.id]?.has(d) || lockedDays[late.id]?.has(d));
+    // 交換後: early→遅番, late→早番 の両セルで遷移・強制を再チェック
+    const transitionOk = transOk(early.id, d, '遅番') && transOk(late.id, d, '早番');
+    const eIdx = idxOf.get(early.id), lIdx = idxOf.get(late.id);
+    const fairnessOk = fairnessOkAfterSwap(earlyCounts, eIdx, lIdx, DEFAULT_FAIRNESS_TOL);
+    if (shouldSwapPair({ gain, locked, coverageOk: true, transitionOk, fairnessOk })) {
+      res[early.id][d] = '遅番';
+      res[late.id][d] = '早番';
+      earlyCounts[eIdx] -= 1; earlyCounts[lIdx] += 1; // 以降の日の公平性判定へ反映
     }
   }
   return res;
@@ -2195,6 +2261,8 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   };
   // ★遷移強制ルール（dept.transitionForces）の生成後処理。条件を全て満たす箇所のみ適用（ダメなら諦める）。
   applyTransitionForces(res, ds, dept, days, lockedDays);
+  // ★ペア交換（dept.targetSwapEnabled の部署のみ）。学習に合わせて同日の早番/遅番を入替（全ガード充足時のみ）。
+  applyTargetSwap(res, ds, dept, days, lockedDays, year, month, shiftTrend);
   return { shifts: res, warnings, timelineWarnings, diagnosticReport };
 }
 
@@ -2809,6 +2877,7 @@ export {
   nameMatch,
   buildNightSet,
   applyTransitionForces,
+  applyTargetSwap,
   buildSlotManagedTypes,
   isNikkinBase,
   isBadTransition,
