@@ -18,6 +18,7 @@ import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListS
 import { NON_WORK_SHIFTS, applyPatternsToStaff, markPatternOverrides } from './lib/recurringPattern.js';
 import { buildPinInsert, sanitizePinName, sortPinsByNewest } from './lib/historyPins.js';
 import { moveByIdDir } from './lib/reorder.js';
+import { sanitizeForces, forceLabel } from './lib/transitionForces.js';
 
 // 時間帯系機能（インターバル制限・勤務時間設定・必須運営時間＝未カバー警告）を凍結するフラグ。
 // false で該当UIと未カバー/不足警告の表示を隠す（コードは残す＝将来 true で復活可能）。
@@ -67,6 +68,10 @@ const RECURRING_PATTERN_ENABLED = true;
 //    独立テーブル shift_data_pins を使用（案B）。既存の履歴/トリガー/生成には非関与。
 //    false で完全に従来動作（UI 非表示・DB 参照もしない）。要: shift_data_pins マイグレーション適用。
 const PIN_HISTORY_ENABLED = true;
+// ── 部署独自の「前日の勤務→翌日の勤務」強制ルール（dept.transitionForces）。
+//    既存の夜勤→明け→休みセット/allowLateToEarly とは独立。PR-2(このフラグ): 設定UIのみ・保存のみ。
+//    生成反映(core.js 後処理)は PR-3。false で完全に従来動作（UI 非表示・dept の形も不変）。
+const TRANSITION_FORCE_ENABLED = false;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
@@ -1046,8 +1051,14 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm, y
   const [requiredEnd, setRequiredEnd] = useState(dept?.requiredEnd || "");
   const [maxStaffRelaxable, setMaxStaffRelaxable] = useState(dept?.maxStaffRelaxable !== false);
   const [engineType, setEngineType] = useState(dept?.engineType || 'kaigo');
+  // 遷移強制ルール（前日→翌日を必ず）。夜勤/明けは夜勤連鎖と混同しないよう選択肢から除外。
+  const [transitionForces, setTransitionForces] = useState(Array.isArray(dept?.transitionForces) ? dept.transitionForces : []);
+  const tfOptions = ['休み', ...shiftTypes.filter(k => k !== '夜勤' && k !== '明け')];
+  const [tfDraft, setTfDraft] = useState({ from: '休み', to: (shiftTypes.find(k => k !== '夜勤' && k !== '明け') || '日勤') });
+  const tfAdd = () => { if (tfDraft.from === tfDraft.to) { alert('前日と翌日に同じ勤務は指定できません'); return; } setTransitionForces(prev => sanitizeForces([...prev, { from: tfDraft.from, to: tfDraft.to }])); };
+  const tfRemove = (idx) => setTransitionForces(prev => prev.filter((_, i) => i !== idx));
   const toggleShiftType = (k) => { setShiftTypes(prev => { const next=prev.includes(k)?prev.filter(x=>x!==k):[...prev,k]; setMinStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]||1;});return n;}); setMaxStaff(p=>{const n={};next.forEach(s=>{n[s]=p[s]!=null?p[s]:(s==="日勤"?99:1);});return n;}); setShiftMaxByType(p=>{const n={};next.filter(s=>s!=="夜勤").forEach(s=>{n[s]=p[s]||0;});return n;}); return next; }); };
-  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kyukoDaysByMonth:(monthlyKyukoMap&&Object.keys(monthlyKyukoMap).length)?monthlyKyukoMap:undefined,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,allowLateToEarly:allowLateToEarly||undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType}); };
+  const handleSave = () => { if(!label.trim()){alert("部署名を入力してください");return;} if(shiftTypes.length===0){alert("シフト種別を選択してください");return;} if(pinCode&&pinCode.length!==4){alert("PINコードは4桁で入力してください");return;} const roles=rolesText.split("\n").map(r=>r.trim()).filter(Boolean); const cleanRST={}; const nonNightTypes=shiftTypes.filter(k=>k!=='夜勤'&&k!=='明け'); Object.entries(roleShiftTypes).forEach(([role,types])=>{if(types!=null&&types.length>0&&types.length<nonNightTypes.length)cleanRST[role]=types;}); const cleanMax=Object.keys(shiftMaxByType).some(k=>shiftMaxByType[k]>0)?shiftMaxByType:undefined; onSave({id:dept?.id||`dept_${Date.now()}`,label:label.trim(),shiftTypes,minStaff:Object.fromEntries(Object.entries(minStaff).filter(([k])=>k.trim()!=='')),maxStaff:Object.fromEntries(Object.entries(maxStaff).filter(([k])=>k.trim()!=='')),shiftMaxByType:cleanMax,maxConsecutive:maxConsec,defaultKyukoDays:defKyuko,kyukoDaysByMonth:(monthlyKyukoMap&&Object.keys(monthlyKyukoMap).length)?monthlyKyukoMap:undefined,kiboLimit,kiboDayLimit,roles:roles.length>0?roles:["職員"],roleShiftTypes:Object.keys(cleanRST).length>0?cleanRST:undefined,pin:pinCode||undefined,customShiftDefs:customShiftDefs.filter(d=>d.key.trim()),shiftTimes:Object.keys(shiftTimes).length>0?shiftTimes:undefined,intervalEnabled:intervalEnabled||undefined,intervalHours:intervalEnabled?intervalHours:undefined,intervalTargetShifts:intervalEnabled&&intervalTargetShifts.length>0?intervalTargetShifts:undefined,allowLateToEarly:allowLateToEarly||undefined,requiredStart:requiredStart||undefined,requiredEnd:requiredEnd||undefined,crossFloorNightEnabled:crossFloorNightEnabled||undefined,engineType,transitionForces:(TRANSITION_FORCE_ENABLED?(sanitizeForces(transitionForces).length?sanitizeForces(transitionForces):undefined):(dept?.transitionForces||undefined))}); };
   const LS = { fontSize:11, color:"#52525B", fontWeight:700, marginBottom:5, display:"block" };
   const [kp, setKp] = useState(null);
   return (
@@ -1071,6 +1082,35 @@ function DeptSettingModal({ dept, onSave, onDelete, onClose, isNew, onConfirm, y
             </span>
           </label>
         </div>
+        {TRANSITION_FORCE_ENABLED && (
+          <div style={{background:"#eef2ff",border:"1px solid #a5b4fc",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:800,color:"#4338ca",marginBottom:2}}>遷移強制ルール（前日→翌日を必ず）</div>
+            <div style={{fontSize:10,color:"#4f46e5",marginBottom:8}}>「前日が◯◯なら翌日は必ず△△」を設定します（例：休み→遅番）。その勤務が可能な役職のみ対象。個別の希望（右クリック）が優先され、必要人数が満たせない場合は適用を見送ります。</div>
+            {transitionForces.length > 0 ? (
+              <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+                {transitionForces.map((f,idx)=>(
+                  <div key={`${f.from}-${f.to}-${idx}`} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"#fff",border:"1px solid #c7d2fe",borderRadius:6,padding:"6px 10px"}}>
+                    <span style={{fontSize:12,color:"#3730a3",fontWeight:700}}>{forceLabel(f)} を強制</span>
+                    <button onClick={()=>tfRemove(idx)} style={{background:"#fff1f2",border:"1px solid #fecdd3",color:"#be123c",borderRadius:6,padding:"3px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>クリア</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{fontSize:11,color:"#9CA3AF",marginBottom:10}}>まだ強制ルールはありません。</div>
+            )}
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:11,color:"#4f46e5"}}>前日</span>
+              <select value={tfDraft.from} onChange={e=>setTfDraft(d=>({...d,from:e.target.value}))} style={{...INPUT_STYLE,width:"auto",marginBottom:0,padding:"6px 8px",fontSize:12}}>
+                {tfOptions.map(k=><option key={k} value={k}>{k}</option>)}
+              </select>
+              <span style={{fontSize:11,color:"#4f46e5"}}>→ 翌日</span>
+              <select value={tfDraft.to} onChange={e=>setTfDraft(d=>({...d,to:e.target.value}))} style={{...INPUT_STYLE,width:"auto",marginBottom:0,padding:"6px 8px",fontSize:12}}>
+                {tfOptions.map(k=><option key={k} value={k}>{k}</option>)}
+              </select>
+              <button onClick={tfAdd} style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:800}}>強制に追加</button>
+            </div>
+          </div>
+        )}
         {/* インターバル設定（時間帯系・TIME_FEATURES_ENABLEDで凍結／復活） */}
         {TIME_FEATURES_ENABLED && <div style={{background:"#f0f8ff",border:"1px solid #90c4e0",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:8}}>
