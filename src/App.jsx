@@ -72,7 +72,7 @@ const PIN_HISTORY_ENABLED = true;
 //    既存の isBadTransition / allowLateToEarly / 夜勤→明け→休みセットとは独立。
 //    PR-2(このフラグ): DeptSettingModal の設定UIのみ。生成反映(isBadTransition)は PR-3。
 //    false で完全に従来動作（UI 非表示・dept の形も不変）。
-const TRANSITION_BAN_ENABLED = false;
+const TRANSITION_BAN_ENABLED = true;
 const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
