@@ -212,10 +212,6 @@ function isBadTransition(prev, curr, dept, nightSet) {
     return shiftIntervalHours(prev, curr, dept) < (dept.intervalHours ?? 11);
   }
   if (curr === '明け' && !nightSet.has(prev)) return true;
-  // 部署独自の遷移禁止（dept.transitionBans = [{from,to}]）。allowLateToEarly でも適用する独立ルール。
-  //   既存の遅番→早番 等とは別枠。夜勤→明け→休みセット（上の明け判定）には非干渉。
-  //   transitionBans 未設定の部署は従来通り（空配列なら no-op）。
-  if (dept.transitionBans && dept.transitionBans.some(b => b && b.from === prev && b.to === curr)) return true;
   // 遅番→早番/日勤・日勤→早番タブー（労務上の休息確保・全部署既定ON）。
   // dept.allowLateToEarly=true の部署（夜勤なしの栄養科など）のみ、このタブーを外す。
   if (dept.allowLateToEarly) return false;
@@ -2292,8 +2288,6 @@ function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}
     if (dept.intervalEnabled && dept.intervalTargetShifts?.includes(curr)) {
       return shiftIntervalHours(prev, curr, dept) < (dept.intervalHours ?? 11);
     }
-    // 部署独自の遷移禁止（dept.transitionBans）もスワップ時に尊重（isBadTransition と一貫）。
-    if (dept.transitionBans && dept.transitionBans.some(b => b && b.from === prev && b.to === curr)) return true;
     return (prev === "遅番" && (curr === "早番" || curr === "日勤")) || (prev === "日勤" && curr === "早番");
   };
 
