@@ -2530,6 +2530,26 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
     const improvedScore = scoreShifts(improved, ds, dept, days, year, month, shiftTrend);
     if (improvedScore < bestScore) { best.shifts = improved; best.score = improvedScore; }
   }
+  // ★最終確定パス: localSearchImprove の「後」に 遷移強制→ペア交換 を再適用する。
+  //   localSearchImprove は scoreShifts だけを見て盤面を組み直すため（学習重み250 ≪ 公平性2000 等）、
+  //   autoGenerate 内で適用した強制・ペア交換の結果を上書き／帳消しにしてしまう。
+  //   そこで両パスをパイプラインの最後に再適用し、確定させる（以降は何も触れない＝実質ロック）。
+  //   どちらも「同日の早↔遅を交換するだけ（人数不変）」の設計なので、min/max・カバレッジは崩れない。
+  //   dept.transitionForces が無ければ強制パスは no-op、dept.targetSwapEnabled が無ければ交換パスは no-op。
+  if (best) {
+    const mk = monthKey(year, month);
+    const lockedDays = {};
+    for (const s of ds) {
+      const lk = new Set();
+      (s.kiboByMonth?.[mk] || []).forEach(d => lk.add(Number(d)));
+      (s.yukyuByMonth?.[mk] || []).forEach(d => lk.add(Number(d)));
+      Object.keys(s.shiftRequestsByMonth?.[mk] || {}).forEach(d => lk.add(Number(d)));
+      lockedDays[s.id] = lk;
+    }
+    applyTransitionForces(best.shifts, ds, dept, days, lockedDays);
+    applyTargetSwap(best.shifts, ds, dept, days, lockedDays, year, month, shiftTrend);
+    best.score = scoreShifts(best.shifts, ds, dept, days, year, month, shiftTrend);
+  }
   return best;
 }
 
