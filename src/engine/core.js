@@ -459,14 +459,20 @@ function NSO_canSwap(s1, s2, d1, d2, assignment, lockedDays, res, deptWork, days
 // ─────────────────────────────────────────────────────────────────────────────
 
 // 遷移強制ルール（dept.transitionForces = [{from,to}]）の生成後処理パス（純粋・res を直接更新）。
-// 「前日が from なら翌日を to にする」を、以下を"全て満たす時だけ"適用する（1つでもダメなら諦める）:
+// 「前日が from なら翌日を to にする」を、以下を"全て満たす時だけ"適用する（1つでもダメなら諦める）。
+//
+// ★スワップ方式: 当日(d+1)に to を既に持つ"相手"がいれば、その相手と「2セル同時交換」する
+//   （強制対象者→to / 相手→強制対象者の元の種別 curr）。交換は各種別の人数を完全に不変に保つため、
+//   早1・遅1 の厳密な部署でも minStaff/maxStaff/カバレッジを壊さずに強制を満たせる。
+//   相手がいない（to スロットが空）／全相手がNG の場合のみ、従来どおり単一セル書換を min/max ガード付きで試みる。
+//
+// 強制対象者(s)側の安全条件（従来どおり）:
 //   - 個別の希望（lockedDays に d+1 が含まれる）→ 適用しない（個別優先）
 //   - 夜勤/明けが絡む（prev/curr/to のいずれか、または d+2 が明け）→ 触れない（夜勤連鎖保護）
 //   - 公休/連勤を崩さない: curr と to が同カテゴリ（勤務↔勤務 または 休み↔休み）でないと適用しない
 //   - 役職: to が勤務なら roleShiftTypes[role] が to を許可
-//   - minStaff: curr（勤務）を1減らしても最低人数を割らない
-//   - maxStaff: to（勤務）を1増やしても最大人数を超えない
 //   - 既存の遷移ルール: prev→to・to→翌日 が isBadTransition に触れない（遅番→早番等を作らない）
+// 交換相手(p)側も、受け取る curr について同じ観点を再チェックし、1つでもダメなら その相手は不可。
 // ※ 同カテゴリ限定のため、公休数・連勤は変化しない（勤務種別の置換のみ）。
 function applyTransitionForces(res, ds, dept, days, lockedDays = {}) {
   const forces = (dept.transitionForces || []).filter(f => f && f.from && f.to && f.from !== f.to);
@@ -478,8 +484,16 @@ function applyTransitionForces(res, ds, dept, days, lockedDays = {}) {
   const dayCount = (d, shift) => ds.reduce((a, s) => a + (res[s.id]?.[d] === shift ? 1 : 0), 0);
   const maxFor = (k) => (dept.maxStaff?.[k] != null ? dept.maxStaff[k] : (k === '日勤' ? 99 : 1));
   const minFor = (k) => (dept.minStaff?.[k] != null ? dept.minStaff[k] : 0);
+  const roleOk = (role, shift) => { if (!isWork(shift)) return true; const ra = dept.roleShiftTypes?.[role]; return !ra || ra.includes(shift); };
+  // 交換で sid の day セルへ newShift を置くと、他の強制(前日→当日・当日→翌日)を破るか
+  const forceViolated = (sid, d, newShift) => {
+    const p = d > 1 ? res[sid]?.[d - 1] : null;
+    const n = res[sid]?.[d + 1];
+    if (p) { const f = forces.find(x => x.from === p); if (f && f.to !== newShift) return true; }
+    if (n) { const f = forces.find(x => x.from === newShift); if (f && f.to !== n) return true; }
+    return false;
+  };
   for (const s of ds) {
-    const ra = dept.roleShiftTypes?.[s.role];
     const locked = lockedDays[s.id];
     for (let d = 1; d < days; d++) {
       const prev = res[s.id]?.[d];
@@ -488,17 +502,42 @@ function applyTransitionForces(res, ds, dept, days, lockedDays = {}) {
       if (!f) continue;
       const to = f.to;
       if (!to || to === curr) continue;
+      // ── 強制対象者 s 側の安全条件（人数非依存）──
       if (locked && locked.has(d + 1)) continue;                       // 個別優先
       if (NIGHT.has(prev) || NIGHT.has(curr) || NIGHT.has(to)) continue; // 夜勤セット非干渉
       if (res[s.id]?.[d + 2] === '明け') continue;                      // 明け連鎖保護
       if (isWork(curr) !== isWork(to)) continue;                        // 公休/連勤を崩さない（同カテゴリのみ）
-      if (isWork(to) && ra && !ra.includes(to)) continue;              // 役職で to 不可
+      if (!roleOk(s.role, to)) continue;                               // 役職で to 不可
+      if (isBadTransition(prev, to, dept, nightSet)) continue;         // prev→to が既存ルール違反
+      const sNext = res[s.id]?.[d + 2];
+      if (sNext && isBadTransition(to, sNext, dept, nightSet)) continue; // to→翌日 が既存ルール違反
+
+      // ── スワップ方式: d+1 に to を持つ相手と2セル同時交換（人数は構造上不変）──
+      let swapped = false;
+      for (const p of ds) {
+        if (p.id === s.id) continue;
+        if (res[p.id]?.[d + 1] !== to) continue;                       // d+1 に to を持つ人だけが交換相手
+        const pLocked = lockedDays[p.id];
+        if (pLocked && pLocked.has(d + 1)) continue;                   // 相手の個別優先
+        const pPrev = res[p.id]?.[d];
+        const pNext = res[p.id]?.[d + 2];
+        if (pPrev === '夜勤' || pPrev === '明け') continue;            // 相手の前日が夜勤系 → 触れない
+        if (pNext === '明け') continue;                                // 相手の翌々日が明け → 夜勤連鎖保護
+        if (!roleOk(p.role, curr)) continue;                          // 相手の役職で curr 不可
+        if (pPrev && isBadTransition(pPrev, curr, dept, nightSet)) continue; // 相手 prev→curr
+        if (pNext && isBadTransition(curr, pNext, dept, nightSet)) continue; // 相手 curr→翌日
+        if (forceViolated(p.id, d + 1, curr)) continue;              // 相手が別の強制を破る（例: 相手も休み→遅番）
+        res[s.id][d + 1] = to;                                        // 全条件クリア → 交換
+        res[p.id][d + 1] = curr;
+        swapped = true;
+        break;
+      }
+      if (swapped) continue;
+
+      // ── 相手不在/全員NG: 従来の単一セル書換に min/max ガード付きで後退 ──
       if (isWork(curr) && (dayCount(d + 1, curr) - 1) < minFor(curr)) continue; // minStaff 割れ
       if (isWork(to) && (dayCount(d + 1, to) + 1) > maxFor(to)) continue;        // maxStaff 超過
-      if (isBadTransition(prev, to, dept, nightSet)) continue;         // prev→to が既存ルール違反
-      const next = res[s.id]?.[d + 2];
-      if (next && isBadTransition(to, next, dept, nightSet)) continue; // to→翌日 が既存ルール違反
-      res[s.id][d + 1] = to;                                           // 全条件クリア → 適用
+      res[s.id][d + 1] = to;
     }
   }
   return res;
