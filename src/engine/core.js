@@ -1,4 +1,5 @@
 import { swapLearningGain, fairnessOkAfterSwap, shouldSwapPair, DEFAULT_FAIRNESS_TOL } from '../lib/targetSwap.js';
+import { matchesToken } from '../lib/shiftEquivalence.js';
 
 const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 
@@ -489,8 +490,8 @@ function applyTransitionForces(res, ds, dept, days, lockedDays = {}) {
   const forceViolated = (sid, d, newShift) => {
     const p = d > 1 ? res[sid]?.[d - 1] : null;
     const n = res[sid]?.[d + 1];
-    if (p) { const f = forces.find(x => x.from === p); if (f && f.to !== newShift) return true; }
-    if (n) { const f = forces.find(x => x.from === newShift); if (f && f.to !== n) return true; }
+    if (p) { const f = forces.find(x => matchesToken(p, x.from)); if (f && f.to !== newShift) return true; }
+    if (n) { const f = forces.find(x => matchesToken(newShift, x.from)); if (f && f.to !== n) return true; }
     return false;
   };
   for (const s of ds) {
@@ -498,7 +499,7 @@ function applyTransitionForces(res, ds, dept, days, lockedDays = {}) {
     for (let d = 1; d < days; d++) {
       const prev = res[s.id]?.[d];
       const curr = res[s.id]?.[d + 1];
-      const f = forces.find(x => x.from === prev);
+      const f = forces.find(x => matchesToken(prev, x.from));
       if (!f) continue;
       const to = f.to;
       if (!to || to === curr) continue;
@@ -574,8 +575,8 @@ function applyTargetSwap(res, ds, dept, days, lockedDays = {}, year, month, shif
     if (forces.length === 0) return false;
     const prev = d > 1 ? res[sid]?.[d - 1] : null;
     const next = res[sid]?.[d + 1];
-    if (prev) { const f = forces.find(x => x.from === prev); if (f && f.to !== newShift) return true; }
-    if (next) { const f = forces.find(x => x.from === newShift); if (f && f.to !== next) return true; }
+    if (prev) { const f = forces.find(x => matchesToken(prev, x.from)); if (f && f.to !== newShift) return true; }
+    if (next) { const f = forces.find(x => matchesToken(newShift, x.from)); if (f && f.to !== next) return true; }
     return false;
   };
   const transOk = (sid, d, newShift) => {
