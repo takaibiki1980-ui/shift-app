@@ -16,6 +16,8 @@
  *  - 夜勤/明けは夜勤連鎖と混同しないため UI 側で from/to の選択肢から除外する想定。
  */
 
+import { matchesToken } from './shiftEquivalence.js';
+
 /**
  * 遷移 (prev → curr) に対し、強制ルール forces が「curr を別の値へ強制するか」を返す。
  * prev が from に一致する最初のルールの to を返す（後勝ちにしたい場合は呼び出し側で調整）。
@@ -28,7 +30,7 @@
 export function forcedShiftFor(prev, curr, forces) {
   if (!prev || !Array.isArray(forces) || forces.length === 0) return null;
   for (const f of forces) {
-    if (f && f.from === prev) {
+    if (f && matchesToken(prev, f.from)) {
       if (!f.to || f.to === curr) return null; // 既に to・不正 to は何もしない
       return f.to;
     }
