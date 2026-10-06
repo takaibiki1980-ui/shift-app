@@ -50,6 +50,40 @@ export function buildPinInsert({ userId, dataKey, name, dataValue, marksValue = 
 }
 
 /**
+ * 「今の画面の状態」から shift_data_pins へ INSERT する行を組み立てる（純粋・非破壊）。
+ * 履歴行を経由せず、現在の勤務データ＋色情報から直接ピン行を作るための関数。
+ *
+ * - shiftKey は saveNow と同形 `shifts_{year}_{month+1}_{deptId}`（month は 0 始まり）。
+ * - 名前は sanitizePinName に通すが、ここでは「空・空白だけの名前なら null を返す」
+ *   （PR-2 以降の「名前を入れて保存」フローで、未入力時はピンを作らないため）。
+ * - 履歴起点ではないので sourceArchivedAt / originalUpdatedAt は渡さない（null のまま）。
+ *
+ * @param {Object} args
+ * @param {string} args.userId
+ * @param {string} args.deptId
+ * @param {number} args.year      西暦
+ * @param {number} args.month     0 始まりの月（saveNow と同じ）
+ * @param {Object} args.dataValue 現在の勤務データ（allShiftsRef.current[deptId] 相当・必須）
+ * @param {Object} [args.marksValue] 現在の色情報（buildMarksVal の戻り値相当・任意）
+ * @param {string} args.name      ピン名（未整形で可）
+ * @returns {Object|null} INSERT 用オブジェクト、または名前空・data_value 欠如時 null
+ */
+export function buildPinFromCurrent({ userId, deptId, year, month, dataValue, marksValue = null, name }) {
+  // 名前が空・空白だけなら作らない（既定名へのフォールバックはしない）
+  if (name == null || String(name).trim() === '') return null;
+  if (!userId || !deptId || dataValue == null) return null;
+  const dataKey = `shifts_${year}_${month + 1}_${deptId}`;
+  return buildPinInsert({
+    userId,
+    dataKey,
+    name: sanitizePinName(name),
+    dataValue,
+    marksValue: marksValue ?? null,
+    // 履歴起点ではないため source/original は付けない
+  });
+}
+
+/**
  * ピン一覧を新しい順（created_at 降順）に並べ替える（非破壊）。
  * created_at が無い/同値の場合は id 降順で安定化。
  * @param {Array} pins
