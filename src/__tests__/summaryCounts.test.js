@@ -60,6 +60,16 @@ describe('countRestAndPaid 端', () => {
     expect(countRestAndPaid({ cellByDay: {}, deptRest })).toEqual({ rest: 0, paid: 0 });
   });
 
+  test('代表月（申請希望休・申請有休・半日有給・有/休・日有・有日を含む）: 4か所で共用する期待値', () => {
+    // 画面・CSV・印刷・共有すべてこの countRestAndPaid を通すため、同入力なら同値になる。
+    const cellByDay = { 1: '休み', 2: '希望休', 3: '早番', 4: '日勤', 5: '有休', 6: '早/有', 7: '有/遅', 8: '有/休', 9: '日/有', 10: '有/日' };
+    const kiboDays = [2, 11];   // 2はセル有→無視、11はセル空→+1
+    const yukyuDays = [5, 12];  // 5はセル有→無視、12はセル空→+1
+    const { rest, paid } = countRestAndPaid({ cellByDay, kiboDays, yukyuDays, deptRest });
+    expect(rest).toBe(3.5); // 休み1+希望休1+有/休0.5=2.5 ＋申請希望休1
+    expect(paid).toBe(4.5); // 有休1+早有0.5+有遅0.5+有/休0.5+日有0.5+有日0.5=3.5 ＋申請有休1
+  });
+
   test('申請なしなら既存 restCnt と同じ数（回帰）', () => {
     // 既存 L3015 の式を素朴に再現して突き合わせ
     const cellByDay = { 1: '休み', 2: '日/休', 3: '有/休', 4: '明け', 5: '有休', 6: '遅番', 7: '休/日', 8: '希望休' };

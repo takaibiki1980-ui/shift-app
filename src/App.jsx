@@ -12,6 +12,7 @@ import { computePaidLeaveConsumed, applyConsumption } from './lib/paidLeave.js';
 import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
+import { countRestAndPaid } from './lib/summaryCounts.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -404,6 +405,19 @@ function workDayValue(v, deptWork) {
   if (deptWork && deptWork.has(v)) return 1; // カスタム勤務（呼び出し側がdeptWorkを渡した場合）
   return 0;
 }
+// 集計列V2用: 休/有の数を lib/summaryCounts.countRestAndPaid で算出（画面・CSV・印刷・共有で共用）。
+//   cellByDay は effectiveCellShift（実値||希望勤務）で解決した効果的セル値。申請希望休/有休は
+//   セル値が無い日だけ加算（二重計上なし）。SUMMARY_COLUMNS_V2 OFF 時は呼ばれない。
+function summaryCountsFor({ shiftsForDept, staff, mk, days, deptRest }) {
+  const cellByDay = {};
+  for (let d = 1; d <= days; d++) {
+    const v = effectiveCellShift(shiftsForDept?.[staff.id]?.[d] || "", staff.shiftRequestsByMonth?.[mk]?.[d]);
+    if (v) cellByDay[d] = v;
+  }
+  return countRestAndPaid({ cellByDay, kiboDays: staff.kiboByMonth?.[mk] || [], yukyuDays: staff.yukyuByMonth?.[mk] || [], deptRest });
+}
+// 0.5刻みの表示を4か所で統一（整数は "4"、半端は "4.5"）。
+const fmtCount = (n) => String(Math.round(n * 10) / 10);
 function getShiftDef(key, customDefs, dept) {
   if (SHIFTS[key]) return SHIFTS[key];
   const cd = (customDefs || []).find(d => d.key === key);
@@ -547,17 +561,20 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const rows = [];
-  const header = ["部署","氏名","役職", ...Array.from({length:days},(_,i)=>i+1+"日"), "勤務計","夜勤","休日"];
+  const header = ["部署","氏名","役職", ...Array.from({length:days},(_,i)=>i+1+"日"), "勤務計","夜勤","休日", ...(SUMMARY_COLUMNS_V2?["有給"]:[])];
   rows.push(header.join(","));
   depts.filter(d=>selectedDepts.includes(d.id)).forEach(dept => {
     const shifts = allShifts[dept.id] || {};
+    const deptRest = buildDeptRestTypes(dept.customShiftDefs);
     staffList.filter(s=>s.dept===dept.id).forEach(s => {
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays = s.yukyuByMonth?.[mk] || [];
       const cells = [dept.label, s.name, s.role];
       let workCnt=0, nightCnt=0, restCnt=0;
       for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const out=dispV||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); workCnt+=workDayValue(v); if(v==="夜勤") nightCnt++; if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休") restCnt+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1; }
-      cells.push(workCnt, nightCnt, restCnt);
+      const _sum = SUMMARY_COLUMNS_V2 ? summaryCountsFor({shiftsForDept:shifts, staff:s, mk, days, deptRest}) : null;
+      cells.push(workCnt, nightCnt, SUMMARY_COLUMNS_V2?fmtCount(_sum.rest):restCnt);
+      if(SUMMARY_COLUMNS_V2) cells.push(fmtCount(_sum.paid));
       rows.push(cells.map(c=>`"${c}"`).join(","));
     });
     rows.push("");
@@ -609,7 +626,8 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+'<td class="name"><div class="name-inner" style="font-size:'+printNameFontSize(s.name)+'px">'+s.name+'</div></td>';
       for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const isKibo=!dispV&&kibodays.includes(d); const isYukyu2=!dispV&&!isKibo&&yukyudays2.includes(d); w+=workDayValue(v); if(v==="夜勤") n++; if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休") r+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||dispV==="希望休"||dispV==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(HALF_REST_TYPES.has(dispV))?dispV:(getShiftDef(dispV, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}"`)+cellText+CTAG('td'); }
-      html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+r+CTAG('td')+CTAG('tr');
+      const _rPrint = SUMMARY_COLUMNS_V2 ? fmtCount(summaryCountsFor({shiftsForDept:shifts, staff:s, mk, days, deptRest:buildDeptRestTypes(dept.customShiftDefs)}).rest) : r;
+      html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+_rPrint+CTAG('td')+CTAG('tr');
     });
     html += CTAG('tbody')+CTAG('table');
   });
@@ -2831,7 +2849,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   const isAlert = (d) => { for(const [sh,min] of Object.entries(dept.minStaff||{})){const cnt=ds.filter(s=>(shifts[s.id]?.[d]||"")===sh).length;if(cnt<min)return true;} return false; };
   const isConsecViolation = (sShifts, d) => { if(!deptWork.has(sShifts[d]))return false; return calcConsecutive(sShifts,d)>maxConsec; };
   const hasNight = dept.shiftTypes.includes("夜勤");
-  const rightCols = [...dept.shiftTypes, ...(hasNight?["明け"]:[]), "計", "休", "希"];
+  const rightCols = [...dept.shiftTypes, ...(hasNight?["明け"]:[]), "計", "休", SUMMARY_COLUMNS_V2 ? "有" : "希"];
   const rightColCount = rightCols.length;
 
   // Drag-to-select state
@@ -3022,6 +3040,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
             dept.shiftTypes.forEach(t=>{typeCnts[t]=Object.values(sShifts).filter(v=>v===t).length;});
             if(hasNight)typeCnts["明け"]=Object.values(sShifts).filter(v=>v==="明け").length;
             typeCnts["計"]=workCnt; typeCnts["休"]=restCnt; typeCnts["希"]=kibodays.length;
+            if(SUMMARY_COLUMNS_V2){ const _sum=summaryCountsFor({shiftsForDept:shifts, staff:s, mk, days, deptRest}); typeCnts["休"]=_sum.rest; typeCnts["有"]=_sum.paid; }
             return (
               <tr key={s.id} style={{background:si%2===0?"#FFFFFF":"#FAFAFA"}}>
                 <td style={{position:"sticky",left:0,zIndex:2,background:si%2===0?"#FFFFFF":"#FAFAFA",padding:"7px 14px",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",minWidth:156}}>
@@ -3070,14 +3089,15 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   else if(col==="夜勤"){val=cnt||"－";color=nightOver?"#EF4444":"#334155";}
                   else if(col==="明け"){val=cnt||"－";color="#475569";}
                   else if(col==="休"){
-                    val=cnt;
+                    val=SUMMARY_COLUMNS_V2?fmtCount(cnt):cnt;
                     const kyukoTarget=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;
                     const kyukoDiff=cnt-kyukoTarget;
                     color=kyukoDiff>0?"#b91c1c":kyukoDiff<0?"#92400e":"#52525B";
                     const kyukoBg=kyukoDiff>0?"#fee2e2":kyukoDiff<0?"#fef9c3":undefined;
-                    const kyukoTip=kyukoDiff!==0?`目標${kyukoTarget}日 / 実績${cnt}日`:undefined;
+                    const kyukoTip=kyukoDiff!==0?`目標${kyukoTarget}日 / 実績${SUMMARY_COLUMNS_V2?fmtCount(cnt):cnt}日`:undefined;
                     return <td key={col} style={{...TD,background:kyukoBg}} title={kyukoTip}><span style={{color,fontWeight:700,fontSize:11}}>{val}</span></td>;
                   }
+                  else if(col==="有"){val=cnt?fmtCount(cnt):"－";color="#9b4db5";}
                   else if(col==="希"){val=cnt||"－";color="#BE123C";}
                   else{const mx=dept.shiftMaxByType?.[col]||0;const over=mx>0&&cnt>mx;val=cnt||"－";const sd=getShiftDef(col,dept.customShiftDefs,dept);color=over?"#ef4444":(sd.color||"#71717A");}
                   return <td key={col} style={TD}><span style={{color,fontWeight:700,fontSize:11}}>{val}</span></td>;
@@ -4147,6 +4167,9 @@ function SharedShiftView({ token }) {
                   {deptStaff.map(s=>{
                     let w=0,n=0,r=0;
                     const ss = deptShifts[s.id] || {};
+                    // 共有は休の数え方を画面と同じ countRestAndPaid に寄せる（申請希望休/有休は
+                    // 共有ペイロードに含まれないためセル値のみ・customShiftDefs も無いため基本休種別）。
+                    const _rShared = SUMMARY_COLUMNS_V2 ? fmtCount(summaryCountsFor({shiftsForDept:deptShifts, staff:s, mk:`${year}-${month}`, days, deptRest:buildDeptRestTypes()}).rest) : r;
                     return (
                       <tr key={s.id}>
                         <td style={nameTdStyle}><div style={nameInnerStyle}>{s.name}</div></td>
@@ -4160,7 +4183,7 @@ function SharedShiftView({ token }) {
                         })}
                         <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{w}</td>
                         <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{n||'－'}</td>
-                        <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{r}</td>
+                        <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{SUMMARY_COLUMNS_V2?_rShared:r}</td>
                       </tr>
                     );
                   })}
