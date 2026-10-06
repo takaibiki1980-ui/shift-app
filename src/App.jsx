@@ -16,7 +16,8 @@ import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
 import { NON_WORK_SHIFTS, applyPatternsToStaff, markPatternOverrides } from './lib/recurringPattern.js';
-import { buildPinInsert, sanitizePinName, sortPinsByNewest } from './lib/historyPins.js';
+import { buildPinInsert, buildPinFromCurrent, sanitizePinName, sortPinsByNewest } from './lib/historyPins.js';
+import { saveThenPin } from './lib/saveWithName.js';
 import { moveByIdDir } from './lib/reorder.js';
 import { sanitizeForces, forceLabel } from './lib/transitionForces.js';
 
@@ -1280,21 +1281,21 @@ function ConfirmDialog({ message, onOk, onCancel, okLabel="削除" }) {
 // ConfirmDialog の枠・オーバーレイ・ボタン様式を土台にする（ConfirmDialog 自体は変更しない）。
 // props: onNo（このまま保存）/ onSubmitName(name)（名前を入れて保存＋ピン）/ onClose（保存しない）。
 // 本コンポーネントは saveNow やピン作成を呼ばない（呼び出し側の責務）。
-function SaveNameDialog({ onNo, onSubmitName, onClose }) {
+function SaveNameDialog({ onNo, onSubmitName, onClose, busy = false }) {
   const [step, setStep] = useState(1);     // 1=聞く / 2=名前入力
   const [name, setName] = useState("");
   const composingRef = useRef(false);      // 日本語変換中フラグ
   const inputRef = useRef(null);
-  const canSubmit = name.trim() !== "";
-  // Esc は何もせず閉じる（保存しない）
+  const canSubmit = name.trim() !== "" && !busy;
+  // Esc は何もせず閉じる（保存しない）。処理中は閉じない。
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e) => { if (e.key === "Escape" && !busy) onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, busy]);
   // 2段目を開いたら入力欄へフォーカス
   useEffect(() => { if (step === 2) { const t = setTimeout(() => inputRef.current?.focus(), 30); return () => clearTimeout(t); } }, [step]);
-  const submit = () => { if (name.trim() !== "") onSubmitName(name); };
+  const submit = () => { if (name.trim() !== "" && !busy) onSubmitName(name); };
   const onKeyDown = (e) => {
     if (e.key !== "Enter") return;
     // 日本語変換確定の Enter（isComposing）では決定しない
@@ -1312,16 +1313,16 @@ function SaveNameDialog({ onNo, onSubmitName, onClose }) {
   const primary = { ...btnBase, background:"linear-gradient(135deg,#6366F1,#7C3AED)", color:"#fff", border:"none" };
   const ghost = { ...btnBase, background:"#ffffff", color:"#52525B", border:"1px solid #D4D4D8", fontWeight:700 };
   return (
-    <div style={overlay} onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div style={overlay} onClick={e=>{ if(!busy && e.target===e.currentTarget) onClose(); }}>
       <div style={card}>
-        <button aria-label="閉じる" onClick={onClose} style={closeBtn}>×</button>
+        <button aria-label="閉じる" onClick={()=>{ if(!busy) onClose(); }} disabled={busy} style={closeBtn}>×</button>
         {step === 1 ? (
           <>
             <div style={titleSt}>名前を入れますか？</div>
             <div style={bodySt}>名前を入れて保存すると、あとで探しやすいように「ピン留め」として残せます。そのまま保存もできます。</div>
             <div style={rowSt}>
-              <button onClick={onNo} style={ghost}>このまま保存</button>
-              <button onClick={()=>setStep(2)} style={primary}>名前を入れる</button>
+              <button onClick={onNo} disabled={busy} style={{ ...ghost, opacity:busy?0.5:1, cursor:busy?"not-allowed":"pointer" }}>このまま保存</button>
+              <button onClick={()=>setStep(2)} disabled={busy} style={{ ...primary, opacity:busy?0.5:1, cursor:busy?"not-allowed":"pointer" }}>名前を入れる</button>
             </div>
           </>
         ) : (
@@ -1334,12 +1335,13 @@ function SaveNameDialog({ onNo, onSubmitName, onClose }) {
               onKeyDown={onKeyDown}
               onCompositionStart={()=>{composingRef.current=true;}}
               onCompositionEnd={()=>{composingRef.current=false;}}
+              disabled={busy}
               placeholder="例：確定版・差し替え前 など"
               style={{ width:"100%", boxSizing:"border-box", fontSize:18, padding:"14px 14px", border:"1px solid #A1A1AA", borderRadius:10, marginBottom:20, outline:"none" }}
             />
             <div style={rowSt}>
-              <button onClick={()=>setStep(1)} style={ghost}>戻る</button>
-              <button onClick={submit} disabled={!canSubmit} style={{ ...primary, background:canSubmit?"linear-gradient(135deg,#6366F1,#7C3AED)":"#E5E7EB", color:canSubmit?"#fff":"#9CA3AF", cursor:canSubmit?"pointer":"not-allowed" }}>決定</button>
+              <button onClick={()=>setStep(1)} disabled={busy} style={{ ...ghost, opacity:busy?0.5:1, cursor:busy?"not-allowed":"pointer" }}>戻る</button>
+              <button onClick={submit} disabled={!canSubmit} style={{ ...primary, background:canSubmit?"linear-gradient(135deg,#6366F1,#7C3AED)":"#E5E7EB", color:canSubmit?"#fff":"#9CA3AF", cursor:canSubmit?"pointer":"not-allowed" }}>{busy?"保存中…":"決定"}</button>
             </div>
           </>
         )}
@@ -5166,6 +5168,37 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [pinSettingsModal, setPinSettingsModal] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(null);
 
+  // ── 保存ボタン用「名前を入れますか？」ダイアログ（SAVE_NAME_PROMPT_ENABLED で有効）──
+  const [saveNameOpen, setSaveNameOpen] = useState(false);
+  const [saveNameBusy, setSaveNameBusy] = useState(false);
+  // 保存ボタン押下: フラグONかつピン機能ONならダイアログ、そうでなければ従来どおり即保存。
+  const onClickSave = () => {
+    if (SAVE_NAME_PROMPT_ENABLED && PIN_HISTORY_ENABLED) setSaveNameOpen(true);
+    else saveNow();
+  };
+  // 「このまま保存」: 従来どおり保存して閉じる（ピンは作らない）。
+  const handleSaveNo = async () => {
+    setSaveNameBusy(true);
+    try { await saveNow(); } finally { setSaveNameBusy(false); setSaveNameOpen(false); }
+  };
+  // 「名前を入れる」→決定: 保存する状態とピンの中身を一致させるため、saveNow の前に控える。
+  const handleSaveWithName = async (name) => {
+    const deptId = activeDeptIdRef.current;
+    const y = yearRef.current, m = monthRef.current;
+    const dataValue = allShiftsRef.current[deptId] || {};
+    const marksValue = buildMarksVal(staffListRef.current, deptId, monthKey(y, m));
+    const pinRow = buildPinFromCurrent({ userId: session.user.id, deptId, year: y, month: m, dataValue, marksValue, name });
+    setSaveNameBusy(true);
+    const { saved, pinError } = await saveThenPin({
+      saveNow,
+      pinRow,
+      insertPin: (row) => supabase.from('shift_data_pins').insert(row),
+    });
+    setSaveNameBusy(false);
+    setSaveNameOpen(false);
+    if (saved && pinError) alert('ピン留め失敗: ' + (pinError.message || pinError));
+  };
+
   const [adminModal, setAdminModal] = useState(false);
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
@@ -5919,7 +5952,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             {saveStatus==="unsaved"&&<><Loader size={11} strokeWidth={2}/>{!isMobile&&<span>未保存</span>}</>}
             {saveStatus==="error"&&<><span style={{color:"#EF4444"}}>!</span><span>保存失敗</span></>}
           </div>
-          {!isLocked && <button onClick={saveNow} disabled={saveStatus!=="unsaved"&&saveStatus!=="error"} title={saveStatus==="unsaved"?"編集内容をクラウドに保存します":"保存済みです"} style={{background:(saveStatus==="unsaved"||saveStatus==="error")?"#F59E0B":"#F3F4F6",color:(saveStatus==="unsaved"||saveStatus==="error")?"#fff":"#9CA3AF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(saveStatus==="unsaved"||saveStatus==="error")?"pointer":"default",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Save size={14} strokeWidth={2}/>{!isMobile&&" 保存"}</button>}
+          {!isLocked && <button onClick={onClickSave} disabled={saveStatus!=="unsaved"&&saveStatus!=="error"} title={saveStatus==="unsaved"?"編集内容をクラウドに保存します":"保存済みです"} style={{background:(saveStatus==="unsaved"||saveStatus==="error")?"#F59E0B":"#F3F4F6",color:(saveStatus==="unsaved"||saveStatus==="error")?"#fff":"#9CA3AF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(saveStatus==="unsaved"||saveStatus==="error")?"pointer":"default",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Save size={14} strokeWidth={2}/>{!isMobile&&" 保存"}</button>}
           {isLocked
             ? <button onClick={()=>setPinModal(true)} style={{background:"#374151",color:"#fff",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Lock size={14} strokeWidth={2}/>{!isMobile&&" 解錠する"}</button>
             : <button onClick={handleGenerate} disabled={generating||isMonthLoading||isConfirmed} title={isConfirmed?"確定済みです。「編集」ボタンで解除してください":isMonthLoading?"データ読み込み中です":undefined} style={{background:(generating||isMonthLoading||isConfirmed)?"#E5E7EB":"#2563EB",color:(generating||isMonthLoading||isConfirmed)?"#9CA3AF":"#FFFFFF",border:"none",borderRadius:8,padding:"0 14px",height:36,cursor:(generating||isMonthLoading||isConfirmed)?"not-allowed":"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5,opacity:(isMonthLoading||isConfirmed)?0.6:1}}><Zap size={14} strokeWidth={2}/>{generating?" 最適化中…":isMonthLoading?" 読込中…":" 自動生成"}</button>
@@ -6136,6 +6169,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} coverageWarnings={generateWarnings.coverageWarnings} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#F4F4F5",border:"1px solid #D4D4D8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#A1A1AA",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#6366F1",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
+      {saveNameOpen&&<SaveNameDialog busy={saveNameBusy} onNo={handleSaveNo} onSubmitName={handleSaveWithName} onClose={()=>{ if(!saveNameBusy) setSaveNameOpen(false); }}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
       {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
       {historyModal&&<ShiftHistoryModal
