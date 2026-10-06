@@ -73,6 +73,10 @@ const PIN_HISTORY_ENABLED = true;
 //    PR-1(このフラグ): 純粋ロジック(buildPinFromCurrent)とテストのみ・まだどこからも参照しない。
 //    false で完全に従来動作（ダイアログ非表示・従来どおり即保存）。配線は PR-3、有効化は PR-4。
 const SAVE_NAME_PROMPT_ENABLED = true;
+// ── シフト表 右側集計列の変更（休に申請希望休を含める／希列を廃止し有列を追加）。
+//    PR-1(このフラグ): 集計の純粋ロジック(lib/summaryCounts.js)とテストのみ・まだどこからも参照しない。
+//    false で完全に従来動作（列も数え方も現状のまま）。配線は PR-2、有効化は PR-3。
+const SUMMARY_COLUMNS_V2 = false;
 // ── 部署独自の「前日の勤務→翌日の勤務」強制ルール（dept.transitionForces）。
 //    既存の夜勤→明け→休みセット/allowLateToEarly とは独立。PR-2(このフラグ): 設定UIのみ・保存のみ。
 //    生成反映(core.js 後処理)は PR-3。false で完全に従来動作（UI 非表示・dept の形も不変）。
