@@ -4,7 +4,7 @@ import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, CalendarOff, Users, Trash2, Zap, ClipboardPaste, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2, Info, Brain } from 'lucide-react';
+import { Settings, Calendar, CalendarOff, Users, Trash2, Zap, ClipboardPaste, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, Loader2, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2, Info, Brain } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -2143,7 +2143,7 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
       <div style={{background:'#FAFAFA',border:'1px solid #D4D4D8',borderRadius:14,padding:'16px 18px',width:'100%',maxWidth:960,maxHeight:'95vh',boxShadow:'0 30px 80px #000',display:'flex',flexDirection:'column',gap:10}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div>
-            <div style={{fontSize:15,fontWeight:900,color:'#18181B'}}>📋 シフト貼り付けグリッド</div>
+            <div style={{fontSize:15,fontWeight:900,color:'#18181B',display:'flex',alignItems:'center',gap:6}}><ClipboardPaste size={16} strokeWidth={2}/>シフト貼り付けグリッド</div>
             <div style={{fontSize:11,color:'#52525B',marginTop:2}}>{year}年{month+1}月 ／ Ctrl+Vで読み込み・セルをクリックでシフト変更</div>
           </div>
           <button onClick={onClose} style={{background:'none',border:'none',color:'#52525B',cursor:'pointer',fontSize:20,lineHeight:1}}><X size={18} strokeWidth={2}/></button>
@@ -2164,7 +2164,9 @@ function ExcelPasteModal({ onClose, onApply, staffList, year, month, customShift
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
           <button onClick={handleClickPaste} disabled={pasting}
             style={{background:'#6366F1',color:'#fff',border:'none',borderRadius:9,padding:'8px 14px',cursor:'pointer',fontSize:13,fontWeight:800,whiteSpace:'nowrap'}}>
-            {pasting ? '⏳ 読み込み中…' : '📋 クリップボードから読み込み'}
+            {pasting
+              ? <span style={{display:'inline-flex',alignItems:'center',gap:6}}><Loader2 size={14} strokeWidth={2} style={{animation:'spin 1s linear infinite'}}/>読み込み中…</span>
+              : <span style={{display:'inline-flex',alignItems:'center',gap:6}}><ClipboardPaste size={14} strokeWidth={2}/>クリップボードから読み込み</span>}
           </button>
           <span style={{fontSize:11,color:'#71717A'}}>または画面にCtrl+V</span>
           {(lastPasteType === 'names' || lastPasteType === 'shifts') && (
@@ -2275,7 +2277,7 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 30px 80px #000"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>📅 休み日数 一括設定</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}><div><div style={{fontSize:15,fontWeight:900,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><CalendarOff size={16} strokeWidth={2}/>休み日数 一括設定</div><div style={{fontSize:11,color:"#52525B",marginTop:2}}>{year}年{month+1}月</div></div><button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button></div>
         <div style={{fontSize:11,color:"#3F3F46",marginBottom:20,marginTop:8,background:"#F4F4F5",borderRadius:7,padding:"8px 12px",border:"1px solid #27272A"}}>💡 施設全体の休み日数を設定します。全部署・全スタッフ（{totalStaff}名）に一括適用されます。</div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:28,background:"#F4F4F5",borderRadius:12,padding:"18px 20px",border:"1px solid #D4D4D8"}}>
           <button onClick={()=>setVal(days-1)} style={{background:"#E4E4E7",border:"1px solid #1a4040",borderRadius:8,color:"#1a4040",cursor:"pointer",width:40,height:40,fontSize:22,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
@@ -2538,7 +2540,7 @@ function EventEditModal({ day, month, year, currentText, onSave, onClose }) {
   return (
     <div style={{position:"fixed",inset:0,background:"#000000bb",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#fff",border:"1px solid #fde68a",borderRadius:14,padding:24,width:"100%",maxWidth:360,boxShadow:"0 20px 60px #0004"}}>
-        <div style={{fontSize:14,fontWeight:900,color:"#92400e",marginBottom:14}}>📅 {month+1}月{day}日（{wd}）の行事</div>
+        <div style={{fontSize:14,fontWeight:900,color:"#92400e",marginBottom:14,display:"flex",alignItems:"center",gap:6}}><Calendar size={16} strokeWidth={2}/>{month+1}月{day}日（{wd}）の行事</div>
         <input autoFocus value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")onSave(text.trim());if(e.key==="Escape")onClose();}} placeholder="例：運営会議、研修" maxLength={12} style={{width:"100%",fontSize:14,padding:"9px 12px",border:"1px solid #fde68a",borderRadius:8,outline:"none",boxSizing:"border-box",marginBottom:12}} />
         <div style={{display:"flex",gap:8}}>
           <button onClick={()=>onSave(text.trim())} style={{flex:1,background:"linear-gradient(135deg,#f59e0b,#d97706)",color:"#fff",border:"none",borderRadius:8,padding:"10px",cursor:"pointer",fontSize:13,fontWeight:800}}>保存</button>
@@ -2732,7 +2734,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#fff",borderRadius:16,padding:24,width:"100%",maxWidth:420,maxHeight:"85vh",overflow:"auto",boxShadow:"0 8px 40px rgba(0,0,0,0.25)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-          <div style={{fontWeight:800,fontSize:16,color:"#18181B"}}>🕐 変更履歴から復元</div>
+          <div style={{fontWeight:800,fontSize:16,color:"#18181B",display:"flex",alignItems:"center",gap:6}}><History size={18} strokeWidth={2}/>変更履歴から復元</div>
           <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#888",lineHeight:1}}><X size={18} strokeWidth={2}/></button>
         </div>
         <div style={{fontSize:12,color:"#71717A",marginBottom:16,fontWeight:600}}>{deptLabel} — {year}年{month+1}月シフト</div>
@@ -4068,7 +4070,7 @@ function SharedShiftView({ token }) {
     };
   }, [row]);
 
-  if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14}}>📋 シフト表を読み込み中...</div>;
+  if (loading) return <div style={{padding:48,textAlign:'center',color:'#52525B',fontSize:14,display:'flex',alignItems:'center',justifyContent:'center',gap:6}}><ClipboardList size={14} strokeWidth={2}/>シフト表を読み込み中...</div>;
   if (notFound || !row) return (
     <div style={{padding:48,textAlign:'center'}}>
       <div style={{fontSize:32,marginBottom:12}}>🔗</div>
