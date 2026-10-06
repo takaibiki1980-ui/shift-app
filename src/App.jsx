@@ -1320,7 +1320,7 @@ function SaveNameDialog({ onNo, onSubmitName, onClose }) {
             <div style={titleSt}>名前を入れますか？</div>
             <div style={bodySt}>名前を入れて保存すると、あとで探しやすいように「ピン留め」として残せます。そのまま保存もできます。</div>
             <div style={rowSt}>
-              <button onClick={onNo} style={ghost}>いいえ（このまま保存）</button>
+              <button onClick={onNo} style={ghost}>このまま保存</button>
               <button onClick={()=>setStep(2)} style={primary}>名前を入れる</button>
             </div>
           </>
