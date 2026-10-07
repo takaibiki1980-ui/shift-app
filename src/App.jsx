@@ -13,6 +13,7 @@ import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { countRestAndPaid } from './lib/summaryCounts.js';
+import { monthlyWorkCapAndRest } from './lib/weeklyDays.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -918,7 +919,7 @@ const deriveYears = (dateStr, refDate) => {
   return Math.max(0, (refDate - d) / (365.25 * 24 * 60 * 60 * 1000));
 };
 
-function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCountByDay, kiboLimit }) {
+function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCountByDay, kiboLimit, prevCellByDay = {}, prevAvailable = false }) {
   const isNew = !data;
   const mk = monthKey(year, month);
   const deptRoles = getDeptRoles(depts, deptId);
@@ -946,6 +947,12 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   // 入力経路は 職員ポータル(①) と シフト表の右クリック(②) に一本化。
   const kyukoThisMonth = form.kyukoDaysByMonth?.[mk] ?? form.kyukoDays ?? 8;
   const setKyukoThisMonth = (v) => set("kyukoDaysByMonth",{...(form.kyukoDaysByMonth||{}),[mk]:+v});
+  // ── 週◯日出勤（WEEKLY_DAYS_ENABLED 時のみ）──
+  const weeklyWorkDays = form.weeklyWorkDays ?? null; // null=未設定
+  const weeklyActive = WEEKLY_DAYS_ENABLED && weeklyWorkDays != null;
+  const weeklyAutoRest = weeklyActive
+    ? monthlyWorkCapAndRest({ weeklyCap: weeklyWorkDays, year, month, prevCellByDay }).restTarget
+    : null;
   const deptObj = depts.find(d => d.id === deptId);
   const [kp, setKp] = useState(null);
   return (
@@ -959,9 +966,21 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
         <div style={{marginBottom:12}}><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>役職</div><select value={form.role} onChange={e=>set("role",e.target.value)} style={INPUT_STYLE}>{(deptRoles.includes(form.role)?deptRoles:[...deptRoles,form.role]).map(r=><option key={r}>{r}</option>)}</select></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
           <div><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>目標勤務日数</div><div onClick={e=>setKp({value:form.targetWork,min:1,max:31,unit:"日",onConfirm:v=>set("targetWork",v===""?1:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.targetWork}</div></div>
-          <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#6366F1",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>
+          {weeklyActive
+            ? <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div title="週◯日出勤から自動計算（手入力不可）" style={{...INPUT_STYLE,color:"#6366F1",userSelect:"none",fontWeight:800,textAlign:"center",background:"#EEF2FF",cursor:"not-allowed"}}>{weeklyAutoRest}</div>{!prevAvailable&&<div style={{fontSize:9,color:"#9CA3AF",marginTop:2}}>前月データなし（前月側を0として計算）</div>}</div>
+            : <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#6366F1",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>}
           <div><div style={{color:"#9b4db5",fontSize:11,marginBottom:4,fontWeight:700}}>有給残日数（0.5刻み可）</div><div onClick={e=>setKp({mode:"decimal",value:String(form.paidLeaveBalance??0),unit:"日",onConfirm:v=>set("paidLeaveBalance",v===""?0:Number(v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:(form.paidLeaveBalance??0)<0?"#dc2626":"#9b4db5",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{form.paidLeaveBalance??0}</div></div>
         </div>
+        {WEEKLY_DAYS_ENABLED&&(
+          <div style={{marginBottom:14}}>
+            <div style={{color:"#0d9488",fontSize:11,marginBottom:4,fontWeight:700}}>週◯日出勤（月〜日で数える・解除するまで有効）</div>
+            <select value={weeklyWorkDays==null?"":String(weeklyWorkDays)} onChange={e=>set("weeklyWorkDays", e.target.value===""?null:+e.target.value)} style={{...INPUT_STYLE,cursor:"pointer",fontWeight:700}}>
+              <option value="">設定しない</option>
+              {[1,2,3,4,5,6].map(n=><option key={n} value={String(n)}>週{n}日まで</option>)}
+            </select>
+            <div style={{fontSize:9,color:"#9CA3AF",marginTop:2}}>設定すると「今月の休み日数」は自動計算になります（手入力不可）。</div>
+          </div>
+        )}
         {deptObj?.shiftTypes?.includes("夜勤")&&(
           <div style={{marginBottom:14}}>
             <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:10}}><input type="checkbox" checked={!!form.nightOk} onChange={e=>set("nightOk",e.target.checked)} style={{width:15,height:15,accentColor:"#6366F1"}}/><span style={{color:"#71717A",fontSize:13}}>夜勤対応可</span></label>
@@ -6148,7 +6167,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             <button onClick={()=>setSwapPicker(null)} style={{marginTop:14,width:"100%",background:"#fff",border:"1px solid #D4D4D8",borderRadius:8,padding:"9px 0",cursor:"pointer",fontSize:13,color:"#52525B"}}>キャンセル</button>
           </div>
         </div>);})()}
-      {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3}/>;})()}
+      {staffModal!==null&&(()=>{const mk=monthKey(year,month);const editingId=staffModal.data?.id;const kiboCountByDay={};staffList.filter(s=>s.dept===activeDeptId&&s.id!==editingId).forEach(s=>{(s.kiboByMonth?.[mk]||[]).forEach(d=>{kiboCountByDay[d]=(kiboCountByDay[d]||0)+1;});});
+        // 週◯日の休み目標計算用: 前月シフト（生成と同じ前月データ）を editing スタッフ分だけ渡す。
+        const pY=month===0?year-1:year, pM=month===0?11:month-1;
+        const prevRaw=(allDBDataRef.current||{})[`shifts_${pY}_${pM+1}_${activeDeptId}`];
+        const prevCellByDay=(prevRaw&&editingId)?(prevRaw[editingId]||{}):{};
+        const prevAvailable=!!(prevRaw&&editingId&&prevRaw[editingId]);
+        return<StaffModal data={staffModal.data} deptId={activeDeptId} depts={depts} year={year} month={month} onSave={saveStaff} onClose={()=>setStaffModal(null)} kiboCountByDay={kiboCountByDay} kiboLimit={dept?.kiboLimit||3} prevCellByDay={prevCellByDay} prevAvailable={prevAvailable}/>;})()}
       {deptSettingModal&&<DeptSettingModal dept={deptSettingModal.dept} isNew={deptSettingModal.isNew} year={year} month={month} onApplyMonthlyKyuko={applyDeptMonthlyKyuko} onSave={handleSaveDept} onDelete={handleDeleteDept} onConfirm={(message,onOk,okLabel)=>setConfirmDialog({message,onOk,okLabel})} onClose={()=>setDeptSettingModal(null)}/>}
       {clearModal&&<ClearModal deptLabel={dept.label} onClearDept={()=>{ if(isConfirmedRef.current){alert(`${dept?.label} は確定済みです。編集するには「編集」を押してください。`);setClearModal(false);return;}
         // オールクリア = 生成結果と「生成後の修正」だけ消す。生成前の希望勤務/希望休/有給は残す（同じ条件で生成し直せる）。
