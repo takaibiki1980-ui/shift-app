@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { weeklyWorkValue, getMonthWeeks, weeklyWorkBefore, monthlyWorkCapAndRest, countWeeklyOverages } from '../lib/weeklyDays.js';
+import { weeklyWorkValue, getMonthWeeks, weeklyWorkBefore, monthlyWorkCapAndRest, countWeeklyOverages, restTargetForStaff } from '../lib/weeklyDays.js';
 
 describe('weeklyWorkValue（1セルの週出勤寄与）', () => {
   test('通常勤務・有休・半日有給=1', () => {
@@ -97,6 +97,35 @@ describe('countWeeklyOverages', () => {
     const cells = { 1:'日勤',2:'日勤',3:'日勤',4:'日勤',5:'有/休',6:'日/休' }; // 4 + 0.5 + 0.5 = 5
     expect(countWeeklyOverages({ cellByDayByStaff:{s:cells}, year:Y, month:M, capByStaff:{s:4} }))
       .toEqual([{ staffId:'s', weekStart:1, worked:5, cap:4 }]);
+  });
+});
+
+describe('restTargetForStaff（休みの目標・画面と生成で共通）', () => {
+  test('週◯日ありは monthlyWorkCapAndRest の restTarget（2024-07 週4 → 12）', () => {
+    const staff = { weeklyWorkDays: 4, kyukoDaysByMonth: { '2024-7': 99 }, kyukoDays: 5 };
+    // 週◯日が優先され、kyukoDaysByMonth/kyukoDays は無視される
+    expect(restTargetForStaff({ staff, year: 2024, month: 6 })).toBe(12);
+  });
+  test('週◯日ありで月初週に前月の勤務がある（2025-01 水曜始まり 週5, 前月末=勤務2日）', () => {
+    const staff = { weeklyWorkDays: 5 };
+    const prevCellByDay = { 30: '日勤', 31: '日勤' }; // floor(min(5-2,5))=3 → 23出勤 → 休み8
+    expect(restTargetForStaff({ staff, year: 2025, month: 0, prevCellByDay })).toBe(8);
+  });
+  test('週◯日なし・その月の値あり → kyukoDaysByMonth[mk]', () => {
+    const staff = { kyukoDaysByMonth: { '2024-7': 10 }, kyukoDays: 8 };
+    expect(restTargetForStaff({ staff, year: 2024, month: 6 })).toBe(10);
+  });
+  test('週◯日なし・その月の値なし → kyukoDays', () => {
+    const staff = { kyukoDaysByMonth: { '2024-8': 10 }, kyukoDays: 9 };
+    expect(restTargetForStaff({ staff, year: 2024, month: 6 })).toBe(9); // 2024-7 は未登録
+  });
+  test('どちらもない → 8', () => {
+    expect(restTargetForStaff({ staff: {}, year: 2024, month: 6 })).toBe(8);
+    expect(restTargetForStaff({ staff: null, year: 2024, month: 6 })).toBe(8);
+  });
+  test('weeklyEnabled=false のときは週◯日を無視して従来計算', () => {
+    const staff = { weeklyWorkDays: 4, kyukoDaysByMonth: { '2024-7': 10 }, kyukoDays: 8 };
+    expect(restTargetForStaff({ staff, year: 2024, month: 6, weeklyEnabled: false })).toBe(10);
   });
 });
 

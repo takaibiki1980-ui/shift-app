@@ -13,7 +13,7 @@ import { applyCellFix } from './lib/cellFix.js';
 import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { countRestAndPaid } from './lib/summaryCounts.js';
-import { monthlyWorkCapAndRest } from './lib/weeklyDays.js';
+import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -84,6 +84,11 @@ const SUMMARY_COLUMNS_V2 = true;
 //    PR-1(このフラグ): 純粋ロジック(lib/weeklyDays.js)とテストのみ・まだどこからも参照しない。
 //    false で完全に従来動作。入力UIは PR-2、生成反映は PR-3、有効化は PR-4。
 const WEEKLY_DAYS_ENABLED = true;
+// ── スタッフ設定画面の簡素化（PR-1 このフラグ・画面のみ）。週◯日出勤ができたので、
+//    StaffModal から「目標勤務日数」「今月の休み日数」の入力欄をなくし、「今月の休み：◯日」を
+//    読むだけで表示する（スタッフ一覧の「目標X日」も消す）。保存データ（targetWork/kyukoDays/
+//    kyukoDaysByMonth）・生成・core.js には一切触れない。false で従来どおりの画面。有効化は PR-2。
+const STAFF_MODAL_SIMPLIFIED = false;
 // ── 部署独自の「前日の勤務→翌日の勤務」強制ルール（dept.transitionForces）。
 //    既存の夜勤→明け→休みセット/allowLateToEarly とは独立。PR-2(このフラグ): 設定UIのみ・保存のみ。
 //    生成反映(core.js 後処理)は PR-3。false で完全に従来動作（UI 非表示・dept の形も不変）。
@@ -966,6 +971,8 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
   const weeklyAutoRest = weeklyActive
     ? monthlyWorkCapAndRest({ weeklyCap: weeklyWorkDays, year, month, prevCellByDay }).restTarget
     : null;
+  // 「休みの目標」（画面・生成で共通の純粋ロジック）。簡素化モードの読み取り専用表示に使う。
+  const restTargetDisplay = restTargetForStaff({ staff: form, year, month, prevCellByDay, weeklyEnabled: WEEKLY_DAYS_ENABLED });
   const deptObj = depts.find(d => d.id === deptId);
   const [kp, setKp] = useState(null);
   return (
@@ -977,13 +984,28 @@ function StaffModal({ data, deptId, depts, year, month, onSave, onClose, kiboCou
         </div>
         <div style={{marginBottom:12}}><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>氏名</div><input type="text" value={form.name} onChange={e=>set("name",e.target.value)} style={INPUT_STYLE} placeholder="例：田中 花子"/></div>
         <div style={{marginBottom:12}}><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>役職</div><select value={form.role} onChange={e=>set("role",e.target.value)} style={INPUT_STYLE}>{(deptRoles.includes(form.role)?deptRoles:[...deptRoles,form.role]).map(r=><option key={r}>{r}</option>)}</select></div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-          <div><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>目標勤務日数</div><div onClick={e=>setKp({value:form.targetWork,min:1,max:31,unit:"日",onConfirm:v=>set("targetWork",v===""?1:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.targetWork}</div></div>
-          {weeklyActive
-            ? <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div title="週◯日出勤から自動計算（手入力不可）" style={{...INPUT_STYLE,color:"#6366F1",userSelect:"none",fontWeight:800,textAlign:"center",background:"#EEF2FF",cursor:"not-allowed"}}>{weeklyAutoRest}</div>{!prevAvailable&&<div style={{fontSize:9,color:"#9CA3AF",marginTop:2}}>前月データなし（前月側を0として計算）</div>}</div>
-            : <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#6366F1",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>}
-          <div><div style={{color:"#9b4db5",fontSize:11,marginBottom:4,fontWeight:700}}>有給残日数（0.5刻み可）</div><div onClick={e=>setKp({mode:"decimal",value:String(form.paidLeaveBalance??0),unit:"日",onConfirm:v=>set("paidLeaveBalance",v===""?0:Number(v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:(form.paidLeaveBalance??0)<0?"#dc2626":"#9b4db5",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{form.paidLeaveBalance??0}</div></div>
-        </div>
+        {STAFF_MODAL_SIMPLIFIED
+          ? (
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              {/* 簡素化モード: 入力欄なし。休みの目標は読み取り専用表示（生成に渡す値と同じ）。 */}
+              <div>
+                <div style={{color:"#6366F1",fontSize:12,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み</div>
+                <div style={{...INPUT_STYLE,color:"#6366F1",userSelect:"none",fontWeight:800,textAlign:"center",fontSize:16,background:"#EEF2FF"}}>{restTargetDisplay}日</div>
+                <div style={{fontSize:10,color:"#9CA3AF",marginTop:3}}>{weeklyActive?"（週◯日から自動）":"（休み設定で変更）"}</div>
+                {weeklyActive&&!prevAvailable&&<div style={{fontSize:9,color:"#9CA3AF",marginTop:1}}>前月データなし（前月側を0として計算）</div>}
+              </div>
+              <div><div style={{color:"#9b4db5",fontSize:12,marginBottom:4,fontWeight:700}}>有給残日数（0.5刻み可）</div><div onClick={e=>setKp({mode:"decimal",value:String(form.paidLeaveBalance??0),unit:"日",onConfirm:v=>set("paidLeaveBalance",v===""?0:Number(v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:(form.paidLeaveBalance??0)<0?"#dc2626":"#9b4db5",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{form.paidLeaveBalance??0}</div></div>
+            </div>
+          )
+          : (
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+              <div><div style={{color:"#52525B",fontSize:11,marginBottom:4}}>目標勤務日数</div><div onClick={e=>setKp({value:form.targetWork,min:1,max:31,unit:"日",onConfirm:v=>set("targetWork",v===""?1:Math.max(1,+v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,cursor:"pointer",userSelect:"none",fontWeight:700,textAlign:"center"}}>{form.targetWork}</div></div>
+              {weeklyActive
+                ? <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div title="週◯日出勤から自動計算（手入力不可）" style={{...INPUT_STYLE,color:"#6366F1",userSelect:"none",fontWeight:800,textAlign:"center",background:"#EEF2FF",cursor:"not-allowed"}}>{weeklyAutoRest}</div>{!prevAvailable&&<div style={{fontSize:9,color:"#9CA3AF",marginTop:2}}>前月データなし（前月側を0として計算）</div>}</div>
+                : <div><div style={{color:"#6366F1",fontSize:11,marginBottom:4,fontWeight:700}}>{year}年{month+1}月の休み日数</div><div onClick={e=>setKp({value:kyukoThisMonth,min:0,max:20,unit:"日",onConfirm:v=>setKyukoThisMonth(v===""?0:+v),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:"#6366F1",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{kyukoThisMonth}</div></div>}
+              <div><div style={{color:"#9b4db5",fontSize:11,marginBottom:4,fontWeight:700}}>有給残日数（0.5刻み可）</div><div onClick={e=>setKp({mode:"decimal",value:String(form.paidLeaveBalance??0),unit:"日",onConfirm:v=>set("paidLeaveBalance",v===""?0:Number(v)),anchorRect:e.currentTarget.getBoundingClientRect()})} style={{...INPUT_STYLE,color:(form.paidLeaveBalance??0)<0?"#dc2626":"#9b4db5",cursor:"pointer",userSelect:"none",fontWeight:800,textAlign:"center"}}>{form.paidLeaveBalance??0}</div></div>
+            </div>
+          )}
         {WEEKLY_DAYS_ENABLED&&(
           <div style={{marginBottom:14}}>
             <div style={{color:"#0d9488",fontSize:11,marginBottom:4,fontWeight:700}}>週◯日出勤（月〜日で数える・解除するまで有効）</div>
@@ -3122,14 +3144,22 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                 {rightCols.map(col=>{
                   const cnt=typeCnts[col]??0;
                   let color,val;
-                  if(col==="計"){val=cnt;color=cnt<(s.targetWork-2)?"#F59E0B":cnt>(s.targetWork+2)?"#EF4444":"#6366F1";}
+                  if(col==="計"){
+                    val=cnt;
+                    if(STAFF_MODAL_SIMPLIFIED){
+                      // 簡素化モード: 目標勤務日数の代わりに「月の日数 − 休みの目標」と比較（±2幅は従来どおり）。
+                      const rt=restTargetForStaff({staff:s,year,month,prevCellByDay:prevShiftsByStaff?.[s.id]||{},weeklyEnabled:WEEKLY_DAYS_ENABLED});
+                      const wtgt=days-rt;
+                      color=cnt<(wtgt-2)?"#F59E0B":cnt>(wtgt+2)?"#EF4444":"#6366F1";
+                    }else{
+                      color=cnt<(s.targetWork-2)?"#F59E0B":cnt>(s.targetWork+2)?"#EF4444":"#6366F1";
+                    }
+                  }
                   else if(col==="夜勤"){val=cnt||"－";color=nightOver?"#EF4444":"#334155";}
                   else if(col==="明け"){val=cnt||"－";color="#475569";}
                   else if(col==="休"){
                     val=SUMMARY_COLUMNS_V2?fmtCount(cnt):cnt;
-                    const kyukoTarget=(WEEKLY_DAYS_ENABLED&&s.weeklyWorkDays!=null)
-                      ? monthlyWorkCapAndRest({weeklyCap:s.weeklyWorkDays,year,month,prevCellByDay:prevShiftsByStaff?.[s.id]||{}}).restTarget
-                      : (s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8);
+                    const kyukoTarget=restTargetForStaff({staff:s,year,month,prevCellByDay:prevShiftsByStaff?.[s.id]||{},weeklyEnabled:WEEKLY_DAYS_ENABLED});
                     const kyukoDiff=cnt-kyukoTarget;
                     color=kyukoDiff>0?"#b91c1c":kyukoDiff<0?"#92400e":"#52525B";
                     const kyukoBg=kyukoDiff>0?"#fee2e2":kyukoDiff<0?"#fef9c3":undefined;
@@ -3196,7 +3226,7 @@ function StaffList({ locked, staffList, dept, year, month, staffCount, staffMax,
         <button onClick={onAdd} style={{background:"linear-gradient(135deg,#6366F1,#7C3AED)",color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontSize:13,fontWeight:800}}>＋ 追加</button>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
-        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},50%,78%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3F3F46",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span>{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}{s.paidLeaveBalance!=null&&<span style={{color:s.paidLeaveBalance<0?"#dc2626":"#9b4db5",fontWeight:s.paidLeaveBalance<0?800:400}}>有給残{s.paidLeaveBalance}日</span>}</div></div></div><div style={{display:"flex",gap:6,alignItems:"center"}}><div style={{display:"flex",flexDirection:"column",gap:2,marginRight:2}}><button onClick={()=>onReorder&&onReorder(s.id,'up')} disabled={i===0} title="上へ" style={{background:i===0?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===0?"#D4D4D8":"#6B7280",cursor:i===0?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▲</button><button onClick={()=>onReorder&&onReorder(s.id,'down')} disabled={i===ds.length-1} title="下へ" style={{background:i===ds.length-1?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===ds.length-1?"#D4D4D8":"#6B7280",cursor:i===ds.length-1?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▼</button></div><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
+        {ds.map((s,i)=>{const mk=monthKey(year,month),kibo=(s.kiboByMonth?.[mk]||[]).length,yukyu=(s.yukyuByMonth?.[mk]||[]).length;return(<div key={s.id} style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:10,padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:36,height:36,borderRadius:"50%",flexShrink:0,background:`hsl(${(i*53+180)%360},50%,78%)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#3F3F46",fontWeight:800}}>{s.name.charAt(0)}</div><div><div style={{fontWeight:800,fontSize:13,color:"#18181B"}}>{s.name}</div><div style={{fontSize:10,color:"#3F3F46",display:"flex",gap:8,flexWrap:"wrap"}}><span>{s.role}</span>{STAFF_MODAL_SIMPLIFIED?<span>休み{restTargetForStaff({staff:s,year,month,weeklyEnabled:WEEKLY_DAYS_ENABLED})}日</span>:<><span>目標{s.targetWork}日</span><span>休み{s.kyukoDaysByMonth?.[monthKey(year,month)]??s.kyukoDays??8}日</span></>}{s.nightOk&&<span style={{color:"#c45c35"}}>🌙夜勤×{s.nightMax}回</span>}{kibo>0&&<span style={{color:"#dc2626"}}>希望休{kibo}日</span>}{yukyu>0&&<span style={{color:"#9b4db5"}}>有休{yukyu}日</span>}{s.paidLeaveBalance!=null&&<span style={{color:s.paidLeaveBalance<0?"#dc2626":"#9b4db5",fontWeight:s.paidLeaveBalance<0?800:400}}>有給残{s.paidLeaveBalance}日</span>}</div></div></div><div style={{display:"flex",gap:6,alignItems:"center"}}><div style={{display:"flex",flexDirection:"column",gap:2,marginRight:2}}><button onClick={()=>onReorder&&onReorder(s.id,'up')} disabled={i===0} title="上へ" style={{background:i===0?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===0?"#D4D4D8":"#6B7280",cursor:i===0?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▲</button><button onClick={()=>onReorder&&onReorder(s.id,'down')} disabled={i===ds.length-1} title="下へ" style={{background:i===ds.length-1?"#F4F4F5":"#FFFFFF",border:"1px solid #E4E4E7",borderRadius:5,color:i===ds.length-1?"#D4D4D8":"#6B7280",cursor:i===ds.length-1?"default":"pointer",fontSize:9,lineHeight:1,padding:"3px 6px"}}>▼</button></div><button onClick={()=>onEdit(s)} style={ICON_BTN("#6366F1")}>✏️</button><button onClick={()=>onDelete(s.id)} style={ICON_BTN("#ef4444")}>🗑</button></div></div>);})}
         {ds.length===0&&<div style={{background:"#FAFAFA",border:"1px dashed #27272A",borderRadius:10,padding:32,textAlign:"center",color:"#A1A1AA",fontSize:13}}>スタッフが登録されていません</div>}
       </div>
     </div>
