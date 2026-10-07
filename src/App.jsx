@@ -78,6 +78,11 @@ const SAVE_NAME_PROMPT_ENABLED = true;
 //    PR-1(このフラグ): 集計の純粋ロジック(lib/summaryCounts.js)とテストのみ・まだどこからも参照しない。
 //    false で完全に従来動作（列も数え方も現状のまま）。配線は PR-2、有効化は PR-3。
 const SUMMARY_COLUMNS_V2 = true;
+// ── スタッフ設定「週◯日出勤」（月曜〜日曜で数える）。設定者は週の出勤を◯日までにし、
+//    その月の休み目標を週日数から自動算出。未設定者は従来どおり kyukoDays を使う。
+//    PR-1(このフラグ): 純粋ロジック(lib/weeklyDays.js)とテストのみ・まだどこからも参照しない。
+//    false で完全に従来動作。入力UIは PR-2、生成反映は PR-3、有効化は PR-4。
+const WEEKLY_DAYS_ENABLED = false;
 // ── 部署独自の「前日の勤務→翌日の勤務」強制ルール（dept.transitionForces）。
 //    既存の夜勤→明け→休みセット/allowLateToEarly とは独立。PR-2(このフラグ): 設定UIのみ・保存のみ。
 //    生成反映(core.js 後処理)は PR-3。false で完全に従来動作（UI 非表示・dept の形も不変）。
