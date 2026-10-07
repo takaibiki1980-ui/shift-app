@@ -561,7 +561,7 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
   const days = getDays(year, month);
   const mk = monthKey(year, month);
   const rows = [];
-  const header = ["部署","氏名","役職", ...Array.from({length:days},(_,i)=>i+1+"日"), "勤務計","夜勤","休日", ...(SUMMARY_COLUMNS_V2?["有給"]:[])];
+  const header = ["部署","氏名","役職", ...Array.from({length:days},(_,i)=>i+1+"日"), "勤務計","夜勤","休日"];
   rows.push(header.join(","));
   depts.filter(d=>selectedDepts.includes(d.id)).forEach(dept => {
     const shifts = allShifts[dept.id] || {};
@@ -572,9 +572,9 @@ function buildCSV(depts, staffList, allShifts, year, month, selectedDepts) {
       const cells = [dept.label, s.name, s.role];
       let workCnt=0, nightCnt=0, restCnt=0;
       for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const out=dispV||(yukyudays.includes(d)?"有休":kibodays.includes(d)?"希望休":""); cells.push(out); workCnt+=workDayValue(v); if(v==="夜勤") nightCnt++; if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休") restCnt+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1; }
+      // CSV は「休日」のみ countRestAndPaid に寄せる（有列は画面のみ・列数と並びは OFF と同一）。
       const _sum = SUMMARY_COLUMNS_V2 ? summaryCountsFor({shiftsForDept:shifts, staff:s, mk, days, deptRest}) : null;
       cells.push(workCnt, nightCnt, SUMMARY_COLUMNS_V2?fmtCount(_sum.rest):restCnt);
-      if(SUMMARY_COLUMNS_V2) cells.push(fmtCount(_sum.paid));
       rows.push(cells.map(c=>`"${c}"`).join(","));
     });
     rows.push("");
