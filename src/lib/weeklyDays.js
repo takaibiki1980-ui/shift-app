@@ -143,6 +143,29 @@ export function monthlyWorkCapAndRest({ weeklyCap, year, month, prevCellByDay = 
 }
 
 /**
+ * スタッフのその月の「休みの目標」日数（画面表示と生成で同じ値を使うための共通ロジック）。
+ *   週◯日が設定されていれば monthlyWorkCapAndRest の自動値（restTarget）、
+ *   そうでなければ kyukoDaysByMonth[mk] ?? kyukoDays ?? 8（＝生成に渡している値と同じ）。
+ *   mk は monthKey と同じ `${year}-${month+1}`。
+ * @param {Object} a
+ * @param {Object} a.staff スタッフ（weeklyWorkDays / kyukoDaysByMonth / kyukoDays を参照）
+ * @param {number} a.year
+ * @param {number} a.month 0始まり
+ * @param {Object<number,string>} [a.prevCellByDay] 前月 {日:値}（週◯日の月初週の控除に使用）
+ * @param {Set<string>} [a.restLike]
+ * @param {boolean} [a.weeklyEnabled=true] 週◯日機能が有効か（false のとき週◯日は無視して従来計算）
+ * @returns {number}
+ */
+export function restTargetForStaff({ staff, year, month, prevCellByDay = {}, restLike, weeklyEnabled = true }) {
+  const cap = staff == null ? null : staff.weeklyWorkDays;
+  if (weeklyEnabled && cap != null) {
+    return monthlyWorkCapAndRest({ weeklyCap: cap, year, month, prevCellByDay, restLike }).restTarget;
+  }
+  const mk = `${year}-${month + 1}`;
+  return staff?.kyukoDaysByMonth?.[mk] ?? staff?.kyukoDays ?? 8;
+}
+
+/**
  * 生成結果の中で「週の出勤上限」を超えている箇所を数える（純粋・生成後の確認用）。
  * @param {Object} a
  * @param {Object<string,Object<number,string>>} a.cellByDayByStaff {staffId: {日:値}}（当月）
