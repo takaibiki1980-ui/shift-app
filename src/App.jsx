@@ -88,7 +88,7 @@ const WEEKLY_DAYS_ENABLED = true;
 //    StaffModal から「目標勤務日数」「今月の休み日数」の入力欄をなくし、「今月の休み：◯日」を
 //    読むだけで表示する（スタッフ一覧の「目標X日」も消す）。保存データ（targetWork/kyukoDays/
 //    kyukoDaysByMonth）・生成・core.js には一切触れない。false で従来どおりの画面。有効化は PR-2。
-const STAFF_MODAL_SIMPLIFIED = false;
+const STAFF_MODAL_SIMPLIFIED = true;
 // ── 部署独自の「前日の勤務→翌日の勤務」強制ルール（dept.transitionForces）。
 //    既存の夜勤→明け→休みセット/allowLateToEarly とは独立。PR-2(このフラグ): 設定UIのみ・保存のみ。
 //    生成反映(core.js 後処理)は PR-3。false で完全に従来動作（UI 非表示・dept の形も不変）。
