@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { weeklyWorkValue, getMonthWeeks, weeklyWorkBefore, monthlyWorkCapAndRest } from '../lib/weeklyDays.js';
+import { weeklyWorkValue, getMonthWeeks, weeklyWorkBefore, monthlyWorkCapAndRest, countWeeklyOverages } from '../lib/weeklyDays.js';
 
 describe('weeklyWorkValue（1セルの週出勤寄与）', () => {
   test('通常勤務・有休・半日有給=1', () => {
@@ -69,6 +69,34 @@ describe('monthlyWorkCapAndRest', () => {
   test('休み目標 = 月の日数 − 上限（恒等）', () => {
     const r = monthlyWorkCapAndRest({ weeklyCap: 3, year: 2025, month: 1 });
     expect(r.restTarget).toBe(28 - r.workCap);
+  });
+});
+
+describe('countWeeklyOverages', () => {
+  const Y = 2024, M = 6; // 7月・月曜始まり
+  test('超過なし（週4で週内4日勤務）→ 空', () => {
+    const cells = { 1:'日勤',2:'日勤',3:'日勤',4:'日勤',5:'休み',6:'休み',7:'休み' };
+    expect(countWeeklyOverages({ cellByDayByStaff:{s:cells}, year:Y, month:M, capByStaff:{s:4} })).toEqual([]);
+  });
+  test('超過あり（週内5日勤務・週4）→ 1件', () => {
+    const cells = { 1:'日勤',2:'日勤',3:'日勤',4:'日勤',5:'日勤' };
+    expect(countWeeklyOverages({ cellByDayByStaff:{s:cells}, year:Y, month:M, capByStaff:{s:4} }))
+      .toEqual([{ staffId:'s', weekStart:1, worked:5, cap:4 }]);
+  });
+  test('月初の月またぎで前月分を足すと超える（2024-09 日曜始まり・初週は1日＋前月6日）', () => {
+    const cells = { 1:'日勤' };                         // 当月分 1
+    const prev = { 28:'日勤', 29:'日勤', 30:'日勤', 31:'有休' }; // 前月分 4（有休=1）
+    const r = countWeeklyOverages({ cellByDayByStaff:{s:cells}, prevByStaff:{s:prev}, year:2024, month:8, capByStaff:{s:4} });
+    expect(r).toEqual([{ staffId:'s', weekStart:1, worked:5, cap:4 }]); // 1+4=5>4
+  });
+  test('未設定(cap=null)の人は数えない', () => {
+    const cells = { 1:'日勤',2:'日勤',3:'日勤',4:'日勤',5:'日勤' };
+    expect(countWeeklyOverages({ cellByDayByStaff:{s:cells}, year:Y, month:M, capByStaff:{s:null} })).toEqual([]);
+  });
+  test('有/休・半日休は0.5で数える', () => {
+    const cells = { 1:'日勤',2:'日勤',3:'日勤',4:'日勤',5:'有/休',6:'日/休' }; // 4 + 0.5 + 0.5 = 5
+    expect(countWeeklyOverages({ cellByDayByStaff:{s:cells}, year:Y, month:M, capByStaff:{s:4} }))
+      .toEqual([{ staffId:'s', weekStart:1, worked:5, cap:4 }]);
   });
 });
 

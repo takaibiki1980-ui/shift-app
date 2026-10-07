@@ -424,6 +424,19 @@ function summaryCountsFor({ shiftsForDept, staff, mk, days, deptRest }) {
 }
 // 0.5刻みの表示を4か所で統一（整数は "4"、半端は "4.5"）。
 const fmtCount = (n) => String(Math.round(n * 10) / 10);
+// 週◯日出勤: 生成に渡す直前にスタッフのコピーを作り、週◯日を設定した人だけ当月の公休目標を
+//   週日数から自動計算した値に差し替え＋_weeklyCap を付ける（保存データは書き換えない）。
+//   WEEKLY_DAYS_ENABLED OFF・未設定の人は素通し（何も付けない）。
+function applyWeeklyCapToStaff(staffList, year, month, prevTailByStaff) {
+  if (!WEEKLY_DAYS_ENABLED) return staffList;
+  const mk = monthKey(year, month);
+  return (staffList || []).map(s => {
+    const cap = s?.weeklyWorkDays;
+    if (cap == null) return s;
+    const { restTarget } = monthlyWorkCapAndRest({ weeklyCap: cap, year, month, prevCellByDay: prevTailByStaff?.[s.id] || {} });
+    return { ...s, _weeklyCap: cap, kyukoDaysByMonth: { ...(s.kyukoDaysByMonth || {}), [mk]: restTarget } };
+  });
+}
 function getShiftDef(key, customDefs, dept) {
   if (SHIFTS[key]) return SHIFTS[key];
   const cd = (customDefs || []).find(d => d.key === key);
@@ -1664,12 +1677,12 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
       const pY = mIdx === 0 ? yIdx - 1 : yIdx, pM = mIdx === 0 ? 11 : mIdx - 1;
       const prevRaw = allDBData[`shifts_${pY}_${pM + 1}_${deptId}`];
       const prevTail = {};
-      if (prevRaw) { const pd = getDays(pY, pM); const ts = Math.max(1, pd - 4); for (const [sid, dm] of Object.entries(prevRaw)) { const t = {}; for (let d = ts; d <= pd; d++) { const v = dm[String(d)]; if (v) t[d] = v; } if (Object.keys(t).length) prevTail[sid] = t; } }
+      if (prevRaw) { const pd = getDays(pY, pM); const ts = Math.max(1, pd - 5); for (const [sid, dm] of Object.entries(prevRaw)) { const t = {}; for (let d = ts; d <= pd; d++) { const v = dm[String(d)]; if (v) t[d] = v; } if (Object.keys(t).length) prevTail[sid] = t; } } // 末尾6日分（週◯日の月またぎ用。consecWork は5日のまま遡る）
       // Step4: bestOfN 5回（UIに制御を返しながら）
       const runs = [];
       for (let i = 0; i < 5; i++) {
         await new Promise(r => setTimeout(r, 20));
-        const { shifts } = bestOfN(btStaff, dept, yIdx, mIdx, {}, trend, 30, prevTail);
+        const { shifts } = bestOfN(applyWeeklyCapToStaff(btStaff, yIdx, mIdx, prevTail), dept, yIdx, mIdx, {}, trend, 30, prevTail);
         runs.push(shifts);
         setProgress(i + 1);
       }
@@ -1699,7 +1712,7 @@ function BacktestView({ staffList, depts, allDBData, exceptionMonths, activeDept
       const cleanRuns = [];
       for (let i = 0; i < 5; i++) {
         await new Promise(r => setTimeout(r, 20));
-        const { shifts } = bestOfN(cleanStaff, dept, yIdx, mIdx, {}, trend, 30, prevTail);
+        const { shifts } = bestOfN(applyWeeklyCapToStaff(cleanStaff, yIdx, mIdx, prevTail), dept, yIdx, mIdx, {}, trend, 30, prevTail);
         cleanRuns.push(shifts);
         setProgress(5 + i + 1);
       }
@@ -2848,7 +2861,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
   );
 }
 
-function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed, warnings }) {
+function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed, warnings, prevShiftsByStaff = {} }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
@@ -3114,7 +3127,9 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   else if(col==="明け"){val=cnt||"－";color="#475569";}
                   else if(col==="休"){
                     val=SUMMARY_COLUMNS_V2?fmtCount(cnt):cnt;
-                    const kyukoTarget=s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8;
+                    const kyukoTarget=(WEEKLY_DAYS_ENABLED&&s.weeklyWorkDays!=null)
+                      ? monthlyWorkCapAndRest({weeklyCap:s.weeklyWorkDays,year,month,prevCellByDay:prevShiftsByStaff?.[s.id]||{}}).restTarget
+                      : (s.kyukoDaysByMonth?.[mk]??s.kyukoDays??8);
                     const kyukoDiff=cnt-kyukoTarget;
                     color=kyukoDiff>0?"#b91c1c":kyukoDiff<0?"#92400e":"#52525B";
                     const kyukoBg=kyukoDiff>0?"#fee2e2":kyukoDiff<0?"#fef9c3":undefined;
@@ -5434,7 +5449,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const builtPrevTail = {};
     if (prevMonthRaw) {
       const prevDays = getDays(prevMonthYear, prevMonthIdx);
-      const tailStart = Math.max(1, prevDays - 4); // 末尾5日分
+      const tailStart = Math.max(1, prevDays - 5); // 末尾6日分（週◯日の月またぎ用。consecWork は5日のまま遡る）
       let staffCount = 0, dayCount = 0;
       for (const [staffId, dayShifts] of Object.entries(prevMonthRaw)) {
         const tail = {};
@@ -5451,7 +5466,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // 自動生成はundo/redo対象外: 履歴をリセット（redoも無効化）。
     undoStackRef.current[hkey(targetDept.id, year, month)] = [];
     redoStackRef.current[hkey(targetDept.id, year, month)] = [];
-    const _genResult = bestOfN(cs, targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
+    const _genResult = bestOfN(applyWeeklyCapToStaff(cs, year, month, builtPrevTail), targetDept, year, month, genSnapshot, ct, 30, builtPrevTail);
     const {shifts:result, warnings, timelineWarnings, score, diagnosticReport} = _genResult;
     lastAutoGenRef.current[targetDept.id] = result;
     return { result, warnings, timelineWarnings, score, genSnapshot, diagnosticReport };
@@ -6146,7 +6161,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
             </div>
           </div>}
-          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null}/></ZoomWrapper>
+          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null} prevShiftsByStaff={WEEKLY_DAYS_ENABLED?(allDBDataRef.current?.[`shifts_${month===0?year-1:year}_${month===0?12:month}_${activeDeptId}`]||{}):{}}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} staffCount={staffList.length} staffMax={planLimit.staff} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>{ if(staffList.length>=planLimit.staff){alert(`${planLabelJa}プランではスタッフは${planLimit.staff}名までです。`);return;} setStaffModal({data:null}); }} onReorder={moveStaff}/>}

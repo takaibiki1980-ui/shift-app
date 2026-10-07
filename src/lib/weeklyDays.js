@@ -118,3 +118,32 @@ export function monthlyWorkCapAndRest({ weeklyCap, year, month, prevCellByDay = 
   }
   return { workCap: total, restTarget: daysInMonth(year, month) - total };
 }
+
+/**
+ * 生成結果の中で「週の出勤上限」を超えている箇所を数える（純粋・生成後の確認用）。
+ * @param {Object} a
+ * @param {Object<string,Object<number,string>>} a.cellByDayByStaff {staffId: {日:値}}（当月）
+ * @param {Object<string,Object<number,string>>} [a.prevByStaff] {staffId: {日:値}}（前月・月初の週用）
+ * @param {number} a.year
+ * @param {number} a.month 0始まり
+ * @param {Object<string,number|null>} a.capByStaff {staffId: 週上限}（null/未設定は対象外）
+ * @param {Set<string>} [a.restLike]
+ * @returns {Array<{staffId:string, weekStart:number, worked:number, cap:number}>}
+ *   weekStart = その週の当月側の最初の日番号
+ */
+export function countWeeklyOverages({ cellByDayByStaff = {}, prevByStaff = {}, year, month, capByStaff = {}, restLike }) {
+  const weeks = getMonthWeeks(year, month);
+  const out = [];
+  for (const staffId of Object.keys(capByStaff)) {
+    const cap = capByStaff[staffId];
+    if (cap == null) continue;
+    const cells = cellByDayByStaff[staffId] || {};
+    const prev = prevByStaff[staffId] || {};
+    for (const wk of weeks) {
+      let worked = wk.current.reduce((a, dn) => a + weeklyWorkValue(cells[dn], restLike), 0);
+      if (wk.prevCount > 0) worked += wk.prevDays.reduce((a, dn) => a + weeklyWorkValue(prev[dn], restLike), 0);
+      if (worked > cap) out.push({ staffId, weekStart: wk.current[0], worked, cap });
+    }
+  }
+  return out;
+}

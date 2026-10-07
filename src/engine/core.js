@@ -1,5 +1,6 @@
 import { swapLearningGain, fairnessOkAfterSwap, shouldSwapPair, DEFAULT_FAIRNESS_TOL } from '../lib/targetSwap.js';
 import { matchesToken } from '../lib/shiftEquivalence.js';
+import { weeklyWorkBefore, weeklyWorkValue, countWeeklyOverages } from '../lib/weeklyDays.js';
 
 const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 
@@ -781,6 +782,15 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
 
 
   const _consecWork = (id, d) => consecWork(id, d, res, deptWork, prevTail, prevDays); // Step8: グローバル昇格
+  // ★週◯日出勤の上限（追加のみ・s._weeklyCap がある人だけ効く＝フラグOFF/未設定なら常に false）。
+  //   d 日に placingValue を置くと、その日を含む週（月〜日）の出勤が上限を超えるなら true（配置不可）。
+  //   月初の週は prevTail も数える（weeklyWorkBefore と同じ数え方）。
+  const _weeklyBlocked = (s, d, placingValue) => {
+    const cap = s && s._weeklyCap;
+    if (cap == null) return false;
+    const before = weeklyWorkBefore({ day: d, cellByDay: res[s.id], prevCellByDay: prevTail[s.id] || {}, year, month });
+    return (before + weeklyWorkValue(placingValue)) > cap;
+  };
   const _consecRest = (id, d) => consecRest(id, d, res, deptRest); // Step8: グローバル昇格
   const _consecRestFwd = (id, d) => consecRestFwd(id, d, res, deptRest, days); // Step8: グローバル昇格
   // ★[Fix-NightSeq] 夜勤系 shift set: baseType=夜勤 の全 shift key（明け前日バリデーション用）
@@ -1462,6 +1472,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (prev === '明け') return false;
             if (_isBadTransition(prev, k) || _isBadTransition(k, next)) return false;
             if ((_consecWork(s.id, d - 1) + 1) > maxConsec) return false;
+            if (_weeklyBlocked(s, d, k)) return false; // ★週◯日上限（_weeklyCap がある人のみ）
             return true;
           }).sort((a, b) => {
             const ra = getTrend(a)?.dowShiftRate?.[dow]?.[k] ?? 0;
@@ -1704,6 +1715,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
             if (prev === '明け') continue;
             if (_isBadTransition(prev, _partDay) || _isBadTransition(_partDay, next)) continue;
             if ((_consecWork(s.id, d - 1) + 1) > maxConsec) continue;
+            if (_weeklyBlocked(s, d, _partDay)) continue; // ★週◯日上限
             if (ds.filter(sx => res[sx.id][d] === _partDay).length >= (maxStaff[_partDay] ?? 99)) continue;
             res[s.id][d] = _partDay; // soft: lockedDays に入れない
           }
@@ -1741,6 +1753,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           res[s.id][d] = '休み';
           return;
         }
+        if (_weeklyBlocked(s, d, '日勤')) { res[s.id][d] = '休み'; return; } // ★週◯日上限（Pass B 本体）
         const probs = {};
         allowed.forEach(k => { probs[k] = getShiftWeight(d, k); });
         // minStaff 不足シフトにブースト（minStaff充足優先）
@@ -1865,6 +1878,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           let actualAfter = 0;
           for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) actualAfter++; else break; }
           if (actualBefore + 1 + actualAfter > maxConsec) continue;
+          if (_weeklyBlocked(s, d, '日勤')) continue; // ★週◯日上限（余剰休み→勤務の抑止）
           const dayCnts = {};
           dayTypes.forEach(k => { dayCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
           let av = dayTypes.filter(k => dayCnts[k] < (maxStaff[k] ?? 99));
@@ -2044,6 +2058,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           if (_isBadTransition(prev, shiftKey)) return false;
           if (_isBadTransition(shiftKey, next)) return false;
           if ((_consecWork(s.id, d - 1) + 1) > maxConsec) return false;
+          if (_weeklyBlocked(s, d, shiftKey)) return false; // ★週◯日上限
           const curCount = ds.filter(sx => res[sx.id][d] === shiftKey).length;
           if (curCount >= (maxStaff[shiftKey] ?? 99)) return false;
           const targetKyuko = s.kyukoDaysByMonth?.[mk] ?? s.kyukoDays ?? 8;
@@ -2134,6 +2149,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
           const backW = _consecWork(s.id, d - 1);
           let fwdW = 0; for (let i = d + 1; i <= days; i++) { if (deptWork.has(res[s.id][i])) fwdW++; else break; }
           if ((backW + 1 + fwdW) > maxConsec) return false;
+          if (_weeklyBlocked(s, +d, '日勤')) return false; // ★週◯日上限（余剰休み→日勤の抑止）
           // シフト連続性チェック（日勤を仮ターゲットとして違反確認）
           const tgt = allowedForS.includes("日勤") ? "日勤" : (allowedForS[0] || "日勤");
           if (_isBadTransition(prev, tgt)) return false;
@@ -2550,6 +2566,14 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
     applyTransitionForces(best.shifts, ds, dept, days, lockedDays);
     applyTargetSwap(best.shifts, ds, dept, days, lockedDays, year, month, shiftTrend);
     best.score = scoreShifts(best.shifts, ds, dept, days, year, month, shiftTrend);
+    // ★週◯日上限の生成後チェック（_weeklyCap がある人のみ。超過があれば console に出す・画面には出さない）
+    const _capByStaff = {};
+    for (const s of ds) if (s._weeklyCap != null) _capByStaff[s.id] = s._weeklyCap;
+    if (Object.keys(_capByStaff).length > 0) {
+      const _prevByStaff = {}; for (const s of ds) if (prevTail[s.id]) _prevByStaff[s.id] = prevTail[s.id];
+      const _over = countWeeklyOverages({ cellByDayByStaff: best.shifts, prevByStaff: _prevByStaff, year, month, capByStaff: _capByStaff });
+      if (_over.length > 0) console.warn('[週◯日上限] 超過あり:', _over);
+    }
   }
   return best;
 }
