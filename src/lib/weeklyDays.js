@@ -89,6 +89,29 @@ export function weeklyWorkBefore({ day, cellByDay = {}, prevCellByDay = {}, year
 }
 
 /**
+ * 指定日を含む週（月〜日）の出勤数を、その日「当日を除いて」合計する（当月セル＋月初週は前月側も）。
+ * weeklyWorkBefore は「当日より前」だけを数えるため、配置順が左→右でない処理（Pass B など週の後方の
+ * 日を先に置く場合）では数え落とす。配置可否の判定には当日を除いた週全体を数えるこの関数を使う。
+ * @param {Object} a （weeklyWorkBefore と同じ引数。day は除外する当日）
+ * @returns {number}
+ */
+export function weeklyWorkExcludingDay({ day, cellByDay = {}, prevCellByDay = {}, year, month, restLike }) {
+  const firstMon = mondayIdx(new Date(year, month, 1).getDay());
+  const wi = Math.floor((day - 1 + firstMon) / 7);
+  const weekStart = wi * 7 - firstMon + 1;
+  let sum = 0;
+  for (let d = Math.max(1, weekStart); d <= Math.min(daysInMonth(year, month), weekStart + 6); d++) {
+    if (d === day) continue;
+    sum += weeklyWorkValue(cellByDay[d], restLike);
+  }
+  if (wi === 0 && firstMon > 0) {
+    const pmDays = daysInMonth(year, month - 1);
+    for (let i = 0; i < firstMon; i++) sum += weeklyWorkValue(prevCellByDay[pmDays - i], restLike);
+  }
+  return sum;
+}
+
+/**
  * その月の「出勤の上限」と「休みの目標」。週◯日が未設定なら {workCap:null, restTarget:null}。
  *   月初の週 = floor(min(cap − 前月側ですでに出た日数, 当月側の日数))（0未満は0）
  *   途中の週 = cap（＝min(cap, 7)）

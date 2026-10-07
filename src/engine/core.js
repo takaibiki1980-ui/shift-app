@@ -1,6 +1,6 @@
 import { swapLearningGain, fairnessOkAfterSwap, shouldSwapPair, DEFAULT_FAIRNESS_TOL } from '../lib/targetSwap.js';
 import { matchesToken } from '../lib/shiftEquivalence.js';
-import { weeklyWorkBefore, weeklyWorkValue, countWeeklyOverages } from '../lib/weeklyDays.js';
+import { weeklyWorkExcludingDay, weeklyWorkValue, countWeeklyOverages } from '../lib/weeklyDays.js';
 
 const REST_TYPES  = new Set(["休み","希望休","有休","明け","日/休","休/日","早/休","休/遅"]);
 
@@ -784,12 +784,12 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
   const _consecWork = (id, d) => consecWork(id, d, res, deptWork, prevTail, prevDays); // Step8: グローバル昇格
   // ★週◯日出勤の上限（追加のみ・s._weeklyCap がある人だけ効く＝フラグOFF/未設定なら常に false）。
   //   d 日に placingValue を置くと、その日を含む週（月〜日）の出勤が上限を超えるなら true（配置不可）。
-  //   月初の週は prevTail も数える（weeklyWorkBefore と同じ数え方）。
+  //   月初の週は prevTail も数える。配置順に依存しないよう、当日を除く週全体を数える。
   const _weeklyBlocked = (s, d, placingValue) => {
     const cap = s && s._weeklyCap;
     if (cap == null) return false;
-    const before = weeklyWorkBefore({ day: d, cellByDay: res[s.id], prevCellByDay: prevTail[s.id] || {}, year, month });
-    return (before + weeklyWorkValue(placingValue)) > cap;
+    const others = weeklyWorkExcludingDay({ day: d, cellByDay: res[s.id], prevCellByDay: prevTail[s.id] || {}, year, month });
+    return (others + weeklyWorkValue(placingValue)) > cap;
   };
   const _consecRest = (id, d) => consecRest(id, d, res, deptRest); // Step8: グローバル昇格
   const _consecRestFwd = (id, d) => consecRestFwd(id, d, res, deptRest, days); // Step8: グローバル昇格
@@ -1927,6 +1927,7 @@ function autoGenerate(staffList, dept, year, month, prevShifts, shiftTrend = {},
         if (res[s.id][d + 1] === "明け") continue;
         if (_consecRest(s.id, d) <= 3) continue;
         if ((_consecWork(s.id, d - 1) + 1) > maxConsec) continue;
+        if (_weeklyBlocked(s, d, '日勤')) continue; // ★週◯日上限（連続休み分割で勤務を増やさない）
         const fixCnts = {};
         dayTypes.forEach(k => { fixCnts[k] = ds.filter(sx => res[sx.id][d] === k).length; });
         let av = dayTypes.filter(k => fixCnts[k] < (maxStaff[k] ?? 99));
@@ -2451,7 +2452,7 @@ function scoreShifts(res, ds, dept, days, year, month, shiftTrend = {}) {
 
 // 局所探索（2-opt swap）: 生成済みシフトのスコアをスワップ改善でさらに下げる
 
-function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}) {
+function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}, prevTail = {}) {
   if (ds.length < 2) return shifts;
   const res = {};
   for (const s of ds) res[s.id] = { ...(shifts[s.id] || {}) };
@@ -2506,9 +2507,23 @@ function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}
           if (ra2 && isRoleWork(v1) && !ra2.includes(v1)) continue;
           // スワップ試行
           res[s1.id][d] = v2; res[s2.id][d] = v1;
+          // ★週◯日上限: 入れ替えで勤務が増える側に _weeklyCap があり、その週(月〜日・月初は prevTail も)の
+          //   出勤が上限を超えるなら、この入れ替えは採用しない（_weeklyCap が無い人は従来どおり）。
+          const _wkOver = (st, oldV, newV) => {
+            if (st._weeklyCap == null) return false;
+            if (weeklyWorkValue(newV) <= weeklyWorkValue(oldV)) return false; // 勤務が増えない側は対象外
+            const firstMon = ((new Date(year, month, 1).getDay()) + 6) % 7;
+            const wi = Math.floor((d - 1 + firstMon) / 7);
+            const weekStart = wi * 7 - firstMon + 1;
+            let sum = 0;
+            for (let dd = Math.max(1, weekStart); dd <= Math.min(days, weekStart + 6); dd++) sum += weeklyWorkValue(res[st.id][dd]);
+            if (wi === 0 && firstMon > 0) { const pm = new Date(year, month, 0).getDate(); for (let i = 0; i < firstMon; i++) sum += weeklyWorkValue((prevTail[st.id] || {})[pm - i]); }
+            return sum > st._weeklyCap;
+          };
+          const weeklyBad = _wkOver(s1, v1, v2) || _wkOver(s2, v2, v1);
           const newScore = scoreShifts(res, ds, dept, days, year, month, shiftTrend);
-          if (newScore < curScore) { curScore = newScore; improved = true; }
-          else { res[s1.id][d] = v1; res[s2.id][d] = v2; } // 戻す
+          if (newScore < curScore && !weeklyBad) { curScore = newScore; improved = true; }
+          else { res[s1.id][d] = v1; res[s2.id][d] = v2; } // 戻す（スコア悪化 or 週上限超過）
         }
       }
     }
@@ -2543,7 +2558,7 @@ function bestOfN(staffList, dept, year, month, prevShifts, shiftTrend, n = 30, p
   }
   // 局所探索（swap改善）: 30回試行の最良案をさらにスコア改善
   if (best && bestScore > 0) {
-    const improved = localSearchImprove(best.shifts, ds, dept, days, year, month, shiftTrend);
+    const improved = localSearchImprove(best.shifts, ds, dept, days, year, month, shiftTrend, prevTail);
     const improvedScore = scoreShifts(improved, ds, dept, days, year, month, shiftTrend);
     if (improvedScore < bestScore) { best.shifts = improved; best.score = improvedScore; }
   }
