@@ -2693,7 +2693,7 @@ function ZoomWrapper({ zoom, onZoomChange, children }) {
   }, [zoom, onZoomChange]);
 
   return (
-    <div ref={outerRef} style={{overflowX:"auto",overflowY:"visible",position:"relative"}}>
+    <div ref={outerRef} style={{overflowX:"auto",overflowY:"hidden",position:"relative"}}>
       <div ref={innerRef} style={{transformOrigin:"top left",transform:`scale(${scale})`,width:scale<1?`${Math.round(100/scale)}%`:"100%",display:"inline-block",minWidth:"max-content"}}>{children}</div>
     </div>
   );
