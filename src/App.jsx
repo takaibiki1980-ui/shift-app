@@ -98,7 +98,11 @@ const TRANSITION_FORCE_ENABLED = true;
 //    PR-2(このフラグ): 部署設定のチェックボックスのみ・保存のみ。生成反映(core.js後処理)は PR-3。
 //    false で完全に従来動作（UI 非表示・dept の形も不変）。
 const TARGET_SWAP_ENABLED = true;
-const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（ヘッダー固定の縦範囲）
+const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高さ上限（初期値・JSで実測値に置換）
+// 表スクロール容器の下端とビューポート下端の余白(px)。容器上端から画面下端までを埋める高さを
+// 実測で算出する際に使う。固定 calc だと上部クロム高と食い違い、ページ全体の縦スクロールが
+// 二重に出る原因になるため、実際の上端位置から動的に高さを決める（縦スクロールは表内1本だけ）。
+const STICKY_HEADER_BOTTOM_GAP = 16;
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
@@ -2902,6 +2906,26 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   // sticky header用: ヘッダーth に縦固定(top)を付与する追加スタイル。corner=氏名列(左固定と交差)は最前面。
   // sticky ヘッダー: body セルより確実に上へ(z-index 10/11)＋下端を不透明罫線でベタ塗り(色枠の透け防止)。
   const stTop = (topPx, corner) => STICKY_HEADER_ENABLED ? { position:'sticky', top:topPx, zIndex: corner ? 11 : 10, boxShadow:'0 1px 0 #F1F5F9' } : null;
+  // スクロール容器の縦の高さを、容器の実際の上端位置から動的に算出（上部クロムの高さに追従）。
+  // 容器上端〜画面下端を埋めるので、縦スクロールは表の内側の1本だけになり、ページ全体の
+  // 二重スクロールバーが出ない。倍率変更・画面リサイズ・帯の出入りで再計算する。
+  const scrollRef = useRef(null);
+  const [scrollMaxH, setScrollMaxH] = useState(STICKY_HEADER_MAXH);
+  useLayoutEffect(() => {
+    if (!STICKY_HEADER_ENABLED) return;
+    const recompute = () => {
+      const el = scrollRef.current; if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      const h = Math.max(240, Math.round(window.innerHeight - top - STICKY_HEADER_BOTTOM_GAP));
+      setScrollMaxH(prev => prev === h + 'px' ? prev : h + 'px');
+    };
+    recompute();
+    const t = setTimeout(recompute, 60);
+    window.addEventListener('resize', recompute);
+    let ro;
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(recompute); ro.observe(document.body); }
+    return () => { clearTimeout(t); window.removeEventListener('resize', recompute); if (ro) ro.disconnect(); };
+  }, [year, month, staffList.length, dept.id]);
   const maxConsec = dept.maxConsecutive || 5;
   const deptWork = buildDeptWorkTypes(dept.customShiftDefs);
   const deptRest = buildDeptRestTypes(dept.customShiftDefs);
@@ -3074,7 +3098,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
         <span>役職制限: {roleViolationCount}件</span>
       </div>
     )}
-    <div style={{overflowX:"auto",overflowY:STICKY_HEADER_ENABLED?"auto":"visible",...(STICKY_HEADER_ENABLED?{maxHeight:STICKY_HEADER_MAXH}:{}),userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
+    <div ref={scrollRef} style={{overflowX:"auto",overflowY:STICKY_HEADER_ENABLED?"auto":"visible",...(STICKY_HEADER_ENABLED?{maxHeight:scrollMaxH}:{}),userSelect:"none",WebkitTouchCallout:"none"}} onTouchMove={handleTouchMove}>
       <table style={{borderCollapse:"collapse",minWidth:"max-content",fontSize:12}}>
         <thead>
           <tr ref={headRow1Ref}>
