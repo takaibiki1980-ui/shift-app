@@ -104,6 +104,20 @@ const STICKY_HEADER_MAXH = 'calc(100vh - 210px)'; // スクロール容器の高
 // 二重に出る原因になるため、実際の上端位置から動的に高さを決める（縦スクロールは表内1本だけ）。
 const STICKY_HEADER_BOTTOM_GAP = 16;
 
+// ── アプリの公開アドレス（独自ドメイン www.yeix.jp に統一するための唯一の窓口）──
+//   職員に配るリンク（共有URL・LINE文面・職員ポータル・QR など）はすべて getPublicBaseUrl()
+//   を通す。Vercel の環境変数 VITE_PUBLIC_BASE_URL があればそれを採用し（例 https://www.yeix.jp）、
+//   なければ従来どおり開いているアドレス window.location.origin を使う（旧 shift-app-peach.vercel.app
+//   でもそのまま動く）。環境変数を設定しなければ今とまったく同じリンクが出る。
+//   ※ ログイン等「開いているアドレスに戻る」リダイレクトは window.location.origin のまま（この関数は使わない）。
+//   ※ core.js・生成・保存データには一切関係しない（表示するリンクの文字列だけ）。
+function getPublicBaseUrl() {
+  const env = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PUBLIC_BASE_URL) || '';
+  if (env) return String(env).replace(/\/+$/, '');
+  if (typeof window !== 'undefined' && window.location?.origin) return window.location.origin;
+  return '';
+}
+
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
 function YeixTextLogo({ height = 36 }) {
@@ -2430,7 +2444,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
       if (error) throw error;
 
       // STEP4: INSERT成功後のみ shareToken 確定・QR/LINE/URLを有効化
-      const shareUrl = `${window.location.origin}/?share=${token}`;
+      const shareUrl = `${getPublicBaseUrl()}/?share=${token}`;
       setSharedResult({ token, shareUrl });
     } catch(e) {
       // INSERT失敗: URL・QR・LINEは発行しない
@@ -6350,9 +6364,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
                   <div style={{padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8,display:"inline-block"}}>
-                    <QRCodeSVG value={window.location.origin} size={160} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
+                    <QRCodeSVG value={getPublicBaseUrl()} size={160} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
                   </div>
-                  <div style={{fontSize:9,color:"#71717A",wordBreak:"break-all",textAlign:"center",maxWidth:176}}>{window.location.origin}</div>
+                  <div style={{fontSize:9,color:"#71717A",wordBreak:"break-all",textAlign:"center",maxWidth:176}}>{getPublicBaseUrl()}</div>
                 </div>
                 <div style={{flex:1,minWidth:160}}>
                   <div style={{fontSize:11,fontWeight:700,color:"#3F3F46",marginBottom:8}}>使い方</div>
@@ -6364,7 +6378,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   </div>
                   <div style={{marginTop:10,fontSize:10,background:"#fef3c7",border:"1px solid #fbbf24",borderRadius:6,padding:"6px 8px",color:"#92400e"}}>
                     <span style={{display:"inline-flex",alignItems:"center",gap:4}}><Lightbulb size={12} strokeWidth={2}/>URLもリンクとして貼れます</span><br/>
-                    <span style={{wordBreak:"break-all",fontWeight:700}}>{window.location.origin}</span>
+                    <span style={{wordBreak:"break-all",fontWeight:700}}>{getPublicBaseUrl()}</span>
                   </div>
                 </div>
               </div>
@@ -6379,7 +6393,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               const cfgObj={fn:profile?.facility_name||'',d:{id:d.id,label:d.label,kb:d.kiboLimit||3,kd:d.kiboDayLimit||0,dl:ps.deadline||null,ty:ps.targetYear||null,tm:ps.targetMonth||null,bm:ps.byMonth||null},sl:deptSl};
               const cfgB64=btoa(unescape(encodeURIComponent(JSON.stringify(cfgObj))));
               // 配布URLに対象月 ym を付与（前月リンク/新月リンクを区別し、締切を月ごとに判定させる）。対象月未設定なら従来どおり ym なし。
-              const urlShort=`${window.location.origin}?staff=${uuidToShort(session.user.id)}&dept=${d.id}${ymStr?`&ym=${ymStr}`:''}`;
+              const urlShort=`${getPublicBaseUrl()}?staff=${uuidToShort(session.user.id)}&dept=${d.id}${ymStr?`&ym=${ymStr}`:''}`;
               const urlFull=`${urlShort}&cfg=${cfgB64}`;
               const doCopy=()=>{if(navigator.clipboard?.writeText){navigator.clipboard.writeText(urlShort).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${urlShort}`));}else{alert(`URLをコピーしてください:\n${urlShort}`);}};
               const doLine=()=>{const dl=d.kiboDayLimit||0;const body=`${d.label}の希望休入力はこちら${dl>0?`\n※希望休は${dl}日までです`:''}\n${urlShort}`;const lineUrl=`https://line.me/R/msg/text/?${encodeURIComponent(body)}`;window.open(lineUrl,'_blank');};              const doSaveSettings=async()=>{
