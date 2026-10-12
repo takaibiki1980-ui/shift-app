@@ -118,6 +118,15 @@ function getPublicBaseUrl() {
   return '';
 }
 
+// ── Phase B スイッチ（1か所に集約）──
+//   VITE_PORTAL_RPC_ENABLED==='true' のときだけ、職員ポータル／共有リンクを
+//   窓口関数（get_portal_config / get_portal_kibo / submit_portal_kibo / get_shared_shift）
+//   経由にする。未設定や 'true' 以外は従来どおり表を直接読み書き（＝今とまったく同じ動き）。
+//   core.js・生成・保存データ・リーダー側の画面には一切関係しない。
+function isPortalRpcEnabled() {
+  return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PORTAL_RPC_ENABLED) === 'true';
+}
+
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
 function YeixTextLogo({ height = 36 }) {
@@ -3714,14 +3723,21 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
     setLoading(true); setLoadError(false); setConfig(null);
     for (let attempt = 0; attempt < 4; attempt++) {
       if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
-      const { data, error } = await supabase
-        .from('shift_data')
-        .select('data_value')
-        .eq('user_id', adminUserId)
-        .eq('data_key', 'facilityConfig')
-        .maybeSingle();
-      if (!error && data?.data_value) {
-        const cfg = data.data_value;
+      let cfg = null, error = null;
+      if (isPortalRpcEnabled()) {
+        // 窓口経由（Phase C で表を閉じても動く）。返り値は facilityConfig と同じ形の jsonb。
+        const res = await supabase.rpc('get_portal_config', { p_admin: adminUserId, p_dept: fixedDeptId || null });
+        error = res.error; cfg = res.data || null;
+      } else {
+        const res = await supabase
+          .from('shift_data')
+          .select('data_value')
+          .eq('user_id', adminUserId)
+          .eq('data_key', 'facilityConfig')
+          .maybeSingle();
+        error = res.error; cfg = res.data?.data_value || null;
+      }
+      if (!error && cfg) {
         setConfig(cfg);
         setLoading(false);
         if (!fixedDeptId && cfg.depts?.length > 0) setSelDeptId(cfg.depts[0].id);
@@ -3776,8 +3792,11 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
     if (!selStaffId || !selDeptId) return;
     setKiboLoading(true);
     setSubmitted(false);
-    supabase.from('staff_kibo').select('*')
-      .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk)
+    const kiboQuery = isPortalRpcEnabled()
+      ? supabase.rpc('get_portal_kibo', { p_admin: adminUserId, p_dept: selDeptId, p_month: mk })
+      : supabase.from('staff_kibo').select('*')
+          .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
+    kiboQuery
       .then(({ data }) => {
         setKiboLoading(false);
         if (!data) return;
@@ -3799,9 +3818,11 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const { data: latest } = await supabase.from('staff_kibo')
-        .select('staff_id,days')
-        .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
+      const { data: latest } = isPortalRpcEnabled()
+        ? await supabase.rpc('get_portal_kibo', { p_admin: adminUserId, p_dept: selDeptId, p_month: mk })
+        : await supabase.from('staff_kibo')
+            .select('staff_id,days')
+            .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
       const overDays = myDays.filter(d =>
         (latest || []).filter(k => k.staff_id !== selStaffId && (k.days||[]).includes(d)).length >= lim
       );
@@ -3814,11 +3835,22 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
         alert(`希望休は${dayLim}日までです。現在${myDays.length}日選択されています。${myDays.length - dayLim}日減らしてください。`);
         return;
       }
-      const { error } = await supabase.from('staff_kibo').upsert({
-        admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
-        month_key: mk, days: myDays, yukyu_days: myYukyuDays, updated_at: new Date().toISOString()
-      }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
+      let error;
+      if (isPortalRpcEnabled()) {
+        const res = await supabase.rpc('submit_portal_kibo', {
+          p_admin: adminUserId, p_dept: selDeptId, p_staff: selStaffId,
+          p_month: mk, p_days: myDays, p_yukyu: myYukyuDays
+        });
+        error = res.error;
+      } else {
+        const res = await supabase.from('staff_kibo').upsert({
+          admin_user_id: adminUserId, dept_id: selDeptId, staff_id: selStaffId,
+          month_key: mk, days: myDays, yukyu_days: myYukyuDays, updated_at: new Date().toISOString()
+        }, { onConflict: 'admin_user_id,dept_id,staff_id,month_key' });
+        error = res.error;
+      }
       if (!error) setSubmitted(true);
+      else if (error.code === '42501') alert('この部署の職員として登録されていません。リーダーに確認してください。');
       else alert('送信に失敗しました。もう一度お試しください。');
     } catch {
       alert('送信に失敗しました。ネットワークを確認してください。');
@@ -4166,11 +4198,19 @@ function SharedShiftView({ token }) {
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase
-        .from('shared_shifts')
-        .select('year,month,dept_ids,shift_data,staff_data,dept_data')
-        .eq('token', token)
-        .maybeSingle();
+      let data, error;
+      if (isPortalRpcEnabled()) {
+        // 窓口経由（token 完全一致の1件のみ返る。Phase C で表を閉じても動く）
+        const res = await supabase.rpc('get_shared_shift', { p_token: token });
+        error = res.error; data = Array.isArray(res.data) ? res.data[0] : res.data;
+      } else {
+        const res = await supabase
+          .from('shared_shifts')
+          .select('year,month,dept_ids,shift_data,staff_data,dept_data')
+          .eq('token', token)
+          .maybeSingle();
+        error = res.error; data = res.data;
+      }
       if (error || !data) { setNotFound(true); setLoading(false); return; }
       setRow(data);
       setLoading(false);
