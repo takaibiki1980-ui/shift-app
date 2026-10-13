@@ -34,6 +34,10 @@ REVOKE ALL ON TABLE shift_data FROM anon;
 DROP POLICY IF EXISTS "staff_kibo_select" ON staff_kibo;   -- 旧: USING (true)
 DROP POLICY IF EXISTS "staff_kibo_insert" ON staff_kibo;   -- 旧: WITH CHECK (true)
 DROP POLICY IF EXISTS "staff_kibo_update" ON staff_kibo;   -- 旧: USING/CHECK (true)
+-- ★本番にだけ存在した追加ポリシー（repo の migration には無い）。ALL・USING/CHECK=true・role public。
+--   RLS は許可ポリシーの OR 合成で、public は authenticated も含むため、これが残ると anon の
+--   GRANT を外しても「登録しただけの他施設ユーザー」が全施設の staff_kibo を読み書きできてしまう。必ず削除。
+DROP POLICY IF EXISTS "public_read_write" ON staff_kibo;
 -- （staff_kibo_delete は既に「自分の施設のみ(auth.uid()=admin_user_id)」なので残す）
 
 DROP POLICY IF EXISTS "staff_kibo_select_own" ON staff_kibo;

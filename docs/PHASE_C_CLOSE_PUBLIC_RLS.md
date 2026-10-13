@@ -14,7 +14,7 @@
 | 表 | 消す（今 anon に開いている） | 残す | 追加（リーダー自分行） |
 |---|---|---|---|
 | `shift_data` | `public_read_facilityConfig`（SELECT・`data_key='facilityConfig'`） | `users_own_shift_data`（ALL・自分） | （なし） |
-| `staff_kibo` | `staff_kibo_select`(true) / `staff_kibo_insert`(true) / `staff_kibo_update`(true) | `staff_kibo_delete`（自分） | `staff_kibo_select_own` / `staff_kibo_insert_own` / `staff_kibo_update_own`（すべて authenticated・`auth.uid()=admin_user_id`） |
+| `staff_kibo` | `staff_kibo_select`(true) / `staff_kibo_insert`(true) / `staff_kibo_update`(true) / **`public_read_write`(ALL・true/true・role public)** | `staff_kibo_delete`（自分） | `staff_kibo_select_own` / `staff_kibo_insert_own` / `staff_kibo_update_own`（すべて authenticated・`auth.uid()=admin_user_id`） |
 | `shared_shifts` | `public read by token`(true) | `insert own shared_shifts`（自分・INSERT） | `shared_shifts_select_own`（authenticated・`auth.uid()=admin_user_id`） |
 
 GRANT：3表の **anon への直接権限を REVOKE ALL**。`authenticated` への GRANT は触らない（リーダーの既存動作維持）。窓口関数4本の `EXECUTE`（anon/authenticated）はそのまま＝ポータル/共有は動き続ける（SECURITY DEFINER＝所有者権限で表を読む）。
@@ -51,7 +51,25 @@ WHERE table_schema='public' AND table_name IN ('shift_data','staff_kibo','shared
   AND grantee IN ('anon','authenticated')
 GROUP BY grantee, table_name ORDER BY grantee, table_name;
 ```
-結果を控える（戻すときの照合用）。`public_read_facilityConfig` / `staff_kibo_select` / `staff_kibo_insert` / `staff_kibo_update` / `public read by token` が実在することを確認。無い・名前が違う場合は migration の DROP 名を実物に合わせる。
+結果を控える（戻すときの照合用）。`public_read_facilityConfig` / `staff_kibo_select` / `staff_kibo_insert` / `staff_kibo_update` / `staff_kibo`の`public_read_write` / `public read by token` が実在することを確認。無い・名前が違う場合は migration の DROP 名を実物に合わせる。
+
+#### 1-3. 想定外の「誰でも許可」ポリシーが無いか（見つかったら実行を止める）
+下は3表のうち **role が public/authenticated で qual か with_check が true** のポリシーを洗い出す。
+**この結果に、本手順書が削除対象として挙げていない名前が出たら、そのまま実行してはいけない**
+（別の抜け穴の可能性）。削除対象に取り込むか調査するまで Phase C の SQL は**実行を止める**こと。
+```sql
+SELECT tablename, policyname, cmd, roles::text, qual, with_check
+FROM pg_policies
+WHERE schemaname='public'
+  AND tablename IN ('shift_data','staff_kibo','shared_shifts')
+  AND (lower(coalesce(qual,'')) = 'true' OR lower(coalesce(with_check,'')) = 'true')
+ORDER BY tablename, policyname;
+-- 想定内（この手順書が削除する）のは:
+--   staff_kibo: staff_kibo_select / staff_kibo_insert / staff_kibo_update / public_read_write
+--   shared_shifts: public read by token
+-- これ以外の行が出たら STOP（実行しない）。
+```
+（補足：`shift_data` の `public_read_facilityConfig` は qual が `data_key='facilityConfig'` で "true" ではないが削除対象。`users_own_shift_data` と `Users can manage own data` は qual が `auth.uid()=user_id` の**自分限定**なので上の洗い出しには出ず、残してよい＝抜け穴ではない。）
 
 ## 2. 実行
 SQL Editor に `supabase/migrations/20261013_phase_c_close_public_rls.sql` の全文を貼って実行（冪等・何度でも可）。
@@ -124,6 +142,8 @@ DROP POLICY IF EXISTS "staff_kibo_update_own" ON staff_kibo;
 CREATE POLICY "staff_kibo_select" ON staff_kibo FOR SELECT USING (true);
 CREATE POLICY "staff_kibo_insert" ON staff_kibo FOR INSERT WITH CHECK (true);
 CREATE POLICY "staff_kibo_update" ON staff_kibo FOR UPDATE USING (true) WITH CHECK (true);
+-- 本番にだけあった public_read_write（ALL・true/true・role public）も今と同じ内容で復活
+CREATE POLICY "public_read_write" ON staff_kibo FOR ALL TO public USING (true) WITH CHECK (true);
 GRANT SELECT, INSERT, UPDATE ON staff_kibo TO anon;
 
 -- shared_shifts: 追加した select_own を消し、public read by token(true) を復活
@@ -153,7 +173,21 @@ Supabase 風ロール（anon / authenticated）＋ `auth.uid()`（`request.jwt.c
 | 適用後・リーダーA | 自分の staff_kibo / facilityConfig / shared_shifts | s-a1 の1件 / 1 / 1（Bは見えない=0） |
 | 適用後・リーダーA | 自分行 upsert / 他施設B行への書き込み | 自分=成功(ROLLBACK) / B=**RLS 拒否** |
 | 適用後 | anon の表権限 | 0 行（REVOKE 済み） |
-| 最終ポリシー | shift_data=own のみ / staff_kibo=delete+select/insert/update_own / shared_shifts=insert own+select_own | 期待どおり |
+| 最終ポリシー | shift_data=own系のみ / staff_kibo=delete+select/insert/update_own / shared_shifts=insert own+select_own | 期待どおり（`true`/public の許可ポリシーは残らず） |
+
+### 5-2. 別施設の authenticated ユーザーからの越境（public_read_write の害の再現と解消）
+本番の実ポリシー一式（`public_read_write` ALL/true/true・`staff_kibo_*`(true)・`public read by token`(true)・shift_data の own 系2本と public_read_facilityConfig）を再現し、**施設B 本人としてログイン**した状態で確認。
+
+| 操作（施設B が施設A に対して） | 適用前 | 適用後 |
+|---|---|---|
+| A の `staff_kibo` を読む | **読めた（1件）** | **0 件** |
+| A の `staff_kibo` を UPDATE | **書き換えられた（1行）** | 0 行（RLS 対象外） |
+| A の `staff_kibo` に INSERT | （true で通る） | **RLS 拒否** |
+| A の `shared_shifts` を読む | （true で全件） | **0 件** |
+| A の `facilityConfig` を読む | （public_read で可） | **0 件** |
+| B 自身の行を読む | 可 | 可（1件） |
+
+→ `public_read_write` を消したことで、**登録しただけの別施設ユーザーによる越境読取・改ざんが塞がる**ことを確認。
 
 （補足：ローカルで `SELECT auth.uid()` を直接呼ぶと schema 権限の都合でエラーになるが、RLS 内からの `auth.uid()` 評価は正常に働き、A は自分の行だけが見えることで確認できている。本番の Supabase では authenticated に auth スキーマ権限があるため直呼びも可。）
 
