@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import {
   prevMonthInfo, pickPrevRaw, buildPrevTail, missingPrevStaff,
+  classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK,
 } from '../lib/prevMonth.js';
 
 // 月またぎ（前月データ読み取り）の再現テスト。
@@ -106,6 +107,46 @@ describe('buildPrevTail（前月末尾6日の tail 組み立て）', () => {
     const raw = { s1: { '22': '日勤', '23': '夜勤', '28': '明け' } };
     const tail = buildPrevTail(raw, 2026, 1); // 2026/2は28日
     expect(tail).toEqual({ s1: { 23: '夜勤', 28: '明け' } });
+  });
+});
+
+describe('classifyPrevFetch（取得の3状態: 失敗/無い/取れた）', () => {
+  const okRow = (v) => ({ data: { data_value: v }, error: null });
+  const emptyRow = () => ({ data: null, error: null });
+  const errRow = () => ({ data: null, error: new Error('network') });
+
+  test('取れた(per-dept): r1 に中身 → ok', () => {
+    const raw = { s1: { '31': '夜勤' } };
+    expect(classifyPrevFetch(okRow(raw), undefined, 'kaigo1'))
+      .toEqual({ status: PREV_OK, raw, source: 'per-dept' });
+  });
+
+  test('取れた(legacy): r1 空・r2 に部署あり → ok(legacy)', () => {
+    const raw = { s1: { '31': '夜勤' } };
+    expect(classifyPrevFetch(emptyRow(), okRow({ kaigo1: raw }), 'kaigo1'))
+      .toEqual({ status: PREV_OK, raw, source: 'legacy' });
+  });
+
+  test('無い: r1 空・r2 空（または部署なし）→ none', () => {
+    expect(classifyPrevFetch(emptyRow(), emptyRow(), 'kaigo1'))
+      .toEqual({ status: PREV_NONE, raw: null, source: null });
+    expect(classifyPrevFetch(emptyRow(), okRow({ other: {} }), 'kaigo1'))
+      .toEqual({ status: PREV_NONE, raw: null, source: null });
+  });
+
+  test('失敗: r1 にエラー → error（前月の有無を断定しない）', () => {
+    expect(classifyPrevFetch(errRow(), undefined, 'kaigo1'))
+      .toEqual({ status: PREV_ERROR, raw: null, source: null });
+  });
+
+  test('失敗: r1 空で r2 にエラー → error', () => {
+    expect(classifyPrevFetch(emptyRow(), errRow(), 'kaigo1'))
+      .toEqual({ status: PREV_ERROR, raw: null, source: null });
+  });
+
+  test('失敗: r1 が未定義(取得できず) → error（null と error を同一視しない）', () => {
+    expect(classifyPrevFetch(undefined, undefined, 'kaigo1'))
+      .toEqual({ status: PREV_ERROR, raw: null, source: null });
   });
 });
 

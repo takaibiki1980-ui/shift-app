@@ -50,3 +50,24 @@ export function buildPrevTail(raw, pY, pIdx) {
 export function missingPrevStaff(tail, staffIds) {
   return (staffIds || []).filter((id) => !tail[id]);
 }
+
+// ── 前月取得の3状態 ───────────────────────────────────────────────
+//  'error' : 取得に失敗した（通信エラー等）。前月が有るか無いか判断できない。
+//  'none'  : 取得は成功したが、前月が保存されていないと確認できた。
+//  'ok'    : 前月データが取れた（raw に中身あり）。
+// 「失敗」と「無い」を同じ null で潰さないために status で区別する。
+export const PREV_ERROR = 'error';
+export const PREV_NONE = 'none';
+export const PREV_OK = 'ok';
+
+// Supabase の2回の取得結果（r1=部署別キー, r2=旧形式キー。いずれも {data,error} 形）から
+// 3状態を判定する純関数。どちらかでも error があれば即 'error'（＝前月の有無を断定しない）。
+// r1/r2 は { data: { data_value } | null, error: Error|null } を想定。
+export function classifyPrevFetch(r1, r2, deptId) {
+  if (!r1 || r1.error) return { status: PREV_ERROR, raw: null, source: null };
+  if (r1.data?.data_value) return { status: PREV_OK, raw: r1.data.data_value, source: 'per-dept' };
+  if (!r2 || r2.error) return { status: PREV_ERROR, raw: null, source: null };
+  const legacyVal = r2.data?.data_value;
+  if (legacyVal && legacyVal[deptId]) return { status: PREV_OK, raw: legacyVal[deptId], source: 'legacy' };
+  return { status: PREV_NONE, raw: null, source: null };
+}

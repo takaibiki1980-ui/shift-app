@@ -14,7 +14,7 @@ import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { countRestAndPaid } from './lib/summaryCounts.js';
 import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
-import { prevMonthInfo, buildPrevTail, missingPrevStaff } from './lib/prevMonth.js';
+import { prevMonthInfo, buildPrevTail, missingPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -151,18 +151,26 @@ async function fetchAllShiftData(userId) {
 
 // ── 月またぎ修正: 生成時の前月データを、全データキャッシュに頼らず Supabase から直接取得する。
 //    ① 現行の部署別キー shifts_{Y}_{M}_{deptId} ② 無ければ旧形式 shifts_{Y}_{M}（全部署まとめ）→[deptId]
-//    を順に試す。戻り値 raw は { [staffId]: { [dayStr]: shift } }（無ければ null）。
+//    を順に試す。戻り値は { status: 'ok'|'none'|'error', raw, source }（classifyPrevFetch 参照）。
+//    「取得失敗(error)」と「前月なし(none)」を区別する。通信エラー時に前月なし扱いで
+//    古いキャッシュのまま黙って生成しないため、失敗は必ず error として呼び出し側へ伝える。
 async function fetchPrevMonthRaw(userId, deptId, year, month) {
   const { perDeptKey, legacyKey } = prevMonthInfo(year, month);
   const pdKey = perDeptKey(deptId);
-  const r1 = await supabase.from('shift_data').select('data_value')
-    .eq('user_id', userId).eq('data_key', pdKey).maybeSingle();
-  if (r1.data?.data_value) return { raw: r1.data.data_value, source: 'per-dept', key: pdKey };
-  const r2 = await supabase.from('shift_data').select('data_value')
-    .eq('user_id', userId).eq('data_key', legacyKey).maybeSingle();
-  const legacyVal = r2.data?.data_value;
-  if (legacyVal && legacyVal[deptId]) return { raw: legacyVal[deptId], source: 'legacy', key: legacyKey };
-  return { raw: null, source: null, key: pdKey };
+  let r1, r2;
+  try {
+    r1 = await supabase.from('shift_data').select('data_value')
+      .eq('user_id', userId).eq('data_key', pdKey).maybeSingle();
+    // 部署別で取れなかった場合のみ旧形式を引く（取れたら r2 は不要）。
+    if (!r1.error && !r1.data?.data_value) {
+      r2 = await supabase.from('shift_data').select('data_value')
+        .eq('user_id', userId).eq('data_key', legacyKey).maybeSingle();
+    }
+  } catch (e) {
+    // 例外（ネットワーク断など）は error 状態に写像する。
+    return { status: PREV_ERROR, raw: null, source: null };
+  }
+  return classifyPrevFetch(r1, r2, deptId);
 }
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
@@ -4716,6 +4724,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const activeDeptIdRef = useRef(activeDeptId);
   useEffect(() => { activeDeptIdRef.current = activeDeptId; }, [activeDeptId]);
   const userEditSeq = useRef(0); // ユーザー編集のたびにインクリメント（Realtime競合検出用）
+  const genRunRef = useRef(0); // 自動生成の実行番号。新しい生成が始まるたびに+1し、await後に一致確認（二重実行・遅延実行の防止）
   // Realtimeデータ適用時の userEditSeq スナップショット（-1=未ロード）
   // 保存エフェクトで userEditSeq===seqAtLastRemoteLoad なら「Realtime直後で変更なし」→保存スキップ
   const seqAtLastRemoteLoad = useRef(-1);
@@ -5687,6 +5696,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       return { ...s, facilityYears: fy, floorYears: fl };
     });
     const cd=dept, ct=learningEnabled?learnedTrend:{}; // free は学習オフ＝中立trend（制約は従来どおり守る）
+    const myRun = ++genRunRef.current; // この生成の実行番号（await後に最新かを確認する）
     generateTimerRef.current = setTimeout(async () => {
       // 月切り替え中は生成を中断（year/monthクロージャ陳腐化チェック）
       if (year !== yearRef.current || month !== monthRef.current) {
@@ -5701,27 +5711,36 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化
       // ── 月またぎ修正: 前月データを Supabase から直接取得して prevTail を組み立てる ──
-      //   （全データキャッシュに頼らず・旧形式フォールバック込み）。失敗時は従来のキャッシュ経路。
+      //   3状態（取れた/無い/失敗）で分岐。失敗のときは古いキャッシュで黙って生成せず、
+      //   生成を始めずに止める（今回の不具合「古い前の月で黙って生成」の再発防止）。
       prevTailOverrideRef.current = null;
       setGenPrevNotice(null);
-      try {
-        const pr = await fetchPrevMonthRaw(session.user.id, cd.id, year, month);
-        if (year !== yearRef.current || month !== monthRef.current) { setGenerating(false); return; } // await 中の月切替
+      const pr = await fetchPrevMonthRaw(session.user.id, cd.id, year, month);
+      // await 後の最新性チェック: 実行番号・年月・部署が今の操作と一致しなければ、この生成は破棄。
+      if (myRun !== genRunRef.current) { return; } // 新しい生成が始まった → 遅延した古い処理は何もしない
+      if (year !== yearRef.current || month !== monthRef.current || cd.id !== activeDeptIdRef.current) {
+        setGenerating(false); return; // 月/部署が切り替わった
+      }
+      if (pr.status === PREV_ERROR) {
+        // 取得失敗: 生成処理に入らない・キャッシュへフォールバックしない・シフト表を変えない。
+        setGenPrevNotice('前の月のシフトを読み込めませんでした。通信を確認して、もう一度生成してください。');
+        prevTailOverrideRef.current = null;
+        setGenerating(false);
+        return;
+      }
+      {
         const { pY: pYv, pIdx: pIdxv } = prevMonthInfo(year, month);
         // 末尾6日分の tail を組み立て（_runGenerateCore のキャッシュ経路と同一ロジック）。
         const tail = buildPrevTail(pr.raw, pYv, pIdxv);
         prevTailOverrideRef.current = { deptId: cd.id, year, month, tail };
         // 通知: 前月が無い／前月に居ない職員（id不一致の気づき）。表示のみ・生成は続行。
         const deptStaffIds = cs.filter(s => s.dept === cd.id).map(s => s.id);
-        if (!pr.raw) {
+        if (pr.status === PREV_NONE) {
           setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）の「${cd.label}」のシフトが見つかりません。前月末からの夜勤明け・連勤などは引き継がれません。`);
         } else {
           const miss = missingPrevStaff(tail, deptStaffIds);
           if (miss.length > 0) setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）に見つからない職員が ${miss.length}人います（部署や職員を作り直すと前月と紐づきません）。その人は月またぎが引き継がれません。`);
         }
-      } catch (e) {
-        prevTailOverrideRef.current = null; // 取得失敗→従来のキャッシュ経路にフォールバック
-        console.warn('[handleGenerate] 前月データ直接取得に失敗。キャッシュ経路にフォールバック:', e?.message || e);
       }
       try {
         const csForGenerate = buildNightExclusion(cs, cd, allShiftsRef.current, deptsRef.current, year, month);
