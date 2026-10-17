@@ -14,6 +14,7 @@ import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { countRestAndPaid } from './lib/summaryCounts.js';
 import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
+import { prevMonthInfo, buildPrevTail, missingPrevStaff } from './lib/prevMonth.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -152,18 +153,16 @@ async function fetchAllShiftData(userId) {
 //    ① 現行の部署別キー shifts_{Y}_{M}_{deptId} ② 無ければ旧形式 shifts_{Y}_{M}（全部署まとめ）→[deptId]
 //    を順に試す。戻り値 raw は { [staffId]: { [dayStr]: shift } }（無ければ null）。
 async function fetchPrevMonthRaw(userId, deptId, year, month) {
-  const pY = month === 0 ? year - 1 : year;
-  const pIdx = month === 0 ? 11 : month - 1;
-  const perDeptKey = `shifts_${pY}_${pIdx + 1}_${deptId}`;
+  const { perDeptKey, legacyKey } = prevMonthInfo(year, month);
+  const pdKey = perDeptKey(deptId);
   const r1 = await supabase.from('shift_data').select('data_value')
-    .eq('user_id', userId).eq('data_key', perDeptKey).maybeSingle();
-  if (r1.data?.data_value) return { raw: r1.data.data_value, source: 'per-dept', key: perDeptKey };
-  const legacyKey = `shifts_${pY}_${pIdx + 1}`;
+    .eq('user_id', userId).eq('data_key', pdKey).maybeSingle();
+  if (r1.data?.data_value) return { raw: r1.data.data_value, source: 'per-dept', key: pdKey };
   const r2 = await supabase.from('shift_data').select('data_value')
     .eq('user_id', userId).eq('data_key', legacyKey).maybeSingle();
   const legacyVal = r2.data?.data_value;
   if (legacyVal && legacyVal[deptId]) return { raw: legacyVal[deptId], source: 'legacy', key: legacyKey };
-  return { raw: null, source: null, key: perDeptKey };
+  return { raw: null, source: null, key: pdKey };
 }
 
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
@@ -5598,21 +5597,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       return { result: _r.shifts, warnings: _r.warnings, timelineWarnings: _r.timelineWarnings, score: _r.score, genSnapshot: genSnapshotO, diagnosticReport: _r.diagnosticReport };
     }
     const prevMonthRaw  = allDBDataRef.current[prevMonthKey]; // { [staffId]: { [dayStr]: shift } }
-    const builtPrevTail = {};
-    if (prevMonthRaw) {
-      const prevDays = getDays(prevMonthYear, prevMonthIdx);
-      const tailStart = Math.max(1, prevDays - 5); // 末尾6日分（週◯日の月またぎ用。consecWork は5日のまま遡る）
-      let staffCount = 0, dayCount = 0;
-      for (const [staffId, dayShifts] of Object.entries(prevMonthRaw)) {
-        const tail = {};
-        for (let d = tailStart; d <= prevDays; d++) {
-          const v = dayShifts[String(d)];
-          if (v) { tail[d] = v; dayCount++; }
-        }
-        if (Object.keys(tail).length > 0) { builtPrevTail[staffId] = tail; staffCount++; }
-      }
-      // prevTail情報は diagnosticReport.prevTail に格納済み（Phase3 Step2）
-    }
+    // 末尾6日分の tail を組み立て（純粋ロジックは src/lib/prevMonth.js に集約。挙動は従来と同一）。
+    const builtPrevTail = buildPrevTail(prevMonthRaw, prevMonthYear, prevMonthIdx);
+    // prevTail情報は diagnosticReport.prevTail に格納済み（Phase3 Step2）
 
     const genSnapshot = allShiftsRef.current[targetDept.id] || {};
     // 自動生成はundo/redo対象外: 履歴をリセット（redoも無効化）。
@@ -5720,23 +5707,16 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       try {
         const pr = await fetchPrevMonthRaw(session.user.id, cd.id, year, month);
         if (year !== yearRef.current || month !== monthRef.current) { setGenerating(false); return; } // await 中の月切替
-        const pYv = month === 0 ? year - 1 : year, pIdxv = month === 0 ? 11 : month - 1;
-        const tail = {};
-        if (pr.raw) {
-          const pd = getDays(pYv, pIdxv), ts = Math.max(1, pd - 5);
-          for (const [sid, dm] of Object.entries(pr.raw)) {
-            const t = {};
-            for (let d = ts; d <= pd; d++) { const v = dm[String(d)]; if (v) t[d] = v; }
-            if (Object.keys(t).length) tail[sid] = t;
-          }
-        }
+        const { pY: pYv, pIdx: pIdxv } = prevMonthInfo(year, month);
+        // 末尾6日分の tail を組み立て（_runGenerateCore のキャッシュ経路と同一ロジック）。
+        const tail = buildPrevTail(pr.raw, pYv, pIdxv);
         prevTailOverrideRef.current = { deptId: cd.id, year, month, tail };
         // 通知: 前月が無い／前月に居ない職員（id不一致の気づき）。表示のみ・生成は続行。
         const deptStaffIds = cs.filter(s => s.dept === cd.id).map(s => s.id);
         if (!pr.raw) {
           setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）の「${cd.label}」のシフトが見つかりません。前月末からの夜勤明け・連勤などは引き継がれません。`);
         } else {
-          const miss = deptStaffIds.filter(id => !tail[id]);
+          const miss = missingPrevStaff(tail, deptStaffIds);
           if (miss.length > 0) setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）に見つからない職員が ${miss.length}人います（部署や職員を作り直すと前月と紐づきません）。その人は月またぎが引き継がれません。`);
         }
       } catch (e) {
