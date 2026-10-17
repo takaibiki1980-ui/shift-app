@@ -127,6 +127,45 @@ function isPortalRpcEnabled() {
   return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PORTAL_RPC_ENABLED) === 'true';
 }
 
+// ── 月またぎ修正: 全データ取得は Supabase 既定の1000行で打ち切られるため、range でページ分けして
+//    最後まで読む。これで前月行（追加部署・古い月）がキャッシュから漏れない。
+async function fetchAllShiftData(userId) {
+  const pageSize = 1000;
+  let from = 0;
+  const out = [];
+  for (;;) {
+    const { data, error } = await supabase
+      .from('shift_data')
+      .select('data_key,data_value')
+      .eq('user_id', userId)
+      .order('data_key', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    if (data && data.length) out.push(...data);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return out;
+}
+
+// ── 月またぎ修正: 生成時の前月データを、全データキャッシュに頼らず Supabase から直接取得する。
+//    ① 現行の部署別キー shifts_{Y}_{M}_{deptId} ② 無ければ旧形式 shifts_{Y}_{M}（全部署まとめ）→[deptId]
+//    を順に試す。戻り値 raw は { [staffId]: { [dayStr]: shift } }（無ければ null）。
+async function fetchPrevMonthRaw(userId, deptId, year, month) {
+  const pY = month === 0 ? year - 1 : year;
+  const pIdx = month === 0 ? 11 : month - 1;
+  const perDeptKey = `shifts_${pY}_${pIdx + 1}_${deptId}`;
+  const r1 = await supabase.from('shift_data').select('data_value')
+    .eq('user_id', userId).eq('data_key', perDeptKey).maybeSingle();
+  if (r1.data?.data_value) return { raw: r1.data.data_value, source: 'per-dept', key: perDeptKey };
+  const legacyKey = `shifts_${pY}_${pIdx + 1}`;
+  const r2 = await supabase.from('shift_data').select('data_value')
+    .eq('user_id', userId).eq('data_key', legacyKey).maybeSingle();
+  const legacyVal = r2.data?.data_value;
+  if (legacyVal && legacyVal[deptId]) return { raw: legacyVal[deptId], source: 'legacy', key: legacyKey };
+  return { raw: null, source: null, key: perDeptKey };
+}
+
 // YEIX ワードマーク（画像版）。ログイン画面・上部ヘッダーとも画像版で統一表示。
 // height でサイズ調整（ヘッダー=22px / ログイン=40px）。
 function YeixTextLogo({ height = 36 }) {
@@ -4650,6 +4689,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
   const deptsRef = useRef(depts); // 常に最新のdeptsを参照
   const allDBDataRef = useRef({}); // Supabase全データのキャッシュ（保存後の学習再計算に使用）
+  const prevTailOverrideRef = useRef(null); // 月またぎ修正: 生成時に直接取得した前月tailを _runGenerateCore に渡す
   const exceptionMonthsRef = useRef([]); // exceptionMonthsの最新値（保存後の学習再計算に使用）
   allShiftsRef.current = allShifts; // 常に最新状態を参照（生成ハンドラ・保存ハンドラ用）
   staffListRef.current = staffList;
@@ -4689,11 +4729,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => {
     const loadAll = async () => {
       try {
-        const { data, error } = await supabase
-          .from('shift_data')
-          .select('data_key,data_value')
-          .eq('user_id', session.user.id);
-        if (error) throw error;
+        const data = await fetchAllShiftData(session.user.id); // ページ分けで全行取得（1000行上限で切れない）
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
         if (byKey['depts']) {
           deptsSkipSave.current = true;
@@ -4806,11 +4842,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       const seqAtStart = userEditSeq.current;
       isInitializing.current = true;
       try {
-        const { data, error } = await supabase
-          .from('shift_data')
-          .select('data_key,data_value')
-          .eq('user_id', session.user.id);
-        if (error) throw error;
+        const data = await fetchAllShiftData(session.user.id); // ページ分けで全行取得（1000行上限で切れない）
         // fetch中にユーザーが編集していたらシフト更新をキャンセル
         if (userEditSeq.current !== seqAtStart) return;
         const byKey = Object.fromEntries((data||[]).map(r=>[r.data_key, r.data_value]));
@@ -5297,6 +5329,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
   const [generating, setGenerating] = useState(false);
   const [generateWarnings, setGenerateWarnings] = useState(null);
+  const [genPrevNotice, setGenPrevNotice] = useState(null); // 月またぎ: 前月が見つからない/前月にいない職員の通知（表示のみ）
   // 生成直後の「直されそうなセル」警告（表示のみ・保存しない）。scopeが一致する間だけ表示。
   const [genWarnings, setGenWarnings] = useState([]);
   const [warningsOn, setWarningsOn] = useState(true);
@@ -5419,14 +5452,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       // ★Fix W-1: reloadFromRemote/初期load起因の setExceptionMonths は Supabase に書き戻さない
       if (exceptionMonthsSkipSave.current) { exceptionMonthsSkipSave.current = false; return; }
       supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'exceptionMonths', data_value:exceptionMonths, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' });
-      supabase.from('shift_data').select('data_key,data_value').eq('user_id',session.user.id).then(({data})=>{
+      fetchAllShiftData(session.user.id).then((data)=>{
         if (!data) return;
         const byKey = Object.fromEntries(data.map(r=>[r.data_key,r.data_value]));
-        allDBDataRef.current = byKey; // DBキャッシュを最新化
+        allDBDataRef.current = byKey; // DBキャッシュを最新化（ページ分けで全行）
         exceptionMonthsRef.current = exceptionMonths;
         const learned = computeLearnedTrend(byKey, staffList, exceptionMonths);
         if (Object.keys(learned).length > 0) setLearnedTrend(learned);
-      });
+      }).catch(()=>{});
     }
   }, [exceptionMonths]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -5553,6 +5586,17 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     const prevMonthYear = month === 0 ? year - 1 : year;
     const prevMonthIdx  = month === 0 ? 11 : month - 1;
     const prevMonthKey  = `shifts_${prevMonthYear}_${prevMonthIdx + 1}_${targetDept.id}`;
+    // 月またぎ修正: 生成直前に直接取得した前月tail（旧形式フォールバック込み）があればそれを使う。
+    //   無ければ従来どおり全データキャッシュから組み立てる（挙動後方互換）。
+    const _ov = prevTailOverrideRef.current;
+    if (_ov && _ov.deptId === targetDept.id && _ov.year === year && _ov.month === month) {
+      const genSnapshotO = allShiftsRef.current[targetDept.id] || {};
+      undoStackRef.current[hkey(targetDept.id, year, month)] = [];
+      redoStackRef.current[hkey(targetDept.id, year, month)] = [];
+      const _r = bestOfN(applyWeeklyCapToStaff(cs, year, month, _ov.tail), targetDept, year, month, genSnapshotO, ct, 30, _ov.tail);
+      lastAutoGenRef.current[targetDept.id] = _r.shifts;
+      return { result: _r.shifts, warnings: _r.warnings, timelineWarnings: _r.timelineWarnings, score: _r.score, genSnapshot: genSnapshotO, diagnosticReport: _r.diagnosticReport };
+    }
     const prevMonthRaw  = allDBDataRef.current[prevMonthKey]; // { [staffId]: { [dayStr]: shift } }
     const builtPrevTail = {};
     if (prevMonthRaw) {
@@ -5656,7 +5700,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       return { ...s, facilityYears: fy, floorYears: fl };
     });
     const cd=dept, ct=learningEnabled?learnedTrend:{}; // free は学習オフ＝中立trend（制約は従来どおり守る）
-    generateTimerRef.current = setTimeout(() => {
+    generateTimerRef.current = setTimeout(async () => {
       // 月切り替え中は生成を中断（year/monthクロージャ陳腐化チェック）
       if (year !== yearRef.current || month !== monthRef.current) {
         console.warn('[handleGenerate] 年月切替を検出 - 自動生成を中断', {
@@ -5669,6 +5713,36 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       // 自動生成もユーザー操作: シーケンス番号を上げてRealtimeをキャンセル
       userEditSeq.current++;
       saveStatusRef.current = "unsaved"; // Realtime保護を即時有効化
+      // ── 月またぎ修正: 前月データを Supabase から直接取得して prevTail を組み立てる ──
+      //   （全データキャッシュに頼らず・旧形式フォールバック込み）。失敗時は従来のキャッシュ経路。
+      prevTailOverrideRef.current = null;
+      setGenPrevNotice(null);
+      try {
+        const pr = await fetchPrevMonthRaw(session.user.id, cd.id, year, month);
+        if (year !== yearRef.current || month !== monthRef.current) { setGenerating(false); return; } // await 中の月切替
+        const pYv = month === 0 ? year - 1 : year, pIdxv = month === 0 ? 11 : month - 1;
+        const tail = {};
+        if (pr.raw) {
+          const pd = getDays(pYv, pIdxv), ts = Math.max(1, pd - 5);
+          for (const [sid, dm] of Object.entries(pr.raw)) {
+            const t = {};
+            for (let d = ts; d <= pd; d++) { const v = dm[String(d)]; if (v) t[d] = v; }
+            if (Object.keys(t).length) tail[sid] = t;
+          }
+        }
+        prevTailOverrideRef.current = { deptId: cd.id, year, month, tail };
+        // 通知: 前月が無い／前月に居ない職員（id不一致の気づき）。表示のみ・生成は続行。
+        const deptStaffIds = cs.filter(s => s.dept === cd.id).map(s => s.id);
+        if (!pr.raw) {
+          setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）の「${cd.label}」のシフトが見つかりません。前月末からの夜勤明け・連勤などは引き継がれません。`);
+        } else {
+          const miss = deptStaffIds.filter(id => !tail[id]);
+          if (miss.length > 0) setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）に見つからない職員が ${miss.length}人います（部署や職員を作り直すと前月と紐づきません）。その人は月またぎが引き継がれません。`);
+        }
+      } catch (e) {
+        prevTailOverrideRef.current = null; // 取得失敗→従来のキャッシュ経路にフォールバック
+        console.warn('[handleGenerate] 前月データ直接取得に失敗。キャッシュ経路にフォールバック:', e?.message || e);
+      }
       try {
         const csForGenerate = buildNightExclusion(cs, cd, allShiftsRef.current, deptsRef.current, year, month);
 
@@ -5743,9 +5817,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         }
       }
       catch(e){console.error(e);alert("自動生成エラー: "+e.message);}
-      finally{setGenerating(false);}
+      finally{ prevTailOverrideRef.current = null; setGenerating(false); }
     },700);
-  }, [staffList,dept,year,month,learnedTrend,_runGenerateCore]);
+  }, [staffList,dept,year,month,learnedTrend,_runGenerateCore,session]);
 
   const handleConfirm = useCallback(() => {
     if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
@@ -6231,6 +6305,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
 
       {/* CONTENT */}
       <div style={{padding:"8px 12px",minHeight:"calc(100vh - 180px)"}}>
+        {innerTab==="shift"&&genPrevNotice&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,padding:"6px 12px",marginBottom:8,fontSize:12}}>
+            <span style={{fontWeight:800,color:"#B91C1C",display:"inline-flex",alignItems:"center",gap:5}}><AlertTriangle size={14} strokeWidth={2}/>月またぎ</span>
+            <span style={{color:"#7F1D1D"}}>{genPrevNotice}</span>
+            <button onClick={()=>setGenPrevNotice(null)} style={{marginLeft:"auto",background:"#fff",border:"1px solid #FECACA",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:11,color:"#7F1D1D"}}>閉じる</button>
+          </div>
+        )}
         {innerTab==="shift"&&warningsScope&&warningsScope.deptId===activeDeptId&&warningsScope.year===year&&warningsScope.month===month&&(
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,padding:"6px 12px",marginBottom:8,fontSize:12}}>
             <span style={{fontWeight:800,color:"#92400E",display:"inline-flex",alignItems:"center",gap:5}}><AlertTriangle size={14} strokeWidth={2}/>生成レビュー</span>
