@@ -14,7 +14,7 @@ import { pushHistory, undoStep, redoStep } from './lib/undoRedo.js';
 import { effectiveCellShift } from './lib/exportCell.js';
 import { countRestAndPaid } from './lib/summaryCounts.js';
 import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
-import { prevMonthInfo, buildPrevTail, missingPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
+import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -5738,8 +5738,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         if (pr.status === PREV_NONE) {
           setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）の「${cd.label}」のシフトが見つかりません。前月末からの夜勤明け・連勤などは引き継がれません。`);
         } else {
-          const miss = missingPrevStaff(tail, deptStaffIds);
-          if (miss.length > 0) setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）に見つからない職員が ${miss.length}人います（部署や職員を作り直すと前月と紐づきません）。その人は月またぎが引き継がれません。`);
+          // 「前月に勤務が入っていない職員」と「前月と紐づかない職員（作り直しの可能性）」を分けて数える。
+          const { noLink, noWork } = classifyPrevStaff(pr.raw, deptStaffIds);
+          const parts = [];
+          if (noWork.length > 0) parts.push(`前の月に勤務が入っていない職員が ${noWork.length}人`);
+          if (noLink.length > 0) parts.push(`前の月と紐づかない職員（作り直した可能性）が ${noLink.length}人`);
+          if (parts.length > 0) {
+            setGenPrevNotice(`前の月（${pYv}年${pIdxv + 1}月）について、${parts.join('、')}います。その人は前月末からの夜勤明け・連勤などが引き継がれません。`);
+          }
         }
       }
       try {

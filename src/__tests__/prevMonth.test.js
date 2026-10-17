@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'vitest';
 import {
-  prevMonthInfo, pickPrevRaw, buildPrevTail, missingPrevStaff,
+  prevMonthInfo, pickPrevRaw, buildPrevTail, missingPrevStaff, classifyPrevStaff,
   classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK,
 } from '../lib/prevMonth.js';
 
@@ -107,6 +107,38 @@ describe('buildPrevTail（前月末尾6日の tail 組み立て）', () => {
     const raw = { s1: { '22': '日勤', '23': '夜勤', '28': '明け' } };
     const tail = buildPrevTail(raw, 2026, 1); // 2026/2は28日
     expect(tail).toEqual({ s1: { 23: '夜勤', 28: '明け' } });
+  });
+});
+
+describe('classifyPrevStaff（通知の出し分け: 勤務なし / 紐づかない）', () => {
+  // 観測ケース: 前月に A/B/C は勤務あり、ほか5人は同じ前月データに id はあるが勤務ゼロ。
+  test('idはあるが勤務ゼロ → noWork、idが無い → noLink に分かれる', () => {
+    const raw = {
+      A: { '31': '夜勤' },
+      B: { '30': '夜勤', '31': '明け' },
+      C: { '31': '休み' },
+      D: {},            // id あり・勤務なし
+      E: { '5': '' },   // id あり・空文字のみ＝勤務なし
+    };
+    // F は前月 raw に存在しない＝作り直し等で紐づかない
+    const { noLink, noWork } = classifyPrevStaff(raw, ['A', 'B', 'C', 'D', 'E', 'F']);
+    expect(noWork.sort()).toEqual(['D', 'E']);
+    expect(noLink).toEqual(['F']);
+  });
+
+  test('全員前月に勤務あり → 両方空', () => {
+    const raw = { A: { '31': '夜勤' }, B: { '31': '明け' } };
+    expect(classifyPrevStaff(raw, ['A', 'B'])).toEqual({ noLink: [], noWork: [] });
+  });
+
+  test('raw が無い（前月なし）→ 両方空（呼び出し側が別通知）', () => {
+    expect(classifyPrevStaff(null, ['A', 'B'])).toEqual({ noLink: [], noWork: [] });
+  });
+
+  test('休みは「勤務あり」として扱う（C は noWork に入らない）', () => {
+    const raw = { C: { '31': '休み' } };
+    const { noWork } = classifyPrevStaff(raw, ['C']);
+    expect(noWork).toEqual([]);
   });
 });
 
