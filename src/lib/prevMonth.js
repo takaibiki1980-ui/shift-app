@@ -51,6 +51,24 @@ export function missingPrevStaff(tail, staffIds) {
   return (staffIds || []).filter((id) => !tail[id]);
 }
 
+// 前月の生データ raw（{ [staffId]: { [dayStr]: shift } }）と現スタッフ一覧から、通知用に2種類へ分ける。
+//  noLink : 前月の職員一覧（raw のキー）に id が無い。部署や職員を作り直して前月と紐づかない可能性。
+//  noWork : id はあるが前月に勤務が1つも入っていない（その月に未入力）。
+// raw が無い（前月なし）場合は全員 noLink 扱いにはせず、呼び出し側が「前月なし」通知を別に出す想定で
+// 空を返す。表示専用の集計で、生成には一切関与しない。
+export function classifyPrevStaff(raw, staffIds) {
+  const noLink = [], noWork = [];
+  if (!raw) return { noLink, noWork };
+  const present = new Set(Object.keys(raw));
+  for (const id of (staffIds || [])) {
+    if (!present.has(id)) { noLink.push(id); continue; }
+    const dm = raw[id] || {};
+    const hasAny = Object.values(dm).some((v) => v); // 何か勤務が入っているか（空文字/未設定は勤務なし）
+    if (!hasAny) noWork.push(id);
+  }
+  return { noLink, noWork };
+}
+
 // ── 前月取得の3状態 ───────────────────────────────────────────────
 //  'error' : 取得に失敗した（通信エラー等）。前月が有るか無いか判断できない。
 //  'none'  : 取得は成功したが、前月が保存されていないと確認できた。
