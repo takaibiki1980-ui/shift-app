@@ -2478,6 +2478,18 @@ function localSearchImprove(shifts, ds, dept, days, year, month, shiftTrend = {}
     Object.keys(s.shiftRequestsByMonth?.[mk] || {}).forEach(d => lk.add(Number(d)));
     locked[s.id] = lk;
   }
+  // ★[月またぎ] 前月末が「明け」で終わる人の1日目は休み固定（autoGenerate の繰り越しロック）。
+  //   localSearchImprove は locked を希望系からしか作らず、1日目の前日(res[0])も見えないため、
+  //   このロックが無いと1日目の休みがスワップで勤務に化ける（前月末=明けの再発）。
+  //   前月末=夜勤→1日目=明けは FIXED で既に保護済み。prevTail に明け終わりが居なければ no-op。
+  {
+    const pY = month === 0 ? year - 1 : year;
+    const pIdx = month === 0 ? 11 : month - 1;
+    const pDays = getDays(pY, pIdx);
+    for (const s of ds) {
+      if ((prevTail[s.id] || {})[pDays] === '明け') locked[s.id].add(1);
+    }
+  }
 
   let curScore = scoreShifts(res, ds, dept, days, year, month, shiftTrend);
 
