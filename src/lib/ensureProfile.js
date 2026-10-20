@@ -72,3 +72,20 @@ export async function ensureProfile({ supabase, user, enabled, readResult, logge
   }
   return { profile: reread.data, created: !insErr, reason: insErr ? 'existed-23505' : 'created' };
 }
+
+/**
+ * ensureProfile を例外安全に包む。supabase 呼び出しが reject（throw）しても、
+ * 例外を外に出さずログだけ出して「無料の既定」を返す。ログイン処理を止めないため。
+ * 戻り値・引数は ensureProfile と同じ。
+ */
+export async function ensureProfileSafe(args) {
+  try {
+    return await ensureProfile(args);
+  } catch (e) {
+    const log = args?.logger || console;
+    (log?.warn || log?.log || (() => {})).call(
+      log, '[ensureProfileSafe] 例外を捕捉。無料の既定で続行:', e?.message || e,
+    );
+    return { profile: defaultProfile(args?.user), created: false, reason: 'exception' };
+  }
+}

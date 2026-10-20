@@ -15,7 +15,7 @@ import { effectiveCellShift } from './lib/exportCell.js';
 import { countRestAndPaid } from './lib/summaryCounts.js';
 import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
 import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
-import { ensureProfile } from './lib/ensureProfile.js';
+import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -4423,12 +4423,19 @@ export default function App() {
 
   const fetchProfile = async (sess) => {
     if (!sess) { setProfile(null); return; }
-    const readResult = await supabase.from('profiles').select('*').eq('id', sess.user.id).maybeSingle();
-    // フラグ OFF のときは従来どおり（INSERT せず data || 既定）。ON のときだけ行が無ければ作る。
-    const { profile } = await ensureProfile({
-      supabase, user: sess.user, enabled: isProfileAutoCreateEnabled(), readResult,
-    });
-    setProfile(profile);
+    try {
+      const readResult = await supabase.from('profiles').select('*').eq('id', sess.user.id).maybeSingle();
+      // フラグ OFF のときは従来どおり（INSERT せず data || 既定）。ON のときだけ行が無ければ作る。
+      // ensureProfileSafe は例外を外に出さないが、最初の select が throw する場合に備え全体も try/catch。
+      const { profile } = await ensureProfileSafe({
+        supabase, user: sess.user, enabled: isProfileAutoCreateEnabled(), readResult,
+      });
+      setProfile(profile);
+    } catch (e) {
+      // 例外が出てもログインは止めない。無料の既定で動く（次回ログイン/再取得で再試行）。
+      console.warn('[fetchProfile] プロフィール取得で例外。無料の既定で続行:', e?.message || e);
+      setProfile(defaultProfile(sess.user));
+    }
   };
 
   useEffect(() => {

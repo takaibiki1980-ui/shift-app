@@ -3,7 +3,7 @@
  * 実名・実 id・実メールは使わず、仮の値で検証する。
  */
 import { describe, test, expect, vi } from 'vitest';
-import { ensureProfile, defaultProfile, profileFacilityName } from '../lib/ensureProfile.js';
+import { ensureProfile, ensureProfileSafe, defaultProfile, profileFacilityName } from '../lib/ensureProfile.js';
 
 const USER = { id: 'u-test-1', email: 'user1@example.test', user_metadata: {} };
 
@@ -108,6 +108,55 @@ describe('ensureProfile（フラグ ON）', () => {
     });
     await ensureProfile({ supabase: api, user, enabled, readResult: { data: null, error: null } });
     expect(calls.insert[0]).toEqual({ id: 'u-test-2', facility_name: '施設メタ' });
+  });
+});
+
+describe('ensureProfileSafe（例外安全＝ログインを止めない）', () => {
+  // insert / maybeSingle が reject（throw）する偽 supabase。
+  function throwingSupabase({ insertThrows = false, rereadThrows = false } = {}) {
+    const api = {
+      from() { return api; },
+      select() { return api; },
+      eq() { return api; },
+      maybeSingle() { if (rereadThrows) return Promise.reject(new Error('reread network down')); return Promise.resolve({ data: null, error: null }); },
+      insert() { if (insertThrows) return Promise.reject(new Error('insert network down')); return Promise.resolve({ error: null }); },
+    };
+    return api;
+  }
+
+  test('INSERT が reject（throw）→ 例外を外に出さず無料の既定を返す', async () => {
+    const warn = vi.fn();
+    const res = await ensureProfileSafe({
+      supabase: throwingSupabase({ insertThrows: true }), user: USER, enabled: true,
+      readResult: { data: null, error: null }, logger: { warn },
+    });
+    expect(res.profile).toEqual(defaultProfile(USER));
+    expect(res.reason).toBe('exception');
+    expect(warn).toHaveBeenCalled();
+  });
+
+  test('読み直し（reread）が reject（throw）→ 例外を外に出さず無料の既定を返す', async () => {
+    const res = await ensureProfileSafe({
+      supabase: throwingSupabase({ rereadThrows: true }), user: USER, enabled: true,
+      readResult: { data: null, error: null }, logger: { warn: vi.fn() },
+    });
+    expect(res.profile).toEqual(defaultProfile(USER));
+    expect(res.reason).toBe('exception');
+  });
+
+  test('正常系では ensureProfile と同じ結果（例外が無ければ素通し）', async () => {
+    const row = { id: 'u-test-1', facility_name: '既存', plan: 'free', is_admin: false };
+    const api = { from() { return api; }, select() { return api; }, eq() { return api; }, maybeSingle() { return Promise.resolve({ data: row }); }, insert() { return Promise.resolve({ error: null }); } };
+    const res = await ensureProfileSafe({ supabase: api, user: USER, enabled: true, readResult: { data: row, error: null } });
+    expect(res.profile).toBe(row);
+    expect(res.reason).toBe('exists');
+  });
+
+  test('フラグ OFF では supabase に触れず既定（例外も起きない）', async () => {
+    const api = { from() { throw new Error('should not be called'); } };
+    const res = await ensureProfileSafe({ supabase: api, user: USER, enabled: false, readResult: { data: null, error: null } });
+    expect(res.profile).toEqual(defaultProfile(USER));
+    expect(res.reason).toBe('disabled');
   });
 });
 
