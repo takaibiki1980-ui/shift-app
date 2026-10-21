@@ -15,6 +15,7 @@ import { effectiveCellShift } from './lib/exportCell.js';
 import { countRestAndPaid } from './lib/summaryCounts.js';
 import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
 import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
+import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -126,6 +127,14 @@ function getPublicBaseUrl() {
 //   core.js・生成・保存データ・リーダー側の画面には一切関係しない。
 function isPortalRpcEnabled() {
   return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PORTAL_RPC_ENABLED) === 'true';
+}
+
+// ── PR-3a スイッチ ──
+//   VITE_PROFILE_AUTO_CREATE_ENABLED==='true' のときだけ、初回ログインで自分の profiles 行を作る。
+//   未設定や 'true' 以外は従来どおり INSERT しない（＝今とまったく同じ動き）。
+//   試用の終わりは DB の protect トリガーが固定する。core.js・生成・planV2.js には関係しない。
+function isProfileAutoCreateEnabled() {
+  return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PROFILE_AUTO_CREATE_ENABLED) === 'true';
 }
 
 // ── 月またぎ修正: 全データ取得は Supabase 既定の1000行で打ち切られるため、range でページ分けして
@@ -4414,8 +4423,19 @@ export default function App() {
 
   const fetchProfile = async (sess) => {
     if (!sess) { setProfile(null); return; }
-    const { data } = await supabase.from('profiles').select('*').eq('id', sess.user.id).maybeSingle();
-    setProfile(data || { facility_name: sess.user.email, plan: 'free', is_admin: false });
+    try {
+      const readResult = await supabase.from('profiles').select('*').eq('id', sess.user.id).maybeSingle();
+      // フラグ OFF のときは従来どおり（INSERT せず data || 既定）。ON のときだけ行が無ければ作る。
+      // ensureProfileSafe は例外を外に出さないが、最初の select が throw する場合に備え全体も try/catch。
+      const { profile } = await ensureProfileSafe({
+        supabase, user: sess.user, enabled: isProfileAutoCreateEnabled(), readResult,
+      });
+      setProfile(profile);
+    } catch (e) {
+      // 例外が出てもログインは止めない。無料の既定で動く（次回ログイン/再取得で再試行）。
+      console.warn('[fetchProfile] プロフィール取得で例外。無料の既定で続行:', e?.message || e);
+      setProfile(defaultProfile(sess.user));
+    }
   };
 
   useEffect(() => {
