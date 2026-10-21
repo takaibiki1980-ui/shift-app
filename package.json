@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@holiday-jp/holiday_jp": "^2.5.1",
-    "@supabase/supabase-js": "^2.103.0",
+    "@supabase/supabase-js": "^2.118.0",
     "lucide-react": "^1.17.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.4",
