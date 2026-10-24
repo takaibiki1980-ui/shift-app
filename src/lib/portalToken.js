@@ -116,6 +116,33 @@ export function daysFromNowExpiry(now, days) {
   return new Date(nowMs + days * DAY_MS).toISOString();
 }
 
+/**
+ * 共有シフトリンクの期限：対象シフト月(YYYY-MM)の「月末(JST)＋afterDays 日」を ISO で返す。
+ * 決定済み仕様では afterDays=30（＝月末の30日後）。monthEndExpiry の薄いラッパー。不正な ym は null。
+ */
+export function shareExpiry(shiftYm, afterDays = 30) {
+  return monthEndExpiry(shiftYm, afterDays);
+}
+
+/**
+ * 希望休リンクの期限：締切日("YYYY-MM-DD") の「その日の終わり 23:59:59.999（JST）」を ISO で返す。
+ * 締切は facilityConfig.depts[].deadline（または byMonth["YYYY-M"].deadline）に入っている日付文字列。
+ * 不正・空は null（＝無期限扱いの判断は呼び出し側に委ねる）。
+ */
+export function deadlineExpiry(dateString) {
+  if (typeof dateString !== 'string') return null;
+  const m = dateString.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  const y = +m[1], mon = +m[2], d = +m[3];
+  if (mon < 1 || mon > 12 || d < 1 || d > 31) return null;
+  // 日の妥当性（2/30 等を弾く）: UTC で作って月/日が一致するか検査。
+  const probe = new Date(Date.UTC(y, mon - 1, d));
+  if (probe.getUTCMonth() !== mon - 1 || probe.getUTCDate() !== d) return null;
+  // JST 壁時計 y-mon-d 23:59:59.999 を UTC 瞬間へ（-9h）。
+  const ms = Date.UTC(y, mon - 1, d, 23, 59, 59, 999) - JST_OFFSET_MS;
+  return new Date(ms).toISOString();
+}
+
 // baseUrl の末尾スラッシュを除く。
 const stripTrailingSlash = (b) => (typeof b === 'string' ? b : '').replace(/\/+$/, '');
 

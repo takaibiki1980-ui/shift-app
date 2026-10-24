@@ -6,6 +6,7 @@ import { describe, test, expect } from 'vitest';
 import {
   PORTAL_TOKEN_CHARS, genPortalToken, isValidTokenFormat, isLinkActive,
   monthEndExpiry, daysFromNowExpiry, buildPortalUrl, buildShareUrl, parseLinkParams,
+  shareExpiry, deadlineExpiry,
 } from '../lib/portalToken.js';
 
 describe('genPortalToken（生成）', () => {
@@ -127,6 +128,48 @@ describe('daysFromNowExpiry（発行から N 日後）', () => {
     expect(daysFromNowExpiry('bad', 7)).toBeNull();
     expect(daysFromNowExpiry('2026-10-24T00:00:00Z', NaN)).toBeNull();
     expect(daysFromNowExpiry('2026-10-24T00:00:00Z', 'x')).toBeNull();
+  });
+});
+
+describe('shareExpiry（共有＝対象月の月末JST＋30日）', () => {
+  test('既定30日後（10月末 JST の30日後）', () => {
+    // 2026-10 月末 JST 23:59:59.999 = 2026-10-31T14:59:59.999Z、+30日 = 2026-11-30T14:59:59.999Z
+    expect(shareExpiry('2026-10')).toBe('2026-11-30T14:59:59.999Z');
+  });
+  test('うるう年2月＋30日', () => {
+    // 2024-02 月末 = 2024-02-29T14:59:59.999Z、+30日 = 2024-03-30T14:59:59.999Z
+    expect(shareExpiry('2024-02')).toBe('2024-03-30T14:59:59.999Z');
+  });
+  test('12月（年またぎ）＋30日', () => {
+    // 2026-12 月末 = 2026-12-31T14:59:59.999Z、+30日 = 2027-01-30T14:59:59.999Z
+    expect(shareExpiry('2026-12')).toBe('2027-01-30T14:59:59.999Z');
+  });
+  test('afterDays を変えられる / 不正 ym は null', () => {
+    expect(shareExpiry('2026-10', 0)).toBe('2026-10-31T14:59:59.999Z');
+    expect(shareExpiry('bad')).toBeNull();
+  });
+});
+
+describe('deadlineExpiry（希望休＝締切日の終わりJST）', () => {
+  test('締切日の 23:59:59.999 JST（=当日 14:59:59.999Z）', () => {
+    expect(deadlineExpiry('2026-11-20')).toBe('2026-11-20T14:59:59.999Z');
+  });
+  test('月末・年末も正しい', () => {
+    expect(deadlineExpiry('2026-12-31')).toBe('2026-12-31T14:59:59.999Z');
+  });
+  test('存在しない日付・不正形式・空・非文字列は null', () => {
+    expect(deadlineExpiry('2026-02-30')).toBeNull();
+    expect(deadlineExpiry('2026-13-01')).toBeNull();
+    expect(deadlineExpiry('2026/11/20')).toBeNull();
+    expect(deadlineExpiry('')).toBeNull();
+    expect(deadlineExpiry(null)).toBeNull();
+  });
+  test('isLinkActive と整合：締切当日の JST 日中は有効、翌0時(JST)で失効', () => {
+    const exp = deadlineExpiry('2026-11-20'); // 2026-11-20T14:59:59.999Z
+    // JST 11/20 23:00（=UTC 11/20 14:00）→ 有効
+    expect(isLinkActive({ expires_at: exp, revoked_at: null }, new Date('2026-11-20T14:00:00Z'))).toBe(true);
+    // JST 11/21 00:00（=UTC 11/20 15:00）→ 失効
+    expect(isLinkActive({ expires_at: exp, revoked_at: null }, new Date('2026-11-20T15:00:00Z'))).toBe(false);
   });
 });
 
