@@ -16,6 +16,8 @@ import { countRestAndPaid } from './lib/summaryCounts.js';
 import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
 import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
 import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
+import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
+import { resolveDeadlineDate, findReusablePortalLink, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -135,6 +137,14 @@ function isPortalRpcEnabled() {
 //   試用の終わりは DB の protect トリガーが固定する。core.js・生成・planV2.js には関係しない。
 function isProfileAutoCreateEnabled() {
   return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PROFILE_AUTO_CREATE_ENABLED) === 'true';
+}
+
+// ── PR-C スイッチ ──
+//   VITE_PORTAL_TOKEN_ENABLED==='true' のときだけ、ポータル/共有リンクの新方式（長い token・
+//   期限・失効・管理者uuidをURLに含めない）を使う。未設定や 'true' 以外は従来どおり
+//   （旧 ?staff=<uuid> / 8文字 ?share=・期限なし）＝現在とバイト単位で同じ挙動。
+function isPortalTokenEnabled() {
+  return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PORTAL_TOKEN_ENABLED) === 'true';
 }
 
 // ── 月またぎ修正: 全データ取得は Supabase 既定の1000行で打ち切られるため、range でページ分けして
@@ -2478,7 +2488,9 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
     setIsSharing(true);
     try {
       // STEP2: 押下時点のスナップショットをメモリ上で作成
-      const token = genToken();
+      // 新方式(ON): 24文字 token＋期限(シフト月の月末JST+30日)。OFF: 従来の8文字・期限なし。
+      const _useTok = isPortalTokenEnabled();
+      const token = _useTok ? genPortalToken() : genToken();
       const selectedDeptObjs = depts.filter(d => selectedDepts.includes(d.id));
 
       // 全選択部署の shift_data をまとめる
@@ -2494,7 +2506,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
       const dept_data = selectedDeptObjs.map(d => ({ id: d.id, label: d.label }));
 
       // STEP3: shared_shifts へ INSERT（全部署を1レコードで保存）
-      const { error } = await supabase.from('shared_shifts').insert({
+      const _row = {
         token,
         admin_user_id: session.user.id,
         year,
@@ -2504,11 +2516,13 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         staff_data,
         dept_data,
         schema_version: 1,
-      });
+      };
+      if (_useTok) _row.expires_at = shareExpiry(`${year}-${month + 1}`, 30); // 月末(JST)+30日
+      const { error } = await supabase.from('shared_shifts').insert(_row);
       if (error) throw error;
 
       // STEP4: INSERT成功後のみ shareToken 確定・QR/LINE/URLを有効化
-      const shareUrl = `${getPublicBaseUrl()}/?share=${token}`;
+      const shareUrl = _useTok ? buildShareUrl(getPublicBaseUrl(), token) : `${getPublicBaseUrl()}/?share=${token}`;
       setSharedResult({ token, shareUrl });
     } catch(e) {
       // INSERT失敗: URL・QR・LINEは発行しない
@@ -3738,7 +3752,64 @@ export function resolvePortalDeadline(selDept, ymPreload) {
   return selDept.deadline || null;
 }
 
-function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
+// 新方式(フラグON)の希望休リンク発行 UI。ボタン押下時だけ issue_portal_link を呼ぶ（描画では発行しない）。
+// 同じ部署・同じ対象月の有効リンクがあれば再利用（重複発行しない）。締切未設定なら発行しない。
+// URL は buildPortalUrl（?p=<token>）。管理者 uuid も cfg= も URL に含めない。
+function PortalTokenIssuer({ dept, ps, userId }) {
+  const [url, setUrl] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const ymStr = (ps?.targetYear && ps?.targetMonth) ? `${ps.targetYear}-${ps.targetMonth}` : null;
+  const issue = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // 既存の有効リンクを本人として検索して再利用
+      const { data: links, error: selErr } = await supabase
+        .from('portal_links')
+        .select('id,dept_id,target_month,token,expires_at,revoked_at')
+        .eq('admin_user_id', userId).eq('dept_id', dept.id);
+      if (selErr) { alert('リンクの確認に失敗しました。もう一度お試しください。'); return; }
+      const reuse = findReusablePortalLink(links, dept.id, ymStr, new Date());
+      if (reuse) { setUrl(buildPortalUrl(getPublicBaseUrl(), reuse.token)); return; }
+      // 締切を解決（未設定なら発行しない＝期限なしリンクを作らない）
+      const deadlineDate = resolveDeadlineDate(
+        { deadline: ps?.deadline, targetYear: ps?.targetYear, targetMonth: ps?.targetMonth, byMonth: ps?.byMonth }, ymStr
+      );
+      if (!deadlineDate) { alert('先に締切日を設定してください。（期限のないリンクは作成できません）'); return; }
+      const p_expires_at = deadlineExpiry(deadlineDate);
+      const { data, error } = await supabase.rpc('issue_portal_link', {
+        p_dept: dept.id, p_month: ymStr, p_expires_at, p_label: dept.label,
+      });
+      const row = Array.isArray(data) ? data[0] : data;
+      if (error || !row?.token) { alert('リンクの発行に失敗しました。もう一度お試しください。'); return; }
+      setUrl(buildPortalUrl(getPublicBaseUrl(), row.token));
+    } catch {
+      alert('リンクの発行に失敗しました。通信を確認してください。');
+    } finally { setBusy(false); }
+  };
+  const doCopy = () => { if (!url) return; if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(url).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${url}`)); } else { alert(`URLをコピーしてください:\n${url}`); } };
+  const doLine = () => { if (!url) return; const dl=dept.kiboDayLimit||0; const body=`${dept.label}の希望休入力はこちら${dl>0?`\n※希望休は${dl}日までです`:''}\n${url}`; window.open(`https://line.me/R/msg/text/?${encodeURIComponent(body)}`,'_blank'); };
+  return (
+    <div>
+      <button onClick={issue} disabled={busy} style={{width:"100%",background:busy?"#A5B4FC":"#16a34a",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:busy?"wait":"pointer",fontSize:13,fontWeight:800,marginBottom:10,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>{busy?"発行中…":(url?"リンクを再発行・確認":"希望休リンクを発行")}</button>
+      {url && (<>
+        <div style={{textAlign:"center",marginBottom:6}}>
+          <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Camera size={12} strokeWidth={2}/>カメラで読み取り</div>
+          <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8}}>
+            <QRCodeSVG value={url} size={140} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
+          </div>
+        </div>
+        <div style={{fontSize:11,fontWeight:700,color:"#52525B",marginBottom:4}}>希望休入力リンク</div>
+        <div style={{display:"flex",gap:8,marginTop:4,marginBottom:12}}>
+          <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><MessageCircle size={14} strokeWidth={2}/>LINEで送る</button>
+          <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>コピー</button>
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload, portalToken = null }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -3754,8 +3825,24 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [kiboLoading, setKiboLoading] = useState(false);
+  const [portalInvalid, setPortalInvalid] = useState(false); // token モード：リンク無効/期限切れ/失効/不明（理由を区別しない）
 
   const loadConfig = async () => {
+    // ── token モード（新方式）: get_portal_by_token で施設設定を取得。admin uuid は一切扱わない。
+    if (portalToken) {
+      setLoading(true); setPortalInvalid(false); setConfig(null);
+      try {
+        const res = await supabase.rpc('get_portal_by_token', { p_token: portalToken });
+        const cfg = res.error ? null : (res.data || null);
+        if (!cfg) { setPortalInvalid(true); setLoading(false); return; }
+        setConfig(cfg);
+        setLoading(false);
+        if (cfg.depts?.length > 0) setSelDeptId(cfg.depts[0].id);
+      } catch {
+        setPortalInvalid(true); setLoading(false);
+      }
+      return;
+    }
     // URLにcfgデータが埋め込まれていれば即座に使う（Supabase不要・確実）
     if (cfgPreload) {
       try {
@@ -3847,7 +3934,9 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
     if (!selStaffId || !selDeptId) return;
     setKiboLoading(true);
     setSubmitted(false);
-    const kiboQuery = isPortalRpcEnabled()
+    const kiboQuery = portalToken
+      ? supabase.rpc('get_portal_kibo_by_token', { p_token: portalToken, p_month: mk })
+      : isPortalRpcEnabled()
       ? supabase.rpc('get_portal_kibo', { p_admin: adminUserId, p_dept: selDeptId, p_month: mk })
       : supabase.from('staff_kibo').select('*')
           .eq('admin_user_id', adminUserId).eq('dept_id', selDeptId).eq('month_key', mk);
@@ -3873,7 +3962,9 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const { data: latest } = isPortalRpcEnabled()
+      const { data: latest } = portalToken
+        ? await supabase.rpc('get_portal_kibo_by_token', { p_token: portalToken, p_month: mk })
+        : isPortalRpcEnabled()
         ? await supabase.rpc('get_portal_kibo', { p_admin: adminUserId, p_dept: selDeptId, p_month: mk })
         : await supabase.from('staff_kibo')
             .select('staff_id,days')
@@ -3891,7 +3982,13 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
         return;
       }
       let error;
-      if (isPortalRpcEnabled()) {
+      if (portalToken) {
+        const res = await supabase.rpc('submit_portal_kibo_by_token', {
+          p_token: portalToken, p_staff: selStaffId,
+          p_month: mk, p_days: myDays, p_yukyu: myYukyuDays
+        });
+        error = res.error;
+      } else if (isPortalRpcEnabled()) {
         const res = await supabase.rpc('submit_portal_kibo', {
           p_admin: adminUserId, p_dept: selDeptId, p_staff: selStaffId,
           p_month: mk, p_days: myDays, p_yukyu: myYukyuDays
@@ -3905,6 +4002,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
         error = res.error;
       }
       if (!error) setSubmitted(true);
+      else if (portalToken) alert(PORTAL_INVALID_MESSAGE); // 理由（期限切れ/失効/職員不在）を区別しない
       else if (error.code === '42501') alert('この部署の職員として登録されていません。リーダーに確認してください。');
       else alert('送信に失敗しました。もう一度お試しください。');
     } catch {
@@ -3925,6 +4023,15 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload }) {
       <div style={{textAlign:"center"}}>
         <ShifuponIcon size={48} radius={12}/>
         <div style={{color:"#71717A",fontSize:13,marginTop:12}}>読み込み中…</div>
+      </div>
+    </div>
+  );
+
+  if (portalInvalid) return (
+    <div style={{...BASE,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center",color:"#ef4444",maxWidth:320}}>
+        <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><AlertTriangle size={40} strokeWidth={2} style={{color:"#ef4444"}}/></div>
+        <div style={{fontSize:14,fontWeight:700,color:"#374151"}}>{PORTAL_INVALID_MESSAGE}</div>
       </div>
     </div>
   );
@@ -4410,6 +4517,11 @@ export default function App() {
   const staffYm = params.get('ym'); // 対象シフト月 "YYYY-M"（締切を月ごとに判定するため）
   // 短縮UUID（22文字）を通常UUIDに戻す
   const resolvedUserId = staffUserId ? (staffUserId.length <= 24 ? shortToUuid(staffUserId) : staffUserId) : null;
+
+  // 新方式ポータル: ?p=token → StaffPortal（token モード・管理者uuidをURLに含めない）。
+  //   フラグ ON のときだけ解釈する（OFF では ?p= は無視＝従来どおり）。
+  const _portalTok = isPortalTokenEnabled() ? (parseLinkParams(window.location.search).kind === 'portal' ? params.get('p') : null) : null;
+  if (_portalTok) return <StaffPortal portalToken={_portalTok} />;
 
   // 新共有ルート: ?share=token → SharedShiftView（shared_shifts 専用）
   if (shareToken) return <SharedShiftView token={shareToken} />;
@@ -6580,6 +6692,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   </div>
                   {/* 保存ボタン */}
                   <button onClick={doSaveSettings} style={{width:"100%",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Save size={14} strokeWidth={2}/>この設定を保存する</button>
+                  {isPortalTokenEnabled() ? (
+                    <PortalTokenIssuer dept={d} ps={ps} userId={session.user.id} />
+                  ) : (<>
                   <div style={{textAlign:"center",marginBottom:6}}>
                     <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Camera size={12} strokeWidth={2}/>カメラで読み取り</div>
                     <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8}}>
@@ -6591,6 +6706,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                     <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><MessageCircle size={14} strokeWidth={2}/>LINEで送る</button>
                     <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>コピー</button>
                   </div>
+                  </>)}
                 </div>
               );
             })}
