@@ -18,6 +18,7 @@ import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PRE
 import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
 import { resolveDeadlineDate, findReusablePortalLink, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
+import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -3752,6 +3753,106 @@ export function resolvePortalDeadline(selDept, ymPreload) {
   return selDept.deadline || null;
 }
 
+// 発行済みリンクの一覧・失効・配り直し（フラグ ON のときだけ開ける）。token は文字では表示しない。
+function PortalLinkAdminModal({ depts, userId, onClose, onIssueNew }) {
+  const [portalRows, setPortalRows] = useState([]);
+  const [sharedRows, setSharedRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [qrFor, setQrFor] = useState(null);      // QR を表示中の行 id
+  const [portalLimit, setPortalLimit] = useState(50);
+  const [sharedLimit, setSharedLimit] = useState(50);
+  const deptNameById = {}; (depts || []).forEach(d => { deptNameById[d.id] = d.label; });
+
+  const load = async () => {
+    setLoading(true); setError(false);
+    try {
+      const [pl, ss] = await Promise.all([
+        supabase.from('portal_links').select('id,dept_id,target_month,label,token,expires_at,revoked_at,created_at').eq('admin_user_id', userId),
+        supabase.from('shared_shifts').select('id,dept_ids,year,month,token,expires_at,revoked_at,created_at').eq('admin_user_id', userId),
+      ]);
+      if (pl.error || ss.error) { setError(true); setLoading(false); return; }
+      const now = new Date();
+      setPortalRows(formatPortalRows(pl.data, deptNameById, now));
+      setSharedRows(formatSharedRows(ss.data, deptNameById, now));
+      setLoading(false);
+    } catch { setError(true); setLoading(false); }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const urlOf = (row) => row.kind === 'portal' ? buildPortalUrl(getPublicBaseUrl(), row.token) : buildShareUrl(getPublicBaseUrl(), row.token);
+  const revoke = async (row) => {
+    if (!window.confirm('このリンクを止めます。職員はこのリンクを開けなくなります。')) return;
+    try {
+      const fn = row.kind === 'portal' ? 'revoke_portal_link' : 'revoke_shared_shift';
+      const { error: e } = await supabase.rpc(fn, { p_id: row.id });
+      if (e) { alert('止められませんでした。もう一度お試しください'); return; }
+      load();
+    } catch { alert('止められませんでした。もう一度お試しください'); }
+  };
+  const copy = (row) => { const u = urlOf(row); if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(u).then(() => alert('URLをコピーしました！')).catch(() => alert('URLをコピーしてください')); } else { alert('URLをコピーしてください'); } };
+
+  const statusColor = (s) => s === 'active' ? '#16a34a' : s === 'expired' ? '#9CA3AF' : '#c44b4b';
+  const pSlice = sliceWithMore(portalRows, portalLimit);
+  const sSlice = sliceWithMore(sharedRows, sharedLimit);
+
+  const renderRow = (row) => (
+    <div key={`${row.kind}-${row.id}`} style={{border:"1px solid #E5E7EB",borderRadius:8,padding:"8px 10px",marginBottom:8,background:"#fff"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+        <div style={{minWidth:0,flex:1}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#18181B",overflow:"hidden",textOverflow:"ellipsis"}}>
+            {row.kind === 'portal' ? row.deptName : (row.deptNames || []).join('・') || '共有'}
+            {row.kind === 'portal' && row.targetMonth ? ` / ${row.targetMonth}` : ''}
+            {row.kind === 'share' && row.ym ? ` / ${row.ym}` : ''}
+          </div>
+          <div style={{fontSize:11,color:statusColor(row.status),fontWeight:700,marginTop:2}}>
+            {row.kind === 'portal' ? '希望休リンク' : '共有リンク'}・{row.statusLabel}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          {row.canRevoke && <button onClick={()=>setQrFor(qrFor===`${row.kind}-${row.id}`?null:`${row.kind}-${row.id}`)} style={{background:"#F4F4F5",border:"1px solid #D4D4D8",borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#374151"}}>QR</button>}
+          {row.canRevoke && <button onClick={()=>copy(row)} style={{background:"#f0fff4",border:"1px solid #86efac",borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#16a34a"}}>コピー</button>}
+          {row.canRevoke && <button onClick={()=>revoke(row)} style={{background:"#fff0f0",border:"1px solid #fca5a5",borderRadius:6,padding:"5px 8px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#c44b4b"}}>止める</button>}
+        </div>
+      </div>
+      {qrFor===`${row.kind}-${row.id}` && row.canRevoke && (
+        <div style={{textAlign:"center",marginTop:8}}>
+          <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8}}>
+            <QRCodeSVG value={urlOf(row)} size={132} bgColor="#ffffff" fgColor="#18181B" level="L" includeMargin={false}/>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,padding:20,width:"100%",maxWidth:480,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{fontSize:15,fontWeight:900,color:"#18181B"}}>発行済みリンク</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#52525B",cursor:"pointer",fontSize:20}}><X size={18} strokeWidth={2}/></button>
+        </div>
+        <button onClick={onIssueNew} style={{width:"100%",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"9px 0",cursor:"pointer",fontSize:12,fontWeight:800,marginBottom:14,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Share2 size={13} strokeWidth={2}/>新しいリンクを発行</button>
+        {loading && <div style={{fontSize:12,color:"#71717A",textAlign:"center",padding:"20px 0"}}>読み込み中…</div>}
+        {!loading && error && <div style={{fontSize:12,color:"#c44b4b",textAlign:"center",padding:"20px 0"}}>一覧を読み込めませんでした</div>}
+        {!loading && !error && portalRows.length===0 && sharedRows.length===0 && (
+          <div style={{fontSize:12,color:"#71717A",textAlign:"center",padding:"20px 0"}}>発行済みのリンクはありません</div>
+        )}
+        {!loading && !error && portalRows.length>0 && (<>
+          <div style={{fontSize:11,fontWeight:700,color:"#52525B",margin:"4px 0 6px"}}>▍ 希望休リンク</div>
+          {pSlice.shown.map(renderRow)}
+          {pSlice.hasMore && <button onClick={()=>setPortalLimit(l=>l+50)} style={{width:"100%",background:"#fff",border:"1px solid #D4D4D8",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,color:"#52525B",marginBottom:12}}>もっと見る（残り{pSlice.remaining}件）</button>}
+        </>)}
+        {!loading && !error && sharedRows.length>0 && (<>
+          <div style={{fontSize:11,fontWeight:700,color:"#52525B",margin:"10px 0 6px"}}>▍ 共有シフトリンク</div>
+          {sSlice.shown.map(renderRow)}
+          {sSlice.hasMore && <button onClick={()=>setSharedLimit(l=>l+50)} style={{width:"100%",background:"#fff",border:"1px solid #D4D4D8",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,color:"#52525B"}}>もっと見る（残り{sSlice.remaining}件）</button>}
+        </>)}
+      </div>
+    </div>
+  );
+}
+
 // 新方式(フラグON)の希望休リンク発行 UI。ボタン押下時だけ issue_portal_link を呼ぶ（描画では発行しない）。
 // 同じ部署・同じ対象月の有効リンクがあれば再利用（重複発行しない）。締切未設定なら発行しない。
 // URL は buildPortalUrl（?p=<token>）。管理者 uuid も cfg= も URL に含めない。
@@ -5574,6 +5675,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [historyModal, setHistoryModal] = useState(false); // 変更履歴から復元モーダル
   const [conflictBanner, setConflictBanner] = useState(false); // 他端末で更新通知バナー
   const [overflowOpen, setOverflowOpen] = useState(false);
+  const [linkAdminModal, setLinkAdminModal] = useState(false); // 発行済みリンク（新方式・フラグONのみ）
   const conflictBannerDismissed = useRef(false); // ×で閉じたら次のRealtimeで再表示しない
   // タブ切替時の再ロック。LOCK_KEEP_UNLOCKED=true では解錠を部署ごとに保持（階の行き来でPIN不要）。
   // false では従来どおり全解錠をリセット（毎回PIN）。※解錠状態はメモリのみ・リロード/タブ閉じで消える。
@@ -6371,6 +6473,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                 {!isLocked && <div onClick={()=>{setBulkKyukoModal(true);setOverflowOpen(false);}} title="部署全体の公休日数をまとめて設定します" style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151",borderTop:"1px solid #F1F5F9"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><CalendarOff size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>休み設定</span></div>}
                 {EDIT_MODE_ENABLED && !isLocked && editEra && <div onClick={()=>{clearEditsOnly();setOverflowOpen(false);}} title="生成後の修正だけをまとめて取り消します（生成前の希望は残ります）" style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#047857",borderTop:"1px solid #F1F5F9"}} onMouseEnter={e=>e.currentTarget.style.background="#ECFDF5"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Trash2 size={14} strokeWidth={2} style={{color:"#047857"}}/><span>修正だけ削除</span></div>}
                 <div onClick={()=>{setShareModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Share2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>共有</span></div>
+                {isPortalTokenEnabled()&&<div onClick={()=>{setLinkAdminModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151",borderTop:"1px solid #F1F5F9"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Share2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>発行済みリンク</span></div>}
                 {profile?.is_admin&&<div onClick={()=>{setAdminModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><Building2 size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>管理</span></div>}
                 <div onClick={()=>{setHelpModal(true);setOverflowOpen(false);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",cursor:"pointer",fontSize:12,color:"#374151"}} onMouseEnter={e=>e.currentTarget.style.background="#F8FAFC"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}><HelpCircle size={14} strokeWidth={2} style={{color:"#6B7280"}}/><span>ヘルプ</span></div>
                 {/* 編集PIN設定: ロック中でも開ける（PIN忘れ時の復旧口を兼ねる） */}
@@ -6571,6 +6674,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {saveNameOpen&&<SaveNameDialog busy={saveNameBusy} onNo={handleSaveNo} onSubmitName={handleSaveWithName} onClose={()=>{ if(!saveNameBusy) setSaveNameOpen(false); }}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
+      {linkAdminModal&&<PortalLinkAdminModal depts={depts} userId={session.user.id} onClose={()=>setLinkAdminModal(false)} onIssueNew={()=>{setLinkAdminModal(false);setShareModal(true);}}/>}
       {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
       {historyModal&&<ShiftHistoryModal
         session={session} year={year} month={month}
