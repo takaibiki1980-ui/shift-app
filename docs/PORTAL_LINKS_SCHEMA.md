@@ -33,8 +33,19 @@ FROM pg_policies WHERE schemaname='public' AND tablename='shared_shifts' ORDER B
 SELECT pg_get_functiondef(oid) FROM pg_proc
 WHERE proname='get_shared_shift' AND pronamespace='public'::regnamespace;
 
--- a-5. pgcrypto が入っているか（gen_random_bytes 用）
-SELECT extname FROM pg_extension WHERE extname='pgcrypto';
+-- a-5. pgcrypto が入っているか＆どのスキーマか（gen_random_bytes 用）
+SELECT e.extname, n.nspname AS schema
+FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+WHERE e.extname='pgcrypto';
+-- 期待: 1 行（Supabase は schema=extensions が多い）。gen_portal_token は search_path に
+--       public, extensions を含むのでどちらでも解決できる。0 行なら本体の CREATE EXTENSION で導入。
+
+-- a-6. shared_shifts に必要列（id, admin_user_id, token, expires_at）があること
+SELECT column_name FROM information_schema.columns
+WHERE table_schema='public' AND table_name='shared_shifts'
+  AND column_name IN ('id','admin_user_id','token','expires_at')
+ORDER BY column_name;
+-- 期待: 4 行（revoked_at は本体で追加するのでこの時点では無くてよい）
 ```
 **期待**：a-1=NULL／a-2 に `revoked_at` 無し／a-3 は2ポリシーのみ／a-4 は token 一致1件を返すだけの定義／a-5 で pgcrypto 有り（無ければ本体で `CREATE EXTENSION` される）。
 
@@ -68,6 +79,31 @@ WHERE p.proname IN ('get_portal_by_token','get_portal_kibo_by_token','submit_por
 ORDER BY p.proname, r.grantee;
 -- 期待: get_*_by_token/submit_*_by_token/get_shared_shift は anon,authenticated。
 --       issue/revoke_* は authenticated のみ。gen_portal_token は付与なし。
+
+-- d-6. has_function_privilege で anon / authenticated の EXECUTE 可否を確認
+--      （Supabase の default privileges で勝手に付いていないか＝明示 REVOKE が効いているか）
+SELECT f AS func,
+  has_function_privilege('anon',          'public.'||f||s, 'EXECUTE') AS anon,
+  has_function_privilege('authenticated', 'public.'||f||s, 'EXECUTE') AS authed
+FROM (VALUES
+  ('gen_portal_token','(int)'),
+  ('get_portal_by_token','(text)'),
+  ('get_portal_kibo_by_token','(text,text)'),
+  ('submit_portal_kibo_by_token','(text,text,text,int[],int[])'),
+  ('issue_portal_link','(text,text,timestamptz,text)'),
+  ('revoke_portal_link','(uuid)'),
+  ('revoke_shared_shift','(uuid)'),
+  ('get_shared_shift','(text)')
+) AS t(f,s);
+-- 期待:
+--   gen_portal_token            : anon=false / authed=false
+--   get_portal_by_token         : anon=true  / authed=true
+--   get_portal_kibo_by_token    : anon=true  / authed=true
+--   submit_portal_kibo_by_token : anon=true  / authed=true
+--   get_shared_shift            : anon=true  / authed=true
+--   issue_portal_link           : anon=false / authed=true
+--   revoke_portal_link          : anon=false / authed=true
+--   revoke_shared_shift         : anon=false / authed=true
 ```
 
 ## e. 動作確認（本番を変えない・`BEGIN; … ROLLBACK;`）
@@ -155,6 +191,7 @@ COMMIT;
 - 本番 `shared_shifts` のポリシーが「insert own」「shared_shifts_select_own」の2つだけか（a-3）。想定外ポリシーがあれば報告のうえ判断。
 - pgcrypto が本番で有効か（a-5）。無効で `CREATE EXTENSION` が権限で失敗する場合は、Supabase の Database → Extensions から pgcrypto を有効化してから本体を流す。
 - `issue_portal_link` は `p_expires_at` を client（画面）から受け取る設計。締切の真実源（facilityConfig の deadline）をサーバ側で直接読む方式にするかは PR-C/PR-D で再検討（未確認）。
+- **PR-D の宿題**：`submit_portal_kibo_by_token` は `portal_links.target_month` と引数 `p_month` の一致を検証していない（＝有効なリンクなら対象外の月にも送信できてしまう）。月スコープの固定・入力検証（days の値域/重複/件数）・提出レート制限は PR-D で実装する（今回は未実装）。
 
 ## PR-C（画面配線）に必要な前提
 - 発行：`supabase.rpc('issue_portal_link', { p_dept, p_month, p_expires_at, p_label })` → `{ id, token }`。`p_expires_at` は希望休なら `deadlineExpiry(deadline)`、共有は別導線。URL は `buildPortalUrl(base, token)`（`?p=<token>`）。

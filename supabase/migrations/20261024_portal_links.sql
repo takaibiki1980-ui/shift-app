@@ -20,7 +20,9 @@
 
 BEGIN;
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;  -- gen_random_bytes / gen_random_uuid 用
+-- gen_random_bytes / gen_random_uuid 用。IF NOT EXISTS なので既に（Supabase では extensions
+-- スキーマに）入っていれば何もしない＝スキーマは動かさない。未導入の環境でのみ既定スキーマに作る。
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ── ① portal_links 新表 ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS portal_links (
@@ -58,7 +60,10 @@ CREATE OR REPLACE FUNCTION public.gen_portal_token(p_len int DEFAULT 24)
 RETURNS text
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+-- gen_random_bytes(pgcrypto) は Supabase では extensions スキーマにあるため探索路に含める。
+-- ローカル等で pgcrypto が public にある場合も public が先頭なので解決できる（存在しない
+-- スキーマは search_path で無視される）。
+SET search_path = public, extensions
 AS $$
 DECLARE
   alphabet text := 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'; -- 54字
@@ -268,7 +273,10 @@ $$;
 
 -- ── EXECUTE 権限 ────────────────────────────────────────────────
 -- 内部用 token 生成は誰にも付与しない（DEFINER 関数内＝所有者権限でのみ呼ばれる）。
+-- ★Supabase は public の新関数に anon/authenticated への EXECUTE を default privileges で
+--   自動付与するため、FROM PUBLIC だけでは外れない。ロールからも明示的に REVOKE する。
 REVOKE ALL ON FUNCTION public.gen_portal_token(int) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.gen_portal_token(int) FROM anon, authenticated;
 
 -- 職員（ログイン不要）が使う窓口 → anon/authenticated。
 REVOKE ALL ON FUNCTION public.get_portal_by_token(text)                           FROM PUBLIC;
@@ -280,10 +288,13 @@ GRANT EXECUTE ON FUNCTION public.get_portal_kibo_by_token(text, text)           
 GRANT EXECUTE ON FUNCTION public.submit_portal_kibo_by_token(text, text, text, int[], int[]) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_shared_shift(text)                              TO anon, authenticated;
 
--- 発行・失効はリーダー（ログイン済み）のみ。
+-- 発行・失効はリーダー（ログイン済み）のみ。anon には default privileges 対策で明示 REVOKE。
 REVOKE ALL ON FUNCTION public.issue_portal_link(text, text, timestamptz, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.revoke_portal_link(uuid)                         FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.revoke_shared_shift(uuid)                        FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.issue_portal_link(text, text, timestamptz, text) FROM anon;
+REVOKE ALL ON FUNCTION public.revoke_portal_link(uuid)                         FROM anon;
+REVOKE ALL ON FUNCTION public.revoke_shared_shift(uuid)                        FROM anon;
 GRANT EXECUTE ON FUNCTION public.issue_portal_link(text, text, timestamptz, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.revoke_portal_link(uuid)                         TO authenticated;
 GRANT EXECUTE ON FUNCTION public.revoke_shared_shift(uuid)                        TO authenticated;
