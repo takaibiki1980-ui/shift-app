@@ -19,6 +19,7 @@ import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
 import { resolveDeadlineDate, findReusablePortalLink, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
+import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -146,6 +147,13 @@ function isProfileAutoCreateEnabled() {
 //   （旧 ?staff=<uuid> / 8文字 ?share=・期限なし）＝現在とバイト単位で同じ挙動。
 function isPortalTokenEnabled() {
   return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PORTAL_TOKEN_ENABLED) === 'true';
+}
+
+// ── PR-3b スイッチ ──
+//   VITE_PLAN_V2_ENABLED==='true' のときだけ、新プラン（無料/フルの2段階）の実効プラン判定を使う。
+//   未設定や 'true' 以外は OFF＝従来の見かけプランを参考値として返すだけ（制限・ロックは PR-3c）。
+function isPlanV2Enabled() {
+  return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PLAN_V2_ENABLED) === 'true';
 }
 
 // ── 月またぎ修正: 全データ取得は Supabase 既定の1000行で打ち切られるため、range でページ分けして
@@ -4640,14 +4648,16 @@ export default function App() {
       const readResult = await supabase.from('profiles').select('*').eq('id', sess.user.id).maybeSingle();
       // フラグ OFF のときは従来どおり（INSERT せず data || 既定）。ON のときだけ行が無ければ作る。
       // ensureProfileSafe は例外を外に出さないが、最初の select が throw する場合に備え全体も try/catch。
-      const { profile } = await ensureProfileSafe({
+      const result = await ensureProfileSafe({
         supabase, user: sess.user, enabled: isProfileAutoCreateEnabled(), readResult,
       });
-      setProfile(profile);
+      // 読み込み失敗(read-error/exception/reread-error)で既に profile があれば保持し、無料へ落とさない。
+      // 初回失敗のみ既定(free)。成功系は常に新しい値。
+      setProfile(prev => resolveFetchedProfile(prev, result));
     } catch (e) {
-      // 例外が出てもログインは止めない。無料の既定で動く（次回ログイン/再取得で再試行）。
-      console.warn('[fetchProfile] プロフィール取得で例外。無料の既定で続行:', e?.message || e);
-      setProfile(defaultProfile(sess.user));
+      // 例外が出てもログインは止めない。既存の profile があれば保持、無ければ無料の既定（初回）。
+      console.warn('[fetchProfile] プロフィール取得で例外。既存を保持 or 無料の既定で続行:', e?.message || e);
+      setProfile(prev => prev || defaultProfile(sess.user));
     }
   };
 
@@ -4718,7 +4728,9 @@ function AdminPanel({ onClose }) {
     setFacilities(prev => prev.map(f => f.id === id ? { ...f, plan } : f));
   };
 
-  const plans = ['free', 'standard', 'full'];
+  // 新プランは「無料」「フル」の2択（standard は廃止）。standard 行が残っていてもバッジ表示は
+  // PLAN_LABELS で従来ラベルを出し、2ボタンは free/full のみ＝表示は壊れない（effective は free 扱い）。
+  const plans = PLAN_V2_CHOICES;
   return (
     <div style={{position:"fixed",inset:0,background:"#000000cc",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:16,padding:24,width:"100%",maxWidth:680,maxHeight:"85vh",overflowY:"auto",boxShadow:"0 30px 80px #000"}}>
@@ -4833,6 +4845,12 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const planLimit = limitOf(profile);              // { depts, staff }（is_admin/fullは Infinity）
   const planLabelJa = profile?.is_admin ? "研究用" : (PLAN_LABELS[profile?.plan||'free'] || "無料プラン");
   const learningEnabled = isLearningEnabled(profile); // 学習を生成/表示に効かせるか（free=false）
+  // 新プランの実効プラン（'free'|'full'）を App 内で参照できるよう保持する（制限・ロックは PR-3c で使う）。
+  //   この PR では値を持たせるだけ＝limitOf/learningEnabled 等の既存挙動は一切変えない。
+  const effectivePlanRef = useRef('free');
+  useEffect(() => {
+    effectivePlanRef.current = effectivePlanValue(profile, new Date(), isPlanV2Enabled());
+  }, [profile]);
 
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
