@@ -4595,7 +4595,8 @@ function SharedShiftView({ token }) {
                           const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()])||isJpHoliday(year,month-1,d);
                           // 右クリックの有給（セル空＋yukyu日）は「有」で表示。セル値があればセル値優先。旧payloadは従来どおり。
                           const _yc=shareYukyuCell(v, s.yukyu, d, cellText);
-                          return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined,...( _yc.yukyu?{color:SHIFTS['有休'].color}:{})}}>{_yc.text}</td>;
+                          // overlay 有給も通常のセル値（有休）と同じ描画＝色指定なし（既定の黒）にそろえる。
+                          return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{_yc.text}</td>;
                         })}
                         <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{w}</td>
                         <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{n||'－'}</td>
