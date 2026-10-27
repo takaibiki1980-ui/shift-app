@@ -20,6 +20,7 @@ import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShare
 import { resolveDeadlineDate, findReusablePortalLink, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
+import { shareYukyuCell } from './lib/shareCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -2508,9 +2509,12 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         shift_data[deptId] = JSON.parse(JSON.stringify(allShifts[deptId] || {}));
       });
 
+      // 右クリックの有給(yukyuByMonth)はセル値に入らないため、共有月の有給日を payload に含める。
+      // （希望休 kibo は同僚に見せないため含めない＝別途ユーザー判断）
+      const _shareMk = monthKey(year, month);
       const staff_data = staffList
         .filter(s => selectedDepts.includes(s.dept))
-        .map(s => ({ id: s.id, name: s.name, dept: s.dept }));
+        .map(s => ({ id: s.id, name: s.name, dept: s.dept, yukyu: (s.yukyuByMonth?.[_shareMk] || []).map(Number) }));
 
       const dept_data = selectedDeptObjs.map(d => ({ id: d.id, label: d.label }));
 
@@ -2524,7 +2528,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
         shift_data,
         staff_data,
         dept_data,
-        schema_version: 1,
+        schema_version: 2, // v2: staff_data に yukyu（有給日）を含む
       };
       if (_useTok) _row.expires_at = shareExpiry(`${year}-${month + 1}`, 30); // 月末(JST)+30日
       const { error } = await supabase.from('shared_shifts').insert(_row);
@@ -4597,7 +4601,10 @@ function SharedShiftView({ token }) {
                           if(v==='夜勤')n++;
                           if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=='明け'&&v!=='有休')r+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1;
                           const isWe=['日','土'].includes(WD[new Date(year,month-1,d).getDay()])||isJpHoliday(year,month-1,d);
-                          return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{cellText(v)}</td>;
+                          // 右クリックの有給（セル空＋yukyu日）は「有」で表示。セル値があればセル値優先。旧payloadは従来どおり。
+                          const _yc=shareYukyuCell(v, s.yukyu, d, cellText);
+                          // overlay 有給も通常のセル値（有休）と同じ描画＝色指定なし（既定の黒）にそろえる。
+                          return <td key={d} style={{...td,background:isWe?'#fff0f6':undefined}}>{_yc.text}</td>;
                         })}
                         <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{w}</td>
                         <td style={{...td,width:SUM_W,maxWidth:SUM_W}}>{n||'－'}</td>
