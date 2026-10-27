@@ -4651,13 +4651,13 @@ export default function App() {
       const result = await ensureProfileSafe({
         supabase, user: sess.user, enabled: isProfileAutoCreateEnabled(), readResult,
       });
-      // 読み込み失敗(read-error/exception/reread-error)で既に profile があれば保持し、無料へ落とさない。
+      // 読み込み失敗で「同じユーザーの」既存 profile があれば保持（別ユーザー切替時は保持しない）。
       // 初回失敗のみ既定(free)。成功系は常に新しい値。
-      setProfile(prev => resolveFetchedProfile(prev, result));
+      setProfile(prev => resolveFetchedProfile(prev, result, sess.user.id));
     } catch (e) {
-      // 例外が出てもログインは止めない。既存の profile があれば保持、無ければ無料の既定（初回）。
+      // 例外が出てもログインは止めない。同じユーザーの既存 profile は保持、別ユーザー/初回は無料の既定。
       console.warn('[fetchProfile] プロフィール取得で例外。既存を保持 or 無料の既定で続行:', e?.message || e);
-      setProfile(prev => prev || defaultProfile(sess.user));
+      setProfile(prev => (prev && prev.id === sess.user.id) ? prev : defaultProfile(sess.user));
     }
   };
 

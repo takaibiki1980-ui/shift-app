@@ -26,26 +26,38 @@ describe('effectivePlanValue', () => {
   });
 });
 
-describe('resolveFetchedProfile（読み込み失敗時の保持）', () => {
-  const prev = { facility_name: 'A', plan: 'full', is_admin: false };
-  const fresh = { facility_name: 'A', plan: 'full', is_admin: false, trial_ends_at: null };
+describe('resolveFetchedProfile（読み込み失敗時の保持・ユーザー一致ガード）', () => {
+  const UID = 'user-A';
+  const prev = { id: UID, facility_name: 'A', plan: 'full', is_admin: false };
+  const fresh = { id: UID, facility_name: 'A', plan: 'full', is_admin: false, trial_ends_at: null };
 
-  test('読み込み失敗(read-error/exception/reread-error)で既存があれば保持', () => {
+  test('同一ユーザーの読み込み失敗(read-error/exception/reread-error)は既存を保持', () => {
     for (const reason of ['read-error', 'exception', 'reread-error']) {
-      expect(resolveFetchedProfile(prev, { profile: { plan: 'free' }, reason })).toBe(prev);
+      expect(resolveFetchedProfile(prev, { profile: { id: UID, plan: 'free' }, reason }, UID)).toBe(prev);
     }
   });
+  test('別ユーザーの読み込み失敗では前ユーザーの profile を保持しない（result.profile を使う）', () => {
+    const other = { profile: { id: 'user-B', plan: 'free' }, reason: 'read-error' };
+    expect(resolveFetchedProfile(prev, other, 'user-B')).toBe(other.profile); // A を保持しない
+  });
+  test('userId 未指定なら保持しない（安全側）', () => {
+    expect(resolveFetchedProfile(prev, { profile: { plan: 'free' }, reason: 'read-error' }, undefined)).toEqual({ plan: 'free' });
+  });
+  test('prev に id が無い（既定フォールバック等）なら保持しない', () => {
+    const noId = { facility_name: 'x', plan: 'full' };
+    expect(resolveFetchedProfile(noId, { profile: { plan: 'free' }, reason: 'read-error' }, UID)).toEqual({ plan: 'free' });
+  });
   test('読み込み失敗でも既存が無ければ result.profile（初回＝既定 free）', () => {
-    expect(resolveFetchedProfile(null, { profile: { plan: 'free' }, reason: 'read-error' })).toEqual({ plan: 'free' });
+    expect(resolveFetchedProfile(null, { profile: { plan: 'free' }, reason: 'read-error' }, UID)).toEqual({ plan: 'free' });
   });
   test('成功系(exists/created/disabled)は常に新しい値', () => {
     for (const reason of ['exists', 'created', 'disabled', 'existed-23505']) {
-      expect(resolveFetchedProfile(prev, { profile: fresh, reason })).toBe(fresh);
+      expect(resolveFetchedProfile(prev, { profile: fresh, reason }, UID)).toBe(fresh);
     }
   });
   test('result が無い/profile を持たないときは null', () => {
-    expect(resolveFetchedProfile(prev, null)).toBeNull();
-    expect(resolveFetchedProfile(prev, {})).toBeNull();
+    expect(resolveFetchedProfile(prev, null, UID)).toBeNull();
+    expect(resolveFetchedProfile(prev, {}, UID)).toBeNull();
   });
 });
 
