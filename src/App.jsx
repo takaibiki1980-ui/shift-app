@@ -21,6 +21,7 @@ import { resolveDeadlineDate, findReusablePortalLink, PORTAL_INVALID_MESSAGE } f
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { shareYukyuCell } from './lib/shareCell.js';
+import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
 import { buildMarksVal, collectSeById, collectSeByIdFromByKey, hydrateStaffListSe, applyRestoredMarks } from './lib/editMarks.js';
@@ -751,7 +752,7 @@ function buildPrintHTML(depts, staffList, allShifts, year, month, selectedDepts,
       const kibodays = s.kiboByMonth?.[mk] || [];
       const yukyudays2 = s.yukyuByMonth?.[mk] || [];
       html += TAG('tr')+'<td class="name"><div class="name-inner" style="font-size:'+printNameFontSize(s.name)+'px">'+s.name+'</div></td>';
-      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const isKibo=!dispV&&kibodays.includes(d); const isYukyu2=!dispV&&!isKibo&&yukyudays2.includes(d); w+=workDayValue(v); if(v==="夜勤") n++; if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休") r+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=isKibo||dispV==="希望休"||dispV==="希"?'休':isYukyu2?'<span style="color:#9b4db5">有</span>':(HALF_REST_TYPES.has(dispV))?dispV:(getShiftDef(dispV, dept.customShiftDefs, dept)?.short||"－"); html += TAG(`td class="${isWe?"we":""}"`)+cellText+CTAG('td'); }
+      for(let d=1;d<=days;d++){ const v=shifts[s.id]?.[d]||""; const dispV=effectiveCellShift(v, s.shiftRequestsByMonth?.[mk]?.[d]); const isKibo=!dispV&&kibodays.includes(d); const isYukyu2=!dispV&&!isKibo&&yukyudays2.includes(d); w+=workDayValue(v); if(v==="夜勤") n++; if((REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))&&v!=="明け"&&v!=="有休") r+=(HALF_REST_TYPES.has(v)||HALF_PAIDREST_TYPES.has(v))?0.5:1; if(isKibo) r++; const wd=WD[new Date(year,month,d).getDay()]; const isWe=wd==="日"||wd==="土"||isJpHoliday(year,month,d); const cellText=printCellText({isKibo, dispV, isYukyu2, half:HALF_REST_TYPES.has(dispV), short:getShiftDef(dispV, dept.customShiftDefs, dept)?.short}); html += TAG(`td class="${isWe?"we":""}"`)+cellText+CTAG('td'); }
       const _rPrint = SUMMARY_COLUMNS_V2 ? fmtCount(summaryCountsFor({shiftsForDept:shifts, staff:s, mk, days, deptRest:buildDeptRestTypes(dept.customShiftDefs)}).rest) : r;
       html += TAG('td class="sum"')+w+CTAG('td')+TAG('td class="sum"')+(n||"－")+CTAG('td')+TAG('td class="sum"')+_rPrint+CTAG('td')+CTAG('tr');
     });
