@@ -41,6 +41,32 @@ export function findReusablePortalLink(links, deptId, targetMonth, now) {
 }
 
 /**
+ * 発行UI（PortalTokenIssuer）の状態を決める純関数。「確認（表示）」と「発行」を分離する。
+ *  - 有効な同一部署・同一月リンクがある → 'show'（再利用の token を表示。新規は作らない）。
+ *  - 無く、締切日も未設定       → 'needs-deadline'（期限なしリンクは作らせない＝現状維持）。
+ *  - 無く、締切日が設定済み     → 'can-issue'（明示ボタンで新規発行してよい）。
+ * links は本人が SELECT した portal_links 行配列。null/未取得は呼び出し側で 'loading' を扱う。
+ */
+export function portalIssuerState({ links, deptId, targetMonth, deadlineDate, now }) {
+  const reuse = findReusablePortalLink(links, deptId, targetMonth, now);
+  if (reuse) return { mode: 'show', token: reuse.token };
+  if (!deadlineDate) return { mode: 'needs-deadline', token: null };
+  return { mode: 'can-issue', token: null };
+}
+
+/**
+ * 職員ポータルのヘッダに出す施設名。メールらしき値（'@' を含む）は職員に見せないため、
+ * fallback（既定 'YEIX'）に置き換える。profiles.facility_name が未設定だとメールが既定値に
+ * なる経路があるための防御（表示のみ・保存値は変えない）。
+ */
+export function portalDisplayTitle(facilityName, fallback = 'YEIX') {
+  const v = (facilityName == null ? '' : String(facilityName)).trim();
+  if (!v) return fallback;
+  if (v.includes('@')) return fallback; // メールアドレスらしき値は出さない
+  return v;
+}
+
+/**
  * 共有シフト（?share=）の読み取り経路を決める純関数。
  *  - 新方式(token フラグ ON) または RPC フラグ ON → 'rpc'（get_shared_shift 経由。
  *    revoked_at / expires_at を弾く）。

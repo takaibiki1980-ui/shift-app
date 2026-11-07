@@ -2,7 +2,7 @@
  * src/lib/portalWiring.js のテスト（純粋・配線の判断）。
  */
 import { describe, test, expect } from 'vitest';
-import { resolveDeadlineDate, findReusablePortalLink, sharedReadVia, PORTAL_INVALID_MESSAGE } from '../lib/portalWiring.js';
+import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from '../lib/portalWiring.js';
 
 describe('resolveDeadlineDate（締切の解決）', () => {
   const dept = {
@@ -66,6 +66,49 @@ describe('findReusablePortalLink（既存リンクの再利用判定）', () => 
 describe('PORTAL_INVALID_MESSAGE', () => {
   test('理由を区別しない共通文言（トークンを含まない）', () => {
     expect(PORTAL_INVALID_MESSAGE).toBe('このリンクは無効です。リーダーに新しいリンクをもらってください。');
+  });
+});
+
+describe('portalIssuerState（確認と発行の分離）', () => {
+  const NOW = new Date('2026-11-07T00:00:00Z');
+  const future = '2026-12-31T14:59:59.999Z';
+  const active = { id: 'a', dept_id: 'd1', target_month: '2026-12', token: 'TOK', expires_at: future, revoked_at: null };
+  const revoked = { ...active, id: 'b', token: 'OLD', revoked_at: '2026-11-06T00:00:00Z' };
+
+  test('有効リンクがあれば show（再利用 token を返す・発行しない）', () => {
+    const st = portalIssuerState({ links: [active], deptId: 'd1', targetMonth: '2026-12', deadlineDate: '2026-12-18', now: NOW });
+    expect(st).toEqual({ mode: 'show', token: 'TOK' });
+  });
+  test('止めたリンクだけなら show にならない（締切ありなら can-issue）', () => {
+    const st = portalIssuerState({ links: [revoked], deptId: 'd1', targetMonth: '2026-12', deadlineDate: '2026-12-18', now: NOW });
+    expect(st).toEqual({ mode: 'can-issue', token: null });
+  });
+  test('有効リンク無し・締切未設定なら needs-deadline（発行させない）', () => {
+    const st = portalIssuerState({ links: [revoked], deptId: 'd1', targetMonth: '2026-12', deadlineDate: null, now: NOW });
+    expect(st).toEqual({ mode: 'needs-deadline', token: null });
+  });
+  test('リンク0件・締切ありなら can-issue', () => {
+    const st = portalIssuerState({ links: [], deptId: 'd1', targetMonth: '2026-12', deadlineDate: '2026-12-18', now: NOW });
+    expect(st).toEqual({ mode: 'can-issue', token: null });
+  });
+  test('別部署の有効リンクは show にしない', () => {
+    const st = portalIssuerState({ links: [{ ...active, dept_id: 'other' }], deptId: 'd1', targetMonth: '2026-12', deadlineDate: '2026-12-18', now: NOW });
+    expect(st.mode).toBe('can-issue');
+  });
+});
+
+describe('portalDisplayTitle（職員ヘッダにメールを出さない）', () => {
+  test('メールらしき値は fallback に置換', () => {
+    expect(portalDisplayTitle('taro@example.com')).toBe('YEIX');
+    expect(portalDisplayTitle('taro@example.com', '施設')).toBe('施設');
+  });
+  test('通常の施設名はそのまま', () => {
+    expect(portalDisplayTitle('さくら介護')).toBe('さくら介護');
+  });
+  test('空/NULL は fallback', () => {
+    expect(portalDisplayTitle('')).toBe('YEIX');
+    expect(portalDisplayTitle(null)).toBe('YEIX');
+    expect(portalDisplayTitle('   ')).toBe('YEIX');
   });
 });
 

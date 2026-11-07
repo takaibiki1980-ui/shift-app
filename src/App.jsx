@@ -17,7 +17,7 @@ import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
 import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
 import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
-import { resolveDeadlineDate, findReusablePortalLink, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
+import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { shareYukyuCell } from './lib/shareCell.js';
@@ -3870,43 +3870,64 @@ function PortalLinkAdminModal({ depts, userId, onClose, onIssueNew }) {
 // 同じ部署・同じ対象月の有効リンクがあれば再利用（重複発行しない）。締切未設定なら発行しない。
 // URL は buildPortalUrl（?p=<token>）。管理者 uuid も cfg= も URL に含めない。
 function PortalTokenIssuer({ dept, ps, userId }) {
+  const [links, setLinks] = useState(null); // null=読み込み中 / 配列=取得済み
   const [url, setUrl] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [loadErr, setLoadErr] = useState(false);
   const ymStr = (ps?.targetYear && ps?.targetMonth) ? `${ps.targetYear}-${ps.targetMonth}` : null;
+  const deadlineDate = resolveDeadlineDate(
+    { deadline: ps?.deadline, targetYear: ps?.targetYear, targetMonth: ps?.targetMonth, byMonth: ps?.byMonth }, ymStr
+  );
+  // 既存リンクを読み込み、有効なものがあれば URL を復元（モーダル開き直しでも「表示」できる）。
+  const loadLinks = async () => {
+    setLoadErr(false);
+    const { data, error } = await supabase
+      .from('portal_links')
+      .select('id,dept_id,target_month,token,expires_at,revoked_at')
+      .eq('admin_user_id', userId).eq('dept_id', dept.id);
+    if (error) { setLoadErr(true); setLinks([]); setUrl(null); return; }
+    const rows = data || [];
+    setLinks(rows);
+    const reuse = findReusablePortalLink(rows, dept.id, ymStr, new Date());
+    setUrl(reuse ? buildPortalUrl(getPublicBaseUrl(), reuse.token) : null);
+  };
+  useEffect(() => { setLinks(null); loadLinks(); }, [dept.id, ymStr]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 「発行」は明示ボタン＋確認ダイアログのときだけ。描画・表示では絶対に発行しない。
   const issue = async () => {
     if (busy) return;
+    if (!deadlineDate) { alert('先に締切日を設定してください。（期限のないリンクは作成できません）'); return; }
+    if (!window.confirm('新しいリンクを発行します。よろしいですか？')) return;
     setBusy(true);
     try {
-      // 既存の有効リンクを本人として検索して再利用
-      const { data: links, error: selErr } = await supabase
-        .from('portal_links')
-        .select('id,dept_id,target_month,token,expires_at,revoked_at')
-        .eq('admin_user_id', userId).eq('dept_id', dept.id);
-      if (selErr) { alert('リンクの確認に失敗しました。もう一度お試しください。'); return; }
-      const reuse = findReusablePortalLink(links, dept.id, ymStr, new Date());
-      if (reuse) { setUrl(buildPortalUrl(getPublicBaseUrl(), reuse.token)); return; }
-      // 締切を解決（未設定なら発行しない＝期限なしリンクを作らない）
-      const deadlineDate = resolveDeadlineDate(
-        { deadline: ps?.deadline, targetYear: ps?.targetYear, targetMonth: ps?.targetMonth, byMonth: ps?.byMonth }, ymStr
-      );
-      if (!deadlineDate) { alert('先に締切日を設定してください。（期限のないリンクは作成できません）'); return; }
       const p_expires_at = deadlineExpiry(deadlineDate);
       const { data, error } = await supabase.rpc('issue_portal_link', {
         p_dept: dept.id, p_month: ymStr, p_expires_at, p_label: dept.label,
       });
       const row = Array.isArray(data) ? data[0] : data;
       if (error || !row?.token) { alert('リンクの発行に失敗しました。もう一度お試しください。'); return; }
-      setUrl(buildPortalUrl(getPublicBaseUrl(), row.token));
+      await loadLinks(); // 発行後は再読込で「表示」状態に遷移（URL も復元）
     } catch {
       alert('リンクの発行に失敗しました。通信を確認してください。');
     } finally { setBusy(false); }
   };
   const doCopy = () => { if (!url) return; if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(url).then(()=>alert('URLをコピーしました！')).catch(()=>alert(`URLをコピーしてください:\n${url}`)); } else { alert(`URLをコピーしてください:\n${url}`); } };
   const doLine = () => { if (!url) return; const dl=dept.kiboDayLimit||0; const body=`${dept.label}の希望休入力はこちら${dl>0?`\n※希望休は${dl}日までです`:''}\n${url}`; window.open(`https://line.me/R/msg/text/?${encodeURIComponent(body)}`,'_blank'); };
+
+  if (links === null) {
+    return <div style={{textAlign:"center",padding:"10px 0",fontSize:12,color:"#52525B"}}>リンクを確認中…</div>;
+  }
+  const st = portalIssuerState({ links, deptId: dept.id, targetMonth: ymStr, deadlineDate, now: new Date() });
   return (
     <div>
-      <button onClick={issue} disabled={busy} style={{width:"100%",background:busy?"#A5B4FC":"#16a34a",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:busy?"wait":"pointer",fontSize:13,fontWeight:800,marginBottom:10,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>{busy?"発行中…":(url?"リンクを再発行・確認":"希望休リンクを発行")}</button>
-      {url && (<>
+      {loadErr && (
+        <div style={{marginBottom:10}}>
+          <div style={{fontSize:11,color:"#c44b4b",marginBottom:6}}>リンクの確認に失敗しました。</div>
+          <button onClick={()=>{setLinks(null);loadLinks();}} style={{width:"100%",background:"#F4F4F5",color:"#374151",border:"1px solid #D4D4D8",borderRadius:8,padding:"8px 0",cursor:"pointer",fontSize:12,fontWeight:700}}>🔄 もう一度確認</button>
+        </div>
+      )}
+      {st.mode === 'show' && url && (<>
+        <div style={{fontSize:11,fontWeight:800,color:"#16a34a",marginBottom:8,display:"flex",alignItems:"center",gap:5}}><Share2 size={13} strokeWidth={2}/>有効な希望休リンクがあります</div>
         <div style={{textAlign:"center",marginBottom:6}}>
           <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Camera size={12} strokeWidth={2}/>カメラで読み取り</div>
           <div style={{display:"inline-block",padding:8,background:"#fff",border:"2px solid #D4D4D8",borderRadius:8}}>
@@ -3918,6 +3939,14 @@ function PortalTokenIssuer({ dept, ps, userId }) {
           <button onClick={doLine} style={{background:"linear-gradient(135deg,#06C755,#00a040)",color:"#fff",border:"none",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><MessageCircle size={14} strokeWidth={2}/>LINEで送る</button>
           <button onClick={doCopy} style={{background:"#f0fff4",color:"#16a34a",border:"1px solid #86efac",borderRadius:8,padding:"8px 12px",cursor:"pointer",fontSize:12,fontWeight:800,flex:1,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>コピー</button>
         </div>
+        <div style={{fontSize:10,color:"#9CA3AF",marginBottom:4}}>新しいリンクに切り替えるには、先に「発行済みリンク」で今のリンクを止めてください。</div>
+      </>)}
+      {st.mode === 'needs-deadline' && (
+        <div style={{fontSize:11,color:"#c44b4b",padding:"8px 0",display:"flex",alignItems:"flex-start",gap:5}}><AlertTriangle size={12} strokeWidth={2} style={{flexShrink:0,marginTop:1}}/>先に締切日を設定してください。（期限のないリンクは作成できません）</div>
+      )}
+      {st.mode === 'can-issue' && (<>
+        <div style={{fontSize:11,color:"#52525B",marginBottom:8}}>有効な希望休リンクがありません。</div>
+        <button onClick={issue} disabled={busy} style={{width:"100%",background:busy?"#A5B4FC":"#16a34a",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:busy?"wait":"pointer",fontSize:13,fontWeight:800,marginBottom:10,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>{busy?"発行中…":"新しく発行する"}</button>
       </>)}
     </div>
   );
@@ -4170,7 +4199,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload, portalTo
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <ShifuponIcon size={36} radius={8}/>
           <div>
-            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{config.facility_name || "YEIX"}</div>
+            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{portalToken ? portalDisplayTitle(config.facility_name, "YEIX") : (config.facility_name || "YEIX")}</div>
             <div style={{fontSize:10,color:"#52525B"}}>希望休・有休 入力ポータル</div>
           </div>
         </div>
