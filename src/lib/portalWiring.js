@@ -65,3 +65,14 @@ export function portalDisplayTitle(facilityName, fallback = 'YEIX') {
   if (v.includes('@')) return fallback; // メールアドレスらしき値は出さない
   return v;
 }
+
+/**
+ * 共有シフト（?share=）の読み取り経路を決める純関数。
+ *  - 新方式(token フラグ ON) または RPC フラグ ON → 'rpc'（get_shared_shift 経由。
+ *    revoked_at / expires_at を弾く）。
+ *  - 両方 OFF（旧方式・8文字 ?share= など）→ 'table'（従来どおり shared_shifts を直接 SELECT）。
+ * これにより、新方式では止めた/期限切れリンクが開けなくなる（?p= 側と一貫）。旧方式は不変。
+ */
+export function sharedReadVia(tokenEnabled, rpcEnabled) {
+  return (tokenEnabled || rpcEnabled) ? 'rpc' : 'table';
+}

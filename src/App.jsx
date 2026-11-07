@@ -17,7 +17,7 @@ import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
 import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
 import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
-import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
+import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { shareYukyuCell } from './lib/shareCell.js';
@@ -4504,7 +4504,10 @@ function SharedShiftView({ token }) {
   useEffect(() => {
     (async () => {
       let data, error;
-      if (isPortalRpcEnabled()) {
+      // 新方式(token フラグ ON) または RPC フラグ ON のときは必ず RPC 経由にする。
+      // RPC は revoked_at / expires_at を弾くため、止めた/期限切れの共有は開けない（?p= 側と一貫）。
+      // 両フラグ OFF（旧方式・8文字 ?share= 等）は従来どおり直接 SELECT（挙動を変えない）。
+      if (sharedReadVia(isPortalTokenEnabled(), isPortalRpcEnabled()) === 'rpc') {
         // 窓口経由（token 完全一致の1件のみ返る。Phase C で表を閉じても動く）
         const res = await supabase.rpc('get_shared_shift', { p_token: token });
         error = res.error; data = Array.isArray(res.data) ? res.data[0] : res.data;
