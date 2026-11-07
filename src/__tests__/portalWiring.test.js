@@ -2,7 +2,7 @@
  * src/lib/portalWiring.js のテスト（純粋・配線の判断）。
  */
 import { describe, test, expect } from 'vitest';
-import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, PORTAL_INVALID_MESSAGE } from '../lib/portalWiring.js';
+import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from '../lib/portalWiring.js';
 
 describe('resolveDeadlineDate（締切の解決）', () => {
   const dept = {
@@ -109,5 +109,18 @@ describe('portalDisplayTitle（職員ヘッダにメールを出さない）', (
     expect(portalDisplayTitle('')).toBe('YEIX');
     expect(portalDisplayTitle(null)).toBe('YEIX');
     expect(portalDisplayTitle('   ')).toBe('YEIX');
+  });
+});
+
+describe('sharedReadVia（共有シフトの読み取り経路）', () => {
+  test('token ON → rpc（rpc フラグに関わらず）', () => {
+    expect(sharedReadVia(true, false)).toBe('rpc');
+    expect(sharedReadVia(true, true)).toBe('rpc');
+  });
+  test('rpc ON → rpc', () => {
+    expect(sharedReadVia(false, true)).toBe('rpc');
+  });
+  test('両方 OFF（旧方式）→ table（従来どおり）', () => {
+    expect(sharedReadVia(false, false)).toBe('table');
   });
 });
