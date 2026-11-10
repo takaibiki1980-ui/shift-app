@@ -2,7 +2,7 @@
  * src/lib/portalWiring.js のテスト（純粋・配線の判断）。
  */
 import { describe, test, expect } from 'vitest';
-import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from '../lib/portalWiring.js';
+import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, portalHeaderTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from '../lib/portalWiring.js';
 
 describe('resolveDeadlineDate（締切の解決）', () => {
   const dept = {
@@ -122,5 +122,20 @@ describe('sharedReadVia（共有シフトの読み取り経路）', () => {
   });
   test('両方 OFF（旧方式）→ table（従来どおり）', () => {
     expect(sharedReadVia(false, false)).toBe('table');
+  });
+});
+
+describe('portalHeaderTitle（職員画面ヘッダ ?p=/?staff= 共通の実コード）', () => {
+  test('メールのような施設名なら YEIX', () => {
+    expect(portalHeaderTitle({ facility_name: 'takaibiki1980@icloud.com' })).toBe('YEIX');
+    expect(portalHeaderTitle({ facility_name: 'leader@example.co.jp', depts: [] })).toBe('YEIX');
+  });
+  test('通常の施設名ならそのまま', () => {
+    expect(portalHeaderTitle({ facility_name: 'さくら介護施設' })).toBe('さくら介護施設');
+  });
+  test('未設定・config無しは YEIX', () => {
+    expect(portalHeaderTitle({ facility_name: '' })).toBe('YEIX');
+    expect(portalHeaderTitle({})).toBe('YEIX');
+    expect(portalHeaderTitle(null)).toBe('YEIX');
   });
 });
