@@ -18,6 +18,7 @@ import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PRE
 import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
 import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
+import { planV2Limits, canIssuePortalLink, FULL_ONLY_NOTE } from './lib/planGates.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { shareYukyuCell } from './lib/shareCell.js';
@@ -2478,7 +2479,7 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   );
 }
 
-function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, onClose }) {
+function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, canIssue = true, onClose }) {
   // 初期状態: 全部署未選択
   const [selectedDepts, setSelectedDepts] = useState([]);
   const [isSharing, setIsSharing] = useState(false);
@@ -2496,6 +2497,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   // 共有ボタン押下: 選択中の全部署を1つのINSERTで保存し、共通URLを発行
   const doShare = async () => {
     if (noSelection) return;
+    if (!canIssue) { alert(`${FULL_ONLY_NOTE}（共有シフトのリンク発行）。発行済みのリンクは期限まで使えます。`); return; }
     setIsSharing(true);
     try {
       // STEP2: 押下時点のスナップショットをメモリ上で作成
@@ -3869,7 +3871,7 @@ function PortalLinkAdminModal({ depts, userId, onClose, onIssueNew }) {
 // 新方式(フラグON)の希望休リンク発行 UI。ボタン押下時だけ issue_portal_link を呼ぶ（描画では発行しない）。
 // 同じ部署・同じ対象月の有効リンクがあれば再利用（重複発行しない）。締切未設定なら発行しない。
 // URL は buildPortalUrl（?p=<token>）。管理者 uuid も cfg= も URL に含めない。
-function PortalTokenIssuer({ dept, ps, userId }) {
+function PortalTokenIssuer({ dept, ps, userId, canIssue = true }) {
   const [links, setLinks] = useState(null); // null=読み込み中 / 配列=取得済み
   const [url, setUrl] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -3896,6 +3898,7 @@ function PortalTokenIssuer({ dept, ps, userId }) {
   // 「発行」は明示ボタン＋確認ダイアログのときだけ。描画・表示では絶対に発行しない。
   const issue = async () => {
     if (busy) return;
+    if (!canIssue) { alert(`${FULL_ONLY_NOTE}（職員への送信リンクの発行）。発行済みのリンクは期限まで使えます。`); return; }
     if (!deadlineDate) { alert('先に締切日を設定してください。（期限のないリンクは作成できません）'); return; }
     if (!window.confirm('新しいリンクを発行します。よろしいですか？')) return;
     setBusy(true);
@@ -3944,10 +3947,12 @@ function PortalTokenIssuer({ dept, ps, userId }) {
       {st.mode === 'needs-deadline' && (
         <div style={{fontSize:11,color:"#c44b4b",padding:"8px 0",display:"flex",alignItems:"flex-start",gap:5}}><AlertTriangle size={12} strokeWidth={2} style={{flexShrink:0,marginTop:1}}/>先に締切日を設定してください。（期限のないリンクは作成できません）</div>
       )}
-      {st.mode === 'can-issue' && (<>
+      {st.mode === 'can-issue' && (canIssue ? (<>
         <div style={{fontSize:11,color:"#52525B",marginBottom:8}}>有効な希望休リンクがありません。</div>
         <button onClick={issue} disabled={busy} style={{width:"100%",background:busy?"#A5B4FC":"#16a34a",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:busy?"wait":"pointer",fontSize:13,fontWeight:800,marginBottom:10,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>{busy?"発行中…":"新しく発行する"}</button>
-      </>)}
+      </>) : (
+        <div style={{fontSize:11,color:"#6B7280",padding:"8px 0",display:"flex",alignItems:"flex-start",gap:5}}><Lightbulb size={12} strokeWidth={2} style={{flexShrink:0,marginTop:1,color:"#f59e0b"}}/>{FULL_ONLY_NOTE}（職員への希望休リンクの発行）。発行済みのリンクは期限まで使えます。</div>
+      ))}
     </div>
   );
 }
@@ -4882,11 +4887,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (innerTab === "backtest" && !profile?.is_admin) setInnerTab("shift");
     if (innerTab === "learn" && !isLearningEnabled(profile)) setInnerTab("shift"); // free は学習状況タブ不可
   }, [innerTab, profile?.is_admin, profile?.plan]);
-  const planLimit = limitOf(profile);              // { depts, staff }（is_admin/fullは Infinity）
+  // PR-3c: フラグ ON のときだけ新プランのゲートを使う。OFF は従来値（limitOf/isLearningEnabled）で完全一致。
+  const _v2On = isPlanV2Enabled();
+  const _v2Eff = _v2On ? effectivePlanValue(profile, new Date(), true) : null; // 'free'|'full'
+  const canIssueLink = _v2On ? canIssuePortalLink(_v2Eff) : true; // OFF/従来は常に発行可
+  const planLimit = _v2On ? planV2Limits(_v2Eff) : limitOf(profile);    // { depts, staff }
   const planLabelJa = profile?.is_admin ? "研究用" : (PLAN_LABELS[profile?.plan||'free'] || "無料プラン");
-  const learningEnabled = isLearningEnabled(profile); // 学習を生成/表示に効かせるか（free=false）
-  // 新プランの実効プラン（'free'|'full'）を App 内で参照できるよう保持する（制限・ロックは PR-3c で使う）。
-  //   この PR では値を持たせるだけ＝limitOf/learningEnabled 等の既存挙動は一切変えない。
+  const learningEnabled = _v2On ? (_v2Eff === 'full') : isLearningEnabled(profile); // 学習を生成/表示に効かせるか
+  // 実効プラン（'free'|'full'）の参照。生成補助などで使う。
   const effectivePlanRef = useRef('free');
   useEffect(() => {
     effectivePlanRef.current = effectivePlanValue(profile, new Date(), isPlanV2Enabled());
@@ -6726,7 +6734,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             setExcelPasteModal(false);
           }} onClose={()=>setExcelPasteModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
-      {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} session={session} onClose={()=>setDownloadModal(false)}/>}
+      {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} session={session} canIssue={canIssueLink} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} coverageWarnings={generateWarnings.coverageWarnings} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#F4F4F5",border:"1px solid #D4D4D8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#A1A1AA",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#6366F1",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
@@ -6855,7 +6863,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   {/* 保存ボタン */}
                   <button onClick={doSaveSettings} style={{width:"100%",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Save size={14} strokeWidth={2}/>この設定を保存する</button>
                   {isPortalTokenEnabled() ? (
-                    <PortalTokenIssuer dept={d} ps={ps} userId={session.user.id} />
+                    <PortalTokenIssuer dept={d} ps={ps} userId={session.user.id} canIssue={canIssueLink} />
                   ) : (<>
                   <div style={{textAlign:"center",marginBottom:6}}>
                     <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Camera size={12} strokeWidth={2}/>カメラで読み取り</div>
