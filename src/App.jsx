@@ -2995,7 +2995,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
   );
 }
 
-function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed, warnings, prevShiftsByStaff = {} }) {
+function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed, warnings, prevShiftsByStaff = {}, viewOnly = false }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
@@ -3062,12 +3062,14 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   }, [selAnchor, selCur, ds]);
 
   const handleCellMouseDown = (si, d, e) => {
+    if (viewOnly) return; // PR-3c: 無料かつ上限超の部署は範囲選択も不可（閲覧のみ）
     mouseStartRef.current = {x: e.clientX, y: e.clientY};
     dragAnchorRef.current = {si, d};
     isDraggingRef.current = false;
   };
 
   const handleCellMouseEnter = (si, d) => {
+    if (viewOnly) return; // PR-3c: 閲覧のみはドラッグ選択しない
     if (isDraggingRef.current) setSelCur({si, d});
   };
 
@@ -6674,7 +6676,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
             </div>
           </div>}
-          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null} prevShiftsByStaff={WEEKLY_DAYS_ENABLED?(allDBDataRef.current?.[`shifts_${month===0?year-1:year}_${month===0?12:month}_${activeDeptId}`]||{}):{}}/></ZoomWrapper>
+          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null} prevShiftsByStaff={WEEKLY_DAYS_ENABLED?(allDBDataRef.current?.[`shifts_${month===0?year-1:year}_${month===0?12:month}_${activeDeptId}`]||{}):{}} viewOnly={planFreeV2 && !isDeptUsable('free', depts.findIndex(d=>d.id===activeDeptId))}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} staffCount={staffList.length} staffMax={planLimit.staff} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>{ if(staffList.length>=planLimit.staff){alert(`${planLabelJa}プランではスタッフは${planLimit.staff}名までです。`);return;} setStaffModal({data:null}); }} onReorder={moveStaff}/>}
