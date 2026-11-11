@@ -5,6 +5,7 @@ import { describe, test, expect } from 'vitest';
 import {
   canIssuePortalLink, effectiveFeatureFlags, canPasteStaff,
   canAddDept, canAddStaff, isDeptUsable, FULL_ONLY_NOTE,
+  sanitizeDeptForFree, sanitizeStaffForFree,
 } from '../lib/planGates.js';
 import { effectivePlan } from '../lib/planV2.js';
 
@@ -77,5 +78,34 @@ describe('FULL_ONLY_NOTE（料金・購入文言を含まない）', () => {
   test('短い案内文', () => {
     expect(FULL_ONLY_NOTE).toBe('フルプランで使えます');
     expect(FULL_ONLY_NOTE).not.toMatch(/円|¥|購入|決済|Stripe/);
+  });
+});
+
+describe('sanitizeDeptForFree / sanitizeStaffForFree（保存値は書き換えない）', () => {
+  test('部署: 有料設定を外した新オブジェクト・元は不変', () => {
+    const dept = { id: 'd1', label: 'A', transitionForces: [{ from: '夜勤', to: '明け' }], targetSwapEnabled: true };
+    const out = sanitizeDeptForFree(dept);
+    expect(out).not.toHaveProperty('transitionForces');
+    expect(out).not.toHaveProperty('targetSwapEnabled');
+    expect(out.id).toBe('d1'); expect(out.label).toBe('A');
+    // 元オブジェクトは不変＝再び有料で復活できる
+    expect(dept.transitionForces).toEqual([{ from: '夜勤', to: '明け' }]);
+    expect(dept.targetSwapEnabled).toBe(true);
+    expect(out).not.toBe(dept);
+  });
+  test('職員: 週◯日・夜勤レベル・曜日パターンを外す・元は不変', () => {
+    const staff = { id: 's1', name: 'x', weeklyWorkDays: 4, nightLevel: 1, recurringPatterns: [{ id: 'p' }], nightOk: true };
+    const out = sanitizeStaffForFree(staff);
+    expect(out).not.toHaveProperty('weeklyWorkDays');
+    expect(out).not.toHaveProperty('nightLevel');
+    expect(out).not.toHaveProperty('recurringPatterns');
+    expect(out.nightOk).toBe(true); // 他の値は保持
+    expect(staff.weeklyWorkDays).toBe(4); // 元は不変
+    expect(staff.nightLevel).toBe(1);
+    expect(staff.recurringPatterns).toEqual([{ id: 'p' }]);
+  });
+  test('null/非オブジェクトはそのまま', () => {
+    expect(sanitizeDeptForFree(null)).toBe(null);
+    expect(sanitizeStaffForFree(undefined)).toBe(undefined);
   });
 });

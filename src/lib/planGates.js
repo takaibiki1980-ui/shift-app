@@ -62,3 +62,23 @@ export function canPasteStaff(effPlan, currentStaffCount, incomingCount) {
 
 // 無料で機能が制限されたときに出す共通の短い案内（料金・購入ボタンは入れない）。
 export const FULL_ONLY_NOTE = 'フルプランで使えます';
+
+/**
+ * 生成に渡す「部署」から有料の設定を外した新オブジェクトを返す（元は書き換えない＝保存値は不変）。
+ * 外す: transitionForces(遷移強制)・targetSwapEnabled(ペア交換)。再び有料なら元の値がそのまま復活する。
+ */
+export function sanitizeDeptForFree(dept) {
+  if (!dept || typeof dept !== 'object') return dept;
+  const { transitionForces, targetSwapEnabled, ...rest } = dept; // eslint-disable-line no-unused-vars
+  return rest;
+}
+
+/**
+ * 生成に渡す「職員」から有料の設定を外した新オブジェクトを返す（元は書き換えない）。
+ * 外す: weeklyWorkDays(週◯日)・nightLevel(夜勤レベル)・recurringPatterns(曜日パターン)。
+ */
+export function sanitizeStaffForFree(staff) {
+  if (!staff || typeof staff !== 'object') return staff;
+  const { weeklyWorkDays, nightLevel, recurringPatterns, ...rest } = staff; // eslint-disable-line no-unused-vars
+  return rest;
+}

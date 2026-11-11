@@ -18,7 +18,7 @@ import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PRE
 import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
 import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
-import { planV2Limits, canIssuePortalLink, FULL_ONLY_NOTE } from './lib/planGates.js';
+import { planV2Limits, canIssuePortalLink, isDeptUsable, sanitizeDeptForFree, sanitizeStaffForFree, FULL_ONLY_NOTE } from './lib/planGates.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { shareYukyuCell } from './lib/shareCell.js';
@@ -4894,10 +4894,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const planLimit = _v2On ? planV2Limits(_v2Eff) : limitOf(profile);    // { depts, staff }
   const planLabelJa = profile?.is_admin ? "研究用" : (PLAN_LABELS[profile?.plan||'free'] || "無料プラン");
   const learningEnabled = _v2On ? (_v2Eff === 'full') : isLearningEnabled(profile); // 学習を生成/表示に効かせるか
+  const planFreeV2 = _v2On && _v2Eff === 'free'; // 新プランON かつ無料＝有料機能を効かせない
   // 実効プラン（'free'|'full'）の参照。生成補助などで使う。
   const effectivePlanRef = useRef('free');
+  const planFreeRef = useRef(false); // コールバック（生成・パターン適用）から参照する無料フラグ
   useEffect(() => {
     effectivePlanRef.current = effectivePlanValue(profile, new Date(), isPlanV2Enabled());
+    planFreeRef.current = isPlanV2Enabled() && effectivePlanValue(profile, new Date(), true) === 'free';
   }, [profile]);
 
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
@@ -5312,6 +5315,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     //   フラグOFF時は完全な no-op（setStaffList もしない＝従来動作と一致）。
     const expandRecurringPatterns = () => {
       if (!RECURRING_PATTERN_ENABLED) return;
+      if (planFreeRef.current) return; // PR-3c: 無料は曜日パターンを効かせない（保存値は残す＝有料で復活）
+
       const y = yearRef.current, m = monthRef.current;
       staffListSkipSave.current = true;
       setStaffList(prev => {
@@ -5890,6 +5895,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [activeDeptId]);
 
   const _runGenerateCore = useCallback((targetDept, cs, ct) => {
+    // PR-3c: 無料（新プランON）のときは有料の生成設定を外した“無効化コピー”で生成する。
+    //   保存値（depts/staffList の state）は書き換えない＝再び有料で元の設定が復活する。
+    //   外す: 部署=遷移強制/ペア交換、職員=週◯日/夜勤レベル/曜日パターン。
+    if (planFreeRef.current) {
+      targetDept = sanitizeDeptForFree(targetDept);
+      cs = (cs || []).map(sanitizeStaffForFree);
+    }
     // 前月シフトデータから prevTail を組み立て（allDBDataRef は全月分をキャッシュ済み）
     const prevMonthYear = month === 0 ? year - 1 : year;
     const prevMonthIdx  = month === 0 ? 11 : month - 1;
@@ -5986,6 +5998,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleGenerate = useCallback(() => {
     if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
     if (isConfirmedRef.current) { alert(`${dept?.label} は確定済みです。「編集」ボタンで編集状態に戻してから生成してください。`); return; }
+    // PR-3c: 無料は上限を超える部署（並び順の4つ目以降）を「閲覧のみ」＝生成しない。データは消さない。
+    if (planFreeRef.current && !isDeptUsable('free', (deptsRef.current||[]).findIndex(d=>d.id===dept?.id))) {
+      alert(`無料プランでは先頭${planV2Limits('free').depts}部署のみ生成・編集できます。この部署は閲覧・印刷・書き出しのみです。${FULL_ONLY_NOTE}。`); return;
+    }
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
     isInitializing.current = false;
@@ -6260,6 +6276,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (isLockedRef.current) return;
     if (isConfirmedRef.current) return; // 確定済みは編集不可
     if (isMonthLoading) return; // 月ロード中は操作ブロック
+    if (planFreeRef.current && !isDeptUsable('free', (deptsRef.current||[]).findIndex(d=>d.id===activeDeptIdRef.current))) return; // PR-3c: 上限超の部署は閲覧のみ
     activeCellRef.current = { staffId, day, time: Date.now() }; // アクティブセル記録（Realtime上書き保護）
     setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";if(HALF_ALL_TYPES.has(cur))return prev;const s=staffList.find(x=>x.id===staffId);const roleAllowed=s?dept?.roleShiftTypes?.[s.role]:null;const keys=roleAllowed?SHIFT_KEYS.filter(k=>!WORK_TYPES.has(k)||roleAllowed.includes(k)):SHIFT_KEYS;const idx=keys.indexOf(cur);const next=keys[(idx+1)%keys.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
   }, [setDeptShifts, staffList, dept]);
@@ -6268,6 +6285,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (isLockedRef.current) return;
     if (isConfirmedRef.current) return; // 確定済みは編集不可
     if (isMonthLoading) return; // 月ロード中は操作ブロック
+    if (planFreeRef.current && !isDeptUsable('free', (deptsRef.current||[]).findIndex(d=>d.id===activeDeptIdRef.current))) return; // PR-3c: 上限超の部署は閲覧のみ
     setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4,selCells:selCells||null});
   }, []);
   // 右クリックメニューで値を選択 = その勤務を配置し、同時に希望勤務としてロック（shiftRequestsByMonth）。
@@ -6570,8 +6588,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* INNER TABS */}
       <div style={{background:"#F8F9FA",borderBottom:"1px solid #E4E4E7",display:"flex",padding:"0 8px",gap:2,alignItems:"center",overflowX:"auto"}}>
         {[["shift","シフト表"],["staff","スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab===k?"#18181B":"#71717A",borderBottom:innerTab===k?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab===k?700:500,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
-        {profile?.plan==='free'
-          ? <button onClick={()=>alert("予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 予定表</button>
+        {(_v2On ? (_v2Eff !== 'full') : profile?.plan==='free')
+          ? <button onClick={()=>alert(`予定表は${FULL_ONLY_NOTE}。`)} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 予定表</button>
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#18181B":"#71717A",borderBottom:innerTab==="yotei"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
         }
         {learningEnabled
@@ -6864,6 +6882,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   <button onClick={doSaveSettings} style={{width:"100%",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Save size={14} strokeWidth={2}/>この設定を保存する</button>
                   {isPortalTokenEnabled() ? (
                     <PortalTokenIssuer dept={d} ps={ps} userId={session.user.id} canIssue={canIssueLink} />
+                  ) : !canIssueLink ? (
+                  <div style={{fontSize:11,color:"#6B7280",padding:"8px 0",display:"flex",alignItems:"flex-start",gap:5}}><Lightbulb size={12} strokeWidth={2} style={{flexShrink:0,marginTop:1,color:"#f59e0b"}}/>{FULL_ONLY_NOTE}（職員への希望休リンクの配布）。</div>
                   ) : (<>
                   <div style={{textAlign:"center",marginBottom:6}}>
                     <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Camera size={12} strokeWidth={2}/>カメラで読み取り</div>
