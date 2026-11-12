@@ -40,10 +40,11 @@ ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS announcements_select_public ON announcements;
 CREATE POLICY announcements_select_public ON announcements
   FOR SELECT TO authenticated
-  USING (published = true AND publish_at <= now() AND (expire_at IS NULL OR expire_at > now()));
+  USING (published = true AND (publish_at IS NULL OR publish_at <= now()) AND (expire_at IS NULL OR expire_at > now()));
 
-GRANT SELECT ON TABLE announcements TO authenticated; -- select_public ポリシー下でのみ有効
-REVOKE ALL ON TABLE announcements FROM anon;          -- anon は何もできない
+REVOKE ALL ON TABLE announcements FROM authenticated;  -- 既定権限を一旦外し、SELECT だけに絞る
+GRANT SELECT ON TABLE announcements TO authenticated;  -- select_public ポリシー下でのみ有効
+REVOKE ALL ON TABLE announcements FROM anon;           -- anon は何もできない
 
 -- ── ② announcement_reads 表（既読）──────────────────────────────
 CREATE TABLE IF NOT EXISTS announcement_reads (
@@ -65,7 +66,8 @@ CREATE POLICY announcement_reads_insert_own ON announcement_reads
   FOR INSERT TO authenticated
   WITH CHECK (user_id = auth.uid());
 
-GRANT SELECT, INSERT ON TABLE announcement_reads TO authenticated; -- ポリシー下でのみ有効
+REVOKE ALL ON TABLE announcement_reads FROM authenticated;         -- 既定権限を一旦外す
+GRANT SELECT, INSERT ON TABLE announcement_reads TO authenticated; -- ポリシー下でのみ有効（UPDATE/DELETE なし）
 REVOKE ALL ON TABLE announcement_reads FROM anon;
 
 -- ── ③ RPC（SECURITY DEFINER / search_path=public）──────────────
@@ -78,7 +80,7 @@ CREATE OR REPLACE FUNCTION public.admin_upsert_announcement(
 RETURNS uuid
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_id uuid;
@@ -127,7 +129,7 @@ RETURNS SETOF announcements
 LANGUAGE plpgsql
 SECURITY DEFINER
 STABLE
-SET search_path = public
+SET search_path = public, pg_temp
 AS $$
 BEGIN
   IF NOT is_admin() THEN

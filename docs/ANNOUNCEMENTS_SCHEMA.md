@@ -50,16 +50,24 @@ FROM pg_policies WHERE schemaname='public'
 -- c-3. 権限（anon に無いこと・authenticated の EXECUTE/SELECT があること）
 SELECT 'anon:announcements' AS item, has_table_privilege('anon','public.announcements','SELECT')::text AS v
 UNION ALL SELECT 'authed:announcements SELECT', has_table_privilege('authenticated','public.announcements','SELECT')::text
-UNION ALL SELECT 'authed:announcements INSERT', has_table_privilege('authenticated','public.announcements','INSERT')::text  -- false 期待（ポリシーなし）
+UNION ALL SELECT 'authed:announcements INSERT', has_table_privilege('authenticated','public.announcements','INSERT')::text  -- false 期待
+UNION ALL SELECT 'authed:announcements UPDATE', has_table_privilege('authenticated','public.announcements','UPDATE')::text  -- false 期待
+UNION ALL SELECT 'authed:announcements DELETE', has_table_privilege('authenticated','public.announcements','DELETE')::text  -- false 期待
 UNION ALL SELECT 'anon:reads', has_table_privilege('anon','public.announcement_reads','SELECT')::text
+UNION ALL SELECT 'authed:reads SELECT', has_table_privilege('authenticated','public.announcement_reads','SELECT')::text
 UNION ALL SELECT 'authed:reads INSERT', has_table_privilege('authenticated','public.announcement_reads','INSERT')::text
+UNION ALL SELECT 'authed:reads UPDATE', has_table_privilege('authenticated','public.announcement_reads','UPDATE')::text  -- false 期待
+UNION ALL SELECT 'authed:reads DELETE', has_table_privilege('authenticated','public.announcement_reads','DELETE')::text  -- false 期待
 UNION ALL SELECT 'anon:admin_upsert EXECUTE', has_function_privilege('anon','public.admin_upsert_announcement(uuid,text,text,text,timestamptz,timestamptz,boolean,boolean)','EXECUTE')::text  -- false 期待
 UNION ALL SELECT 'authed:admin_upsert EXECUTE', has_function_privilege('authenticated','public.admin_upsert_announcement(uuid,text,text,text,timestamptz,timestamptz,boolean,boolean)','EXECUTE')::text
 UNION ALL SELECT 'authed:admin_list EXECUTE', has_function_privilege('authenticated','public.admin_list_announcements()','EXECUTE')::text
 ORDER BY 1;
--- 期待: anon 系=false / authed:announcements INSERT=false / それ以外の authed=true
+-- 期待: anon 系=false / authed の announcements INSERT・UPDATE・DELETE=false・reads UPDATE・DELETE=false /
+--       それ以外の authed（announcements SELECT, reads SELECT/INSERT, admin_* EXECUTE）=true
 ```
 
 ## d. 元に戻す（revert）
+> **注意: revert するとお知らせのデータ（announcements / announcement_reads の行）が消えます。必要なら先に `SELECT * FROM announcements;` と `SELECT * FROM announcement_reads;` の結果を控えてから実行してください。**
+
 `supabase/migrations/20261112_announcements_revert.sql` の全文を貼って Run（関数→ポリシー→表の順に削除。`pgcrypto`・`is_admin()` は残す）。
 戻した後は a-1 が再び NULL を返すことを確認する。

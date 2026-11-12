@@ -22,7 +22,11 @@ describe('isVisible（公開期間の境界）', () => {
     expect(isVisible(row({ expire_at: iso(-1) }), NOW)).toBe(false);
     expect(isVisible(row({ expire_at: iso(1000) }), NOW)).toBe(true);
   });
-  test('publish_at 未設定は不可（安全側）', () => expect(isVisible(row({ publish_at: null }), NOW)).toBe(false));
+  test('publish_at が null は公開済み扱い＝可（DB RLS と同じ）', () => {
+    expect(isVisible(row({ publish_at: null }), NOW)).toBe(true);
+    expect(isVisible(row({ publish_at: null, published: false }), NOW)).toBe(false); // 下書きは不可
+    expect(isVisible(row({ publish_at: null, expire_at: iso(-1) }), NOW)).toBe(false); // 期限切れは不可
+  });
 });
 
 describe('sortAnnouncements（固定→新しい順）', () => {

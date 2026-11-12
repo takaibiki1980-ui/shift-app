@@ -15,14 +15,14 @@ const _ms = (v) => {
 };
 
 /**
- * 公開中か（公開 & 公開開始<=now & (終了なし | 終了>now)）。
- * now は Date。publish_at 未設定は「開始条件なし＝公開済みなら可」とはせず、未設定は非公開扱い（安全側）。
+ * 公開中か（公開 & (開始なし | 開始<=now) & (終了なし | 終了>now)）。
+ * now は Date。publish_at 未設定（null）は「開始条件なし＝公開済み」扱い（DB の RLS と同じ判定）。
  */
 export function isVisible(row, now) {
   if (!row || !row.published) return false;
   const n = (now instanceof Date ? now.getTime() : new Date(now).getTime());
   const start = _ms(row.publish_at);
-  if (start == null || start > n) return false;
+  if (start != null && start > n) return false;  // publish_at が null なら公開開始済み扱い（DB RLS と同じ）
   const end = _ms(row.expire_at);
   if (end != null && end <= n) return false;
   return true;
