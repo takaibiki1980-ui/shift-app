@@ -19,6 +19,8 @@ import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
 import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
 import { planV2Limits, canIssuePortalLink, isDeptUsable, sanitizeDeptForFree, sanitizeStaffForFree, FULL_ONLY_NOTE } from './lib/planGates.js';
+import { isTrialActive } from './lib/planV2.js';
+import { trialNoticeStage, trialNoticeContent, trialNoticeDismissKey } from './lib/planNotice.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { shareYukyuCell } from './lib/shareCell.js';
@@ -4814,6 +4816,77 @@ function AdminPanel({ onClose }) {
 // ─────────────────────────────────────────────
 //  MAIN APP
 // ─────────────────────────────────────────────
+// PR-3d: 試用終了の予告バナー。フラグ ON かつ「試用中・非管理者」のときだけ出す。
+//   段階（early/soon/last）で見た目を変え、段階ごとに localStorage で閉じられる（次段階で再表示）。
+function TrialNotice({ enabled, profile, depts, staffCount }) {
+  const now = new Date();
+  const stage = (enabled && profile && !profile.is_admin && isTrialActive(profile, now))
+    ? trialNoticeStage(now, profile.trial_ends_at) : 'none';
+  const [dismissed, setDismissed] = useState(() => {
+    if (stage === 'none') return false;
+    try { return localStorage.getItem(trialNoticeDismissKey(stage)) === '1'; } catch { return false; }
+  });
+  if (stage === 'none' || dismissed) return null;
+  const close = () => {
+    try { localStorage.setItem(trialNoticeDismissKey(stage), '1'); } catch { /* localStorage 不可でも画面は壊さない */ }
+    setDismissed(true);
+  };
+  const content = trialNoticeContent(profile.plan, depts, staffCount);
+  // 終了日（JST の「M月D日」）。
+  let endLabel = '';
+  try {
+    const p = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', month: 'long', day: 'numeric' })
+      .formatToParts(new Date(profile.trial_ends_at)).reduce((a, x) => (a[x.type] = x.value, a), {});
+    endLabel = `${p.month}${p.day}`;
+  } catch { endLabel = ''; }
+
+  const barColor = stage === 'last' ? '#B91C1C' : stage === 'soon' ? '#C2410C' : '#2563EB';
+  const bgColor = stage === 'last' ? '#FEF2F2' : stage === 'soon' ? '#FFF7ED' : '#EFF6FF';
+  const closeBtn = (
+    <button onClick={close} aria-label="この予告を閉じる" style={{ background: 'none', border: 'none', color: barColor, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 4, flexShrink: 0 }}>×</button>
+  );
+
+  if (stage === 'early') {
+    return (
+      <div style={{ background: bgColor, borderBottom: `1px solid ${barColor}33`, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#1F2937' }}>
+        <Info size={15} strokeWidth={2} style={{ color: barColor, flexShrink: 0 }} />
+        <span style={{ flex: 1 }}>無料プランの試用は{endLabel ? `${endLabel}に` : 'まもなく'}終わります。終了後は一部の機能が使えなくなります。</span>
+        {closeBtn}
+      </div>
+    );
+  }
+  // soon / last: 目立つ形で項目を出す
+  return (
+    <div style={{ background: bgColor, borderBottom: `2px solid ${barColor}`, padding: '12px 16px', fontSize: 13, color: '#1F2937' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, maxWidth: 920, margin: '0 auto' }}>
+        <AlertTriangle size={18} strokeWidth={2} style={{ color: barColor, flexShrink: 0, marginTop: 2 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, color: barColor, fontSize: stage === 'last' ? 16 : 14, marginBottom: 4 }}>
+            {stage === 'last'
+              ? `試用は${endLabel ? `${endLabel}に` : 'まもなく'}終わります`
+              : '試用の終了が近づいています'}
+          </div>
+          <div style={{ marginBottom: 6 }}>終了後（無料プラン）は、次が使えなくなります：</div>
+          <ul style={{ margin: '0 0 6px', paddingLeft: 18, lineHeight: 1.7 }}>
+            {content.depts && (
+              <li>部署：いまの並びでは、この3部署が使えます（<b>{content.depts.usableNames.join('・')}</b>）。4つ目以降は閲覧・印刷・書き出しのみ。</li>
+            )}
+            {content.staffAddBlocked && (
+              <li>職員：新しい職員の追加ができなくなります（今いる職員の編集・生成はそのまま）。</li>
+            )}
+            <li>有料機能：{content.features.join('、')}。</li>
+            {content.sendBlocked && (
+              <li>職員への送信：希望休リンク・共有シフトリンクの新しい発行。発行済みのリンクは期限まで開けます。</li>
+            )}
+          </ul>
+          <div style={{ fontSize: 12, color: '#6B7280' }}>印刷・書き出し・Excel貼り付け・履歴・ピン留め・発行済みリンクの表示と「止める」はそのまま使えます。設定は消えません（フルに戻せば元どおり）。部署の並び替えは、部署タブの ▲▼ でできます。</div>
+        </div>
+        {closeBtn}
+      </div>
+    </div>
+  );
+}
+
 function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
@@ -6575,6 +6648,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           </div>
         </div>
       </div>
+
+      <TrialNotice enabled={_v2On} profile={profile} depts={depts} staffCount={staffList.length} />
 
       {/* DEPT TABS */}
       <div style={{background:"#F8FAFC",borderBottom:"1px solid #E5E7EB",display:"flex",overflowX:"auto",padding:"0 16px",alignItems:"center"}}>
