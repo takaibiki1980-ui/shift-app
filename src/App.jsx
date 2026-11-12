@@ -3267,7 +3267,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const dispShown=(confirmed&&dispType==="希望休")?"休み":dispType;
                   const warn=warnings?warnings[`${s.id}:${d}`]:null;
                   const warnStrong=warn&&(warn.level===1||warn.level===3);
-                  const warnBg=warn?(warnStrong?"#fee2e2":"#fef9c3"):undefined;
+                  const warnBg=warn?(warnStrong?"#fecaca":"#fef9c3"):undefined; // 強警告の赤は点線撤去に伴い一段濃く（日曜の週末色と区別）。弱警告の黄は据え置き。
                   // 希望・修正の点線枠をやめ、セル下端に色の丸（ドット）で示す。判定データ・条件は従来のまま。
                   //   赤=スタッフ希望(休/有) / 緑=生成後の修正 / 紫=リーダー希望。確定後は showXxx が false＝丸も消える。
                   const dotColor=showStaffReq?'#d6455d':showEdit?'#2a9d6f':showFix?'#7c3aed':null;
