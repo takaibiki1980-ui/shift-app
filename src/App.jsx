@@ -4,7 +4,7 @@ import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, CalendarOff, Users, Trash2, Zap, ClipboardPaste, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, Loader2, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2, Info, Brain } from 'lucide-react';
+import { Settings, Calendar, CalendarOff, Users, Trash2, Zap, ClipboardPaste, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, Loader2, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2, Info, Brain, Bell } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -20,6 +20,7 @@ import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShare
 import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
+import { isVisible as annIsVisible, sortAnnouncements, unreadCount, shouldShowBanner, validateAnnouncementInput, linkifyHttps, ANNOUNCEMENT_SEVERITIES, ANNOUNCE_DISMISS_KEY } from './lib/announcements.js';
 import { shareYukyuCell } from './lib/shareCell.js';
 import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
@@ -156,6 +157,10 @@ function isPortalTokenEnabled() {
 //   未設定や 'true' 以外は OFF＝従来の見かけプランを参考値として返すだけ（制限・ロックは PR-3c）。
 function isPlanV2Enabled() {
   return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PLAN_V2_ENABLED) === 'true';
+}
+// N-1: アプリ内お知らせ欄。未設定=OFF のときはベルも管理画面も出さず、announcements へ問い合わせもしない。
+function isAnnouncementsEnabled() {
+  return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ANNOUNCEMENTS_ENABLED) === 'true';
 }
 
 // ── 月またぎ修正: 全データ取得は Supabase 既定の1000行で打ち切られるため、range でページ分けして
@@ -4805,6 +4810,203 @@ function AdminPanel({ onClose }) {
 }
 
 // ─────────────────────────────────────────────
+//  N-1: アプリ内お知らせ欄（フラグ ON のときだけ描画・問い合わせ）
+// ─────────────────────────────────────────────
+const SEVERITY_META = {
+  info:        { label: 'お知らせ', color: '#2563EB', bg: '#EFF6FF' },
+  maintenance: { label: 'メンテナンス', color: '#C2410C', bg: '#FFF7ED' },
+  important:   { label: '重要', color: '#B91C1C', bg: '#FEF2F2' },
+  incident:    { label: '不具合', color: '#9D174D', bg: '#FDF2F8' },
+};
+// 本文をプレーンテキスト＋https リンクだけで描画（HTML は解釈しない＝XSS 回避）。改行は保持。
+function AnnouncementBody({ text }) {
+  const parts = linkifyHttps(text);
+  return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.7, color: '#1F2937' }}>
+    {parts.map((p, i) => p.type === 'link'
+      ? <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563EB', textDecoration: 'underline' }}>{p.url}</a>
+      : <span key={i}>{p.value}</span>)}
+  </div>;
+}
+
+// リーダー向けの読み取り部品（ベル＋一覧＋バナー）。職員画面では使わない（読む処理を部品化）。
+function AnnouncementCenter({ session, isAdmin, onOpenAdmin }) {
+  const [rows, setRows] = useState([]);
+  const [readIds, setReadIds] = useState(() => new Set());
+  const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [dismissed, setDismissed] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(ANNOUNCE_DISMISS_KEY) || '[]')); } catch { return new Set(); }
+  });
+
+  const load = async () => {
+    try {
+      const [a, r] = await Promise.all([
+        supabase.from('announcements').select('*'),
+        supabase.from('announcement_reads').select('announcement_id').eq('user_id', session.user.id),
+      ]);
+      if (a.error || r.error) { setFailed(true); setReady(true); return; }
+      setRows((a.data || []).filter((x) => annIsVisible(x, new Date())));
+      setReadIds(new Set((r.data || []).map((x) => x.announcement_id)));
+      setFailed(false); setReady(true);
+    } catch { setFailed(true); setReady(true); }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const markRead = async (id) => {
+    if (readIds.has(id)) return;
+    setReadIds((prev) => new Set(prev).add(id));
+    try { await supabase.from('announcement_reads').upsert({ user_id: session.user.id, announcement_id: id }, { onConflict: 'user_id,announcement_id', ignoreDuplicates: true }); } catch { /* 既読保存の失敗は無視（表示は既読扱いのまま） */ }
+  };
+  const openDetail = (row) => { setDetail(row); markRead(row.id); };
+  const dismissBanner = (id) => {
+    setDismissed((prev) => { const next = new Set(prev).add(id); try { localStorage.setItem(ANNOUNCE_DISMISS_KEY, JSON.stringify([...next])); } catch { /* localStorage 不可でも壊さない */ } return next; });
+  };
+
+  if (failed || !ready) return null; // 失敗時はベルを出さないだけ（画面は壊さない）
+  const sorted = sortAnnouncements(rows);
+  const unread = unreadCount(rows, readIds);
+  const banner = shouldShowBanner(rows, readIds, dismissed)[0];
+
+  return (<>
+    <button onClick={() => { setOpen((v) => !v); if (!open) load(); }} title="お知らせ" aria-label="お知らせ" style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'inline-flex', alignItems: 'center' }}>
+      <Bell size={24} strokeWidth={2} style={{ color: '#374151' }} />
+      {unread > 0 && <span style={{ position: 'absolute', top: -2, right: -2, minWidth: 18, height: 18, padding: '0 4px', borderRadius: 9, background: '#DC2626', color: '#fff', fontSize: 12, fontWeight: 800, lineHeight: '18px', textAlign: 'center' }}>{unread > 99 ? '99+' : unread}</span>}
+    </button>
+
+    {open && (
+      <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, background: '#0006', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '48px 12px' }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 'min(560px,96vw)', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 8px 40px #0004' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid #EEE' }}>
+            <div style={{ fontSize: 15, fontWeight: 900, color: '#18181B', display: 'flex', alignItems: 'center', gap: 6 }}><Bell size={16} strokeWidth={2} />お知らせ</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {isAdmin && <button onClick={() => { setOpen(false); onOpenAdmin && onOpenAdmin(); }} style={{ background: '#6366F1', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>管理</button>}
+              <button onClick={() => setOpen(false)} aria-label="閉じる" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#52525B' }}><X size={18} strokeWidth={2} /></button>
+            </div>
+          </div>
+          {detail ? (
+            <div style={{ padding: 16 }}>
+              <button onClick={() => setDetail(null)} style={{ background: 'none', border: 'none', color: '#2563EB', cursor: 'pointer', fontSize: 12, marginBottom: 8 }}>← 一覧へ</button>
+              <div style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, color: SEVERITY_META[detail.severity]?.color, background: SEVERITY_META[detail.severity]?.bg, borderRadius: 6, padding: '2px 8px', marginBottom: 6 }}>{SEVERITY_META[detail.severity]?.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#18181B', marginBottom: 8 }}>{detail.title}</div>
+              <AnnouncementBody text={detail.body} />
+            </div>
+          ) : sorted.length === 0 ? (
+            <div style={{ padding: 32, textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>お知らせはありません</div>
+          ) : (
+            <div>{sorted.map((row) => {
+              const unreadRow = !readIds.has(row.id);
+              return (
+                <div key={row.id} onClick={() => openDetail(row)} style={{ padding: '12px 16px', borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: unreadRow ? '#F8FAFF' : '#fff', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  {unreadRow && <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#DC2626', marginTop: 5, flexShrink: 0 }} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      {row.pinned && <span style={{ fontSize: 10, color: '#6B7280' }}>📌</span>}
+                      <span style={{ fontSize: 10, fontWeight: 700, color: SEVERITY_META[row.severity]?.color }}>{SEVERITY_META[row.severity]?.label}</span>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#18181B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</div>
+                  </div>
+                </div>
+              );
+            })}</div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {banner && (
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 900, background: SEVERITY_META[banner.severity]?.bg, borderBottom: `2px solid ${SEVERITY_META[banner.severity]?.color}`, padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#1F2937' }}>
+        <AlertTriangle size={16} strokeWidth={2} style={{ color: SEVERITY_META[banner.severity]?.color, flexShrink: 0 }} />
+        <span style={{ fontWeight: 800, color: SEVERITY_META[banner.severity]?.color, flexShrink: 0 }}>{SEVERITY_META[banner.severity]?.label}</span>
+        <button onClick={() => { openDetail(banner); }} style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: '#1F2937', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{banner.title}</button>
+        <button onClick={() => dismissBanner(banner.id)} aria-label="閉じる" style={{ background: 'none', border: 'none', cursor: 'pointer', color: SEVERITY_META[banner.severity]?.color, fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
+      </div>
+    )}
+  </>);
+}
+
+// 運営者だけが開ける作成・更新モーダル（権限は DB 側 RPC でも確認）。
+function AnnouncementAdminModal({ session, onClose }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const blank = { id: null, title: '', body: '', severity: 'info', publish_at: '', expire_at: '', pinned: false, published: false };
+  const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
+
+  const reload = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.rpc('admin_list_announcements');
+    if (error) { setErr('一覧の取得に失敗しました（権限またはDB未適用）'); setList([]); } else { setErr(''); setList(data || []); }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const edit = (row) => setForm({ id: row.id, title: row.title, body: row.body, severity: row.severity, publish_at: row.publish_at ? toLocalInput(row.publish_at) : '', expire_at: row.expire_at ? toLocalInput(row.expire_at) : '', pinned: !!row.pinned, published: !!row.published });
+  const save = async () => {
+    const input = { title: form.title, body: form.body, severity: form.severity, publish_at: form.publish_at ? new Date(form.publish_at).toISOString() : null, expire_at: form.expire_at ? new Date(form.expire_at).toISOString() : null };
+    const v = validateAnnouncementInput(input);
+    if (!v.ok) { setErr(v.errors.join(' / ')); return; }
+    setSaving(true); setErr('');
+    const { error } = await supabase.rpc('admin_upsert_announcement', {
+      p_id: form.id, p_title: form.title.trim(), p_body: form.body.trim(), p_severity: form.severity,
+      p_publish_at: input.publish_at, p_expire_at: input.expire_at, p_pinned: form.pinned, p_published: form.published,
+    });
+    setSaving(false);
+    if (error) { setErr('保存に失敗しました（権限またはDB未適用）'); return; }
+    setForm(blank); await reload();
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: '#0006', zIndex: 1100, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '32px 12px', overflow: 'auto' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 'min(680px,96vw)', boxShadow: '0 8px 40px #0004' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid #EEE' }}>
+          <div style={{ fontSize: 15, fontWeight: 900 }}>お知らせ管理（運営者）</div>
+          <button onClick={onClose} aria-label="閉じる" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#52525B' }}><X size={18} strokeWidth={2} /></button>
+        </div>
+        <div style={{ padding: 16 }}>
+          {err && <div style={{ background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FCA5A5', borderRadius: 8, padding: '8px 10px', fontSize: 12, marginBottom: 10 }}>{err}</div>}
+          <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+            <input value={form.title} onChange={(e) => set('title', e.target.value)} maxLength={80} placeholder="タイトル（80字まで）" style={{ padding: '8px 10px', border: '1px solid #D4D4D8', borderRadius: 8, fontSize: 13 }} />
+            <textarea value={form.body} onChange={(e) => set('body', e.target.value)} maxLength={2000} placeholder="本文（2000字まで・プレーンテキスト・https:// のみ自動リンク）" rows={5} style={{ padding: '8px 10px', border: '1px solid #D4D4D8', borderRadius: 8, fontSize: 13, resize: 'vertical' }} />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={form.severity} onChange={(e) => set('severity', e.target.value)} style={{ padding: '7px 8px', border: '1px solid #D4D4D8', borderRadius: 8, fontSize: 13 }}>
+                {ANNOUNCEMENT_SEVERITIES.map((s) => <option key={s} value={s}>{SEVERITY_META[s].label}</option>)}
+              </select>
+              <label style={{ fontSize: 12, color: '#52525B' }}>公開開始 <input type="datetime-local" value={form.publish_at} onChange={(e) => set('publish_at', e.target.value)} style={{ border: '1px solid #D4D4D8', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} /></label>
+              <label style={{ fontSize: 12, color: '#52525B' }}>終了 <input type="datetime-local" value={form.expire_at} onChange={(e) => set('expire_at', e.target.value)} style={{ border: '1px solid #D4D4D8', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} /></label>
+              <label style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={form.pinned} onChange={(e) => set('pinned', e.target.checked)} />固定</label>
+              <label style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={form.published} onChange={(e) => set('published', e.target.checked)} />公開</label>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={save} disabled={saving} style={{ background: saving ? '#A5B4FC' : '#6366F1', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 16px', cursor: saving ? 'wait' : 'pointer', fontSize: 13, fontWeight: 800 }}>{form.id ? '更新する' : '作成する'}</button>
+              {form.id && <button onClick={() => setForm(blank)} style={{ background: '#F4F4F5', color: '#52525B', border: '1px solid #E4E4E7', borderRadius: 8, padding: '9px 16px', cursor: 'pointer', fontSize: 13 }}>新規に戻す</button>}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#52525B', margin: '10px 0 6px' }}>一覧（下書き・期限切れを含む）</div>
+          {loading ? <div style={{ color: '#9CA3AF', fontSize: 12 }}>読み込み中…</div> : list.length === 0 ? <div style={{ color: '#9CA3AF', fontSize: 12 }}>まだありません</div> : (
+            <div style={{ display: 'grid', gap: 6 }}>{list.map((row) => (
+              <div key={row.id} style={{ border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: SEVERITY_META[row.severity]?.color, flexShrink: 0 }}>{SEVERITY_META[row.severity]?.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.pinned ? '📌 ' : ''}{row.title}</span>
+                <span style={{ fontSize: 10, color: row.published ? '#16a34a' : '#9CA3AF', flexShrink: 0 }}>{row.published ? '公開中' : '下書き'}</span>
+                <button onClick={() => edit(row)} style={{ background: '#F4F4F5', border: '1px solid #D4D4D8', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontSize: 11 }}>編集</button>
+              </div>
+            ))}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+// ISO文字列 → datetime-local 入力値（ローカル時刻）。
+function toLocalInput(iso) {
+  try { const d = new Date(iso); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; } catch { return ''; }
+}
+
+// ─────────────────────────────────────────────
 //  MAIN APP
 // ─────────────────────────────────────────────
 function MainApp({ session, profile, onLogout, onProfileUpdate }) {
@@ -5708,6 +5910,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   };
 
   const [adminModal, setAdminModal] = useState(false);
+  const [announceAdmin, setAnnounceAdmin] = useState(false); // N-1: お知らせ管理モーダル（運営者）
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
   const [learnedTrend, setLearnedTrend] = useState({});
@@ -6541,6 +6744,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               </div>
             </>}
           </div>
+          {isAnnouncementsEnabled() && <div style={{marginLeft:4,display:"flex",alignItems:"center"}}><AnnouncementCenter session={session} isAdmin={!!profile?.is_admin} onOpenAdmin={()=>setAnnounceAdmin(true)}/></div>}
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer",marginLeft:4}} onClick={onLogout}>
             <span style={{fontSize:10,fontWeight:700,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:6,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
             <span style={{fontSize:10,color:"#9CA3AF",fontWeight:500,display:"flex",alignItems:"center",gap:2}}><LogOut size={10} strokeWidth={2}/> ログアウト</span>
@@ -6732,6 +6936,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {saveNameOpen&&<SaveNameDialog busy={saveNameBusy} onNo={handleSaveNo} onSubmitName={handleSaveWithName} onClose={()=>{ if(!saveNameBusy) setSaveNameOpen(false); }}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
+      {isAnnouncementsEnabled()&&announceAdmin&&profile?.is_admin&&<AnnouncementAdminModal session={session} onClose={()=>setAnnounceAdmin(false)}/>}
       {linkAdminModal&&<PortalLinkAdminModal depts={depts} userId={session.user.id} onClose={()=>setLinkAdminModal(false)} onIssueNew={()=>{setLinkAdminModal(false);setShareModal(true);}}/>}
       {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
       {historyModal&&<ShiftHistoryModal
