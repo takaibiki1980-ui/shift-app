@@ -68,7 +68,7 @@ describe('send-test-mail', () => {
   });
 
   test('キー未設定は 500・送信しない', async () => {
-    const s = setup({ key: undefined });
+    const s = setup({ key: null });
     const res = await handle(s.req(), s.deps);
     expect(res.status).toBe(500);
     expect((await res.json()).error).toContain('RESEND_API_KEY');
