@@ -67,6 +67,15 @@ export function portalDisplayTitle(facilityName, fallback = 'YEIX') {
 }
 
 /**
+ * 職員画面（新方式 ?p= / 旧方式 ?staff= 共通）のヘッダに出す施設名。
+ * config.facility_name を portalDisplayTitle に通すだけ（メールらしき値は 'YEIX'）。
+ * ヘッダの描画式そのもの＝呼び出し側と同一ロジックをテストできるよう切り出した純関数。
+ */
+export function portalHeaderTitle(config) {
+  return portalDisplayTitle(config == null ? '' : config.facility_name, 'YEIX');
+}
+
+/**
  * 共有シフト（?share=）の読み取り経路を決める純関数。
  *  - 新方式(token フラグ ON) または RPC フラグ ON → 'rpc'（get_shared_shift 経由。
  *    revoked_at / expires_at を弾く）。
