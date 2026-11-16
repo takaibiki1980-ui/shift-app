@@ -4,7 +4,7 @@ import { computeWarnings } from './warnings.js';
 import { createClient } from "@supabase/supabase-js";
 import { QRCodeSVG } from "qrcode.react";
 import HolidayJP from "@holiday-jp/holiday_jp";
-import { Settings, Calendar, CalendarOff, Users, Trash2, Zap, ClipboardPaste, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, Loader2, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2, Info, Brain } from 'lucide-react';
+import { Settings, Calendar, CalendarOff, Users, Trash2, Zap, ClipboardPaste, ClipboardList, Download, Lock, Unlock, History, Share2, Building2, HelpCircle, ChevronLeft, ChevronRight, LogOut, RefreshCw, Loader, Loader2, MoreHorizontal, Undo2, Redo2, Upload, Printer, FileSpreadsheet, FileCode, MessageCircle, Copy, Link2, Home, Clock, Camera, Lightbulb, AlertTriangle, Save, Pencil, Check, Wifi, X, CheckCircle2, Info, Brain, Bell } from 'lucide-react';
 import { REST_TYPES, WORK_TYPES, buildDeptWorkTypes, buildDeptRestTypes, isCustomTimeDept, timeToMins, buildDayIntervals, coverageGaps, DEFAULT_SHIFT_TIMES, getShiftEndTime, getShiftStartTime, shiftIntervalHours, getDays, monthKey, normName, nameMatch, buildNightSet, buildSlotManagedTypes, isNikkinBase, isBadTransition, isSlotManaged, shouldProtectSlot, consecWork, consecRest, consecRestFwd, canRest, NSO_canAssignInitial, NSO_checkC3, NSO_propagateConstraints, NSO_computeCost, NSO_canSwap, autoGenerate, scoreShifts, localSearchImprove, bestOfN, detectManualEditCells, computeLearnedTrend, repairHardConstraints } from './engine/core.js';
 import { computeEditRate } from './lib/editRate.js';
 import { computeLearnedMatch } from './lib/learnedMatch.js';
@@ -17,9 +17,13 @@ import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
 import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
 import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
-import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
+import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalHeaderTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
+import { planV2Limits, canIssuePortalLink, isDeptUsable, sanitizeDeptForFree, sanitizeStaffForFree, FULL_ONLY_NOTE } from './lib/planGates.js';
+import { isTrialActive } from './lib/planV2.js';
+import { trialNoticeStage, trialNoticeContent, trialNoticeDismissKey } from './lib/planNotice.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
+import { isVisible as annIsVisible, sortAnnouncements, unreadCount, shouldShowBanner, validateAnnouncementInput, linkifyHttps, ANNOUNCEMENT_SEVERITIES, ANNOUNCE_DISMISS_KEY } from './lib/announcements.js';
 import { shareYukyuCell } from './lib/shareCell.js';
 import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
@@ -156,6 +160,10 @@ function isPortalTokenEnabled() {
 //   未設定や 'true' 以外は OFF＝従来の見かけプランを参考値として返すだけ（制限・ロックは PR-3c）。
 function isPlanV2Enabled() {
   return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_PLAN_V2_ENABLED) === 'true';
+}
+// N-1: アプリ内お知らせ欄。未設定=OFF のときはベルも管理画面も出さず、announcements へ問い合わせもしない。
+function isAnnouncementsEnabled() {
+  return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ANNOUNCEMENTS_ENABLED) === 'true';
 }
 
 // ── 月またぎ修正: 全データ取得は Supabase 既定の1000行で打ち切られるため、range でページ分けして
@@ -2478,7 +2486,7 @@ function BulkKyukoModal({ staffList, year, month, onApply, onClose }) {
   );
 }
 
-function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, onClose }) {
+function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId, allEvents, session, canIssue = true, onClose }) {
   // 初期状態: 全部署未選択
   const [selectedDepts, setSelectedDepts] = useState([]);
   const [isSharing, setIsSharing] = useState(false);
@@ -2496,6 +2504,7 @@ function DownloadModal({ depts, staffList, allShifts, year, month, activeDeptId,
   // 共有ボタン押下: 選択中の全部署を1つのINSERTで保存し、共通URLを発行
   const doShare = async () => {
     if (noSelection) return;
+    if (!canIssue) { alert(`${FULL_ONLY_NOTE}（共有シフトのリンク発行）。発行済みのリンクは期限まで使えます。`); return; }
     setIsSharing(true);
     try {
       // STEP2: 押下時点のスナップショットをメモリ上で作成
@@ -2993,7 +3002,7 @@ function ShiftHistoryModal({ session, year, month, deptId, deptLabel, onClose, o
   );
 }
 
-function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed, warnings, prevShiftsByStaff = {} }) {
+function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRightClick, events, onEventEdit, confirmed, warnings, prevShiftsByStaff = {}, viewOnly = false }) {
   const days = getDays(year, month);
   const ds = staffList.filter(s=>s.dept===dept.id);
   const mk = monthKey(year, month);
@@ -3060,12 +3069,14 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
   }, [selAnchor, selCur, ds]);
 
   const handleCellMouseDown = (si, d, e) => {
+    if (viewOnly) return; // PR-3c: 無料かつ上限超の部署は範囲選択も不可（閲覧のみ）
     mouseStartRef.current = {x: e.clientX, y: e.clientY};
     dragAnchorRef.current = {si, d};
     isDraggingRef.current = false;
   };
 
   const handleCellMouseEnter = (si, d) => {
+    if (viewOnly) return; // PR-3c: 閲覧のみはドラッグ選択しない
     if (isDraggingRef.current) setSelCur({si, d});
   };
 
@@ -3871,7 +3882,7 @@ function PortalLinkAdminModal({ depts, userId, onClose, onIssueNew }) {
 // 新方式(フラグON)の希望休リンク発行 UI。ボタン押下時だけ issue_portal_link を呼ぶ（描画では発行しない）。
 // 同じ部署・同じ対象月の有効リンクがあれば再利用（重複発行しない）。締切未設定なら発行しない。
 // URL は buildPortalUrl（?p=<token>）。管理者 uuid も cfg= も URL に含めない。
-function PortalTokenIssuer({ dept, ps, userId }) {
+function PortalTokenIssuer({ dept, ps, userId, canIssue = true }) {
   const [links, setLinks] = useState(null); // null=読み込み中 / 配列=取得済み
   const [url, setUrl] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -3898,6 +3909,7 @@ function PortalTokenIssuer({ dept, ps, userId }) {
   // 「発行」は明示ボタン＋確認ダイアログのときだけ。描画・表示では絶対に発行しない。
   const issue = async () => {
     if (busy) return;
+    if (!canIssue) { alert(`${FULL_ONLY_NOTE}（職員への送信リンクの発行）。発行済みのリンクは期限まで使えます。`); return; }
     if (!deadlineDate) { alert('先に締切日を設定してください。（期限のないリンクは作成できません）'); return; }
     if (!window.confirm('新しいリンクを発行します。よろしいですか？')) return;
     setBusy(true);
@@ -3946,10 +3958,12 @@ function PortalTokenIssuer({ dept, ps, userId }) {
       {st.mode === 'needs-deadline' && (
         <div style={{fontSize:11,color:"#c44b4b",padding:"8px 0",display:"flex",alignItems:"flex-start",gap:5}}><AlertTriangle size={12} strokeWidth={2} style={{flexShrink:0,marginTop:1}}/>先に締切日を設定してください。（期限のないリンクは作成できません）</div>
       )}
-      {st.mode === 'can-issue' && (<>
+      {st.mode === 'can-issue' && (canIssue ? (<>
         <div style={{fontSize:11,color:"#52525B",marginBottom:8}}>有効な希望休リンクがありません。</div>
         <button onClick={issue} disabled={busy} style={{width:"100%",background:busy?"#A5B4FC":"#16a34a",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:busy?"wait":"pointer",fontSize:13,fontWeight:800,marginBottom:10,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Copy size={14} strokeWidth={2}/>{busy?"発行中…":"新しく発行する"}</button>
-      </>)}
+      </>) : (
+        <div style={{fontSize:11,color:"#6B7280",padding:"8px 0",display:"flex",alignItems:"flex-start",gap:5}}><Lightbulb size={12} strokeWidth={2} style={{flexShrink:0,marginTop:1,color:"#f59e0b"}}/>{FULL_ONLY_NOTE}（職員への希望休リンクの発行）。発行済みのリンクは期限まで使えます。</div>
+      ))}
     </div>
   );
 }
@@ -4201,7 +4215,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload, portalTo
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <ShifuponIcon size={36} radius={8}/>
           <div>
-            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{portalToken ? portalDisplayTitle(config.facility_name, "YEIX") : (config.facility_name || "YEIX")}</div>
+            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{portalHeaderTitle(config)}</div>
             <div style={{fontSize:10,color:"#52525B"}}>希望休・有休 入力ポータル</div>
           </div>
         </div>
@@ -4807,8 +4821,276 @@ function AdminPanel({ onClose }) {
 }
 
 // ─────────────────────────────────────────────
+//  N-1: アプリ内お知らせ欄（フラグ ON のときだけ描画・問い合わせ）
+// ─────────────────────────────────────────────
+const SEVERITY_META = {
+  info:        { label: 'お知らせ', color: '#2563EB', bg: '#EFF6FF' },
+  maintenance: { label: 'メンテナンス', color: '#C2410C', bg: '#FFF7ED' },
+  important:   { label: '重要', color: '#B91C1C', bg: '#FEF2F2' },
+  incident:    { label: '不具合', color: '#9D174D', bg: '#FDF2F8' },
+};
+// 本文をプレーンテキスト＋https リンクだけで描画（HTML は解釈しない＝XSS 回避）。改行は保持。
+function AnnouncementBody({ text }) {
+  const parts = linkifyHttps(text);
+  return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13, lineHeight: 1.7, color: '#1F2937' }}>
+    {parts.map((p, i) => p.type === 'link'
+      ? <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" style={{ color: '#2563EB', textDecoration: 'underline' }}>{p.url}</a>
+      : <span key={i}>{p.value}</span>)}
+  </div>;
+}
+
+// リーダー向けの読み取り部品（ベル＋一覧＋バナー）。職員画面では使わない（読む処理を部品化）。
+function AnnouncementCenter({ session, isAdmin, onOpenAdmin }) {
+  const [rows, setRows] = useState([]);
+  const [readIds, setReadIds] = useState(() => new Set());
+  const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [dismissed, setDismissed] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(ANNOUNCE_DISMISS_KEY) || '[]')); } catch { return new Set(); }
+  });
+
+  const load = async () => {
+    try {
+      const [a, r] = await Promise.all([
+        supabase.from('announcements').select('*'),
+        supabase.from('announcement_reads').select('announcement_id').eq('user_id', session.user.id),
+      ]);
+      if (a.error || r.error) { setFailed(true); setReady(true); return; }
+      setRows((a.data || []).filter((x) => annIsVisible(x, new Date())));
+      setReadIds(new Set((r.data || []).map((x) => x.announcement_id)));
+      setFailed(false); setReady(true);
+    } catch { setFailed(true); setReady(true); }
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const markRead = async (id) => {
+    if (readIds.has(id)) return;
+    setReadIds((prev) => new Set(prev).add(id));
+    try { await supabase.from('announcement_reads').upsert({ user_id: session.user.id, announcement_id: id }, { onConflict: 'user_id,announcement_id', ignoreDuplicates: true }); } catch { /* 既読保存の失敗は無視（表示は既読扱いのまま） */ }
+  };
+  const openDetail = (row) => { setDetail(row); markRead(row.id); };
+  const dismissBanner = (id) => {
+    setDismissed((prev) => { const next = new Set(prev).add(id); try { localStorage.setItem(ANNOUNCE_DISMISS_KEY, JSON.stringify([...next])); } catch { /* localStorage 不可でも壊さない */ } return next; });
+  };
+
+  if (failed || !ready) return null; // 失敗時はベルを出さないだけ（画面は壊さない）
+  const sorted = sortAnnouncements(rows);
+  const unread = unreadCount(rows, readIds);
+  const banner = shouldShowBanner(rows, readIds, dismissed)[0];
+
+  return (<>
+    <button onClick={() => { setOpen((v) => !v); if (!open) load(); }} title="お知らせ" aria-label="お知らせ" style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'inline-flex', alignItems: 'center' }}>
+      <Bell size={24} strokeWidth={2} style={{ color: '#374151' }} />
+      {unread > 0 && <span style={{ position: 'absolute', top: -2, right: -2, minWidth: 18, height: 18, padding: '0 4px', borderRadius: 9, background: '#DC2626', color: '#fff', fontSize: 12, fontWeight: 800, lineHeight: '18px', textAlign: 'center' }}>{unread > 99 ? '99+' : unread}</span>}
+    </button>
+
+    {open && (
+      <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, background: '#0006', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '48px 12px' }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 'min(560px,96vw)', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 8px 40px #0004' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid #EEE' }}>
+            <div style={{ fontSize: 15, fontWeight: 900, color: '#18181B', display: 'flex', alignItems: 'center', gap: 6 }}><Bell size={16} strokeWidth={2} />お知らせ</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {isAdmin && <button onClick={() => { setOpen(false); onOpenAdmin && onOpenAdmin(); }} style={{ background: '#6366F1', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>管理</button>}
+              <button onClick={() => setOpen(false)} aria-label="閉じる" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#52525B' }}><X size={18} strokeWidth={2} /></button>
+            </div>
+          </div>
+          {detail ? (
+            <div style={{ padding: 16 }}>
+              <button onClick={() => setDetail(null)} style={{ background: 'none', border: 'none', color: '#2563EB', cursor: 'pointer', fontSize: 12, marginBottom: 8 }}>← 一覧へ</button>
+              <div style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, color: SEVERITY_META[detail.severity]?.color, background: SEVERITY_META[detail.severity]?.bg, borderRadius: 6, padding: '2px 8px', marginBottom: 6 }}>{SEVERITY_META[detail.severity]?.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#18181B', marginBottom: 8 }}>{detail.title}</div>
+              <AnnouncementBody text={detail.body} />
+            </div>
+          ) : sorted.length === 0 ? (
+            <div style={{ padding: 32, textAlign: 'center', color: '#9CA3AF', fontSize: 13 }}>お知らせはありません</div>
+          ) : (
+            <div>{sorted.map((row) => {
+              const unreadRow = !readIds.has(row.id);
+              return (
+                <div key={row.id} onClick={() => openDetail(row)} style={{ padding: '12px 16px', borderBottom: '1px solid #F1F5F9', cursor: 'pointer', background: unreadRow ? '#F8FAFF' : '#fff', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  {unreadRow && <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#DC2626', marginTop: 5, flexShrink: 0 }} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      {row.pinned && <span style={{ fontSize: 10, color: '#6B7280' }}>📌</span>}
+                      <span style={{ fontSize: 10, fontWeight: 700, color: SEVERITY_META[row.severity]?.color }}>{SEVERITY_META[row.severity]?.label}</span>
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#18181B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.title}</div>
+                  </div>
+                </div>
+              );
+            })}</div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {banner && (
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, zIndex: 900, background: SEVERITY_META[banner.severity]?.bg, borderBottom: `2px solid ${SEVERITY_META[banner.severity]?.color}`, padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#1F2937' }}>
+        <AlertTriangle size={16} strokeWidth={2} style={{ color: SEVERITY_META[banner.severity]?.color, flexShrink: 0 }} />
+        <span style={{ fontWeight: 800, color: SEVERITY_META[banner.severity]?.color, flexShrink: 0 }}>{SEVERITY_META[banner.severity]?.label}</span>
+        <button onClick={() => { openDetail(banner); }} style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', color: '#1F2937', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{banner.title}</button>
+        <button onClick={() => dismissBanner(banner.id)} aria-label="閉じる" style={{ background: 'none', border: 'none', cursor: 'pointer', color: SEVERITY_META[banner.severity]?.color, fontSize: 16, lineHeight: 1, flexShrink: 0 }}>×</button>
+      </div>
+    )}
+  </>);
+}
+
+// 運営者だけが開ける作成・更新モーダル（権限は DB 側 RPC でも確認）。
+function AnnouncementAdminModal({ session, onClose }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const blank = { id: null, title: '', body: '', severity: 'info', publish_at: '', expire_at: '', pinned: false, published: false };
+  const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
+
+  const reload = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.rpc('admin_list_announcements');
+    if (error) { setErr('一覧の取得に失敗しました（権限またはDB未適用）'); setList([]); } else { setErr(''); setList(data || []); }
+    setLoading(false);
+  };
+  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const edit = (row) => setForm({ id: row.id, title: row.title, body: row.body, severity: row.severity, publish_at: row.publish_at ? toLocalInput(row.publish_at) : '', expire_at: row.expire_at ? toLocalInput(row.expire_at) : '', pinned: !!row.pinned, published: !!row.published });
+  const save = async () => {
+    const input = { title: form.title, body: form.body, severity: form.severity, publish_at: form.publish_at ? new Date(form.publish_at).toISOString() : null, expire_at: form.expire_at ? new Date(form.expire_at).toISOString() : null };
+    const v = validateAnnouncementInput(input);
+    if (!v.ok) { setErr(v.errors.join(' / ')); return; }
+    setSaving(true); setErr('');
+    const { error } = await supabase.rpc('admin_upsert_announcement', {
+      p_id: form.id, p_title: form.title.trim(), p_body: form.body.trim(), p_severity: form.severity,
+      p_publish_at: input.publish_at, p_expire_at: input.expire_at, p_pinned: form.pinned, p_published: form.published,
+    });
+    setSaving(false);
+    if (error) { setErr('保存に失敗しました（権限またはDB未適用）'); return; }
+    setForm(blank); await reload();
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: '#0006', zIndex: 1100, display: 'flex', justifyContent: 'center', alignItems: 'flex-start', padding: '32px 12px', overflow: 'auto' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 'min(680px,96vw)', boxShadow: '0 8px 40px #0004' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid #EEE' }}>
+          <div style={{ fontSize: 15, fontWeight: 900 }}>お知らせ管理（運営者）</div>
+          <button onClick={onClose} aria-label="閉じる" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#52525B' }}><X size={18} strokeWidth={2} /></button>
+        </div>
+        <div style={{ padding: 16 }}>
+          {err && <div style={{ background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FCA5A5', borderRadius: 8, padding: '8px 10px', fontSize: 12, marginBottom: 10 }}>{err}</div>}
+          <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+            <input value={form.title} onChange={(e) => set('title', e.target.value)} maxLength={80} placeholder="タイトル（80字まで）" style={{ padding: '8px 10px', border: '1px solid #D4D4D8', borderRadius: 8, fontSize: 13 }} />
+            <textarea value={form.body} onChange={(e) => set('body', e.target.value)} maxLength={2000} placeholder="本文（2000字まで・プレーンテキスト・https:// のみ自動リンク）" rows={5} style={{ padding: '8px 10px', border: '1px solid #D4D4D8', borderRadius: 8, fontSize: 13, resize: 'vertical' }} />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <select value={form.severity} onChange={(e) => set('severity', e.target.value)} style={{ padding: '7px 8px', border: '1px solid #D4D4D8', borderRadius: 8, fontSize: 13 }}>
+                {ANNOUNCEMENT_SEVERITIES.map((s) => <option key={s} value={s}>{SEVERITY_META[s].label}</option>)}
+              </select>
+              <label style={{ fontSize: 12, color: '#52525B' }}>公開開始 <input type="datetime-local" value={form.publish_at} onChange={(e) => set('publish_at', e.target.value)} style={{ border: '1px solid #D4D4D8', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} /></label>
+              <label style={{ fontSize: 12, color: '#52525B' }}>終了 <input type="datetime-local" value={form.expire_at} onChange={(e) => set('expire_at', e.target.value)} style={{ border: '1px solid #D4D4D8', borderRadius: 6, padding: '4px 6px', fontSize: 12 }} /></label>
+              <label style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={form.pinned} onChange={(e) => set('pinned', e.target.checked)} />固定</label>
+              <label style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={form.published} onChange={(e) => set('published', e.target.checked)} />公開</label>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={save} disabled={saving} style={{ background: saving ? '#A5B4FC' : '#6366F1', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 16px', cursor: saving ? 'wait' : 'pointer', fontSize: 13, fontWeight: 800 }}>{form.id ? '更新する' : '作成する'}</button>
+              {form.id && <button onClick={() => setForm(blank)} style={{ background: '#F4F4F5', color: '#52525B', border: '1px solid #E4E4E7', borderRadius: 8, padding: '9px 16px', cursor: 'pointer', fontSize: 13 }}>新規に戻す</button>}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#52525B', margin: '10px 0 6px' }}>一覧（下書き・期限切れを含む）</div>
+          {loading ? <div style={{ color: '#9CA3AF', fontSize: 12 }}>読み込み中…</div> : list.length === 0 ? <div style={{ color: '#9CA3AF', fontSize: 12 }}>まだありません</div> : (
+            <div style={{ display: 'grid', gap: 6 }}>{list.map((row) => (
+              <div key={row.id} style={{ border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: SEVERITY_META[row.severity]?.color, flexShrink: 0 }}>{SEVERITY_META[row.severity]?.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.pinned ? '📌 ' : ''}{row.title}</span>
+                <span style={{ fontSize: 10, color: row.published ? '#16a34a' : '#9CA3AF', flexShrink: 0 }}>{row.published ? '公開中' : '下書き'}</span>
+                <button onClick={() => edit(row)} style={{ background: '#F4F4F5', border: '1px solid #D4D4D8', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontSize: 11 }}>編集</button>
+              </div>
+            ))}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+// ISO文字列 → datetime-local 入力値（ローカル時刻）。
+function toLocalInput(iso) {
+  try { const d = new Date(iso); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; } catch { return ''; }
+}
+
+// ─────────────────────────────────────────────
 //  MAIN APP
 // ─────────────────────────────────────────────
+// PR-3d: 試用終了の予告バナー。フラグ ON かつ「試用中・非管理者」のときだけ出す。
+//   段階（early/soon/last）で見た目を変え、段階ごとに localStorage で閉じられる（次段階で再表示）。
+function TrialNotice({ enabled, profile, depts, staffCount }) {
+  const now = new Date();
+  const stage = (enabled && profile && !profile.is_admin && isTrialActive(profile, now))
+    ? trialNoticeStage(now, profile.trial_ends_at) : 'none';
+  const [dismissed, setDismissed] = useState(() => {
+    if (stage === 'none') return false;
+    try { return localStorage.getItem(trialNoticeDismissKey(stage)) === '1'; } catch { return false; }
+  });
+  if (stage === 'none' || dismissed) return null;
+  const close = () => {
+    try { localStorage.setItem(trialNoticeDismissKey(stage), '1'); } catch { /* localStorage 不可でも画面は壊さない */ }
+    setDismissed(true);
+  };
+  const content = trialNoticeContent(profile.plan, depts, staffCount);
+  // 終了日（JST の「M月D日」）。
+  let endLabel = '';
+  try {
+    const p = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', month: 'long', day: 'numeric' })
+      .formatToParts(new Date(profile.trial_ends_at)).reduce((a, x) => (a[x.type] = x.value, a), {});
+    endLabel = `${p.month}${p.day}`;
+  } catch { endLabel = ''; }
+
+  const barColor = stage === 'last' ? '#B91C1C' : stage === 'soon' ? '#C2410C' : '#2563EB';
+  const bgColor = stage === 'last' ? '#FEF2F2' : stage === 'soon' ? '#FFF7ED' : '#EFF6FF';
+  const closeBtn = (
+    <button onClick={close} aria-label="この予告を閉じる" style={{ background: 'none', border: 'none', color: barColor, cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 4, flexShrink: 0 }}>×</button>
+  );
+
+  if (stage === 'early') {
+    return (
+      <div style={{ background: bgColor, borderBottom: `1px solid ${barColor}33`, padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#1F2937' }}>
+        <Info size={15} strokeWidth={2} style={{ color: barColor, flexShrink: 0 }} />
+        <span style={{ flex: 1 }}>無料プランの試用は{endLabel ? `${endLabel}に` : 'まもなく'}終わります。終了後は一部の機能が使えなくなります。</span>
+        {closeBtn}
+      </div>
+    );
+  }
+  // soon / last: 目立つ形で項目を出す
+  return (
+    <div style={{ background: bgColor, borderBottom: `2px solid ${barColor}`, padding: '12px 16px', fontSize: 13, color: '#1F2937' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, maxWidth: 920, margin: '0 auto' }}>
+        <AlertTriangle size={18} strokeWidth={2} style={{ color: barColor, flexShrink: 0, marginTop: 2 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, color: barColor, fontSize: stage === 'last' ? 16 : 14, marginBottom: 4 }}>
+            {stage === 'last'
+              ? `試用は${endLabel ? `${endLabel}に` : 'まもなく'}終わります`
+              : '試用の終了が近づいています'}
+          </div>
+          <div style={{ marginBottom: 6 }}>終了後（無料プラン）は、次が使えなくなります：</div>
+          <ul style={{ margin: '0 0 6px', paddingLeft: 18, lineHeight: 1.7 }}>
+            {content.depts && (
+              <li>部署：いまの並びでは、この3部署が使えます（<b>{content.depts.usableNames.join('・')}</b>）。4つ目以降は閲覧・印刷・書き出しのみ。</li>
+            )}
+            {content.staffAddBlocked && (
+              <li>職員：新しい職員の追加ができなくなります（今いる職員の編集・生成はそのまま）。</li>
+            )}
+            <li>有料機能：{content.features.join('、')}。</li>
+            {content.sendBlocked && (
+              <li>職員への送信：希望休リンク・共有シフトリンクの新しい発行。発行済みのリンクは期限まで開けます。</li>
+            )}
+          </ul>
+          <div style={{ fontSize: 12, color: '#6B7280' }}>印刷・書き出し・Excel貼り付け・履歴・ピン留め・発行済みリンクの表示と「止める」はそのまま使えます。設定は消えません（フルに戻せば元どおり）。部署の並び替えは、部署タブの ▲▼ でできます。</div>
+        </div>
+        {closeBtn}
+      </div>
+    </div>
+  );
+}
+
 function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
@@ -4884,14 +5166,20 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (innerTab === "backtest" && !profile?.is_admin) setInnerTab("shift");
     if (innerTab === "learn" && !isLearningEnabled(profile)) setInnerTab("shift"); // free は学習状況タブ不可
   }, [innerTab, profile?.is_admin, profile?.plan]);
-  const planLimit = limitOf(profile);              // { depts, staff }（is_admin/fullは Infinity）
+  // PR-3c: フラグ ON のときだけ新プランのゲートを使う。OFF は従来値（limitOf/isLearningEnabled）で完全一致。
+  const _v2On = isPlanV2Enabled();
+  const _v2Eff = _v2On ? effectivePlanValue(profile, new Date(), true) : null; // 'free'|'full'
+  const canIssueLink = _v2On ? canIssuePortalLink(_v2Eff) : true; // OFF/従来は常に発行可
+  const planLimit = _v2On ? planV2Limits(_v2Eff) : limitOf(profile);    // { depts, staff }
   const planLabelJa = profile?.is_admin ? "研究用" : (PLAN_LABELS[profile?.plan||'free'] || "無料プラン");
-  const learningEnabled = isLearningEnabled(profile); // 学習を生成/表示に効かせるか（free=false）
-  // 新プランの実効プラン（'free'|'full'）を App 内で参照できるよう保持する（制限・ロックは PR-3c で使う）。
-  //   この PR では値を持たせるだけ＝limitOf/learningEnabled 等の既存挙動は一切変えない。
+  const learningEnabled = _v2On ? (_v2Eff === 'full') : isLearningEnabled(profile); // 学習を生成/表示に効かせるか
+  const planFreeV2 = _v2On && _v2Eff === 'free'; // 新プランON かつ無料＝有料機能を効かせない
+  // 実効プラン（'free'|'full'）の参照。生成補助などで使う。
   const effectivePlanRef = useRef('free');
+  const planFreeRef = useRef(false); // コールバック（生成・パターン適用）から参照する無料フラグ
   useEffect(() => {
     effectivePlanRef.current = effectivePlanValue(profile, new Date(), isPlanV2Enabled());
+    planFreeRef.current = isPlanV2Enabled() && effectivePlanValue(profile, new Date(), true) === 'free';
   }, [profile]);
 
   const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
@@ -5306,6 +5594,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     //   フラグOFF時は完全な no-op（setStaffList もしない＝従来動作と一致）。
     const expandRecurringPatterns = () => {
       if (!RECURRING_PATTERN_ENABLED) return;
+      if (planFreeRef.current) return; // PR-3c: 無料は曜日パターンを効かせない（保存値は残す＝有料で復活）
+
       const y = yearRef.current, m = monthRef.current;
       staffListSkipSave.current = true;
       setStaffList(prev => {
@@ -5710,6 +6000,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   };
 
   const [adminModal, setAdminModal] = useState(false);
+  const [announceAdmin, setAnnounceAdmin] = useState(false); // N-1: お知らせ管理モーダル（運営者）
   const [shareModal, setShareModal] = useState(false);
   const [helpModal, setHelpModal] = useState(false);
   const [learnedTrend, setLearnedTrend] = useState({});
@@ -5884,6 +6175,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   }, [activeDeptId]);
 
   const _runGenerateCore = useCallback((targetDept, cs, ct) => {
+    // PR-3c: 無料（新プランON）のときは有料の生成設定を外した“無効化コピー”で生成する。
+    //   保存値（depts/staffList の state）は書き換えない＝再び有料で元の設定が復活する。
+    //   外す: 部署=遷移強制/ペア交換、職員=週◯日/夜勤レベル/曜日パターン。
+    if (planFreeRef.current) {
+      targetDept = sanitizeDeptForFree(targetDept);
+      cs = (cs || []).map(sanitizeStaffForFree);
+    }
     // 前月シフトデータから prevTail を組み立て（allDBDataRef は全月分をキャッシュ済み）
     const prevMonthYear = month === 0 ? year - 1 : year;
     const prevMonthIdx  = month === 0 ? 11 : month - 1;
@@ -5980,6 +6278,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const handleGenerate = useCallback(() => {
     if(isLockedRef.current){alert("この部署はロックされています。編集するには解錠してください。");return;}
     if (isConfirmedRef.current) { alert(`${dept?.label} は確定済みです。「編集」ボタンで編集状態に戻してから生成してください。`); return; }
+    // PR-3c: 無料は上限を超える部署（並び順の4つ目以降）を「閲覧のみ」＝生成しない。データは消さない。
+    if (planFreeRef.current && !isDeptUsable('free', (deptsRef.current||[]).findIndex(d=>d.id===dept?.id))) {
+      alert(`無料プランでは先頭${planV2Limits('free').depts}部署のみ生成・編集できます。この部署は閲覧・印刷・書き出しのみです。${FULL_ONLY_NOTE}。`); return;
+    }
     if (generateTimerRef.current) clearTimeout(generateTimerRef.current);
     setGenerating(true);
     isInitializing.current = false;
@@ -6254,6 +6556,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (isLockedRef.current) return;
     if (isConfirmedRef.current) return; // 確定済みは編集不可
     if (isMonthLoading) return; // 月ロード中は操作ブロック
+    if (planFreeRef.current && !isDeptUsable('free', (deptsRef.current||[]).findIndex(d=>d.id===activeDeptIdRef.current))) return; // PR-3c: 上限超の部署は閲覧のみ
     activeCellRef.current = { staffId, day, time: Date.now() }; // アクティブセル記録（Realtime上書き保護）
     setDeptShifts(prev=>{const cur=prev[staffId]?.[day]||"";if(HALF_ALL_TYPES.has(cur))return prev;const s=staffList.find(x=>x.id===staffId);const roleAllowed=s?dept?.roleShiftTypes?.[s.role]:null;const keys=roleAllowed?SHIFT_KEYS.filter(k=>!WORK_TYPES.has(k)||roleAllowed.includes(k)):SHIFT_KEYS;const idx=keys.indexOf(cur);const next=keys[(idx+1)%keys.length];return{...prev,[staffId]:{...(prev[staffId]||{}),[day]:next}};});
   }, [setDeptShifts, staffList, dept]);
@@ -6262,6 +6565,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     if (isLockedRef.current) return;
     if (isConfirmedRef.current) return; // 確定済みは編集不可
     if (isMonthLoading) return; // 月ロード中は操作ブロック
+    if (planFreeRef.current && !isDeptUsable('free', (deptsRef.current||[]).findIndex(d=>d.id===activeDeptIdRef.current))) return; // PR-3c: 上限超の部署は閲覧のみ
     setCtxMenu({staffId,day,x:e.clientX+4,y:e.clientY+4,selCells:selCells||null});
   }, []);
   // 右クリックメニューで値を選択 = その勤務を配置し、同時に希望勤務としてロック（shiftRequestsByMonth）。
@@ -6543,12 +6847,15 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               </div>
             </>}
           </div>
+          {isAnnouncementsEnabled() && <div style={{marginLeft:4,display:"flex",alignItems:"center"}}><AnnouncementCenter session={session} isAdmin={!!profile?.is_admin} onOpenAdmin={()=>setAnnounceAdmin(true)}/></div>}
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer",marginLeft:4}} onClick={onLogout}>
             <span style={{fontSize:10,fontWeight:700,color:PLAN_COLORS[profile?.plan||'free'],background:"#fff",border:`1px solid ${PLAN_COLORS[profile?.plan||'free']}`,borderRadius:6,padding:"1px 7px",marginBottom:2}}>{PLAN_LABELS[profile?.plan||'free']}</span>
             <span style={{fontSize:10,color:"#9CA3AF",fontWeight:500,display:"flex",alignItems:"center",gap:2}}><LogOut size={10} strokeWidth={2}/> ログアウト</span>
           </div>
         </div>
       </div>
+
+      <TrialNotice enabled={_v2On} profile={profile} depts={depts} staffCount={staffList.length} />
 
       {/* DEPT TABS */}
       <div style={{background:"#F8FAFC",borderBottom:"1px solid #E5E7EB",display:"flex",overflowX:"auto",padding:"0 16px",alignItems:"center"}}>
@@ -6564,8 +6871,8 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       {/* INNER TABS */}
       <div style={{background:"#F8F9FA",borderBottom:"1px solid #E4E4E7",display:"flex",padding:"0 8px",gap:2,alignItems:"center",overflowX:"auto"}}>
         {[["shift","シフト表"],["staff","スタッフ"]].map(([k,l])=><button key={k} onClick={()=>setInnerTab(k)} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab===k?"#18181B":"#71717A",borderBottom:innerTab===k?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab===k?700:500,whiteSpace:"nowrap",flexShrink:0}}>{l}</button>)}
-        {profile?.plan==='free'
-          ? <button onClick={()=>alert("予定表機能はスタンダード・フルプランでご利用いただけます。\nプランのアップグレードはお問い合わせください。")} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 予定表</button>
+        {(_v2On ? (_v2Eff !== 'full') : profile?.plan==='free')
+          ? <button onClick={()=>alert(`予定表は${FULL_ONLY_NOTE}。`)} style={{padding:"10px 16px",background:"transparent",border:"none",color:"#9CA3AF",borderBottom:"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap",flexShrink:0,display:"flex",alignItems:"center",gap:4}}><Lock size={13} strokeWidth={2}/> 予定表</button>
           : <button onClick={()=>setInnerTab("yotei")} style={{padding:"10px 16px",background:"transparent",border:"none",color:innerTab==="yotei"?"#18181B":"#71717A",borderBottom:innerTab==="yotei"?"2px solid #2563EB":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:innerTab==="yotei"?700:500,whiteSpace:"nowrap",flexShrink:0}}>予定表</button>
         }
         {learningEnabled
@@ -6650,7 +6957,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               <span style={{display:"inline-block",animation:"spin 1s linear infinite",fontSize:20}}>⏳</span>シフトデータを読み込んでいます…
             </div>
           </div>}
-          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null} prevShiftsByStaff={WEEKLY_DAYS_ENABLED?(allDBDataRef.current?.[`shifts_${month===0?year-1:year}_${month===0?12:month}_${activeDeptId}`]||{}):{}}/></ZoomWrapper>
+          <ZoomWrapper zoom={tableZoom} onZoomChange={handleZoomChange}><ShiftTable staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month} onLeftClick={handleLeftClick} onRightClick={handleRightClick} events={allEvents[activeDeptId]?.[monthKey(year,month)]||{}} onEventEdit={(d)=>setEventEditDay(d)} confirmed={isConfirmed} warnings={warningsOn?warnMap:null} prevShiftsByStaff={WEEKLY_DAYS_ENABLED?(allDBDataRef.current?.[`shifts_${month===0?year-1:year}_${month===0?12:month}_${activeDeptId}`]||{}):{}} viewOnly={planFreeV2 && !isDeptUsable('free', depts.findIndex(d=>d.id===activeDeptId))}/></ZoomWrapper>
         </div></>)}
         {innerTab==="summary"&&<SummaryView staffList={staffList} shifts={deptShifts} dept={dept} year={year} month={month}/>}
         {innerTab==="staff"&&<StaffList locked={isLocked} staffList={staffList} dept={dept} year={year} month={month} staffCount={staffList.length} staffMax={planLimit.staff} onEdit={s=>setStaffModal({data:s})} onDelete={deleteStaff} onAdd={()=>{ if(staffList.length>=planLimit.staff){alert(`${planLabelJa}プランではスタッフは${planLimit.staff}名までです。`);return;} setStaffModal({data:null}); }} onReorder={moveStaff}/>}
@@ -6728,12 +7035,13 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
             setExcelPasteModal(false);
           }} onClose={()=>setExcelPasteModal(false)}/>}
       {bulkKyukoModal&&<BulkKyukoModal staffList={staffList} year={year} month={month} onApply={handleBulkKyuko} onClose={()=>setBulkKyukoModal(false)}/>}
-      {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} session={session} onClose={()=>setDownloadModal(false)}/>}
+      {downloadModal&&<DownloadModal depts={depts} staffList={staffList} allShifts={allShifts} year={year} month={month} activeDeptId={activeDeptId} allEvents={allEvents} session={session} canIssue={canIssueLink} onClose={()=>setDownloadModal(false)}/>}
       {generateWarnings&&<GenerateWarningModal warnings={generateWarnings.warnings} deptLabel={generateWarnings.deptLabel} year={year} month={month} score={generateWarnings.score} timelineWarnings={generateWarnings.timelineWarnings} coverageWarnings={generateWarnings.coverageWarnings} onClose={()=>setGenerateWarnings(null)}/>}
       <div style={{position:"fixed",bottom:12,right:12,background:"#F4F4F5",border:"1px solid #D4D4D8",borderRadius:16,padding:"5px 12px",fontSize:10,color:"#A1A1AA",display:"flex",gap:6,alignItems:"center"}}><span style={{color:"#6366F1",fontWeight:700}}>Phase 2</span><span>クラウド同期 ＋ リアルタイム連携</span></div>
       {confirmDialog&&<ConfirmDialog message={confirmDialog.message} okLabel={confirmDialog.okLabel||"削除する"} onOk={()=>{confirmDialog.onOk();setConfirmDialog(null);}} onCancel={()=>setConfirmDialog(null)}/>}
       {saveNameOpen&&<SaveNameDialog busy={saveNameBusy} onNo={handleSaveNo} onSubmitName={handleSaveWithName} onClose={()=>{ if(!saveNameBusy) setSaveNameOpen(false); }}/>}
       {adminModal&&<AdminPanel onClose={()=>setAdminModal(false)}/>}
+      {isAnnouncementsEnabled()&&announceAdmin&&profile?.is_admin&&<AnnouncementAdminModal session={session} onClose={()=>setAnnounceAdmin(false)}/>}
       {linkAdminModal&&<PortalLinkAdminModal depts={depts} userId={session.user.id} onClose={()=>setLinkAdminModal(false)} onIssueNew={()=>{setLinkAdminModal(false);setShareModal(true);}}/>}
       {helpModal&&<HelpModal onClose={()=>setHelpModal(false)}/>}
       {historyModal&&<ShiftHistoryModal
@@ -6857,7 +7165,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
                   {/* 保存ボタン */}
                   <button onClick={doSaveSettings} style={{width:"100%",background:"#6366F1",color:"#fff",border:"none",borderRadius:8,padding:"10px 0",cursor:"pointer",fontSize:13,fontWeight:800,marginBottom:12,display:"inline-flex",alignItems:"center",justifyContent:"center",gap:6}}><Save size={14} strokeWidth={2}/>この設定を保存する</button>
                   {isPortalTokenEnabled() ? (
-                    <PortalTokenIssuer dept={d} ps={ps} userId={session.user.id} />
+                    <PortalTokenIssuer dept={d} ps={ps} userId={session.user.id} canIssue={canIssueLink} />
+                  ) : !canIssueLink ? (
+                  <div style={{fontSize:11,color:"#6B7280",padding:"8px 0",display:"flex",alignItems:"flex-start",gap:5}}><Lightbulb size={12} strokeWidth={2} style={{flexShrink:0,marginTop:1,color:"#f59e0b"}}/>{FULL_ONLY_NOTE}（職員への希望休リンクの配布）。</div>
                   ) : (<>
                   <div style={{textAlign:"center",marginBottom:6}}>
                     <div style={{fontSize:10,color:"#52525B",marginBottom:6,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}><Camera size={12} strokeWidth={2}/>カメラで読み取り</div>
