@@ -17,7 +17,7 @@ import { monthlyWorkCapAndRest, restTargetForStaff } from './lib/weeklyDays.js';
 import { prevMonthInfo, buildPrevTail, classifyPrevStaff, classifyPrevFetch, PREV_ERROR, PREV_NONE, PREV_OK } from './lib/prevMonth.js';
 import { ensureProfileSafe, defaultProfile } from './lib/ensureProfile.js';
 import { genPortalToken, shareExpiry, deadlineExpiry, buildPortalUrl, buildShareUrl, parseLinkParams } from './lib/portalToken.js';
-import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalDisplayTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
+import { resolveDeadlineDate, findReusablePortalLink, portalIssuerState, portalHeaderTitle, sharedReadVia, PORTAL_INVALID_MESSAGE } from './lib/portalWiring.js';
 import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalLinkAdmin.js';
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { shareYukyuCell } from './lib/shareCell.js';
@@ -4199,7 +4199,7 @@ function StaffPortal({ adminUserId, fixedDeptId, cfgPreload, ymPreload, portalTo
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <ShifuponIcon size={36} radius={8}/>
           <div>
-            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{portalToken ? portalDisplayTitle(config.facility_name, "YEIX") : (config.facility_name || "YEIX")}</div>
+            <div style={{fontSize:13,fontWeight:900,color:"#18181B"}}>{portalHeaderTitle(config)}</div>
             <div style={{fontSize:10,color:"#52525B"}}>希望休・有休 入力ポータル</div>
           </div>
         </div>
