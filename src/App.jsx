@@ -25,6 +25,7 @@ import { formatPortalRows, formatSharedRows, sliceWithMore } from './lib/portalL
 import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './lib/planSelect.js';
 import { isVisible as annIsVisible, sortAnnouncements, unreadCount, shouldShowBanner, validateAnnouncementInput, linkifyHttps, ANNOUNCEMENT_SEVERITIES, ANNOUNCE_DISMISS_KEY } from './lib/announcements.js';
 import { shareYukyuCell } from './lib/shareCell.js';
+import { cellMarker, cellMarkerColor } from './lib/cellMarker.js';
 import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
@@ -3272,7 +3273,10 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const showEdit=isEdit&&!confirmed;
                   // スタッフの希望(赤): 職員送信 or リーダーがKIBO機能で付与した希望休/有給(kiboByMonth/yukyuByMonth)。
                   //   「大事な希望」を赤で強調しうっかり上書きを防ぐ安全装置。確定中は装飾を消す（青/緑と同じ扱い）。
-                  const showStaffReq=(isKibo||isYukyu)&&!confirmed;
+                  //   ★申請日(kibodays/yukyudays)で判定する。!dispType を条件にしないので、自動生成で
+                  //     セルに希望休/有休が書き込まれても赤は残る（#288 の穴の修正）。isKibo/isYukyu は
+                  //     バッジ表示など他用途のため従来定義のまま（ここでは使わない）。
+                  const isStaffReqDay=kibodays.includes(d)||yukyudays.includes(d);
                   // 確定中のみ希望休を「休」表示（ブラウザ印刷用・表示のみ）。データ/学習/公休カウントは不変。編集に戻すと自動で「希」へ。
                   const kiboAsRest=confirmed&&isKibo;
                   const dispShown=(confirmed&&dispType==="希望休")?"休み":dispType;
@@ -3281,7 +3285,7 @@ function ShiftTable({ staffList, shifts, dept, year, month, onLeftClick, onRight
                   const warnBg=warn?(warnStrong?"#fecaca":"#fef9c3"):undefined; // 強警告の赤は点線撤去に伴い一段濃く（日曜の週末色と区別）。弱警告の黄は据え置き。
                   // 希望・修正の点線枠をやめ、セル下端に色の丸（ドット）で示す。判定データ・条件は従来のまま。
                   //   赤=スタッフ希望(休/有) / 緑=生成後の修正 / 紫=リーダー希望。確定後は showXxx が false＝丸も消える。
-                  const dotColor=showStaffReq?'#d6455d':showEdit?'#2a9d6f':showFix?'#7c3aed':null;
+                  const dotColor=cellMarkerColor(cellMarker({isStaffReqDay,hasEdit:showEdit,hasFixed:showFix,confirmed}));
                   return <td key={d} title={warn?warn.reason:undefined} style={{position:"relative",padding:"2px 1px",textAlign:"center",borderRight:"1px solid #F1F5F9",borderBottom:"1px solid #F1F5F9",background:isSelected?"#bfdbfe":isRoleViol?"#fecaca":consecViol?"#ffe8e8":warnBg||cellWeekBg,cursor:"pointer",outline:isSelected?"2px solid #3b82f6":isRoleViol?"2px solid #ef4444":consecViol?"1px solid #e0707060":undefined,outlineOffset:isSelected||isRoleViol?"-2px":undefined}} onMouseDown={(e)=>{if(e.button!==0)return;e.preventDefault();handleCellMouseDown(si,d,e);}} onMouseEnter={()=>handleCellMouseEnter(si,d)} onContextMenu={(e)=>{e.preventDefault();if(isSelected&&selectedCells.size>1){onRightClick(s.id,d,e,selectedCells);}else{setSelAnchor(null);setSelCur(null);onRightClick(s.id,d,e,null);}}} onTouchStart={(e)=>handleCellTouchStart(si,d,e)} onTouchEnd={(e)=>handleCellTouchEnd(si,d,e)}>{isKibo?(kiboAsRest?<ShiftBadge type="休み" defs={dept.customShiftDefs}/>:<span style={{fontSize:9,color:"#BE123C"}}>希</span>):isYukyu?<span style={{fontSize:9,color:"#9b4db5"}}>有</span>:<ShiftBadge type={dispShown} defs={dept.customShiftDefs}/>}{isRoleViol&&<span style={{fontSize:7,color:"#991b1b",display:"block",lineHeight:1}}>制限!</span>}{!isRoleViol&&consecViol&&<span style={{fontSize:7,color:"#c44b4b",display:"block",lineHeight:1}}>連超</span>}{warn&&<span onClick={(e)=>{e.stopPropagation();setWarnPop({reason:warn.reason,x:e.clientX,y:e.clientY});}} title={warn.reason} style={{position:"absolute",top:0,right:1,fontSize:8,fontWeight:900,lineHeight:1,color:warnStrong?"#dc2626":"#b45309",cursor:"pointer"}}>{warnStrong?"⚠":"!"}</span>}{dotColor&&<span style={{position:"absolute",bottom:1,left:"50%",transform:"translateX(-50%)",width:9,height:9,borderRadius:"50%",background:dotColor,boxShadow:"0 0 0 1.5px #fff",pointerEvents:"none"}}/>}</td>;
                 })}
                 {rightCols.map(col=>{
