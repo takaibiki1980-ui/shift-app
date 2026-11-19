@@ -4,7 +4,7 @@
 import { describe, test, expect } from 'vitest';
 import {
   classifyAuthError, authErrorMessage, AUTH_ERROR_TEXT, isEmailNotConfirmed,
-  validateNewPassword, isRecoveryEvent, isRecoveryHash,
+  validateNewPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash,
 } from '../lib/authFlow.js';
 
 describe('classifyAuthError / authErrorMessage', () => {
@@ -84,5 +84,19 @@ describe('isRecoveryHash', () => {
     expect(isRecoveryHash('#type=recoveryX')).toBe(false); // 部分一致で誤判定しない
     expect(isRecoveryHash('')).toBe(false);
     expect(isRecoveryHash(null)).toBe(false);
+  });
+});
+
+describe('isRecoveryErrorHash（期限切れ・無効リンク）', () => {
+  test('otp_expired / access_denied を含むと true', () => {
+    expect(isRecoveryErrorHash('#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired')).toBe(true);
+    expect(isRecoveryErrorHash('#error_code=otp_expired')).toBe(true);
+    expect(isRecoveryErrorHash('?error=access_denied')).toBe(true);
+  });
+  test('正常な recovery / 無関係・空は false', () => {
+    expect(isRecoveryErrorHash('#access_token=xxx&type=recovery')).toBe(false);
+    expect(isRecoveryErrorHash('#error_code=otp_expiredX')).toBe(false); // 部分一致で誤判定しない
+    expect(isRecoveryErrorHash('')).toBe(false);
+    expect(isRecoveryErrorHash(null)).toBe(false);
   });
 });

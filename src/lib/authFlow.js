@@ -68,3 +68,14 @@ export function isRecoveryHash(hash) {
   const h = String(hash || '').replace(/^[#?]/, '');
   return /(^|&)type=recovery(&|$)/.test(h);
 }
+
+/**
+ * 再設定/確認リンクが期限切れ・無効で戻ってきた URL か。
+ * Supabase はこの場合 session を作らず、hash/query に
+ * "error=access_denied&error_code=otp_expired&..." を付けて Site URL に戻す。
+ * @param {string} hash  window.location.hash（または search）
+ */
+export function isRecoveryErrorHash(hash) {
+  const h = String(hash || '').replace(/^[#?]/, '');
+  return /(^|&)error_code=otp_expired(&|$)/.test(h) || /(^|&)error=access_denied(&|$)/.test(h);
+}

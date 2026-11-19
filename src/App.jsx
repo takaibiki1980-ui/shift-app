@@ -26,7 +26,7 @@ import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './li
 import { isVisible as annIsVisible, sortAnnouncements, unreadCount, shouldShowBanner, validateAnnouncementInput, linkifyHttps, ANNOUNCEMENT_SEVERITIES, ANNOUNCE_DISMISS_KEY } from './lib/announcements.js';
 import { shareYukyuCell } from './lib/shareCell.js';
 import { cellMarker, cellMarkerColor } from './lib/cellMarker.js';
-import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, isRecoveryEvent, isRecoveryHash } from './lib/authFlow.js';
+import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash } from './lib/authFlow.js';
 import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
@@ -250,7 +250,7 @@ const SHIFT_DEFAULT_TIMES = {
 // ─────────────────────────────────────────────
 //  LOGIN PAGE
 // ─────────────────────────────────────────────
-function LoginPage({ onLogin }) {
+function LoginPage({ onLogin, linkExpired }) {
   const [mode, setMode]       = useState("login");
   const [email, setEmail]     = useState("");
   const [password, setPassword] = useState("");
@@ -270,6 +270,13 @@ function LoginPage({ onLogin }) {
     const id = setInterval(() => setCooldown(c => (c <= 1 ? 0 : c - 1)), 1000);
     return () => clearInterval(id);
   }, [cooldown]);
+
+  // 期限切れ・無効な再設定リンクで戻ってきたときの案内（App から渡る）。URL の error 断片も消す。
+  useEffect(() => {
+    if (!linkExpired) return;
+    setError("リンクの有効期限が切れています。もう一度「パスワードを忘れた」からやり直してください。");
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch { /* 失敗しても続行 */ }
+  }, [linkExpired]);
 
   const handleSubmit = async () => {
     if (!email || !password) { setError("メールアドレスとパスワードを入力してください"); return; }
@@ -466,7 +473,7 @@ function LoginPage({ onLogin }) {
 //  PASSWORD RECOVERY PAGE（再設定メールのリンクから戻ったときだけ表示）
 //  session はあるが、ここで新パスワードを設定するまで通常画面(MainApp)には入れない。
 // ─────────────────────────────────────────────
-function PasswordRecoveryPage({ onDone }) {
+function PasswordRecoveryPage({ onDone, onExit }) {
   const [pw, setPw]   = useState("");
   const [pw2, setPw2] = useState("");
   const [loading, setLoading] = useState(false);
@@ -524,6 +531,10 @@ function PasswordRecoveryPage({ onDone }) {
             <button onClick={submit} disabled={loading} style={{width:"100%",background:loading?"#E4E4E7":"#6366F1",color:"#fff",border:"none",borderRadius:10,padding:"13px 0",fontSize:14,fontWeight:800,cursor:loading?"not-allowed":"pointer",letterSpacing:"0.05em"}}>
               {loading ? "⏳ 処理中…" : "パスワードを変更"}
             </button>
+            {/* 出口: updateUser 失敗・session 不在などで詰まないように。signOut してから戻るので通常画面には入らない。 */}
+            <div style={{textAlign:"center",marginTop:14}}>
+              <button onClick={onExit} disabled={loading} style={{background:"none",border:"none",color:"#71717A",cursor:loading?"default":"pointer",fontSize:12,textDecoration:"underline",padding:0}}>ログイン画面へ戻る</button>
+            </div>
           </>
         )}
       </div>
@@ -4832,6 +4843,18 @@ export default function App() {
   const [recovery, setRecovery] = useState(() => {
     try { return typeof window !== 'undefined' && isRecoveryHash(window.location.hash); } catch { return false; }
   });
+  // 期限切れ・無効な再設定リンクで戻ってきたか（session は作られない）。ログイン画面で案内を出す。
+  const [linkExpired] = useState(() => {
+    try { return typeof window !== 'undefined' && isRecoveryErrorHash(window.location.hash + window.location.search); } catch { return false; }
+  });
+
+  // 回復画面からの離脱: session が残っていると通常画面に入れてしまうため、先に signOut してから
+  // recovery を解除する（「設定前に通常画面へ入れない」性質を保つ）。hash も消す。
+  const exitRecovery = async () => {
+    try { await supabase.auth.signOut(); } catch { /* 失敗しても続行 */ }
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch { /* 失敗しても続行 */ }
+    setRecovery(false);
+  };
 
   const fetchProfile = async (sess) => {
     if (!sess) { setProfile(null); return; }
@@ -4879,9 +4902,9 @@ export default function App() {
   }
 
   // 回復モードは session の有無より優先。新パスワードを設定するまで MainApp に入れない。
-  if (recovery) { return <PasswordRecoveryPage onDone={() => setRecovery(false)} />; }
+  if (recovery) { return <PasswordRecoveryPage onDone={() => setRecovery(false)} onExit={exitRecovery} />; }
 
-  if (!session) { return <LoginPage onLogin={() => {}} />; }
+  if (!session) { return <LoginPage onLogin={() => {}} linkExpired={linkExpired} />; }
 
   return <ErrorBoundary><MainApp session={session} profile={profile} onLogout={handleLogout} onProfileUpdate={setProfile} /></ErrorBoundary>;
 }
