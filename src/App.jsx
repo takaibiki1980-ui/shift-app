@@ -26,6 +26,7 @@ import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './li
 import { isVisible as annIsVisible, sortAnnouncements, unreadCount, shouldShowBanner, validateAnnouncementInput, linkifyHttps, ANNOUNCEMENT_SEVERITIES, ANNOUNCE_DISMISS_KEY } from './lib/announcements.js';
 import { shareYukyuCell } from './lib/shareCell.js';
 import { cellMarker, cellMarkerColor } from './lib/cellMarker.js';
+import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, isRecoveryEvent, isRecoveryHash } from './lib/authFlow.js';
 import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
@@ -260,12 +261,21 @@ function LoginPage({ onLogin }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
   const [msg, setMsg]         = useState("");
+  const [showResend, setShowResend] = useState(false); // ログインが「メール未確認」のとき確認メール再送を出す
+  const [cooldown, setCooldown] = useState(0);          // 再送・再設定メールの連打防止（秒・画面側60秒）
+
+  // 60秒のカウントダウン（再送/再設定メールを送ったら開始）。タイマーは1本だけ。
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const id = setInterval(() => setCooldown(c => (c <= 1 ? 0 : c - 1)), 1000);
+    return () => clearInterval(id);
+  }, [cooldown]);
 
   const handleSubmit = async () => {
     if (!email || !password) { setError("メールアドレスとパスワードを入力してください"); return; }
     if (mode === "signup" && !facilityName.trim()) { setError("施設名を入力してください"); return; }
     if (mode === "signup" && !agreed) { setError("利用規約・プライバシーポリシーへの同意が必要です"); return; }
-    setLoading(true); setError(""); setMsg("");
+    setLoading(true); setError(""); setMsg(""); setShowResend(false);
     try {
       if (mode === "login") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -277,11 +287,40 @@ function LoginPage({ onLogin }) {
         setMsg("確認メールを送信しました。メールのリンクをクリックしてアカウントを有効化してください。");
       }
     } catch (e) {
-      const msg = e.message || "";
-      if (msg.includes("Invalid login credentials")) setError("メールアドレスまたはパスワードが正しくありません");
-      else if (msg.includes("User already registered")) setError("このメールアドレスはすでに登録されています");
-      else if (msg.includes("Password should be at least")) setError("パスワードは6文字以上で入力してください");
-      else setError(msg || "エラーが発生しました");
+      const raw = e.message || "";
+      setError(authErrorMessage(raw));
+      if (mode === "login" && isEmailNotConfirmed(raw)) setShowResend(true); // 未確認なら再送ボタン
+    } finally { setLoading(false); }
+  };
+
+  // パスワード再設定メールの送信。登録の有無は中立の文言で隠す（存在推測を防ぐ）。
+  const handleForgot = async () => {
+    if (!email) { setError("メールアドレスを入力してください"); return; }
+    if (cooldown > 0) return;
+    setLoading(true); setError(""); setMsg(""); setShowResend(false);
+    try {
+      // redirectTo は getPublicBaseUrl()（本番 https://www.yeix.jp 等）。Redirect URLs の許可内。
+      await supabase.auth.resetPasswordForEmail(email, { redirectTo: getPublicBaseUrl() });
+      // 成功/失敗（未登録含む）にかかわらず同じ中立文言。エラーは送信間隔制限のときだけ出す。
+      setMsg("登録がある場合、再設定メールを送りました。メールのリンクから新しいパスワードを設定してください。");
+      setCooldown(60);
+    } catch (e) {
+      setError(authErrorMessage(e.message || ""));
+    } finally { setLoading(false); }
+  };
+
+  // 確認メールの再送（ログインが「メール未確認」のときだけ表示）。画面側で60秒あける。
+  const handleResend = async () => {
+    if (!email) { setError("メールアドレスを入力してください"); return; }
+    if (cooldown > 0) return;
+    setLoading(true); setError(""); setMsg("");
+    try {
+      const { error } = await supabase.auth.resend({ type: 'signup', email });
+      if (error) throw error;
+      setMsg("確認メールを再送しました。メールのリンクをクリックしてください。");
+      setCooldown(60);
+    } catch (e) {
+      setError(authErrorMessage(e.message || ""));
     } finally { setLoading(false); }
   };
 
@@ -365,6 +404,14 @@ function LoginPage({ onLogin }) {
             padding:"9px 12px", fontSize:12, color:"#dc2626", marginBottom:14,
           }}><AlertTriangle size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>{error}</div>
         )}
+        {showResend && (
+          <div style={{marginBottom:14,textAlign:"center"}}>
+            <button onClick={handleResend} disabled={loading||cooldown>0} style={{
+              background:"none",border:"none",color:cooldown>0?"#A1A1AA":"#6366F1",
+              cursor:cooldown>0?"default":"pointer",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0,
+            }}>{cooldown>0?`確認メールを再送（${cooldown}秒後に再送できます）`:"確認メールを再送する"}</button>
+          </div>
+        )}
         {msg && (
           <div style={{
             background:"#e8f5ee", border:"1px solid #5cb87a", borderRadius:8,
@@ -395,6 +442,15 @@ function LoginPage({ onLogin }) {
           {loading ? "⏳ 処理中…" : mode==="login" ? "ログイン" : "アカウントを作成"}
         </button>
 
+        {mode==="login" && (
+          <div style={{textAlign:"center",marginTop:14}}>
+            <button onClick={handleForgot} disabled={loading||cooldown>0} style={{
+              background:"none",border:"none",color:cooldown>0?"#A1A1AA":"#6366F1",
+              cursor:cooldown>0?"default":"pointer",fontSize:12,textDecoration:"underline",padding:0,
+            }}>{cooldown>0?`パスワードを忘れた方（${cooldown}秒後に送信できます）`:"パスワードを忘れた方はこちら"}</button>
+          </div>
+        )}
+
         <div style={{textAlign:"center",marginTop:20,display:"flex",justifyContent:"center",gap:16}}>
           <button onClick={()=>setShowTerms(true)} style={{background:"none",border:"none",color:"#71717A",cursor:"pointer",fontSize:11,textDecoration:"underline"}}>利用規約</button>
           <button onClick={()=>setShowPrivacy(true)} style={{background:"none",border:"none",color:"#71717A",cursor:"pointer",fontSize:11,textDecoration:"underline"}}>プライバシーポリシー</button>
@@ -402,6 +458,75 @@ function LoginPage({ onLogin }) {
       </div>
       {showTerms&&<TermsModal onClose={()=>setShowTerms(false)}/>}
       {showPrivacy&&<PrivacyModal onClose={()=>setShowPrivacy(false)}/>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+//  PASSWORD RECOVERY PAGE（再設定メールのリンクから戻ったときだけ表示）
+//  session はあるが、ここで新パスワードを設定するまで通常画面(MainApp)には入れない。
+// ─────────────────────────────────────────────
+function PasswordRecoveryPage({ onDone }) {
+  const [pw, setPw]   = useState("");
+  const [pw2, setPw2] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState("");
+  const [done, setDone]       = useState(false);
+
+  const submit = async () => {
+    const v = validateNewPassword(pw, pw2);
+    if (!v.ok) { setError(v.message); return; }
+    setLoading(true); setError("");
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pw });
+      if (error) throw error;
+      setDone(true);
+      // 完了表示のあと通常画面へ。URL の回復トークンも消す（再読込で再発動しないように）。
+      setTimeout(() => {
+        try { window.history.replaceState(null, "", window.location.pathname + window.location.search); } catch { /* 失敗しても続行 */ }
+        onDone();
+      }, 1500);
+    } catch (e) {
+      setError(authErrorMessage(e.message || ""));
+    } finally { setLoading(false); }
+  };
+  const onKey = (e) => { if (e.key === "Enter") submit(); };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#F8F9FA",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Noto Sans JP',sans-serif",padding:16}}>
+      <div style={{background:"#FAFAFA",border:"1px solid #D4D4D8",borderRadius:18,padding:36,width:"100%",maxWidth:400,boxShadow:"0 20px 60px rgba(0,0,0,0.12)"}}>
+        <div style={{textAlign:"center",marginBottom:22}}>
+          <div style={{margin:"0 auto 12px",width:56,height:56}}><ShifuponIcon size={56} radius={14}/></div>
+          <div style={{fontSize:16,fontWeight:900,color:"#18181B"}}>新しいパスワードの設定</div>
+          <div style={{fontSize:11,color:"#71717A",marginTop:6}}>8文字以上で入力してください</div>
+        </div>
+        {done ? (
+          <div style={{background:"#e8f5ee",border:"1px solid #5cb87a",borderRadius:8,padding:"12px 14px",fontSize:13,color:"#166534",textAlign:"center"}}>
+            <CheckCircle2 size={16} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>パスワードを変更しました。画面を切り替えています…
+          </div>
+        ) : (
+          <>
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:11,color:"#52525B",marginBottom:5}}>新しいパスワード（8文字以上）</div>
+              <input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={onKey} placeholder="••••••••"
+                style={{width:"100%",background:"#f0fffe",border:"1px solid #D4D4D8",borderRadius:8,color:"#18181B",padding:"10px 12px",fontSize:13,boxSizing:"border-box",outline:"none"}}/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:11,color:"#52525B",marginBottom:5}}>新しいパスワード（確認）</div>
+              <input type="password" value={pw2} onChange={e=>setPw2(e.target.value)} onKeyDown={onKey} placeholder="••••••••"
+                style={{width:"100%",background:"#f0fffe",border:"1px solid #D4D4D8",borderRadius:8,color:"#18181B",padding:"10px 12px",fontSize:13,boxSizing:"border-box",outline:"none"}}/>
+            </div>
+            {error && (
+              <div style={{background:"#fff0f0",border:"1px solid #fca5a5",borderRadius:8,padding:"9px 12px",fontSize:12,color:"#dc2626",marginBottom:14}}>
+                <AlertTriangle size={14} strokeWidth={2} style={{verticalAlign:"middle",marginRight:5}}/>{error}
+              </div>
+            )}
+            <button onClick={submit} disabled={loading} style={{width:"100%",background:loading?"#E4E4E7":"#6366F1",color:"#fff",border:"none",borderRadius:10,padding:"13px 0",fontSize:14,fontWeight:800,cursor:loading?"not-allowed":"pointer",letterSpacing:"0.05em"}}>
+              {loading ? "⏳ 処理中…" : "パスワードを変更"}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -4701,6 +4826,12 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [profile, setProfile] = useState(null);
+  // 回復(パスワード再設定)モード。再設定リンクで戻ると session はできるが、
+  // 新パスワードを設定するまで MainApp に入れない。初期描画で URL の hash から判定し、
+  // onAuthStateChange の PASSWORD_RECOVERY でも立てる（通常画面のちらつき防止の二重化）。
+  const [recovery, setRecovery] = useState(() => {
+    try { return typeof window !== 'undefined' && isRecoveryHash(window.location.hash); } catch { return false; }
+  });
 
   const fetchProfile = async (sess) => {
     if (!sess) { setProfile(null); return; }
@@ -4727,6 +4858,7 @@ export default function App() {
       fetchProfile(session).finally(() => setAuthLoading(false));
     }).catch(() => setAuthLoading(false));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (isRecoveryEvent(_event)) setRecovery(true); // 再設定リンク経由。新パスワード設定まで通常画面に入れない
       setSession(session);
       fetchProfile(session);
     });
@@ -4745,6 +4877,9 @@ export default function App() {
       </div>
     );
   }
+
+  // 回復モードは session の有無より優先。新パスワードを設定するまで MainApp に入れない。
+  if (recovery) { return <PasswordRecoveryPage onDone={() => setRecovery(false)} />; }
 
   if (!session) { return <LoginPage onLogin={() => {}} />; }
 
