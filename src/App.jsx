@@ -27,6 +27,7 @@ import { isVisible as annIsVisible, sortAnnouncements, unreadCount, shouldShowBa
 import { shareYukyuCell } from './lib/shareCell.js';
 import { cellMarker, cellMarkerColor } from './lib/cellMarker.js';
 import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash } from './lib/authFlow.js';
+import { chooseSeed } from './lib/accountSeed.js';
 import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
@@ -5501,22 +5502,33 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
           }
         } else {
           // 新規ユーザーのみ: エラーなしでデータが存在しない場合にデフォルトを保存
-          const defaultDepts = deptsRef.current;
+          // ★別アカウント汚染の修正: localStorage 由来(deptsRef.current)ではなくハードコード既定から
+          //   初期化し、state と保存の両方に使う。端末に残る他アカウントのデータを自分の行へ書かない。
+          const defaultDepts = chooseSeed(null, DEFAULT_DEPTS);
+          deptsSkipSave.current = true;
+          setDepts(defaultDepts);
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'depts', data_value:defaultDepts, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-            .then(({ error }) => { if (!error) lastSavedDeptsRef.current = deptsRef.current; });
+            .then(({ error }) => { if (!error) lastSavedDeptsRef.current = defaultDepts; });
         }
+        let newAccountStaffSeed = null; // 新規アカウントで採用したハードコード既定（latestStaffList 用）
         if (byKey['staffList']) {
           staffListSkipSave.current = true;
           setStaffList(byKey['staffList']);
         } else {
           // 新規ユーザーのみ: エラーなしでデータが存在しない場合にデフォルトを保存
-          const defaultStaff = staffListRef.current;
+          // ★別アカウント汚染の修正: localStorage 由来(staffListRef.current)ではなく buildStaff() の
+          //   ハードコード既定から初期化し、state と保存の両方に使う。
+          const defaultStaff = chooseSeed(null, buildStaff());
+          staffListSkipSave.current = true;
+          setStaffList(defaultStaff);
+          newAccountStaffSeed = defaultStaff; // 下の latestStaffList で参照
           supabase.from('shift_data').upsert({ user_id:session.user.id, data_key:'staffList', data_value:defaultStaff, updated_at:new Date().toISOString() },{ onConflict:'user_id,data_key' })
-            .then(({ error }) => { if (!error) lastSavedStaffListRef.current = staffListRef.current; });
+            .then(({ error }) => { if (!error) lastSavedStaffListRef.current = defaultStaff; });
         }
         if (byKey['allFloorSettings']) { allFloorSettingsSkipSave.current = true; setAllFloorSettings(byKey['allFloorSettings']); } // ★Fix W-1
         if (byKey['events_data']) setAllEvents(byKey['events_data']);
-        const latestStaffList = byKey['staffList'] || staffList;
+        // 新規アカウントでは localStorage 由来の staffList ではなく、上で採用した既定を使う。
+        const latestStaffList = byKey['staffList'] || newAccountStaffSeed || staffList;
         const latestExceptionMonths = filterExpiredExceptions(byKey['exceptionMonths'] || []);
         if (byKey['exceptionMonths']) { exceptionMonthsSkipSave.current = true; setExceptionMonths(latestExceptionMonths); } // ★Fix W-1
         allDBDataRef.current = byKey; // DBキャッシュを初期化
