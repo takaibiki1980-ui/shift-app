@@ -6,6 +6,7 @@ import {
   classifyAuthError, authErrorMessage, AUTH_ERROR_TEXT, isEmailNotConfirmed,
   validateNewPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash,
   PASSWORD_MIN_LENGTH, PASSWORD_MIN_NOTE, CONFIRM_MAIL_NOTE, validateSignupPassword,
+  CAPTCHA_FAILED_NOTE, captchaToken, signupOptions, captchaOnlyOptions,
 } from '../lib/authFlow.js';
 
 describe('classifyAuthError / authErrorMessage', () => {
@@ -120,6 +121,31 @@ describe('新規登録拒否の日本語化', () => {
     expect(classifyAuthError('Signup is disabled')).toBe('signup_disabled');
     expect(classifyAuthError('Email signups are disabled')).toBe('signup_disabled');
     expect(authErrorMessage('Signups not allowed for this instance')).toBe('現在、新規登録は受け付けていません');
+  });
+});
+
+describe('Turnstile（CAPTCHA）の options 組み立て', () => {
+  test('鍵未設定＝トークンなしでは captchaToken が付かない（従来と同一）', () => {
+    expect(captchaToken('')).toBeUndefined();
+    expect(captchaToken(null)).toBeUndefined();
+    expect(captchaToken('   ')).toBeUndefined();
+    expect(captchaOnlyOptions('')).toBeUndefined();          // options を付けない
+    expect(signupOptions({ facility_name: 'X' }, '')).toEqual({ data: { facility_name: 'X' } }); // data のみ
+    expect(signupOptions({ facility_name: 'X' }, '')).not.toHaveProperty('captchaToken');
+  });
+  test('トークンありでは captchaToken が付く', () => {
+    expect(captchaToken('tok123')).toBe('tok123');
+    expect(captchaOnlyOptions('tok123')).toEqual({ captchaToken: 'tok123' });
+    expect(signupOptions({ facility_name: 'X' }, 'tok123')).toEqual({ data: { facility_name: 'X' }, captchaToken: 'tok123' });
+  });
+});
+
+describe('CAPTCHA 失敗の分類と文言', () => {
+  test('captcha/turnstile を含むエラー → captcha → 和文', () => {
+    expect(classifyAuthError('captcha verification process failed')).toBe('captcha');
+    expect(classifyAuthError('Turnstile token invalid')).toBe('captcha');
+    expect(authErrorMessage('captcha protection: challenge failed')).toBe(CAPTCHA_FAILED_NOTE);
+    expect(CAPTCHA_FAILED_NOTE).toBe('確認に失敗しました。もう一度お試しください');
   });
 });
 

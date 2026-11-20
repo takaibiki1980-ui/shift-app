@@ -26,7 +26,7 @@ import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './li
 import { isVisible as annIsVisible, sortAnnouncements, unreadCount, shouldShowBanner, validateAnnouncementInput, linkifyHttps, ANNOUNCEMENT_SEVERITIES, ANNOUNCE_DISMISS_KEY } from './lib/announcements.js';
 import { shareYukyuCell } from './lib/shareCell.js';
 import { cellMarker, cellMarkerColor } from './lib/cellMarker.js';
-import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, validateSignupPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash, PASSWORD_MIN_NOTE, CONFIRM_MAIL_NOTE } from './lib/authFlow.js';
+import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, validateSignupPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash, PASSWORD_MIN_NOTE, CONFIRM_MAIL_NOTE, CAPTCHA_FAILED_NOTE, signupOptions, captchaOnlyOptions } from './lib/authFlow.js';
 import { chooseSeed } from './lib/accountSeed.js';
 import { readUserKey, writeUserKey } from './lib/storageKeys.js';
 import { printCellText } from './lib/printCell.js';
@@ -250,6 +250,46 @@ const SHIFT_DEFAULT_TIMES = {
 };
 
 // ─────────────────────────────────────────────
+//  Turnstile（CAPTCHA）
+//    VITE_TURNSTILE_SITE_KEY 未設定ならウィジェットを出さず、トークンも送らず従来どおり。
+// ─────────────────────────────────────────────
+function getTurnstileSiteKey() {
+  try { return (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_TURNSTILE_SITE_KEY) || ''; }
+  catch { return ''; }
+}
+
+// 公式スクリプトのみ。token は親の onToken へ。送信後は親が key を変えて再マウント＝リセット。
+function TurnstileWidget({ siteKey, onToken, onError }) {
+  const boxRef = useRef(null);
+  useEffect(() => {
+    if (!siteKey) return undefined;
+    let cancelled = false; let iv = null;
+    const SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+    const render = () => {
+      if (cancelled || !window.turnstile || !boxRef.current || boxRef.current.childElementCount > 0) return;
+      try {
+        window.turnstile.render(boxRef.current, {
+          sitekey: siteKey, size: 'flexible',
+          callback: (t) => onToken(t),
+          'expired-callback': () => { onToken(null); if (onError) onError('expired'); },
+          'error-callback': () => { onToken(null); if (onError) onError('error'); },
+        });
+      } catch { if (onError) onError('error'); }
+    };
+    if (window.turnstile) { render(); }
+    else {
+      if (!document.querySelector(`script[src="${SRC}"]`)) {
+        const s = document.createElement('script'); s.src = SRC; s.async = true; s.defer = true; document.head.appendChild(s);
+      }
+      iv = setInterval(() => { if (window.turnstile) { clearInterval(iv); iv = null; render(); } }, 200);
+    }
+    return () => { cancelled = true; if (iv) clearInterval(iv); };
+  }, [siteKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!siteKey) return null;
+  return <div ref={boxRef} style={{ margin: '0 0 14px', minHeight: 1 }} />;
+}
+
+// ─────────────────────────────────────────────
 //  LOGIN PAGE
 // ─────────────────────────────────────────────
 function LoginPage({ onLogin, linkExpired }) {
@@ -265,6 +305,15 @@ function LoginPage({ onLogin, linkExpired }) {
   const [msg, setMsg]         = useState("");
   const [showResend, setShowResend] = useState(false); // ログインが「メール未確認」のとき確認メール再送を出す
   const [cooldown, setCooldown] = useState(0);          // 再送・再設定メールの連打防止（秒・画面側60秒）
+
+  // ── Turnstile（CAPTCHA）──
+  const turnstileSiteKey = getTurnstileSiteKey();          // 未設定なら ''＝従来どおり
+  const captchaOn = !!turnstileSiteKey;
+  const [capToken, setCapToken] = useState(null);          // 取得済みトークン（1回使い切り）
+  const [capNonce, setCapNonce] = useState(0);             // key を変えてウィジェットを作り直す＝リセット
+  const resetCaptcha = () => { setCapToken(null); setCapNonce(n => n + 1); };
+  // 鍵ありのときはトークンが取れるまで送信不可。鍵なしは常に ready（従来どおり）。
+  const captchaReady = !captchaOn || !!capToken;
 
   // 60秒のカウントダウン（再送/再設定メールを送ったら開始）。タイマーは1本だけ。
   useEffect(() => {
@@ -288,11 +337,12 @@ function LoginPage({ onLogin, linkExpired }) {
     setLoading(true); setError(""); setMsg(""); setShowResend(false);
     try {
       if (mode === "login") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const capt = captchaOnlyOptions(capToken); // 鍵なし→undefined＝options を付けず従来と同一
+        const { error } = await supabase.auth.signInWithPassword({ email, password, ...(capt ? { options: capt } : {}) });
         if (error) throw error;
         onLogin();
       } else {
-        const { error } = await supabase.auth.signUp({ email, password, options: { data: { facility_name: facilityName.trim() } } });
+        const { error } = await supabase.auth.signUp({ email, password, options: signupOptions({ facility_name: facilityName.trim() }, capToken) });
         if (error) throw error;
         setMsg("確認メールを送信しました。メールのリンクをクリックしてアカウントを有効化してください。" + CONFIRM_MAIL_NOTE);
       }
@@ -300,7 +350,7 @@ function LoginPage({ onLogin, linkExpired }) {
       const raw = e.message || "";
       setError(authErrorMessage(raw));
       if (mode === "login" && isEmailNotConfirmed(raw)) setShowResend(true); // 未確認なら再送ボタン
-    } finally { setLoading(false); }
+    } finally { setLoading(false); if (captchaOn) resetCaptcha(); } // トークンは1回使い切り＝毎回取り直す
   };
 
   // パスワード再設定メールの送信。登録の有無は中立の文言で隠す（存在推測を防ぐ）。
@@ -310,13 +360,14 @@ function LoginPage({ onLogin, linkExpired }) {
     setLoading(true); setError(""); setMsg(""); setShowResend(false);
     try {
       // redirectTo は getPublicBaseUrl()（本番 https://www.yeix.jp 等）。Redirect URLs の許可内。
-      await supabase.auth.resetPasswordForEmail(email, { redirectTo: getPublicBaseUrl() });
+      const capt = captchaOnlyOptions(capToken);
+      await supabase.auth.resetPasswordForEmail(email, { redirectTo: getPublicBaseUrl(), ...(capt || {}) });
       // 成功/失敗（未登録含む）にかかわらず同じ中立文言。エラーは送信間隔制限のときだけ出す。
       setMsg("登録がある場合、再設定メールを送りました。メールのリンクから新しいパスワードを設定してください。");
       setCooldown(60);
     } catch (e) {
       setError(authErrorMessage(e.message || ""));
-    } finally { setLoading(false); }
+    } finally { setLoading(false); if (captchaOn) resetCaptcha(); }
   };
 
   // 確認メールの再送（ログインが「メール未確認」のときだけ表示）。画面側で60秒あける。
@@ -325,13 +376,14 @@ function LoginPage({ onLogin, linkExpired }) {
     if (cooldown > 0) return;
     setLoading(true); setError(""); setMsg("");
     try {
-      const { error } = await supabase.auth.resend({ type: 'signup', email });
+      const capt = captchaOnlyOptions(capToken);
+      const { error } = await supabase.auth.resend({ type: 'signup', email, ...(capt ? { options: capt } : {}) });
       if (error) throw error;
       setMsg("確認メールを再送しました。メールのリンクをクリックしてください。" + CONFIRM_MAIL_NOTE);
       setCooldown(60);
     } catch (e) {
       setError(authErrorMessage(e.message || ""));
-    } finally { setLoading(false); }
+    } finally { setLoading(false); if (captchaOn) resetCaptcha(); }
   };
 
   const handleKeyDown = (e) => { if (e.key === "Enter") handleSubmit(); };
@@ -416,7 +468,7 @@ function LoginPage({ onLogin, linkExpired }) {
         )}
         {showResend && (
           <div style={{marginBottom:14,textAlign:"center"}}>
-            <button onClick={handleResend} disabled={loading||cooldown>0} style={{
+            <button onClick={handleResend} disabled={loading||cooldown>0||!captchaReady} style={{
               background:"none",border:"none",color:cooldown>0?"#A1A1AA":"#6366F1",
               cursor:cooldown>0?"default":"pointer",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0,
             }}>{cooldown>0?`確認メールを再送（${cooldown}秒後に再送できます）`:"確認メールを再送する"}</button>
@@ -441,12 +493,16 @@ function LoginPage({ onLogin, linkExpired }) {
           </div>
         )}
 
-        <button onClick={handleSubmit} disabled={loading} style={{
+        {captchaOn && (
+          <TurnstileWidget key={capNonce} siteKey={turnstileSiteKey} onToken={setCapToken} onError={()=>setError(CAPTCHA_FAILED_NOTE)} />
+        )}
+
+        <button onClick={handleSubmit} disabled={loading||!captchaReady} style={{
           width:"100%",
-          background:loading?"#E4E4E7":"#6366F1",
+          background:(loading||!captchaReady)?"#E4E4E7":"#6366F1",
           color:"#fff", border:"none", borderRadius:10,
           padding:"13px 0", fontSize:14, fontWeight:800,
-          cursor:loading?"not-allowed":"pointer",
+          cursor:(loading||!captchaReady)?"not-allowed":"pointer",
           letterSpacing:"0.05em",
         }}>
           {loading ? "⏳ 処理中…" : mode==="login" ? "ログイン" : "アカウントを作成"}
@@ -454,7 +510,7 @@ function LoginPage({ onLogin, linkExpired }) {
 
         {mode==="login" && (
           <div style={{textAlign:"center",marginTop:14}}>
-            <button onClick={handleForgot} disabled={loading||cooldown>0} style={{
+            <button onClick={handleForgot} disabled={loading||cooldown>0||!captchaReady} style={{
               background:"none",border:"none",color:cooldown>0?"#A1A1AA":"#6366F1",
               cursor:cooldown>0?"default":"pointer",fontSize:12,textDecoration:"underline",padding:0,
             }}>{cooldown>0?`パスワードを忘れた方（${cooldown}秒後に送信できます）`:"パスワードを忘れた方はこちら"}</button>
