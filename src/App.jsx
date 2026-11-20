@@ -26,7 +26,7 @@ import { effectivePlanValue, resolveFetchedProfile, PLAN_V2_CHOICES } from './li
 import { isVisible as annIsVisible, sortAnnouncements, unreadCount, shouldShowBanner, validateAnnouncementInput, linkifyHttps, ANNOUNCEMENT_SEVERITIES, ANNOUNCE_DISMISS_KEY } from './lib/announcements.js';
 import { shareYukyuCell } from './lib/shareCell.js';
 import { cellMarker, cellMarkerColor } from './lib/cellMarker.js';
-import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash } from './lib/authFlow.js';
+import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, validateSignupPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash, PASSWORD_MIN_NOTE, CONFIRM_MAIL_NOTE } from './lib/authFlow.js';
 import { chooseSeed } from './lib/accountSeed.js';
 import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
@@ -283,6 +283,7 @@ function LoginPage({ onLogin, linkExpired }) {
     if (!email || !password) { setError("メールアドレスとパスワードを入力してください"); return; }
     if (mode === "signup" && !facilityName.trim()) { setError("施設名を入力してください"); return; }
     if (mode === "signup" && !agreed) { setError("利用規約・プライバシーポリシーへの同意が必要です"); return; }
+    if (mode === "signup") { const v = validateSignupPassword(password); if (!v.ok) { setError(v.message); return; } } // 画面の「8文字以上」と一致させる
     setLoading(true); setError(""); setMsg(""); setShowResend(false);
     try {
       if (mode === "login") {
@@ -292,7 +293,7 @@ function LoginPage({ onLogin, linkExpired }) {
       } else {
         const { error } = await supabase.auth.signUp({ email, password, options: { data: { facility_name: facilityName.trim() } } });
         if (error) throw error;
-        setMsg("確認メールを送信しました。メールのリンクをクリックしてアカウントを有効化してください。");
+        setMsg("確認メールを送信しました。メールのリンクをクリックしてアカウントを有効化してください。" + CONFIRM_MAIL_NOTE);
       }
     } catch (e) {
       const raw = e.message || "";
@@ -325,7 +326,7 @@ function LoginPage({ onLogin, linkExpired }) {
     try {
       const { error } = await supabase.auth.resend({ type: 'signup', email });
       if (error) throw error;
-      setMsg("確認メールを再送しました。メールのリンクをクリックしてください。");
+      setMsg("確認メールを再送しました。メールのリンクをクリックしてください。" + CONFIRM_MAIL_NOTE);
       setCooldown(60);
     } catch (e) {
       setError(authErrorMessage(e.message || ""));
@@ -392,7 +393,7 @@ function LoginPage({ onLogin, linkExpired }) {
           />
         </div>
         <div style={{marginBottom:20}}>
-          <div style={{fontSize:11, color:"#52525B", marginBottom:5}}>パスワード{mode==="signup"&&<span style={{color:"#71717A"}}>（6文字以上）</span>}</div>
+          <div style={{fontSize:11, color:"#52525B", marginBottom:5}}>パスワード{mode==="signup"&&<span style={{color:"#71717A"}}>（{PASSWORD_MIN_NOTE}）</span>}</div>
           <input
             type="password" value={password}
             onChange={e=>setPassword(e.target.value)}
@@ -506,7 +507,7 @@ function PasswordRecoveryPage({ onDone, onExit }) {
         <div style={{textAlign:"center",marginBottom:22}}>
           <div style={{margin:"0 auto 12px",width:56,height:56}}><ShifuponIcon size={56} radius={14}/></div>
           <div style={{fontSize:16,fontWeight:900,color:"#18181B"}}>新しいパスワードの設定</div>
-          <div style={{fontSize:11,color:"#71717A",marginTop:6}}>8文字以上で入力してください</div>
+          <div style={{fontSize:11,color:"#71717A",marginTop:6}}>{PASSWORD_MIN_NOTE}で入力してください</div>
         </div>
         {done ? (
           <div style={{background:"#e8f5ee",border:"1px solid #5cb87a",borderRadius:8,padding:"12px 14px",fontSize:13,color:"#166534",textAlign:"center"}}>
@@ -515,7 +516,7 @@ function PasswordRecoveryPage({ onDone, onExit }) {
         ) : (
           <>
             <div style={{marginBottom:14}}>
-              <div style={{fontSize:11,color:"#52525B",marginBottom:5}}>新しいパスワード（8文字以上）</div>
+              <div style={{fontSize:11,color:"#52525B",marginBottom:5}}>新しいパスワード（{PASSWORD_MIN_NOTE}）</div>
               <input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={onKey} placeholder="••••••••"
                 style={{width:"100%",background:"#f0fffe",border:"1px solid #D4D4D8",borderRadius:8,color:"#18181B",padding:"10px 12px",fontSize:13,boxSizing:"border-box",outline:"none"}}/>
             </div>
