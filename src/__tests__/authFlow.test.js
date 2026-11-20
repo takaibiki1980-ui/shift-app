@@ -5,6 +5,7 @@ import { describe, test, expect } from 'vitest';
 import {
   classifyAuthError, authErrorMessage, AUTH_ERROR_TEXT, isEmailNotConfirmed,
   validateNewPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash,
+  PASSWORD_MIN_LENGTH, PASSWORD_MIN_NOTE, CONFIRM_MAIL_NOTE, validateSignupPassword,
 } from '../lib/authFlow.js';
 
 describe('classifyAuthError / authErrorMessage', () => {
@@ -22,7 +23,7 @@ describe('classifyAuthError / authErrorMessage', () => {
   });
   test('弱いパスワード（既存文言と同一）', () => {
     expect(classifyAuthError('Password should be at least 6 characters')).toBe('weak');
-    expect(authErrorMessage('Password should be at least 6 characters')).toBe('パスワードは6文字以上で入力してください');
+    expect(authErrorMessage('Password should be at least 6 characters')).toBe(`パスワードは${PASSWORD_MIN_NOTE}で入力してください`);
   });
   test('送信間隔制限（複数の言い回し）', () => {
     expect(classifyAuthError('For security purposes, you can only request this after 46 seconds.')).toBe('ratelimit');
@@ -84,6 +85,41 @@ describe('isRecoveryHash', () => {
     expect(isRecoveryHash('#type=recoveryX')).toBe(false); // 部分一致で誤判定しない
     expect(isRecoveryHash('')).toBe(false);
     expect(isRecoveryHash(null)).toBe(false);
+  });
+});
+
+describe('パスワード最小文字数の定数と文言の一致', () => {
+  test('定数は8、表記は定数から生成', () => {
+    expect(PASSWORD_MIN_LENGTH).toBe(8);
+    expect(PASSWORD_MIN_NOTE).toBe('8文字以上');
+  });
+  test('weak エラー文は最小文字数と一致（旧「6文字」でない）', () => {
+    expect(AUTH_ERROR_TEXT.weak).toBe(`パスワードは${PASSWORD_MIN_NOTE}で入力してください`);
+    expect(AUTH_ERROR_TEXT.weak).toContain('8文字以上');
+    expect(AUTH_ERROR_TEXT.weak).not.toContain('6文字');
+  });
+  test('validateNewPassword / validateSignupPassword が最小文字数で判定', () => {
+    expect(validateNewPassword('1234567', '1234567').ok).toBe(false);   // 7文字→不可
+    expect(validateNewPassword('12345678', '12345678').ok).toBe(true);  // 8文字→可
+    expect(validateSignupPassword('1234567').ok).toBe(false);
+    expect(validateSignupPassword('1234567').message).toBe(`パスワードは${PASSWORD_MIN_NOTE}で入力してください`);
+    expect(validateSignupPassword('12345678').ok).toBe(true);
+  });
+});
+
+describe('確認メールの補足案内 CONFIRM_MAIL_NOTE', () => {
+  test('迷惑メールと最新1通のリンクの2点を含む', () => {
+    expect(CONFIRM_MAIL_NOTE).toContain('迷惑メール');
+    expect(CONFIRM_MAIL_NOTE).toContain('最新の1通');
+  });
+});
+
+describe('新規登録拒否の日本語化', () => {
+  test('Signups not allowed 系 → signup_disabled → 和文', () => {
+    expect(classifyAuthError('Signups not allowed for this instance')).toBe('signup_disabled');
+    expect(classifyAuthError('Signup is disabled')).toBe('signup_disabled');
+    expect(classifyAuthError('Email signups are disabled')).toBe('signup_disabled');
+    expect(authErrorMessage('Signups not allowed for this instance')).toBe('現在、新規登録は受け付けていません');
   });
 });
 
