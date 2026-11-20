@@ -28,6 +28,7 @@ import { shareYukyuCell } from './lib/shareCell.js';
 import { cellMarker, cellMarkerColor } from './lib/cellMarker.js';
 import { authErrorMessage, isEmailNotConfirmed, validateNewPassword, validateSignupPassword, isRecoveryEvent, isRecoveryHash, isRecoveryErrorHash, PASSWORD_MIN_NOTE, CONFIRM_MAIL_NOTE } from './lib/authFlow.js';
 import { chooseSeed } from './lib/accountSeed.js';
+import { readUserKey, writeUserKey } from './lib/storageKeys.js';
 import { printCellText } from './lib/printCell.js';
 import { toggleKiboDays } from './lib/kiboEdit.js';
 import { SWAP_PAIR, isSwapShift, findSwapCandidates } from './lib/earlyLateSwap.js';
@@ -5256,6 +5257,9 @@ function TrialNotice({ enabled, profile, depts, staffCount }) {
 }
 
 function MainApp({ session, profile, onLogout, onProfileUpdate }) {
+  // localStorage の「アカウント中身」キーに含めるユーザーID（2b）。MainApp はログイン後のみ描画されるため
+  // ここで必ず取得できる。空のときは storageKeys 側が読み書きを行わない（空キー混入の防止）。
+  const uid = session?.user?.id || '';
   const now = new Date();
   const [year,  setYear]  = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -5285,9 +5289,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [dbLoading, setDbLoading] = useState(true);
   const [portalSettings, setPortalSettings] = useState({}); // { [deptId]: { deadline, targetYear, targetMonth, byMonth: { "YYYY-M": { deadline } } } }
 
-  const [depts, setDepts] = useState(() => { try { const s=localStorage.getItem("shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
+  const [depts, setDepts] = useState(() => { try { const s=readUserKey(uid,"shiftNavi_depts"); if(s) return JSON.parse(s); } catch {} return DEFAULT_DEPTS; });
   useEffect(() => {
-    try { localStorage.setItem("shiftNavi_depts",JSON.stringify(depts)); } catch {}
+    writeUserKey(uid,"shiftNavi_depts",JSON.stringify(depts));
     if (deptsSkipSave.current) {
       deptsSkipSave.current = false;
       lastSavedDeptsRef.current = depts;
@@ -5346,9 +5350,9 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     planFreeRef.current = isPlanV2Enabled() && effectivePlanValue(profile, new Date(), true) === 'free';
   }, [profile]);
 
-  const [staffList, setStaffList] = useState(() => { try { const s=localStorage.getItem("shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
+  const [staffList, setStaffList] = useState(() => { try { const s=readUserKey(uid,"shiftNavi_staffList"); if(s) return JSON.parse(s); } catch {} return buildStaff(); });
   useEffect(() => {
-    try { localStorage.setItem("shiftNavi_staffList",JSON.stringify(staffList)); } catch {}
+    writeUserKey(uid,"shiftNavi_staffList",JSON.stringify(staffList));
     if (staffListSkipSave.current) {
       // Supabase/Realtimeから来た変更 → 保存不要・保存済みとしてマーク
       staffListSkipSave.current = false;
@@ -5435,7 +5439,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const SAVE_KEY = (y, m) => `shiftNavi_shifts_${y}_${m+1}`;
   const restoreShifts = (parsed) => { const r={}; for(const [dId,ds] of Object.entries(parsed||{})){r[dId]={};for(const [sId,dm] of Object.entries(ds)){r[dId][sId]={};for(const [d,v] of Object.entries(dm))r[dId][sId][+d]=v;}} return r; };
   const [allShifts, setAllShifts] = useState(() => {
-    try { const key=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=localStorage.getItem(key); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
+    try { const base=`shiftNavi_shifts_${new Date().getFullYear()}_${new Date().getMonth()+1}`; const saved=readUserKey(uid, base); if(!saved) return {}; return restoreShifts(JSON.parse(saved)); } catch { return {}; }
   });
   const allShiftsRef = useRef(allShifts); // 常に最新のallShiftsを参照（生成ハンドラ内で利用）
   const staffListRef = useRef(staffList); // 常に最新のstaffListを参照（保存ハンドラ内で利用）
@@ -5845,14 +5849,14 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     // year/monthをdepsから外す: 月切替時はallShiftsより先にこのeffectが走り
     // 旧月データを新月のlocalStorageキーに書き込むバグを防ぐ。
     // allShifts変更時のみ実行すれば year/month は常に正しい現在値になる。
-    try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShifts)); } catch {}
+    writeUserKey(uid, SAVE_KEY(year, month), JSON.stringify(allShifts));
   }, [allShifts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── タブ/ウィンドウを閉じる直前: 未保存データをlocalStorageに緊急保存 ──
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (saveStatusRef.current === 'unsaved') {
-        try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current)); } catch {}
+        writeUserKey(uid, SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current));
         e.preventDefault();
         e.returnValue = '未保存のシフトがあります。';
       }
@@ -5874,7 +5878,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
       if (dirtyIds.size === 0 && saveStatusRef.current !== 'unsaved') return;
       // saveStatusが'unsaved'なら activeDeptId も保存対象に含める（dirtyに漏れがある場合の安全網）
       if (saveStatusRef.current === 'unsaved') dirtyIds.add(activeDeptIdRef.current);
-      try { localStorage.setItem(SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current)); } catch {}
+      writeUserKey(uid, SAVE_KEY(year, month), JSON.stringify(allShiftsRef.current));
       console.log('[save] 月切替前緊急保存（対象部署）:', [...dirtyIds].join(','));
       let savedCount = 0;
       for (const deptId of dirtyIds) {
@@ -5948,7 +5952,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
               if (reqId !== fetchReqIdRef.current) return;
               if (ld?.data_value) { applyLoaded(ld.data_value); }
               else {
-                try { const saved=localStorage.getItem(SAVE_KEY(year,month)); applyLoaded(saved ? JSON.parse(saved) : {}); }
+                try { const saved=readUserKey(uid, SAVE_KEY(year,month)); applyLoaded(saved ? JSON.parse(saved) : {}); }
                 catch { applyLoaded({}); }
               }
             });
@@ -5956,7 +5960,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         // Load yotei for new month（reqId不一致でも上書きは無害なため実行）
         const yKey=`yotei_${year}_${month+1}`;
         supabase.from('shift_data').select('data_value').eq('user_id',session.user.id).eq('data_key',yKey).maybeSingle()
-          .then(({data})=>{ if(reqId!==fetchReqIdRef.current)return; if(data?.data_value)setAllYotei(data.data_value);else{try{const s=localStorage.getItem(`shiftNavi_${yKey}`);setAllYotei(s?JSON.parse(s):{});}catch{setAllYotei({});}} });
+          .then(({data})=>{ if(reqId!==fetchReqIdRef.current)return; if(data?.data_value)setAllYotei(data.data_value);else{try{const s=readUserKey(uid, `shiftNavi_${yKey}`);setAllYotei(s?JSON.parse(s):{});}catch{setAllYotei({});}} });
       });
     return () => { emergencySave(); }; // cleanup: 月切替/アンマウント時に旧月を緊急保存
   }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -6045,7 +6049,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
         staffListDirtyRef.current = false;
       } catch(e) { saveError = e; console.log("[SAVE] staffList UPSERT ERROR", e?.message || e); }
     }
-    try { localStorage.setItem(SAVE_KEY(y,m),JSON.stringify(allShiftsRef.current)); } catch {}
+    writeUserKey(uid, SAVE_KEY(y,m), JSON.stringify(allShiftsRef.current));
     if (!saveError) {
       saveFailCountRef.current = 0;
       lastSelfSaveTime.current = Date.now(); // 自己Realtimeループ検知用
@@ -6074,7 +6078,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
     dirtyDeptIdsRef.current.add(activeDeptIdRef.current);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      try { localStorage.setItem(SAVE_KEY(yearRef.current, monthRef.current), JSON.stringify(allShiftsRef.current)); } catch {}
+      writeUserKey(uid, SAVE_KEY(yearRef.current, monthRef.current), JSON.stringify(allShiftsRef.current));
     }, 500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [allShifts, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -6241,10 +6245,10 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   const [staffModal, setStaffModal] = useState(null);
 
   const DEFAULT_FLOOR_SETTINGS = {floors:[],duties:[{name:"入浴"},{name:"フリー"}]};
-  const [allFloorSettings, setAllFloorSettings] = useState(() => { try{const s=localStorage.getItem("shiftNavi_allFloorSettings");if(s)return JSON.parse(s);}catch{} return {}; });
+  const [allFloorSettings, setAllFloorSettings] = useState(() => { try{const s=readUserKey(uid,"shiftNavi_allFloorSettings");if(s)return JSON.parse(s);}catch{} return {}; });
   const floorSettings = allFloorSettings[activeDeptId] || DEFAULT_FLOOR_SETTINGS;
   useEffect(() => {
-    try{localStorage.setItem("shiftNavi_allFloorSettings",JSON.stringify(allFloorSettings));}catch{}
+    writeUserKey(uid,"shiftNavi_allFloorSettings",JSON.stringify(allFloorSettings));
     // ★Fix W-1: 初期load起因の setAllFloorSettings は Supabase に書き戻さない
     if (allFloorSettingsSkipSave.current) { allFloorSettingsSkipSave.current = false; return; }
     if(!isInitializing.current){supabase.from('shift_data').upsert({user_id:session.user.id,data_key:'allFloorSettings',data_value:allFloorSettings,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});}
@@ -6255,7 +6259,7 @@ function MainApp({ session, profile, onLogout, onProfileUpdate }) {
   useEffect(() => {
     if(isLoadingMonth.current||isInitializing.current)return;
     const key=YOTEI_SAVE_KEY(year,month);
-    try{localStorage.setItem(`shiftNavi_${key}`,JSON.stringify(allYotei));}catch{}
+    writeUserKey(uid,`shiftNavi_${key}`,JSON.stringify(allYotei));
     supabase.from('shift_data').upsert({user_id:session.user.id,data_key:key,data_value:allYotei,updated_at:new Date().toISOString()},{onConflict:'user_id,data_key'}).then(()=>{});
   }, [allYotei, year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
